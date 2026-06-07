@@ -64,6 +64,30 @@ if [[ "$SKIP_MESA" -eq 0 ]]; then
     [[ "$STAGED" -gt 0 ]] && echo "  Staged $STAGED .so files to rootfs-overlay/usr/lib/"
 fi
 
+# ── Step 3b: Stage NPU test model ─────────────────────────────────────────────
+NPU_TEST_DIR="${REPO}/rootfs-overlay/opt/npu-test"
+MODEL_NAME="mobilenet_v1_1.0_224_quant.tflite"
+MODEL_TF="${NPU_TEST_DIR}/${MODEL_NAME}"
+MODEL_URL="https://storage.googleapis.com/download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_1.0_224_quant.tgz"
+
+mkdir -p "${NPU_TEST_DIR}"
+if [[ ! -f "${MODEL_TF}" ]]; then
+    echo "==> [3b/5] Downloading MobileNetV1 UINT8 model..."
+    TMPTAR="$(mktemp /tmp/mobilenet.XXXXXX.tgz)"
+    wget -q --show-progress -O "${TMPTAR}" "${MODEL_URL}"
+    tar -xzf "${TMPTAR}" -C "${NPU_TEST_DIR}"
+    rm -f "${TMPTAR}"
+    # The tgz may also contain txt/info files; find the tflite specifically
+    FOUND="$(find "${NPU_TEST_DIR}" -name "*.tflite" -maxdepth 1 | head -1)"
+    if [[ -n "$FOUND" && "$FOUND" != "$MODEL_TF" ]]; then
+        mv "$FOUND" "$MODEL_TF"
+    fi
+    [[ -f "${MODEL_TF}" ]] || { echo "ERROR: ${MODEL_NAME} not found after extract"; exit 1; }
+    echo "  Staged: $(du -sh "${MODEL_TF}" | cut -f1)  ${MODEL_NAME}"
+else
+    echo "==> [3b/5] NPU model already staged ($(du -sh "${MODEL_TF}" | cut -f1))"
+fi
+
 # ── Step 4: Download buildroot if needed ──────────────────────────────────────
 echo "==> [4/5] Buildroot..."
 if [[ ! -d "${BR_SRC}" ]]; then

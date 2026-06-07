@@ -1,7 +1,7 @@
 From fbd3c71d84d4b78123de16bf2108734fb5a6b5af Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <huhuvmb88@outlook.com>
 Date: Mon, 8 Jun 2026 03:52:23 +1200
-Subject: [PATCH 2/4] arm64: dts: rockchip: rk3576: add RKNN NPU subsystem
+Subject: [PATCH 1/2] arm64: dts: rockchip: rk3576: add RKNN NPU subsystem
 
 Add device tree nodes for the two RKNN neural processing unit cores
 (rknn_core_0, rknn_core_1) and their IOMMU units (rknn_mmu_0,
@@ -41,7 +41,7 @@ index e12a2a0cf..dd32b43d3 100644
 @@ -1804,6 +1804,64 @@ qos_npu_m1ro: qos@27f22100 {
  			reg = <0x0 0x27f22100 0x0 0x20>;
  		};
- 
+
 +		rknn_core_0: npu@27700000 {
 +			compatible = "rockchip,rk3576-rknn-core";
 +			reg = <0x0 0x27700000 0x0 0x1000>,
@@ -103,6 +103,5 @@ index e12a2a0cf..dd32b43d3 100644
  		gmac0: ethernet@2a220000 {
  			compatible = "rockchip,rk3576-gmac", "snps,dwmac-4.20a";
  			reg = <0x0 0x2a220000 0x0 0x10000>;
--- 
+--
 2.43.0
-
