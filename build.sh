@@ -64,7 +64,24 @@ if [[ "$SKIP_MESA" -eq 0 ]]; then
     [[ "$STAGED" -gt 0 ]] && echo "  Staged $STAGED .so files to rootfs-overlay/usr/lib/"
 fi
 
-# ── Step 3b: Stage NPU test model ─────────────────────────────────────────────
+# ── Step 3b: Stage tflite-runtime wheel (cp311 / manylinux_2_34_aarch64) ──────
+TFLITE_SITE_PKG="${REPO}/rootfs-overlay/usr/lib/python3.11/site-packages"
+TFLITE_SO="${TFLITE_SITE_PKG}/tflite_runtime/_pywrap_tensorflow_interpreter_wrapper.so"
+TFLITE_WHL_URL="https://files.pythonhosted.org/packages/f2/e9/5fc0435129c23c17551fcfadc82bd0d5482276213dfbc641f07b4420cb6d/tflite_runtime-2.14.0-cp311-cp311-manylinux_2_34_aarch64.whl"
+
+mkdir -p "${TFLITE_SITE_PKG}"
+if [[ ! -f "${TFLITE_SO}" ]]; then
+    echo "==> [3b/5] Downloading tflite-runtime 2.14.0 (cp311 aarch64)..."
+    TMPWHL="$(mktemp /tmp/tflite.XXXXXX.whl)"
+    wget -q --show-progress -O "${TMPWHL}" "${TFLITE_WHL_URL}"
+    unzip -q "${TMPWHL}" -d "${TFLITE_SITE_PKG}"
+    rm -f "${TMPWHL}"
+    echo "  Staged: $(du -sh "${TFLITE_SITE_PKG}/tflite_runtime" | cut -f1)  tflite_runtime"
+else
+    echo "==> [3b/5] tflite-runtime already staged"
+fi
+
+# ── Step 3d: Stage NPU test model ─────────────────────────────────────────────
 NPU_TEST_DIR="${REPO}/rootfs-overlay/opt/npu-test"
 MODEL_NAME="mobilenet_v1_1.0_224_quant.tflite"
 MODEL_TF="${NPU_TEST_DIR}/${MODEL_NAME}"

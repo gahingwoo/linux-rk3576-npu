@@ -1,16 +1,25 @@
 #!/usr/bin/env sh
-# On-board first-run setup: install tflite-runtime and fetch model.
+# Verify the NPU test stack is ready.  tflite-runtime and numpy are
+# baked into the image; this script just confirms they import correctly.
 set -e
 
-pip3 install --upgrade tflite-runtime==2.14.0
+ok()   { echo "  OK: $*"; }
+fail() { echo "FAIL: $*"; exit 1; }
 
-MODEL_DIR="/opt/npu-test"
-if [ ! -f "${MODEL_DIR}/mobilenet_v1_1.0_224_quant.tflite" ]; then
-    echo "Fetching MobileNetV1 UINT8 model..."
-    URL="https://storage.googleapis.com/download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_1.0_224_quant.tgz"
-    wget -q -O /tmp/mobilenet.tgz "$URL" || curl -sL -o /tmp/mobilenet.tgz "$URL"
-    tar -xzf /tmp/mobilenet.tgz -C "$MODEL_DIR"
-    rm /tmp/mobilenet.tgz
-fi
+echo "==> Checking NPU test stack..."
 
-echo "Setup complete. Run: bash /opt/npu-test/bringup-check.sh"
+python3 -c "import tflite_runtime.interpreter; print('tflite_runtime:', tflite_runtime.__version__)" \
+    && ok "tflite_runtime" \
+    || fail "tflite_runtime import failed — rebuild image with build.sh"
+
+python3 -c "import numpy; print('numpy:', numpy.__version__)" \
+    && ok "numpy" \
+    || fail "numpy import failed — check BR2_PACKAGE_PYTHON_NUMPY=y in defconfig"
+
+[ -f /usr/lib/libteflon.so ] && ok "libteflon.so" \
+    || fail "libteflon.so not found"
+
+[ -f /opt/npu-test/mobilenet_v1_1.0_224_quant.tflite ] && ok "model" \
+    || fail "model not found — rebuild image"
+
+echo "==> All checks passed.  Run: bash /opt/npu-test/bringup-check.sh"
