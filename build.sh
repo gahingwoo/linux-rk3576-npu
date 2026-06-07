@@ -75,9 +75,9 @@ if [[ ! -f "${MODEL_TF}" ]]; then
     echo "==> [3b/5] Downloading MobileNetV1 UINT8 model..."
     TMPTAR="$(mktemp /tmp/mobilenet.XXXXXX.tgz)"
     wget -q --show-progress -O "${TMPTAR}" "${MODEL_URL}"
-    tar -xzf "${TMPTAR}" -C "${NPU_TEST_DIR}"
+    # Extract only the tflite; the tgz also contains ~40 MB of ckpt/pb files
+    tar -xzf "${TMPTAR}" -C "${NPU_TEST_DIR}" --wildcards --no-anchored '*.tflite'
     rm -f "${TMPTAR}"
-    # The tgz may also contain txt/info files; find the tflite specifically
     FOUND="$(find "${NPU_TEST_DIR}" -name "*.tflite" -maxdepth 1 | head -1)"
     if [[ -n "$FOUND" && "$FOUND" != "$MODEL_TF" ]]; then
         mv "$FOUND" "$MODEL_TF"
