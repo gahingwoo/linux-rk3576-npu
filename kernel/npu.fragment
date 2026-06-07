@@ -1,0 +1,9 @@
+CONFIG_DRM_ACCEL=y
+# Built-in (=y), not module: rocket must probe before the late_initcall that
+# disables "unused" regulators turns off vdd_npu_s0 (~31s after boot).
+# A module loaded at 167s finds the NPU power domain (nputop) unpowerable.
+CONFIG_DRM_ACCEL_ROCKET=y
+CONFIG_ROCKCHIP_IOMMU=y
+# ext4 metadata_csum calls crypto_alloc_shash("crc32c"); omitting this causes
+# a kernel panic at rootfs mount: "VFS: Unable to mount root fs".
+CONFIG_CRYPTO_CRC32C=y

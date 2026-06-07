@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * RK3576 NPU subsystem device tree overlay.
+ *
+ * Add to rk3576.dtsi and enable in board DTS with:
+ *   &rknn_core_0 { status = "okay"; };
+ *
+ * Start single-core (core 0 only) per bring-up policy.
+ */
+
+#include <dt-bindings/clock/rockchip,rk3576-cru.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/power/rockchip,rk3576-power.h>
+#include <dt-bindings/reset/rockchip,rk3576-cru.h>
+
+/ {
+	/*
+	 * NPU OPP table.
+	 * Rates from BL31 SCMI pvtpll table:
+	 * CONFIRMED: tfa/plat/rockchip/rk3576/scmi/rk3576_clk.c:319-354
+	 */
+	npu_opp_table: opp-table-npu {
+		compatible = "operating-points-v2";
+
+		opp-300000000 {
+			opp-hz = /bits/ 64 <300000000>;
+			opp-microvolt = <675000>;
+		};
+		opp-400000000 {
+			opp-hz = /bits/ 64 <400000000>;
+			opp-microvolt = <675000>;
+		};
+		opp-500000000 {
+			opp-hz = /bits/ 64 <500000000>;
+			opp-microvolt = <700000>;
+		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			opp-microvolt = <725000>;
+		};
+		opp-700000000 {
+			opp-hz = /bits/ 64 <700000000>;
+			opp-microvolt = <775000>;
+		};
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			opp-microvolt = <825000>;
+		};
+		opp-900000000 {
+			opp-hz = /bits/ 64 <900000000>;
+			opp-microvolt = <875000>;
+		};
+		opp-950000000 {
+			opp-hz = /bits/ 64 <950000000>;
+			opp-microvolt = <950000>;
+		};
+	};
+};
+
+&soc {
+	/*
+	 * NPU core 0.
+	 *
+	 * Register addresses: UNVERIFIED - needs hardware confirmation.
+	 * Estimated from memory map gap before GPU@0x27800000.
+	 * RK3588 layout pattern (pc=base+0x0000, cna=base+0x1000, core=base+0x3000).
+	 *
+	 * Interrupt: UNVERIFIED - derived from IRQ gap analysis (unused SPI 344
+	 * adjacent to GPU SPI 347-349).
+	 *
+	 * Clock topology (CONFIRMED):
+	 *   aclk: ACLK_RKNN0 gated from CLK_RKNN_DSU0
+	 *         include/dt-bindings/clock/rockchip,rk3576-cru.h:229
+	 *   hclk: HCLK_RKNN_ROOT (shared root)
+	 *         include/dt-bindings/clock/rockchip,rk3576-cru.h:231
+	 *   npu:  CLK_RKNN_DSU0 (SCMI-managed via BL31)
+	 *         include/dt-bindings/clock/rockchip,rk3576-cru.h:232
+	 *         rk3576_clk.c:1101 - mapped in BL31 SCMI table
+	 *   pclk: PCLK_NPUTOP_ROOT
+	 *         include/dt-bindings/clock/rockchip,rk3576-cru.h:233
+	 *
+	 * Reset: CONFIRMED (SRST_A_RKNN0=204, SRST_A_RKNN0_BIU=205)
+	 *   srst_a: SRST_A_RKNN0
+	 *           include/dt-bindings/reset/rockchip,rk3576-cru.h:239
+	 *   srst_h: UNVERIFIED - no SRST_H_RKNN0 in rk3576; using SRST_A_RKNN0_BIU
+	 *           as placeholder; needs TRM confirmation.
+	 *
+	 * Power domain: RK3576_PD_NPU0=2 (CONFIRMED)
+	 *   include/dt-bindings/power/rockchip,rk3576-power.h:8
+	 */
+	rknn_core_0: npu@27700000 {
+		compatible = "rockchip,rk3576-rknn-core";
+		/* UNVERIFIED - needs hardware confirmation */
+		reg = <0x0 0x27700000 0x0 0x1000>,
+		      <0x0 0x27701000 0x0 0x1000>,
+		      <0x0 0x27703000 0x0 0x1000>;
+		reg-names = "pc", "cna", "core";
+		/* UNVERIFIED - IRQ gap analysis, not from TRM */
+		interrupts = <GIC_SPI 344 IRQ_TYPE_LEVEL_HIGH>;
+		/* CONFIRMED: rk3576-cru.h:229,231,232,233 */
+		clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
+			 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+		clock-names = "aclk", "hclk", "npu", "pclk";
+		assigned-clocks = <&cru CLK_RKNN_DSU0>;
+		assigned-clock-rates = <300000000>;
+		/* CONFIRMED: rk3576-cru.h:239; srst_h UNVERIFIED */
+		resets = <&cru SRST_A_RKNN0>, <&cru SRST_A_RKNN0_BIU>;
+		reset-names = "srst_a", "srst_h";
+		/* CONFIRMED: rockchip,rk3576-power.h:8 */
+		power-domains = <&power RK3576_PD_NPU0>;
+		/* UNVERIFIED - IOMMU address needs TRM confirmation */
+		iommus = <&rknn_mmu_0>;
+		operating-points-v2 = <&npu_opp_table>;
+		/* npu-supply CONFIRMED: rk3576-rock-4d.dts:444 */
+		/* sram-supply UNVERIFIED: assumed same rail */
+		status = "disabled";
+	};
+
+	/*
+	 * IOMMU for NPU core 0.
+	 * Address: UNVERIFIED - estimated offset +0x9000 from core base.
+	 * Compatible: CONFIRMED by analogy with vdec_mmu (rk3576.dtsi:1307).
+	 */
+	rknn_mmu_0: iommu@27709000 {
+		compatible = "rockchip,rk3576-iommu", "rockchip,rk3568-iommu";
+		/* UNVERIFIED */
+		reg = <0x0 0x27709000 0x0 0x100>,
+		      <0x0 0x27709100 0x0 0x100>;
+		/* UNVERIFIED - shared with core interrupt */
+		interrupts = <GIC_SPI 344 IRQ_TYPE_LEVEL_HIGH>;
+		/* CONFIRMED: rk3576-cru.h:229,231 */
+		clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>;
+		clock-names = "aclk", "iface";
+		#iommu-cells = <0>;
+		/* CONFIRMED: rockchip,rk3576-power.h:8 */
+		power-domains = <&power RK3576_PD_NPU0>;
+		status = "disabled";
+	};
+
+	/*
+	 * NPU core 1 - kept disabled for single-core bring-up.
+	 * Enable only after core 0 is fully validated.
+	 *
+	 * Register addresses, interrupts: UNVERIFIED (same basis as core 0).
+	 * Reset: CONFIRMED SRST_A_RKNN1=207; srst_h UNVERIFIED.
+	 * Power domain: RK3576_PD_NPU1=3 (CONFIRMED).
+	 */
+	rknn_core_1: npu@27710000 {
+		compatible = "rockchip,rk3576-rknn-core";
+		/* UNVERIFIED */
+		reg = <0x0 0x27710000 0x0 0x1000>,
+		      <0x0 0x27711000 0x0 0x1000>,
+		      <0x0 0x27713000 0x0 0x1000>;
+		reg-names = "pc", "cna", "core";
+		/* UNVERIFIED */
+		interrupts = <GIC_SPI 345 IRQ_TYPE_LEVEL_HIGH>;
+		/* CONFIRMED: rk3576-cru.h:230,231,232,233 */
+		clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>,
+			 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+		clock-names = "aclk", "hclk", "npu", "pclk";
+		assigned-clocks = <&cru CLK_RKNN_DSU0>;
+		assigned-clock-rates = <300000000>;
+		/* CONFIRMED: rk3576-cru.h:243; srst_h UNVERIFIED */
+		resets = <&cru SRST_A_RKNN1>, <&cru SRST_A_RKNN1_BIU>;
+		reset-names = "srst_a", "srst_h";
+		/* CONFIRMED: rockchip,rk3576-power.h:9 */
+		power-domains = <&power RK3576_PD_NPU1>;
+		/* UNVERIFIED */
+		iommus = <&rknn_mmu_1>;
+		operating-points-v2 = <&npu_opp_table>;
+		status = "disabled";
+	};
+
+	/* IOMMU for NPU core 1 - UNVERIFIED address */
+	rknn_mmu_1: iommu@27719000 {
+		compatible = "rockchip,rk3576-iommu", "rockchip,rk3568-iommu";
+		/* UNVERIFIED */
+		reg = <0x0 0x27719000 0x0 0x100>,
+		      <0x0 0x27719100 0x0 0x100>;
+		/* UNVERIFIED */
+		interrupts = <GIC_SPI 345 IRQ_TYPE_LEVEL_HIGH>;
+		/* CONFIRMED: rk3576-cru.h:230,231 */
+		clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>;
+		clock-names = "aclk", "iface";
+		#iommu-cells = <0>;
+		/* CONFIRMED: rockchip,rk3576-power.h:9 */
+		power-domains = <&power RK3576_PD_NPU1>;
+		status = "disabled";
+	};
+};

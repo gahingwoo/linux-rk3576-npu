@@ -1,0 +1,44 @@
+From 364893aad5a1fec82a63f098d924efcd67b22343 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Mon, 8 Jun 2026 03:52:23 +1200
+Subject: [PATCH 1/4] dt-bindings: npu: rockchip,rk3588-rknn-core: add rk3576
+
+Add rockchip,rk3576-rknn-core to the compatible enum.
+
+The RK3576 has two RKNN neural processing unit cores with the same
+pc/cna/core register layout as RK3588, so the same binding covers both
+SoCs without modification.
+
+Remove sram-supply from required: as RK3576 boards share a single
+npu-supply rail for both the NPU core and its SRAM.  The property is
+kept in properties: so RK3588 boards with a dedicated SRAM rail can
+still describe it.
+
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+ .../devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml      | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+index caca2a490..d904db3bf 100644
+--- a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
++++ b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+@@ -21,6 +21,7 @@ properties:
+ 
+   compatible:
+     enum:
++      - rockchip,rk3576-rknn-core
+       - rockchip,rk3588-rknn-core
+ 
+   reg:
+@@ -75,7 +76,6 @@ required:
+   - resets
+   - reset-names
+   - npu-supply
+-  - sram-supply
+ 
+ additionalProperties: false
+ 
+-- 
+2.43.0
+
