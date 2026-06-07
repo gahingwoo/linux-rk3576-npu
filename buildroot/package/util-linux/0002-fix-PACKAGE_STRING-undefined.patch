@@ -1,0 +1,20 @@
+util-linux 2.39.3 configure.ac intentionally unsets PACKAGE_STRING, but
+include/c.h uses it in UTIL_LINUX_VERSION. Add a fallback so the build
+doesn't break on hosts that pick up the undefined symbol.
+
+Fixed in upstream util-linux post-2.39.3.
+
+Signed-off-by: RK3576 NPU bringup <local-patch>
+--- a/include/c.h
++++ b/include/c.h
+@@ -468,6 +468,10 @@ static inline void __attribute__((__noreturn__)) ul_unreachable(void)
+
+ #define USAGE_MAN_TAIL(_man)   _("\nFor more details see %s.\n"), _man
+
++#ifndef PACKAGE_STRING
++# define PACKAGE_STRING "util-linux"
++#endif
++
+ #define UTIL_LINUX_VERSION _("%s from %s\n"), program_invocation_short_name, PACKAGE_STRING
+
+ #define print_version(eval) __extension__ ({ \

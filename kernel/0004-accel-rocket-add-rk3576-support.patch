@@ -1,0 +1,81 @@
+From 61e5b7cd3a6850a11d360c5a61da69522e831c5b Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Mon, 8 Jun 2026 03:52:23 +1200
+Subject: [PATCH 4/4] accel: rocket: add RK3576 support
+
+Three changes add RK3576 NPU support to the rocket DRM-accel driver:
+
+1. rocket_drv.c: add "rockchip,rk3576-rknn-core" to dt_match[] so the
+   platform driver binds to RK3576 DT nodes.
+
+2. rocket_device.c: add a second for_each_compatible_node pass for
+   "rockchip,rk3576-rknn-core" in rocket_device_init() so RK3576 cores
+   are counted when pre-allocating rdev->cores.  Without this the array
+   is zero-sized on RK3576 and the first rdev->cores[] access in
+   rocket_probe() goes out of bounds.
+
+3. rocket_core.c: assign clock consumer IDs ("aclk", "hclk", "npu",
+   "pclk") before the devm_clk_bulk_get() call.  devm_clk_bulk_get()
+   looks up each clock by its .id field against the DT clock-names
+   property; without the IDs set the lookup falls back to index 0 for
+   all four entries, returning the same clock four times.
+
+RK3576 uses the same pc/cna/core register layout as RK3588, so no new
+register definitions are required.
+
+Tested on Radxa ROCK 4D (RK3576) with linux-next-20260527:
+  [drm] Initialized rocket 0.0.0 for rknn on minor 0
+  rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+ drivers/accel/rocket/rocket_core.c   | 4 ++++
+ drivers/accel/rocket/rocket_device.c | 4 ++++
+ drivers/accel/rocket/rocket_drv.c    | 1 +
+ 3 files changed, 9 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b3b2fa9ba..5dd260bac 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -28,6 +28,10 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+ 
++	core->clks[0].id = "aclk";
++	core->clks[1].id = "hclk";
++	core->clks[2].id = "npu";
++	core->clks[3].id = "pclk";
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
+index 46e6ee1e7..bfb00f967 100644
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -31,6 +31,10 @@ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 		if (of_device_is_available(core_node))
+ 			num_cores++;
+ 
++	for_each_compatible_node(core_node, NULL, "rockchip,rk3576-rknn-core")
++		if (of_device_is_available(core_node))
++			num_cores++;
++
+ 	rdev->cores = devm_kcalloc(dev, num_cores, sizeof(*rdev->cores), GFP_KERNEL);
+ 	if (!rdev->cores)
+ 		return ERR_PTR(-ENOMEM);
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 8bbbce594..8f6a02d50 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -215,6 +215,7 @@ static void rocket_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id dt_match[] = {
+ 	{ .compatible = "rockchip,rk3588-rknn-core" },
++	{ .compatible = "rockchip,rk3576-rknn-core" },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+-- 
+2.43.0
+
