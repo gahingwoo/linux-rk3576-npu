@@ -1,0 +1,100 @@
+From ab2d52195298cf2854f94aec19c98c26cfff3181 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Wed, 10 Jun 2026 10:53:35 +1200
+Subject: [PATCH] arm64: dts: rk3576 / accel: rocket: move RKNN BIU reset to
+ power domain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The RKNN0/1 bus interface unit (SRST_A_RKNN0/1_BIU) must be pulsed
+after the NPU0/NPU1 power domain powers on, before any device in the
+domain resumes.  Previously SRST_A_RKNN0_BIU was listed in rknn_core's
+resets as "srst_h", but rknn_core resumes after the IOMMU (which is a
+supplier via the iommus property), so the BIU reset never fired before
+the IOMMU tried to access registers — causing:
+
+  rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+Fix: assign SRST_A_RKNN0/1_BIU to the NPU0/NPU1 power-domain nodes so
+that pm-domains cycles the reset at power-on, before any device resumes.
+Remove "srst_h" from rknn_core's reset list and shrink the resets array
+from 2 to 1 — rknn_core only needs SRST_A_RKNN0 for error recovery.
+
+Signed-off-by: Jiaxing Hu <huhuvmb88@gmail.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 10 ++++++----
+ drivers/accel/rocket/rocket_core.c       |  1 -
+ drivers/accel/rocket/rocket_core.h       |  2 +-
+ 3 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index dd32b43d3..6bd772b84 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1071,6 +1071,7 @@ power-domain@RK3576_PD_NPU0 {
+ 							reg = <RK3576_PD_NPU0>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+ 								 <&cru ACLK_RKNN0>;
++							resets = <&cru SRST_A_RKNN0_BIU>;
+ 							pm_qos = <&qos_npu_m0>;
+ 							#power-domain-cells = <0>;
+ 						};
+@@ -1078,6 +1079,7 @@ power-domain@RK3576_PD_NPU1 {
+ 							reg = <RK3576_PD_NPU1>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+ 								 <&cru ACLK_RKNN1>;
++							resets = <&cru SRST_A_RKNN1_BIU>;
+ 							pm_qos = <&qos_npu_m1>;
+ 							#power-domain-cells = <0>;
+ 						};
+@@ -1814,8 +1816,8 @@ rknn_core_0: npu@27700000 {
+ 			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
+ 				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+ 			clock-names = "aclk", "hclk", "npu", "pclk";
+-			resets = <&cru SRST_A_RKNN0>, <&cru SRST_A_RKNN0_BIU>;
+-			reset-names = "srst_a", "srst_h";
++			resets = <&cru SRST_A_RKNN0>;
++			reset-names = "srst_a";
+ 			power-domains = <&power RK3576_PD_NPU0>;
+ 			iommus = <&rknn_mmu_0>;
+ 			status = "disabled";
+@@ -1843,8 +1845,8 @@ rknn_core_1: npu@27710000 {
+ 			clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>,
+ 				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+ 			clock-names = "aclk", "hclk", "npu", "pclk";
+-			resets = <&cru SRST_A_RKNN1>, <&cru SRST_A_RKNN1_BIU>;
+-			reset-names = "srst_a", "srst_h";
++			resets = <&cru SRST_A_RKNN1>;
++			reset-names = "srst_a";
+ 			power-domains = <&power RK3576_PD_NPU1>;
+ 			iommus = <&rknn_mmu_1>;
+ 			status = "disabled";
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 5dd260bac..7b1b4d05f 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -22,7 +22,6 @@ int rocket_core_init(struct rocket_core *core)
+ 	int err = 0;
+ 
+ 	core->resets[0].id = "srst_a";
+-	core->resets[1].id = "srst_h";
+ 	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, ARRAY_SIZE(core->resets),
+ 						    core->resets);
+ 	if (err)
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index a3fa64067..6bcd1bc16 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -38,7 +38,7 @@ struct rocket_core {
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+ 	struct clk_bulk_data clks[4];
+-	struct reset_control_bulk_data resets[2];
++	struct reset_control_bulk_data resets[1];
+ 
+ 	struct iommu_group *iommu_group;
+ 
+-- 
+2.43.0
+
