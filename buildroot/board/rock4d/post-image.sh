@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BINARIES="${1:?missing binaries dir}"
-EXTERNAL_DIR="${BR2_EXTERNAL_RK3576NPU_PATH:?BR2_EXTERNAL_RK3576NPU_PATH not set}"
+BINARIES="${BINARIES_DIR:-${1:?missing binaries dir}}"
 ROCKCHIP_BIN="${ROCKCHIP_BINARIES:-/home/parallels/Desktop/rock4d_package/binaries}"
 OUT="${BINARIES}/sdcard.img"
 

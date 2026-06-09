@@ -32,8 +32,8 @@ fi
 
 echo "==> Regenerating sdcard.img..."
 ROCKCHIP_BINARIES="${ROCKCHIP_BIN}" \
-    BINARIES_DIR="${BR_OUT}/images" \
-    bash "${REPO}/buildroot/board/rock4d/post-image.sh" "${REPO}/buildroot"
+BINARIES_DIR="${BR_OUT}/images" \
+    bash "${REPO}/buildroot/board/rock4d/post-image.sh"
 
 echo ""
 echo "==> Done. Flash:"

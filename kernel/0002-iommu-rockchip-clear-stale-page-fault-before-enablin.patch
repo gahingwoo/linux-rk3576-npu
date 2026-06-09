@@ -1,0 +1,57 @@
+From e5ed6cee58afb13d33525f248e287e3b9feec824 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Tue, 9 Jun 2026 16:23:19 +1200
+Subject: [PATCH 2/2] iommu/rockchip: clear stale page fault before enabling
+ stall
+
+A Rockchip IOMMU bank that has PAGE_FAULT_ACTIVE set will silently
+reject CMD_ENABLE_STALL, causing rk_iommu_enable_stall() to time out
+even though the bus is otherwise idle.  This can happen when firmware
+leaves the IOMMU with a latched fault from an unmapped access that
+occurred before the DTE was programmed (e.g. during NPU power-on).
+
+Before issuing CMD_ENABLE_STALL, check each bank for the combination
+of PAGE_FAULT_ACTIVE and IDLE (no transaction in flight).  If both are
+set, clear the latched fault with CMD_ZAP_CACHE + CMD_PAGE_FAULT_DONE,
+the same sequence used in the IRQ handler.  This is safe because IDLE
+guarantees no active transaction will be disrupted.
+
+Observed on RK3576 (Radxa ROCK 4D): the first two or three attach calls
+to the NPU IOMMU produced spurious "Enable stall request timed out,
+status: 0x00000b / 0x00001d" messages until the stale boot-time fault
+was cleared by an interrupt.  With this fix those messages disappear.
+---
+ drivers/iommu/rockchip-iommu.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index 0013cf196..8e4fa814d 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -420,6 +420,23 @@ static int rk_iommu_enable_stall(struct rk_iommu *iommu)
+ 	if (!rk_iommu_is_paging_enabled(iommu))
+ 		return 0;
+ 
++	/*
++	 * A pending page fault on an idle IOMMU prevents the hardware from
++	 * accepting CMD_ENABLE_STALL.  This can occur after a power-on when
++	 * firmware left the IOMMU with a latched fault from an unmapped access.
++	 * Clear the fault before requesting stall; doing so is safe when IDLE
++	 * is set because no transaction is actively in flight.
++	 */
++	for (i = 0; i < iommu->num_mmu; i++) {
++		u32 status = rk_iommu_read(iommu->bases[i], RK_MMU_STATUS);
++
++		if ((status & RK_MMU_STATUS_PAGE_FAULT_ACTIVE) &&
++		    (status & RK_MMU_STATUS_IDLE)) {
++			rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
++			rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_PAGE_FAULT_DONE);
++		}
++	}
++
+ 	rk_iommu_command(iommu, RK_MMU_CMD_ENABLE_STALL);
+ 
+ 	ret = readx_poll_timeout(rk_iommu_is_stall_active, iommu, val,
+-- 
+2.43.0
+
