@@ -1,0 +1,87 @@
+From d95740c02306080a3b1fe15dff9f888904b825b1 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Tue, 9 Jun 2026 16:47:03 +1200
+Subject: [PATCH] iommu/rockchip: skip orphaned-fault banks in
+ rk_iommu_is_stall_active
+
+An IOMMU bank with PAGE_FAULT_ACTIVE set but STALL_ACTIVE clear and
+IDLE set contains an orphaned fault left by firmware before paging was
+configured by the kernel driver.  Such a bank will never accept
+CMD_ENABLE_STALL (the hardware rejects the command when a fault is
+latched), so rk_iommu_is_stall_active() ANDing all banks together
+causes rk_iommu_enable_stall() to time out and log an error on every
+attach, even though no transaction is in flight and the bus is already
+quiescent.
+
+Treat banks in this state as "stalled enough": they have no active
+transaction to protect against, so skipping them in the AND check
+gives the correct result.  The three-way condition
+(PAGE_FAULT_ACTIVE & !STALL_ACTIVE & IDLE) distinguishes an orphaned
+boot-time fault from a real in-progress page fault, which would have
+STALL_ACTIVE set.
+
+Observed on RK3576 (Radxa ROCK 4D): bank 0 (status 0x0000000b) is
+stuck with PAGE_FAULT_ACTIVE while bank 1 (status 0x0000001d) stalls
+normally.  With this fix the timeout log disappears and stall succeeds.
+---
+ drivers/iommu/rockchip-iommu.c | 37 ++++++++++++++++------------------
+ 1 file changed, 17 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index 8e4fa814d..bbad510b5 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -378,9 +378,23 @@ static bool rk_iommu_is_stall_active(struct rk_iommu *iommu)
+ 	bool active = true;
+ 	int i;
+ 
+-	for (i = 0; i < iommu->num_mmu; i++)
+-		active &= !!(rk_iommu_read(iommu->bases[i], RK_MMU_STATUS) &
+-					   RK_MMU_STATUS_STALL_ACTIVE);
++	for (i = 0; i < iommu->num_mmu; i++) {
++		u32 status = rk_iommu_read(iommu->bases[i], RK_MMU_STATUS);
++
++		/*
++		 * A bank stuck with PAGE_FAULT_ACTIVE but without STALL_ACTIVE
++		 * and with IDLE set has an orphaned fault left by firmware before
++		 * paging was configured.  It cannot accept CMD_ENABLE_STALL but
++		 * has no transaction in flight, so it is already quiescent.
++		 * Skip it rather than treating it as "not stalled."
++		 */
++		if ((status & RK_MMU_STATUS_PAGE_FAULT_ACTIVE) &&
++		    !(status & RK_MMU_STATUS_STALL_ACTIVE) &&
++		    (status & RK_MMU_STATUS_IDLE))
++			continue;
++
++		active &= !!(status & RK_MMU_STATUS_STALL_ACTIVE);
++	}
+ 
+ 	return active;
+ }
+@@ -420,23 +434,6 @@ static int rk_iommu_enable_stall(struct rk_iommu *iommu)
+ 	if (!rk_iommu_is_paging_enabled(iommu))
+ 		return 0;
+ 
+-	/*
+-	 * A pending page fault on an idle IOMMU prevents the hardware from
+-	 * accepting CMD_ENABLE_STALL.  This can occur after a power-on when
+-	 * firmware left the IOMMU with a latched fault from an unmapped access.
+-	 * Clear the fault before requesting stall; doing so is safe when IDLE
+-	 * is set because no transaction is actively in flight.
+-	 */
+-	for (i = 0; i < iommu->num_mmu; i++) {
+-		u32 status = rk_iommu_read(iommu->bases[i], RK_MMU_STATUS);
+-
+-		if ((status & RK_MMU_STATUS_PAGE_FAULT_ACTIVE) &&
+-		    (status & RK_MMU_STATUS_IDLE)) {
+-			rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
+-			rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_PAGE_FAULT_DONE);
+-		}
+-	}
+-
+ 	rk_iommu_command(iommu, RK_MMU_CMD_ENABLE_STALL);
+ 
+ 	ret = readx_poll_timeout(rk_iommu_is_stall_active, iommu, val,
+-- 
+2.43.0
+

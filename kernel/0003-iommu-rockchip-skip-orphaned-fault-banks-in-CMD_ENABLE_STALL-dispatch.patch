@@ -1,0 +1,51 @@
+From 3cc565d71214c9342e8df6b1c3b00a15752f8015 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Tue, 9 Jun 2026 17:38:53 +1200
+Subject: [PATCH] iommu/rockchip: skip orphaned-fault banks in CMD_ENABLE_STALL
+ dispatch
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Sending CMD_ENABLE_STALL to a bank stuck with PAGE_FAULT_ACTIVE (but
+without STALL_ACTIVE and with IDLE=1 — an orphaned firmware fault) delays
+the other banks from transitioning to STALL_ACTIVE within the poll
+timeout.  The orphaned bank cannot act on the command, but its presence
+on the shared command path causes the remaining banks to stall far slower
+than normal.
+
+Skip such banks when issuing CMD_ENABLE_STALL, matching the existing
+is_stall_active() skip introduced in the previous commit.
+---
+ drivers/iommu/rockchip-iommu.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index bbad510b5..cd3d529f9 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -434,7 +434,20 @@ static int rk_iommu_enable_stall(struct rk_iommu *iommu)
+ 	if (!rk_iommu_is_paging_enabled(iommu))
+ 		return 0;
+ 
+-	rk_iommu_command(iommu, RK_MMU_CMD_ENABLE_STALL);
++	/*
++	 * Do not send CMD_ENABLE_STALL to orphaned-fault banks
++	 * (PAGE_FAULT_ACTIVE without STALL_ACTIVE, IDLE=1).  Doing so delays
++	 * the other banks from reaching STALL_ACTIVE within the poll timeout.
++	 */
++	for (i = 0; i < iommu->num_mmu; i++) {
++		u32 status = rk_iommu_read(iommu->bases[i], RK_MMU_STATUS);
++
++		if ((status & RK_MMU_STATUS_PAGE_FAULT_ACTIVE) &&
++		    !(status & RK_MMU_STATUS_STALL_ACTIVE) &&
++		    (status & RK_MMU_STATUS_IDLE))
++			continue;
++		writel(RK_MMU_CMD_ENABLE_STALL, iommu->bases[i] + RK_MMU_COMMAND);
++	}
+ 
+ 	ret = readx_poll_timeout(rk_iommu_is_stall_active, iommu, val,
+ 				 val, RK_MMU_POLL_PERIOD_US,
+-- 
+2.43.0
+
