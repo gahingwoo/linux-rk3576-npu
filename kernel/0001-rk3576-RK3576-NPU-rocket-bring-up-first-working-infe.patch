@@ -1,39 +1,43 @@
-From 1aa051992d66f33327f4058f809ea020ca40ea5c Mon Sep 17 00:00:00 2001
+From 97aab9c9f993eb2aa29d91181df399dfd142af45 Mon Sep 17 00:00:00 2001
 From: gahingwoo <huhuvmb88@outlook.com>
-Date: Tue, 9 Jun 2026 16:09:08 +1200
-Subject: [PATCH 1/2] =?UTF-8?q?rk3576:=20RK3576=20NPU=20(rocket)=20bring-u?=
+Date: Tue, 9 Jun 2026 18:15:04 +1200
+Subject: [PATCH 1/4] =?UTF-8?q?rk3576:=20RK3576=20NPU=20(rocket)=20bring-u?=
  =?UTF-8?q?p=20=E2=80=94=20first=20working=20inference?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Four fixes to make MobileNetV1 inference work on RK3576 via Mesa Teflon
-TFLite delegate on mainline linux-next (v7.1-rc5-next-20260527).
+Add support for the RK3576 NPU (RKNN) via the rocket DRM accelerator
+driver and Mesa Teflon TFLite delegate.  Tested on Radxa ROCK 4D with
+MobileNetV1 1.0/224 quantised:
 
-Fix A (rocket_job.c): Guard MMIO reads in rocket_job_timedout() behind
-pm_runtime_active() to prevent synchronous external abort when the DRM
-500ms timeout fires before pm_runtime_get_sync() completes.
+  First-compile: ~50 ms   Steady-state: ~51 ms avg
 
-Fix B (pm-domains.c): Set GENPD_FLAG_ALWAYS_ON for all four RK3576 NPU
-power domains (PD_NPU/NPUTOP/NPU0/NPU1). The chain_status bit for NPUTOP
-(PMU 0x248 bit22) never asserts after power-on so pm-domains cannot
-power-cycle the NPU hierarchy safely. Workaround until the restore path
-is fixed.
+Driver changes
+--------------
+rocket_drv.c: add "rk3576-rknn-core" to compatible match table
+rocket_device.c: add for_each_compatible_node loop for rk3576-rknn-core
+rocket_core.c/.h: add named clock IDs (aclk/hclk/npu/pclk); required
+  because the RK3576 DT binding uses clock-names and devm_clk_bulk_get()
+  needs the IDs set before the lookup
+rocket_job.c:
+  - rocket_job_timedout(): guard MMIO reads behind pm_runtime_active()
+    to avoid faults when the job timer fires after runtime suspend
+  - Add hrtimer-based completion polling for RK3576: OP_EN never clears
+    on this SoC (unlike RK3588), so poll INTERRUPT_RAW_STATUS bits 28-29
+    (PC_DONE_0/PC_DONE_1) instead; bits are read-only in INTERRUPT_MASK
+    so they cannot be routed to the GIC
 
-Fix C (rk3576-rock-4d.dts): Add regulator-always-on to vdd_npu_s0.
-GENPD_FLAG_ALWAYS_ON prevents rockchip_pd_power_off() but does not prevent
-regulator_disable_unused() (late_initcall_sync), which sees enable_count=0
-because pm_genpd_init with initially_off=false never calls power_on →
-regulator_enable. Without always-on the NPU rail is killed at ~31s boot.
+DT / binding changes
+--------------------
+rk3576.dtsi: add rknn_core_0/1, rknn_mmu_0/1 nodes with confirmed
+  register addresses, IRQs (GIC_SPI 247/248), clocks, and resets
+rk3576-rock-4d.dts: enable rknn_core_0/rknn_mmu_0; add npu-supply and
+  regulator-always-on on vdd_npu_s0
+rockchip,rk3588-rknn-core.yaml: make sram-supply optional (absent on
+  RK3576)
 
-Fix D (rocket_job.c): On RK3576, OPERATION_ENABLE is not cleared by
-hardware on job completion (unlike RK3588). The real completion signal is
-INTERRUPT_RAW_STATUS bits 28-29 (PC_DONE_0/PC_DONE_1), which are read-only
-in INTERRUPT_MASK and cannot be routed to the GIC. Use hrtimer polling
-(1ms interval) checking both OP_EN==0 and RAW_STATUS & PC_DONE_0|1.
-
-Tested: MobileNetV1 1.0/224/quant, steady-state ~121ms/inference, INFERENCE OK.
-Kernel: linux-next 7.1-rc5-next-20260527, board: Radxa ROCK 4D (RK3576).
+Signed-off-by: Jiaxing Hu <huhuvmb88@gmail.com>
 ---
  .../npu/rockchip,rk3588-rknn-core.yaml        |   2 +-
  .../boot/dts/rockchip/rk3576-rock-4d.dts      |  10 +
@@ -43,8 +47,7 @@ Kernel: linux-next 7.1-rc5-next-20260527, board: Radxa ROCK 4D (RK3576).
  drivers/accel/rocket/rocket_device.c          |   4 +
  drivers/accel/rocket/rocket_drv.c             |   1 +
  drivers/accel/rocket/rocket_job.c             | 174 ++++++++++++++----
- drivers/pmdomain/rockchip/pm-domains.c        |  12 ++
- 9 files changed, 237 insertions(+), 38 deletions(-)
+ 8 files changed, 225 insertions(+), 38 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
 index caca2a490..d904db3bf 100644
@@ -518,36 +521,6 @@ index 2f1861f96..142e973f0 100644
  	drm_sched_fini(&core->sched);
  
  	cancel_work_sync(&core->reset.work);
-diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
-index 490bbb1d1..3d09f0ac9 100644
---- a/drivers/pmdomain/rockchip/pm-domains.c
-+++ b/drivers/pmdomain/rockchip/pm-domains.c
-@@ -767,6 +767,9 @@ static void rockchip_pd_detach_dev(struct generic_pm_domain *genpd,
- 	pm_clk_destroy(dev);
- }
- 
-+/* forward reference: definition is after the per-SoC tables */
-+static const struct rockchip_pmu_info rk3576_pmu;
-+
- static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
- 				      struct device_node *node)
- {
-@@ -895,6 +898,15 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
- 	pd->genpd.flags = GENPD_FLAG_PM_CLK | GENPD_FLAG_NO_STAY_ON;
- 	if (pd_info->active_wakeup)
- 		pd->genpd.flags |= GENPD_FLAG_ACTIVE_WAKEUP;
-+	/*
-+	 * RK3576: the NPUTOP chain_status bit (PMU 0x248 bit22) never asserts
-+	 * after power-on, so pm-domains cannot power-cycle the NPU hierarchy.
-+	 * Keep all four NPU domains always-on until the restore path is fixed.
-+	 */
-+	if (pmu->info == &rk3576_pmu &&
-+	    (id == RK3576_PD_NPU || id == RK3576_PD_NPUTOP ||
-+	     id == RK3576_PD_NPU0 || id == RK3576_PD_NPU1))
-+		pd->genpd.flags |= GENPD_FLAG_ALWAYS_ON;
- 	pm_genpd_init(&pd->genpd, NULL,
- 		      !rockchip_pmu_domain_is_on(pd) ||
- 		      (pd->info->mem_status_mask && !rockchip_pmu_domain_is_mem_on(pd)));
 -- 
 2.43.0
 
