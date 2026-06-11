@@ -67,11 +67,42 @@ for _ in range(5):
     interp.invoke()
     times.append((time.perf_counter() - t) * 1e3)
 
-probs = interp.get_tensor(out["index"])[0]
+raw = interp.get_tensor(out["index"])[0]
+scale, zero_point = out["quantization"]
+if scale != 0:
+    probs = (raw.astype(np.float32) - zero_point) * scale
+else:
+    probs = raw.astype(np.float32)
+
 top1  = int(np.argmax(probs))
 conf  = float(probs[top1])
 
+# top-5 for diagnostics
+top5_idx = np.argsort(probs)[::-1][:5]
+
 print(f"First-compile: {t_first:.1f} ms")
 print(f"Steady-state:  avg={sum(times)/len(times):.1f} ms  min={min(times):.1f} ms")
+print(f"Output quant:  scale={scale}  zero_point={zero_point}")
+print(f"Raw non-zero:  {int(np.count_nonzero(raw))}/{len(raw)}")
+print(f"Top-5: {[(int(i), round(float(probs[i]),3)) for i in top5_idx]}")
 print(f"Top-1 index:   {top1}  conf={conf:.3f}")
+
+# CPU-only reference run (no delegate)
+interp_cpu = tflite.Interpreter(model_path=model_path)
+interp_cpu.allocate_tensors()
+inp_cpu = interp_cpu.get_input_details()[0]
+out_cpu = interp_cpu.get_output_details()[0]
+interp_cpu.set_tensor(inp_cpu["index"], data)
+t_cpu = time.perf_counter()
+interp_cpu.invoke()
+t_cpu = (time.perf_counter() - t_cpu) * 1e3
+raw_cpu = interp_cpu.get_tensor(out_cpu["index"])[0]
+sc, zp = out_cpu["quantization"]
+probs_cpu = (raw_cpu.astype(np.float32) - zp) * sc if sc != 0 else raw_cpu.astype(np.float32)
+top1_cpu = int(np.argmax(probs_cpu))
+top5_cpu = np.argsort(probs_cpu)[::-1][:5]
+print(f"CPU ref ({t_cpu:.1f} ms): non-zero={int(np.count_nonzero(raw_cpu))}/{len(raw_cpu)}")
+print(f"CPU Top-5: {[(int(i), round(float(probs_cpu[i]),3)) for i in top5_cpu]}")
+print(f"CPU Top-1: {top1_cpu}  conf={float(probs_cpu[top1_cpu]):.3f}")
+
 print("INFERENCE OK")
