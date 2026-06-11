@@ -1,0 +1,63 @@
+From c49d72038e52a2c683b0a464092e9e7f5835ad49 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Wed, 10 Jun 2026 16:10:56 +1200
+Subject: [PATCH 07/09] arm64: dts: rockchip: run all RKNN clocks during
+ NPU0/NPU1 power transitions
+
+The BSP driver enables every NPU clock (CLK_RKNN_DSU0, ACLK_RKNN0/1,
+HCLK_RKNN_ROOT, ACLK/HCLK_RKNN_CBUF) before powering on the NPU0/NPU1
+domains and keeps them running through the whole transition.  Our
+NPU0/NPU1 domain nodes only listed HCLK_RKNN_ROOT and the per-core
+ACLK, so the domains powered on with the DSU core clock and the CBUF
+clocks gated.  Without the functional clock running, the power-on
+sequencing never propagates through the core block: the domain reports
+on, the idle handshake completes, but every register in the block
+(including the IOMMU banks at core+0x2000) reads back dead, which is
+exactly the
+
+  rk_iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+failure on the first runtime resume.  It also explains why pulsing the
+BIU reset at power-on did not help -- with the clocks gated the
+synchronous reset cannot propagate either.
+
+Add CLK_RKNN_DSU0 and the CBUF clocks to both domain nodes so the
+pmdomain core keeps them running across the transition, matching the
+clock state the BSP guarantees.
+
+Signed-off-by: Jiaxing Hu <huhuvmb88@gmail.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index 6bd772b84..bb4fe4b18 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1070,7 +1070,10 @@ power-domain@RK3576_PD_NPUTOP {
+ 						power-domain@RK3576_PD_NPU0 {
+ 							reg = <RK3576_PD_NPU0>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+-								 <&cru ACLK_RKNN0>;
++								 <&cru ACLK_RKNN0>,
++								 <&cru CLK_RKNN_DSU0>,
++								 <&cru ACLK_RKNN_CBUF>,
++								 <&cru HCLK_RKNN_CBUF>;
+ 							resets = <&cru SRST_A_RKNN0_BIU>;
+ 							pm_qos = <&qos_npu_m0>;
+ 							#power-domain-cells = <0>;
+@@ -1078,7 +1081,10 @@ power-domain@RK3576_PD_NPU0 {
+ 						power-domain@RK3576_PD_NPU1 {
+ 							reg = <RK3576_PD_NPU1>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+-								 <&cru ACLK_RKNN1>;
++								 <&cru ACLK_RKNN1>,
++								 <&cru CLK_RKNN_DSU0>,
++								 <&cru ACLK_RKNN_CBUF>,
++								 <&cru HCLK_RKNN_CBUF>;
+ 							resets = <&cru SRST_A_RKNN1_BIU>;
+ 							pm_qos = <&qos_npu_m1>;
+ 							#power-domain-cells = <0>;
+-- 
+2.43.0
+

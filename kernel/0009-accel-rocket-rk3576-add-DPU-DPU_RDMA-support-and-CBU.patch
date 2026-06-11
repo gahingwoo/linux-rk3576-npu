@@ -1,0 +1,149 @@
+From 1d46fc0e5968e5c0477e086ed2590fa45b4506b6 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Thu, 11 Jun 2026 23:28:11 +1200
+Subject: [PATCH 09/09] accel/rocket: rk3576: add DPU/DPU_RDMA support and CBUF
+ clocks
+
+Map the DPU (0x4000) and DPU_RDMA (0x5000) register blocks and add the
+matching iomem accessors so the post-processing/write-back stage can be
+programmed and its S_POINTER pre-armed.
+
+Add the CBUF (convolution buffer) clock domain (ACLK_RKNN_CBUF,
+HCLK_RKNN_CBUF) to the NPU core node and the driver clk_bulk set. The CNA
+fills the CBUF and CORE reads from it; without these clocks held for the
+duration of a job the compute path stalls after loading one slice while the
+DRAM-only DPU_RDMA path still runs. The vendor keeps all NPU clocks enabled
+whenever the block is powered.
+
+Also map the per-core stats window (base+0x2000) used to read the DMA
+read/write byte counters.
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 18 ++++++++-----
+ drivers/accel/rocket/rocket_core.c       | 32 ++++++++++++++++++++++++
+ drivers/accel/rocket/rocket_core.h       | 15 ++++++++++-
+ 3 files changed, 58 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index a28de316e..e812746ad 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1814,12 +1814,16 @@ rknn_core_0: npu@27700000 {
+ 			compatible = "rockchip,rk3576-rknn-core";
+ 			reg = <0x0 0x27700000 0x0 0x1000>,
+ 			      <0x0 0x27701000 0x0 0x1000>,
+-			      <0x0 0x27703000 0x0 0x1000>;
+-			reg-names = "pc", "cna", "core";
++			      <0x0 0x27703000 0x0 0x1000>,
++			      <0x0 0x27704000 0x0 0x1000>,
++			      <0x0 0x27705000 0x0 0x1000>;
++			reg-names = "pc", "cna", "core", "dpu", "dpu_rdma";
+ 			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
+-				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+-			clock-names = "aclk", "hclk", "npu", "pclk";
++				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
++				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
++			clock-names = "aclk", "hclk", "npu", "pclk",
++				      "aclk_cbuf", "hclk_cbuf";
+ 			resets = <&cru SRST_A_RKNN0>;
+ 			reset-names = "srst_a";
+ 			power-domains = <&power RK3576_PD_NPU0>;
+@@ -1844,8 +1848,10 @@ rknn_core_1: npu@27710000 {
+ 			compatible = "rockchip,rk3576-rknn-core";
+ 			reg = <0x0 0x27710000 0x0 0x1000>,
+ 			      <0x0 0x27711000 0x0 0x1000>,
+-			      <0x0 0x27713000 0x0 0x1000>;
+-			reg-names = "pc", "cna", "core";
++			      <0x0 0x27713000 0x0 0x1000>,
++			      <0x0 0x27714000 0x0 0x1000>,
++			      <0x0 0x27715000 0x0 0x1000>;
++			reg-names = "pc", "cna", "core", "dpu", "dpu_rdma";
+ 			interrupts = <GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>,
+ 				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>;
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 7b1b4d05f..eb6291826 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -31,6 +31,14 @@ int rocket_core_init(struct rocket_core *core)
+ 	core->clks[1].id = "hclk";
+ 	core->clks[2].id = "npu";
+ 	core->clks[3].id = "pclk";
++	/*
++	 * RK3576: the CBUF (convolution buffer) has its own clock domain. The CNA
++	 * fills the CBUF and CORE reads from it; without these the compute path
++	 * stalls after loading one slice (RDMA, which bypasses the CBUF, still
++	 * runs). The vendor keeps all NPU clocks on whenever powered.
++	 */
++	core->clks[4].id = "aclk_cbuf";
++	core->clks[5].id = "hclk_cbuf";
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+@@ -53,6 +61,30 @@ int rocket_core_init(struct rocket_core *core)
+ 		return PTR_ERR(core->core_iomem);
+ 	}
+ 
++	core->dpu_iomem = devm_platform_ioremap_resource_byname(pdev, "dpu");
++	if (IS_ERR(core->dpu_iomem)) {
++		dev_warn(dev, "no DPU registers; DPU S_POINTER won't be pre-armed\n");
++		core->dpu_iomem = NULL;
++	}
++
++	core->dpu_rdma_iomem = devm_platform_ioremap_resource_byname(pdev, "dpu_rdma");
++	if (IS_ERR(core->dpu_rdma_iomem)) {
++		dev_warn(dev, "no DPU_RDMA registers; DPU_RDMA S_POINTER won't be pre-armed\n");
++		core->dpu_rdma_iomem = NULL;
++	}
++
++	{
++		struct resource *pc_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pc");
++
++		if (pc_res) {
++			core->stats_iomem = devm_ioremap(dev, pc_res->start + 0x2000, 0x1000);
++			if (IS_ERR_OR_NULL(core->stats_iomem))
++				core->stats_iomem = NULL;
++		} else {
++			core->stats_iomem = NULL;
++		}
++	}
++
+ 	dma_set_max_seg_size(dev, UINT_MAX);
+ 
+ 	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 6bcd1bc16..48eca77ab 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -28,6 +28,16 @@
+ #define rocket_core_writel(core, reg, value) \
+ 	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+ 
++#define rocket_dpu_readl(core, reg) \
++	readl((core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS)
++#define rocket_dpu_writel(core, reg, value) \
++	writel(value, (core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS)
++
++#define rocket_dpu_rdma_readl(core, reg) \
++	readl((core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS)
++#define rocket_dpu_rdma_writel(core, reg, value) \
++	writel(value, (core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS)
++
+ struct rocket_core {
+ 	struct device *dev;
+ 	struct rocket_device *rdev;
+@@ -37,7 +47,10 @@ struct rocket_core {
+ 	void __iomem *pc_iomem;
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+-	struct clk_bulk_data clks[4];
++	void __iomem *dpu_iomem;
++	void __iomem *dpu_rdma_iomem;
++	void __iomem *stats_iomem; /* NPU base+0x2000: dt_wr/dt_rd counters */
++	struct clk_bulk_data clks[6];
+ 	struct reset_control_bulk_data resets[1];
+ 
+ 	struct iommu_group *iommu_group;
+-- 
+2.43.0
+
