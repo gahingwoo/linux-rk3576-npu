@@ -1,0 +1,328 @@
+From 77634fc960efb8da85671eea2a527f8be796a87b Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@gmail.com>
+Date: Fri, 12 Jun 2026 19:17:32 +1200
+Subject: [PATCH] rocket: fix RK3576 ping-pong sequencing, CBUF re-arm, and
+ DPU/RDMA grouping
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fixes all three bugs that prevent correct output on RK3576 hardware
+(MobileNetV1: Top-1 class 653, conf≈0.887 expected; was all zeros).
+
+Bug 1: PP state machine deadlock on cold boot
+  Initial S_POINTER arm wrote 0xe (POINTER_PP_MODE|EXECUTER_PP_EN|
+  POINTER_PP_EN, POINTER=0).  In PP mode group 0 (PRODUCER) cannot start
+  until group 1 (CONSUMER) has completed at least once.  At cold boot
+  group 1 has never run, so the HW sees "never-started IDLE" rather than
+  "post-completion IDLE" and keeps CNA STATUS_0=PENDING indefinitely.
+  Observed: dt_rd_top stuck at 0xe00 (exactly one row = 3584 B), all
+  other dt counters zero.
+  Fix: pulse POINTER_PP_CLEAR (bit 4) on the initial arm of all four
+  units (CNA, CORE, DPU, DPU_RDMA): 0xe → 0x1e.  POINTER_PP_CLEAR resets
+  the PP state machine so both groups enter "post-completion IDLE" before
+  the first job, letting group 0 proceed on OP_EN.  The bit self-clears;
+  subsequent re-arm writes stay at 0xe.
+
+Bug 2: Missing CNA re-arm after second CNA_CBUF_CON0 write
+  CNA_CBUF_CON0 appears twice in the command stream (entries [4] and [21]).
+  Each write flips POINTER 0→1 for CNA, DPU, and DPU_RDMA.  The re-arm
+  at entry [8] covers the first flip.  The second flip at entry [21]
+  goes unhandled, so all subsequent CNA config (CBUF_CON1, CVT_CON*,
+  FC_CON*, DMA_CON*, DCOMP, PAD_CON1) lands in the unarmed group 1
+  while OP_EN fires group 0.
+  Fix: add CNA_S_POINTER = 0xe immediately after the second CNA_CBUF_CON0.
+
+Bug 3: Missing DPU/DPU_RDMA re-arms before DPU config block
+  The second CNA_CBUF_CON0 flip (Bug 2) also flips DPU and DPU_RDMA
+  POINTER to 1, but only CNA was re-armed.  All DPU registers
+  (FEATURE_MODE_CFG, DST_BASE_ADDR, DATA_CUBE_*, BS_*, WDMA_*, LUT_*) and
+  DPU_RDMA registers go to group 1, but OP_EN fires group 0.  DPU
+  executes with stale uninitialized group-0 registers; write-back never
+  occurs (dt_wr_top=0, output all zeros).
+  Fix: add DPU_S_POINTER and DPU_RDMA_S_POINTER re-arms (0xe) immediately
+  after the CORE_S_POINTER re-arm, before the DPU config block.
+
+Also fix surfaces_per_row in rkt_task.c: DPU_SURFACE_ADD (register 0x40c0)
+stores the stride between output surfaces in units of ATOMIC_K_SIZE bytes.
+The previous formula multiplied output_width × output_height by 2, yielding
+a 2× stride that caused DPU to read/write wrong memory locations.
+
+Also fix registers.xml: CNA_S_POINTER bit4 was undocumented; add
+POINTER_PP_CLEAR field at [4:4].  Same correction for CORE, DPU, DPU_RDMA.
+
+Reported-by: hardware test (ROCK 4D, RK3576 NPU, MobileNetV1 inference)
+---
+ src/gallium/drivers/rocket/registers.xml |   6 +-
+ src/gallium/drivers/rocket/rkt_regcmd.c  | 123 +++++++++++++++++++++--
+ src/gallium/drivers/rocket/rkt_task.c    |  24 +++--
+ 3 files changed, 136 insertions(+), 17 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/registers.xml b/src/gallium/drivers/rocket/registers.xml
+index 8410eda..ce6257f 100644
+--- a/src/gallium/drivers/rocket/registers.xml
++++ b/src/gallium/drivers/rocket/registers.xml
+@@ -479,9 +479,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+       <bitfield name="RGP_TYPE" low="26" high="29" type="uint"/>
+       <bitfield name="NONALIGN" pos="25" type="uint"/>
+       <bitfield name="SURF_LEN" low="9" high="24" type="uint"/>
+-      <bitfield name="BURST_LEN" low="5" high="8" type="uint"/>
+-      <bitfield name="CONV_MODE" low="3" high="4" type="uint"/>
+-      <bitfield name="OUTPUT_MODE" low="1" high="2" type="uint"/>
++      <bitfield name="BURST_LEN" low="7" high="8" type="uint"/>
++      <bitfield name="CONV_MODE" low="4" high="5" type="uint"/>
++      <bitfield name="OUTPUT_MODE" low="1" high="3" type="uint"/>
+       <bitfield name="FLYING_MODE" pos="0" type="uint"/>
+    </reg32>
+    <reg32 offset="0x4010" name="DATA_FORMAT">
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index be992fd..66387f0 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -41,6 +41,39 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    unsigned weights_zero_point = task->weights_zero_point;
+    unsigned offset = output_zero_point - 0x80;
+ 
++   /*
++    * Arm each sub-unit's ping-pong executer from inside the command stream, as
++    * the vendor BSP does at the very top of its regcmd. mesa relied on the
++    * kernel CPU-writing S_POINTER before submit, but the executer "engaged"
++    * bit (S_POINTER bit16) is HW-set only when the PC writes these into the
++    * *active* ping-pong group in-stream — a CPU write at submit time lands in
++    * the inactive group. Without this, RDMA engages but CNA/CORE/DPU never do
++    * (dt_wr stays 0). 0x1e = 0xe | POINTER_PP_CLEAR: the CLEAR pulse resets
++    * the PP state machine so both groups are in "post-completion IDLE" before
++    * the first job.  Without CLEAR, group 0 is queued PENDING but waits for
++    * group 1 (consumer) to have completed at least once — it never has at cold
++    * boot, causing an indefinite deadlock (CNA STATUS_0=PENDING forever,
++    * dt_rd_top stuck at one row).  POINTER_PP_CLEAR self-clears after the
++    * reset; all subsequent re-arm writes use 0xe (no CLEAR needed).
++    */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
++                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
++                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
++        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_CLEAR(1));
++
+    uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
+                    CNA_CBUF_CON0_DATA_BANK(task->input_banks);
+    if (task_num > 0 && operation->reuse_weights_cbuf)
+@@ -62,6 +95,17 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CONV_CON1, con1);
+ 
++   /*
++    * Re-arm CNA, DPU, and DPU_RDMA S_POINTER after the initial CNA register
++    * block.  Writing CNA_CBUF_CON0 / DCOMP / CONV_CON1 resets the ping-pong
++    * POINTER for CNA, DPU, and DPU_RDMA from group 0 to group 1; without
++    * re-arming here all subsequent CNA config writes land in the unarmed
++    * group 1, CNA never engages (dt_rd_top stuck at one row), and the entire
++    * pipeline stalls.  Vendor BSP re-arms all three units at this point.
++    */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1));
+    EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+                               DPU_S_POINTER_EXECUTER_PP_EN(1) |
+                               DPU_S_POINTER_POINTER_PP_EN(1));
+@@ -70,6 +114,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+            DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+            DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
+    EMIT(REG_CNA_CONV_CON1, con1);
++
+    EMIT(REG_CNA_CONV_CON2,
+         CNA_CONV_CON2_FEATURE_GRAINS(
+            50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
+@@ -96,6 +141,17 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CBUF_CON0, con0);
+ 
++   /*
++    * Re-arm CNA S_POINTER again: the second CNA_CBUF_CON0 write above has the
++    * same side-effect as the first — it flips POINTER 0→1 once more.  Without
++    * this re-arm, all remaining CNA config (CBUF_CON1, CVT, FC, DMA, DCOMP …)
++    * lands in the unarmed group 1, op_en still targets group 1, and CNA never
++    * engages (dt_rd_top stuck at one row).
++    */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1));
++
+    EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
+ 
+    if (task->input_channels_real == 1) {
+@@ -189,7 +245,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_PAD_CON1, pad_con1);
+ 
+-   uint32_t misc_cfg = CORE_MISC_CFG_QD_EN(1);
++   /*
++    * Un-gate the CORE MAC array. The vendor BSP writes MAC_GATING = 0
++    * (SLCG_OP_EN = 0, second-level clock gating off) before MISC_CFG; mainline
++    * mesa never writes it, so the MAC stays at its gated reset value and the
++    * conv core reads weights + the first window but never produces output
++    * (dt_wr_core = 0). The external CBUF clocks being on isn't enough — this is
++    * the per-unit SLCG inside the core block.
++    */
++   EMIT(REG_CORE_MAC_GATING, 0);
++
++   /*
++    * Match the BSP CORE_MISC_CFG: SOFT_GATING(28) plus the two fields the
++    * register XML still calls RESERVED_0/RESERVED_2 (the BSP sets them to 2/9).
++    * mesa only set QD_EN, leaving the core soft-gated.
++    */
++   uint32_t misc_cfg = CORE_MISC_CFG_QD_EN(1) |
++                       CORE_MISC_CFG_SOFT_GATING(28) |
++                       CORE_MISC_CFG_RESERVED_0(2) |
++                       CORE_MISC_CFG_RESERVED_2(9);
+    if (operation->depthwise)
+       misc_cfg |= CORE_MISC_CFG_DW_EN(1);
+ 
+@@ -203,8 +277,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+         CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
+    emit_raw(regs, CORE | 0x1, 0x3030, 0);
+ 
++   /*
++    * Re-arm CORE S_POINTER after CORE_MAC_GATING / MISC_CFG writes.
++    * These writes flip CORE's ping-pong POINTER from group 0 to group 1;
++    * without this re-arm op_en targets the unarmed group and CORE never
++    * engages (dt_wr_core stays 0, DPU has no CBUF input, output = zeros).
++    */
++   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
++                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_EN(1));
++
++   /*
++    * Re-arm DPU and DPU_RDMA S_POINTER before their config blocks.  The
++    * second CNA_CBUF_CON0 write (entry [21] in the stream) has the same
++    * side-effect as the first: it flips POINTER 0→1 for CNA, DPU, and
++    * DPU_RDMA simultaneously.  Edit-C re-armed CNA only; DPU and DPU_RDMA
++    * have been at POINTER=1 since then.  Without these re-arms, all DPU
++    * and DPU_RDMA config writes below go to group 1, but OP_EN fires
++    * group 0 (the HW-active group), so DPU/RDMA execute with stale
++    * uninitialized registers and produce no output.
++    */
++   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
++                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_EN(1));
++   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
++        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
++
+    uint32_t feat_mode_cfg =
+-      DPU_FEATURE_MODE_CFG_BURST_LEN(15) | DPU_FEATURE_MODE_CFG_OUTPUT_MODE(2);
++      DPU_FEATURE_MODE_CFG_BURST_LEN(2) | DPU_FEATURE_MODE_CFG_OUTPUT_MODE(4);
+    if (operation->depthwise)
+       feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
+ 
+@@ -244,7 +346,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
+ 
+    EMIT(REG_DPU_WDMA_SIZE_0,
+-        DPU_WDMA_SIZE_0_CHANNEL_WDMA(task->output_channels - 1));
++        DPU_WDMA_SIZE_0_CHANNEL_WDMA(task->output_channels - 1) |
++        DPU_WDMA_SIZE_0_SIZE_C_WDMA(task->output_channels / ATOMIC_K_SIZE - 1));
+    EMIT(REG_DPU_WDMA_SIZE_1,
+         DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
+            DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
+@@ -525,10 +628,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    /* TRM: before op_en, 64'h0041_xxxx_xxxx_xxxx must be set. */
+    util_dynarray_append(regs, uint64_t, 0x0041000000000000);
+ 
+-   /* TRM: 64'h0081_0000_007f_0008 will set each block's op_en(CNA, CORE, ...,
+-    * PPU_RDMA). */
+-   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE,
+-            PC_OPERATION_ENABLE_RESERVED_0(14) | PC_OPERATION_ENABLE_OP_EN(1));
++   /*
++    * TRM: 64'h0081_0000_007f_0008 sets each sub-unit's op_en (CNA, CMAC, CORE,
++    * DPU, DPU_RDMA, PPU, PPU_RDMA) via the broadcast target 0x81 — the value
++    * 0x7f is a per-sub-unit enable bitmask. The previous 0x1d
++    * (RESERVED_0(14)|OP_EN(1)) only set bits 0,2,3,4 and left bit1 clear, so the
++    * MAC/CMAC stage never engaged: CORE read weights+first window but produced
++    * no output (dt_wr_core=0), starving the DPU write-back (dt_wr_top=0). Use
++    * the documented 0x7f so all sub-units arm.
++    */
++   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x7f);
+ }
+ 
+ void
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 6dbb278..0c51770 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -74,10 +74,10 @@ calc_explicit_padding(const struct rkt_operation *operation,
+          MAX2((operation->output_height - 1) * operation->stride +
+                  operation->weights_height - operation->input_height,
+               0);
+-      *pad_left = pad_along_height / 2;
+-      *pad_right = pad_along_height - *pad_left;
+-      *pad_top = pad_along_width / 2;
+-      *pad_bottom = pad_along_width - *pad_top;
++      *pad_left = pad_along_width / 2;
++      *pad_right = pad_along_width - *pad_left;
++      *pad_top = pad_along_height / 2;
++      *pad_bottom = pad_along_height - *pad_top;
+    } else {
+       *pad_left = 0;
+       *pad_right = 0;
+@@ -137,9 +137,9 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+          task->input_surface_stride =
+             (float)task->input_line_stride * (((float)task->input_height) - 1);
+    } else {
+-      task->input_line_stride = calc_line_stride(operation->input_width) / 4;
++      task->input_line_stride = calc_line_stride(operation->input_width) / FEATURE_ATOMIC_SIZE;
+       task->input_surface_stride =
+-         (float)task->input_line_stride * (((float)task->input_height / 4) - 1);
++         (float)task->input_line_stride * (((float)task->input_height) - 1);
+    }
+ 
+    if (task->input_width == 8 &&
+@@ -172,7 +172,15 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+    else
+       task->weights_kernels = ALIGN(operation->output_channels, 2);
+ 
+-   task->surfaces_per_row = task->output_width * task->output_height * 2;
++   /*
++    * DPU_SURFACE_ADD stores the stride between output surfaces in units of
++    * 16 bytes (ATOMIC_K_SIZE).  One surface covers output_width × output_height
++    * pixels × ATOMIC_K_SIZE bytes = output_width × output_height atoms.
++    * The previous formula included an extra ×2 which produced a 2× surface
++    * stride, causing DPU to address the wrong memory locations on write-back.
++    * DST_SURF_STRIDE uses the same W×H formula with no extra multiplier.
++    */
++   task->surfaces_per_row = task->output_width * task->output_height;
+    if (operation->depthwise)
+       task->surfaces_per_row *= 2;
+ }
+@@ -214,6 +222,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+       fill_task(subgraph, operation, &task);
+       task.input_banks = input_banks_required;
+       task.weights_banks = CBUF_BANKS - task.input_banks;
++      task.input_data_entries = task.input_banks * CBUF_ENTRIES_PER_BANK;
+       task.input_height = operation->input_height;
+ 
+       task.pad_top = pad_top;
+@@ -346,6 +355,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+ 
+       cur_task->input_banks = available_input_banks;
+       cur_task->weights_banks = available_weights_banks;
++      cur_task->input_data_entries = cur_task->input_banks * CBUF_ENTRIES_PER_BANK;
+ 
+       output_height_processed += cur_task->output_height;
+    }
+-- 
+2.43.0
+
