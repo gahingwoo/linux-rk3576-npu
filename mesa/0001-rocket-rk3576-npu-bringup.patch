@@ -15,30 +15,173 @@ index 8410eda..ce6257f 100644
        <bitfield name="FLYING_MODE" pos="0" type="uint"/>
     </reg32>
     <reg32 offset="0x4010" name="DATA_FORMAT">
+diff --git a/src/gallium/drivers/rocket/rkt_device.c b/src/gallium/drivers/rocket/rkt_device.c
+index 9c2da6a..6025c06 100644
+--- a/src/gallium/drivers/rocket/rkt_device.c
++++ b/src/gallium/drivers/rocket/rkt_device.c
+@@ -9,12 +9,56 @@
+ #include "drm-uapi/rocket_accel.h"
+ 
+ #include <xf86drm.h>
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
+ #include "util/os_mman.h"
+ #include "util/ralloc.h"
+ #include "util/u_inlines.h"
+ #include "util/u_surface.h"
+ #include "util/u_transfer.h"
+ 
++/*
++ * Detect the SoC behind the rocket DRM device. The rocket uAPI has no version/
++ * param query, so read the platform device's OF "compatible" via sysfs (the
++ * NVDLA-derived NPUs differ by register map + CBUF geometry). ROCKET_SOC=rk3576|
++ * rk3588 overrides. Defaults to RK3576 (this tree's primary target) when the
++ * compatible can't be read.
++ */
++static enum rkt_soc
++rkt_detect_soc(int fd)
++{
++   const char *override = getenv("ROCKET_SOC");
++   if (override) {
++      if (strstr(override, "3588"))
++         return RKT_SOC_RK3588;
++      if (strstr(override, "3576"))
++         return RKT_SOC_RK3576;
++   }
++
++   struct stat st;
++   if (fstat(fd, &st) == 0 && S_ISCHR(st.st_mode)) {
++      char path[128], buf[512];
++      snprintf(path, sizeof(path),
++               "/sys/dev/char/%u:%u/device/of_node/compatible",
++               major(st.st_rdev), minor(st.st_rdev));
++      FILE *f = fopen(path, "r");
++      if (f) {
++         size_t n = fread(buf, 1, sizeof(buf) - 1, f);
++         fclose(f);
++         buf[n] = '\0';
++         /* compatible is a NUL-separated list; scan the whole blob. */
++         for (size_t i = 0; i < n; i++) {
++            if (!strncmp(buf + i, "rk3588", 6) || !strncmp(buf + i, "rk3568", 6))
++               return RKT_SOC_RK3588;
++            if (!strncmp(buf + i, "rk3576", 6))
++               return RKT_SOC_RK3576;
++         }
++      }
++   }
++
++   return RKT_SOC_RK3576;
++}
++
+ static const struct debug_named_value rocket_debug_options[] = {
+    {"dbg_msgs", ROCKET_DBG_MSGS, "Print debug messages"},
+    {"dump_bos", ROCKET_DBG_DUMP_BOS, "Dump buffers for analysis"},
+@@ -222,6 +266,19 @@ rkt_screen_create(int fd,
+ 
+    rkt_screen->fd = fd;
+ 
++   rkt_screen->soc = rkt_detect_soc(fd);
++   if (rkt_screen->soc == RKT_SOC_RK3576) {
++      /* RK3576: 16 banks x 64 KiB (1 MiB), 512 x 128-byte entries per bank. */
++      rkt_screen->cbuf_banks = 16;
++      rkt_screen->cbuf_entries_per_bank = 512;
++      rkt_screen->cbuf_bank_size = 65536;
++   } else {
++      /* RK3588 (NVDLA): 12 banks x 32 KiB (384 KiB), 256 x 128-byte entries. */
++      rkt_screen->cbuf_banks = 12;
++      rkt_screen->cbuf_entries_per_bank = 256;
++      rkt_screen->cbuf_bank_size = 32768;
++   }
++
+    screen->get_screen_fd = rkt_screen_get_fd;
+    screen->destroy = rkt_destroy_screen;
+    screen->context_create = rkt_create_context;
+diff --git a/src/gallium/drivers/rocket/rkt_device.h b/src/gallium/drivers/rocket/rkt_device.h
+index 0425a42..7dd57c0 100644
+--- a/src/gallium/drivers/rocket/rkt_device.h
++++ b/src/gallium/drivers/rocket/rkt_device.h
+@@ -29,11 +29,28 @@ extern int rocket_debug;
+                    ##__VA_ARGS__);                    \
+    } while (0)
+ 
++/*
++ * The rocket driver supports two NVDLA-derived NPUs with different register
++ * maps and CBUF geometry. The SoC is detected at screen creation; all
++ * SoC-specific behaviour (register encoders, CBUF banking, the row-window split)
++ * branches on screen->soc so a single binary works on both.
++ */
++enum rkt_soc {
++   RKT_SOC_RK3588 = 0,   /* original mainline target */
++   RKT_SOC_RK3576,
++};
++
+ struct rkt_screen {
+    struct pipe_screen pscreen;
+ 
+    int fd;
+    struct renderonly *ro;
++
++   enum rkt_soc soc;
++   /* CBUF (convolution buffer) geometry, selected per SoC. */
++   unsigned cbuf_banks;
++   unsigned cbuf_entries_per_bank;
++   unsigned cbuf_bank_size;
+ };
+ 
+ static inline struct rkt_screen *
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index 1f616df..e08a0b8 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -170,6 +170,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+ {
+    util_dynarray_init(&operation->tasks, NULL);
+ 
++   struct rkt_screen *screen = rkt_screen(subgraph->base.context->screen);
++   operation->soc = screen->soc;
++   operation->cbuf_banks = screen->cbuf_banks;
++   operation->cbuf_entries_per_bank = screen->cbuf_entries_per_bank;
++   operation->cbuf_bank_size = screen->cbuf_bank_size;
++
+    operation->depthwise = rkt_is_depthwise(poperation);
+    operation->padding_same = poperation->conv.padding_same;
+    operation->stride = poperation->conv.stride_x;
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
-index 04dea3d..ced9bc0 100644
+index 04dea3d..f4937c1 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
 +++ b/src/gallium/drivers/rocket/rkt_ml.h
-@@ -11,9 +11,14 @@
+@@ -11,10 +11,11 @@
  #include "rkt_device.h"
  
  // http://nvdla.org/hw/v1/ias/unit_description.html#convolution-buffer
 -#define CBUF_BANK_SIZE        32768
 -#define CBUF_BANKS            12
 -#define CBUF_ENTRIES_PER_BANK 256
-+// RK3576 CBUF geometry: 16 banks, 1 MiB total (64 KiB/bank), found by testing
-+// against the board (the previous 12-bank / 384 KiB values are RK3588's and made
-+// the CNA stage feature data to the wrong CBUF entries, so its executer stayed
-+// PENDING and never ran). Keep the 128-byte entry width (HW atomic), so a
-+// 64 KiB bank holds 512 entries.
-+#define CBUF_BANK_SIZE        65536
-+#define CBUF_BANKS            16
-+#define CBUF_ENTRIES_PER_BANK 512
- #define CBUF_ENTRY_SIZE       (CBUF_BANK_SIZE / CBUF_ENTRIES_PER_BANK)
+-#define CBUF_ENTRY_SIZE       (CBUF_BANK_SIZE / CBUF_ENTRIES_PER_BANK)
++// CBUF (convolution buffer) bank count and entries-per-bank differ by SoC and
++// are selected at runtime (screen->cbuf_*, copied onto each rkt_operation):
++//   RK3588: 12 banks x 256 entries (384 KiB);  RK3576: 16 banks x 512 (1 MiB).
++// The entry width is the 128-byte HW atomic on both, so it stays a constant.
++#define CBUF_ENTRY_SIZE       128
  #define FEATURE_ATOMIC_SIZE   16
  #define WEIGHT_ATOMIC_SIZE    32
+ #define ATOMIC_K_SIZE         16
+@@ -108,6 +109,13 @@ struct rkt_operation {
+ 
+    int add_tensor;
+ 
++   /* SoC + CBUF geometry, copied from the screen so the per-operation task
++    * splitter and register encoders can branch without a screen handle. */
++   enum rkt_soc soc;
++   unsigned cbuf_banks;
++   unsigned cbuf_entries_per_bank;
++   unsigned cbuf_bank_size;
++
+    struct util_dynarray tasks; /* struct split_task */
+ };
+ 
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..f4e1785 100644
+index be992fd..5841ba0 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -28,6 +28,418 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
@@ -663,36 +806,52 @@ index be992fd..f4e1785 100644
  }
  
  void
-@@ -536,6 +1068,25 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1068,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
-+   /*
-+    * RK3576 Phase 1: the 224x224x3 first convolution (in_ch<=4 ARGB path) uses
-+    * the validated RK3576 register layout. Other layers still use the legacy
-+    * (RK3588-map) path until the RK3576 normal/depthwise encoder lands.
-+    */
-+   if (operation->input_channels <= 4 && operation->input_width == 224 &&
-+       !operation->depthwise) {
-+      fill_first_regcmd_rk3576_firstconv(subgraph, operation, regs, task_num);
++   if (operation->soc == RKT_SOC_RK3576) {
++      /*
++       * RK3576 register map. The 224x224x3 first convolution uses the in_ch<=4
++       * ARGB path; every other layer uses the per-task normal/depthwise encoder,
++       * which handles both the single (non-windowed) task and the multiple
++       * row-window tasks the 112-wide layers are split into (rkt_split_tasks).
++       */
++      if (operation->input_channels <= 4 && operation->input_width == 224 &&
++          !operation->depthwise)
++         fill_first_regcmd_rk3576_firstconv(subgraph, operation, regs, task_num);
++      else
++         fill_regcmd_rk3576_normal(subgraph, operation, regs, task_num);
 +      return;
 +   }
 +
-+   /*
-+    * RK3576 Phase 2: normal + depthwise layers. The per-task encoder handles
-+    * both the single (non-windowed) task and the multiple row-window tasks the
-+    * 112-wide layers are split into (rkt_split_tasks).
-+    */
-+   fill_regcmd_rk3576_normal(subgraph, operation, regs, task_num);
-+   return;
-+
     /*
++    * RK3588 (original) register map.
      * TODO: We should only need to set all the registers on the regcmd for the first
      * task in an operation, but for now set them all to be sure.
+     */
 diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
-index 6dbb278..3ad7780 100644
+index 6dbb278..c19ae11 100644
 --- a/src/gallium/drivers/rocket/rkt_task.c
 +++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -30,7 +30,7 @@ calc_input_banks(struct rkt_operation *operation)
+ {
+    unsigned entries_per_slice = calc_entries_per_slice(operation);
+    return DIV_ROUND_UP(entries_per_slice * operation->input_height,
+-                       CBUF_ENTRIES_PER_BANK);
++                       operation->cbuf_entries_per_bank);
+ }
+ 
+ static unsigned
+@@ -45,7 +45,7 @@ calc_weights_banks(struct rkt_operation *operation)
+    if (!operation->depthwise)
+       bytes *= operation->output_channels;
+    entries = DIV_ROUND_UP(bytes, CBUF_ENTRY_SIZE);
+-   banks = DIV_ROUND_UP(entries, CBUF_ENTRIES_PER_BANK);
++   banks = DIV_ROUND_UP(entries, operation->cbuf_entries_per_bank);
+ 
+    /* Why do we need an extra bank? The calc above might be wrong on this HW */
+    banks++;
 @@ -74,10 +74,10 @@ calc_explicit_padding(const struct rkt_operation *operation,
           MAX2((operation->output_height - 1) * operation->stride +
                   operation->weights_height - operation->input_height,
@@ -737,10 +896,31 @@ index 6dbb278..3ad7780 100644
     if (operation->depthwise)
        task->surfaces_per_row *= 2;
  }
-@@ -205,6 +213,50 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
-       available_weights_banks = CBUF_BANKS - available_input_banks;
-    }
+@@ -186,7 +194,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+    unsigned input_banks_required = calc_input_banks(operation);
+    unsigned weights_banks_required = calc_weights_banks(operation);
+    unsigned available_weights_banks = weights_banks_required;
+-   unsigned available_input_banks = CBUF_BANKS - weights_banks_required;
++   unsigned available_input_banks = operation->cbuf_banks - weights_banks_required;
+    unsigned pad_top;
+    unsigned pad_bottom;
+    unsigned pad_left;
+@@ -195,14 +203,58 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+    calc_explicit_padding(operation, &pad_top, &pad_bottom, &pad_left,
+                          &pad_right);
  
+-   if (weights_banks_required + 1 < CBUF_BANKS) {
++   if (weights_banks_required + 1 < operation->cbuf_banks) {
+       /* Full weights, partial input */
+       operation->reuse_weights_cbuf = true;
+    } else {
+       /* Partial weights, partial input */
+       operation->reuse_weights_cbuf = false;
+       available_input_banks = 7;
+-      available_weights_banks = CBUF_BANKS - available_input_banks;
++      available_weights_banks = operation->cbuf_banks - available_input_banks;
++   }
++
 +   /*
 +    * RK3576 in_ch>4 row-window split: the 112-wide layers stage only a window
 +    * of input rows in the CBUF, so the convolution is dispatched as balanced
@@ -748,8 +928,8 @@ index 6dbb278..3ad7780 100644
 +    * (depthwise 3x3 / pointwise) is handled here; other shapes use the generic
 +    * path below.
 +    */
-+   if (operation->input_channels > 4 && operation->input_width >= 112 &&
-+       operation->stride == 1) {
++   if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
++       operation->input_width >= 112 && operation->stride == 1) {
 +      unsigned full_oh = operation->output_height;
 +      unsigned max_owin = operation->input_channels <= 32 ? 90 : 44;
 +      unsigned num_win = DIV_ROUND_UP(full_oh, max_owin);
@@ -767,7 +947,7 @@ index 6dbb278..3ad7780 100644
 +         fill_task(subgraph, operation, &task);
 +         task.input_banks = available_input_banks;
 +         task.weights_banks = available_weights_banks;
-+         task.input_data_entries = task.input_banks * CBUF_ENTRIES_PER_BANK;
++         task.input_data_entries = task.input_banks * operation->cbuf_entries_per_bank;
 +         task.output_height = out_rows;
 +         task.input_height = out_rows + overlap;
 +         task.input_offset =
@@ -783,24 +963,33 @@ index 6dbb278..3ad7780 100644
 +         out_start += out_rows;
 +      }
 +      return;
-+   }
-+
-    if (input_banks_required <= available_input_banks) {
-       /* Full weights, full input */
+    }
  
-@@ -214,6 +266,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+    if (input_banks_required <= available_input_banks) {
+@@ -213,7 +265,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+       task.num = 0;
        fill_task(subgraph, operation, &task);
        task.input_banks = input_banks_required;
-       task.weights_banks = CBUF_BANKS - task.input_banks;
-+      task.input_data_entries = task.input_banks * CBUF_ENTRIES_PER_BANK;
+-      task.weights_banks = CBUF_BANKS - task.input_banks;
++      task.weights_banks = operation->cbuf_banks - task.input_banks;
++      task.input_data_entries = task.input_banks * operation->cbuf_entries_per_bank;
        task.input_height = operation->input_height;
  
        task.pad_top = pad_top;
+@@ -230,7 +283,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+ 
+    struct split_task task = {0};
+    unsigned available_slices =
+-      (CBUF_ENTRIES_PER_BANK * available_input_banks) / entries_per_slice;
++      (operation->cbuf_entries_per_bank * available_input_banks) / entries_per_slice;
+ 
+    task.num = 0;
+    fill_task(subgraph, operation, &task);
 @@ -346,6 +399,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
        cur_task->input_banks = available_input_banks;
        cur_task->weights_banks = available_weights_banks;
-+      cur_task->input_data_entries = cur_task->input_banks * CBUF_ENTRIES_PER_BANK;
++      cur_task->input_data_entries = cur_task->input_banks * operation->cbuf_entries_per_bank;
  
        output_height_processed += cur_task->output_height;
     }
