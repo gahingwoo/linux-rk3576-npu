@@ -1,0 +1,519 @@
+diff --git a/src/gallium/drivers/rocket/registers.xml b/src/gallium/drivers/rocket/registers.xml
+index 8410eda..ce6257f 100644
+--- a/src/gallium/drivers/rocket/registers.xml
++++ b/src/gallium/drivers/rocket/registers.xml
+@@ -479,9 +479,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+       <bitfield name="RGP_TYPE" low="26" high="29" type="uint"/>
+       <bitfield name="NONALIGN" pos="25" type="uint"/>
+       <bitfield name="SURF_LEN" low="9" high="24" type="uint"/>
+-      <bitfield name="BURST_LEN" low="5" high="8" type="uint"/>
+-      <bitfield name="CONV_MODE" low="3" high="4" type="uint"/>
+-      <bitfield name="OUTPUT_MODE" low="1" high="2" type="uint"/>
++      <bitfield name="BURST_LEN" low="7" high="8" type="uint"/>
++      <bitfield name="CONV_MODE" low="4" high="5" type="uint"/>
++      <bitfield name="OUTPUT_MODE" low="1" high="3" type="uint"/>
+       <bitfield name="FLYING_MODE" pos="0" type="uint"/>
+    </reg32>
+    <reg32 offset="0x4010" name="DATA_FORMAT">
+diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
+index 04dea3d..ced9bc0 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.h
++++ b/src/gallium/drivers/rocket/rkt_ml.h
+@@ -11,9 +11,14 @@
+ #include "rkt_device.h"
+ 
+ // http://nvdla.org/hw/v1/ias/unit_description.html#convolution-buffer
+-#define CBUF_BANK_SIZE        32768
+-#define CBUF_BANKS            12
+-#define CBUF_ENTRIES_PER_BANK 256
++// RK3576 CBUF geometry: 16 banks, 1 MiB total (64 KiB/bank), found by testing
++// against the board (the previous 12-bank / 384 KiB values are RK3588's and made
++// the CNA stage feature data to the wrong CBUF entries, so its executer stayed
++// PENDING and never ran). Keep the 128-byte entry width (HW atomic), so a
++// 64 KiB bank holds 512 entries.
++#define CBUF_BANK_SIZE        65536
++#define CBUF_BANKS            16
++#define CBUF_ENTRIES_PER_BANK 512
+ #define CBUF_ENTRY_SIZE       (CBUF_BANK_SIZE / CBUF_ENTRIES_PER_BANK)
+ #define FEATURE_ATOMIC_SIZE   16
+ #define WEIGHT_ATOMIC_SIZE    32
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index be992fd..bfb40cb 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -28,6 +28,190 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+ 
+ #define EMIT(offset, value) emit(regs, offset, value);
+ 
++/*
++ * RK3576 first-convolution encoder (Phase 1).
++ *
++ * The RK3576 NPU uses a register layout that differs from the RK3588-derived map
++ * the rest of this driver emits: it has registers RK3588 lacks and the field
++ * packing at shared offsets differs. Established on hardware by sweeping one conv
++ * parameter at a time and observing which register tracks it.
++ *
++ * This emits the exact register sequence the board's working stream uses for the
++ * 224x224x3 -> 112x112x32 first convolution (the in_ch<=4 "ARGB-packed" datapath),
++ * with the five DMA-address fields patched to this run's tensor allocations:
++ *   0x1088 input feature, 0x1110 weights, 0x4018 output, 0x5020/0x5024 bias.
++ * Geometry/const/quant words are the board's known-good values for this shape.
++ * Purpose: validate the RK3576 offset map + arming + addressing end-to-end.
++ */
++static void
++fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
++                                   const struct rkt_operation *operation,
++                                   struct util_dynarray *regs, unsigned task_num)
++{
++   struct split_task *task =
++      util_dynarray_element(&operation->tasks, struct split_task, task_num);
++
++   uint32_t feature_addr =
++      rkt_get_tensor(subgraph, operation->input_index)->phys_addr +
++      task->input_offset;
++   uint32_t weight_addr = rkt_resource(operation->weights)->phys_addr;
++   uint32_t output_addr =
++      rkt_get_tensor(subgraph, operation->output_index)->phys_addr +
++      task->output_offset;
++   uint32_t bias_addr = rkt_resource(operation->biases)->phys_addr;
++
++#define R_CNA(reg, val)  emit_raw(regs, 0x201, (reg), (val))
++#define R_CORE(reg, val) emit_raw(regs, 0x801, (reg), (val))
++#define R_DPU(reg, val)  emit_raw(regs, 0x1001, (reg), (val))
++#define R_RDMA(reg, val) emit_raw(regs, 0x2001, (reg), (val))
++
++   /* S_POINTER arming for all four units (POINTER=0, PP enabled). */
++   R_CNA(0x1004, 0x0000000e);
++   R_CORE(0x3004, 0x0000000e);
++   R_CNA(0x1038, 0x00000007);
++   R_DPU(0x4004, 0x0000000e);
++   R_RDMA(0x5004, 0x0000000e);
++
++   /* CNA config block. */
++   R_CNA(0x100c, 0x2000a006);
++   R_CNA(0x1010, 0x00000fff);
++   R_CNA(0x1014, 0x00000012);   /* stride (2,2) */
++   R_CNA(0x1018, 0x40000404);
++   R_CNA(0x101c, 0x00000600);
++   R_CNA(0x1020, 0x00000030);
++   R_CNA(0x1024, 0x0202001f);   /* out_ch-1 = 31 */
++   R_CNA(0x1028, 0x0d20000b);
++   R_CNA(0x102c, 0x00df00df);   /* (in_w-1, in_h-1) = (223,223) */
++   R_CNA(0x1030, 0x0060006f);   /* out_w-1 = 111 */
++   R_CNA(0x1034, 0x000030ff);   /* out_w*out_h-1 = 12543 */
++   R_CNA(0x1038, 0x00000007);
++   R_CNA(0x103c, 0x000f0000);
++   R_CNA(0x1040, 0x10000000);
++   R_CNA(0x1044, 0x00e0000f);   /* in_w = 224 */
++   R_CNA(0x1048, 0x000e38e0);
++   R_CNA(0x104c, 0x40004000);   /* CVT (quant) */
++   R_CNA(0x1050, 0x00014000);
++   R_CNA(0x1054, 0xffffff80);
++   R_CNA(0x1058, 0xffffff80);
++   R_CNA(0x105c, 0xffffff80);
++   R_CNA(0x1060, 0x00000000);
++   R_CNA(0x1064, 0x00000777);
++   R_CNA(0x1068, 0x00000000);
++   R_CNA(0x106c, 0x00000000);
++   R_CNA(0x1070, 0x00000000);
++   R_CNA(0x1074, 0x00000000);
++   R_CNA(0x1078, 0x002900df);
++   R_CNA(0x107c, 0x00000002);
++   R_CNA(0x1080, 0x00000101);
++   R_CNA(0x1084, 0x00808080);
++   R_CNA(0x1088, feature_addr); /* input feature base addr */
++   R_CNA(0x108c, 0x000f000f);
++   R_CNA(0x1090, 0x0000002a);   /* CBUF input line-stride = ceil(224/16)*3 */
++   R_CNA(0x1094, 0x000024c0);
++   R_CNA(0x1098, 0x000024c0);
++   R_CNA(0x109c, 0x00000000);
++   R_CNA(0x1100, 0x00000000);
++   R_CNA(0x1104, 0x00000000);
++   R_CNA(0x1110, weight_addr);  /* weights base addr (DCOMP_ADDR0) */
++   R_CNA(0x1140, 0x00000000);
++   R_CNA(0x1144, 0x00000000);
++   R_CNA(0x118c, 0x000e000d);
++
++   /* CORE. */
++   R_CORE(0x3018, 0x10000081); /* MISC/MAC cfg (first-conv in_ch=3) */
++   R_CORE(0x301c, 0x006f006f); /* (out_h-1, out_w-1) */
++   R_CORE(0x3020, 0x0000001f); /* out_ch-1 */
++   R_CORE(0x3024, 0x00000000);
++
++   /* DPU. */
++   R_DPU(0x400c, 0x40000004);
++   R_DPU(0x4010, 0x00000000);
++   R_DPU(0x4014, 0x00000000);
++   R_DPU(0x4018, output_addr); /* output (DST) base addr */
++   R_DPU(0x401c, 0x00003100); /* out_w*out_h */
++   R_DPU(0x4020, 0x0000006f); /* out_w-1 */
++   R_DPU(0x4024, 0x0000006f); /* out_h-1 */
++   R_DPU(0x4028, 0x00000000);
++   R_DPU(0x402c, 0x0000001f); /* out_ch-1 */
++   R_DPU(0x4030, 0x001f0710);
++   R_DPU(0x4034, 0x006f006f); /* (out_h-1, out_w-1) */
++   R_DPU(0x4038, 0x00120080);
++   R_DPU(0x403c, 0x00000000);
++   R_DPU(0x4044, 0x00000001);
++   R_DPU(0x4048, 0x80000000);
++   R_DPU(0x404c, 0x7fffffff);
++   R_DPU(0x4050, 0x80011111);
++   R_DPU(0x4058, 0x80000000);
++   R_DPU(0x405c, 0x7fffffff);
++   R_DPU(0x4060, 0x00000903);
++   R_DPU(0x406c, 0x80000000);
++   R_DPU(0x4070, 0x7fffffff);
++   R_DPU(0x4074, 0x80000000);
++   R_DPU(0x4078, 0x7fffffff);
++   R_DPU(0x407c, 0x010041c1);
++   R_DPU(0x4080, 0x00000000);
++   R_DPU(0x4084, 0x00000001);
++   R_DPU(0x4088, 0x80000000);
++   R_DPU(0x408c, 0x7fffffff);
++   R_DPU(0x4090, 0x00000000);
++   R_DPU(0x4094, 0x00000000);
++   R_DPU(0x409c, 0x00000000);
++   R_DPU(0x40a4, 0x80000000);
++   R_DPU(0x40a8, 0x7fffffff);
++   R_DPU(0x40ac, 0xfffffffe);
++   R_DPU(0x40b0, 0x00005391); /* OUT_CVT requant scale */
++   R_DPU(0x40b4, 0x00000019); /* OUT_CVT shift */
++   R_DPU(0x40b8, 0x00003100); /* out_w*out_h */
++   R_DPU(0x40bc, 0x00000000);
++   R_DPU(0x40c0, 0x04440100);
++   R_DPU(0x40c8, 0x00000000);
++   R_DPU(0x40cc, 0x00000000);
++   R_DPU(0x40d0, 0x0040ffff);
++   for (uint32_t r = 0x4100; r <= 0x4120; r += 4)
++      R_DPU(r, 0x00000000);
++   R_DPU(0x4130, 0x00000000);
++   for (uint32_t r = 0x4140; r <= 0x4154; r += 4)
++      R_DPU(r, 0x00000000);
++   R_DPU(0x4160, 0x00000000);
++   R_DPU(0x4170, 0x00000000);
++   R_DPU(0x4174, 0x00000000);
++   R_DPU(0x4184, 0x00000000);
++   R_DPU(0x4188, 0x00000000);
++   R_DPU(0x418c, 0x00000000);
++   R_DPU(0x4190, 0x00000000);
++   R_DPU(0x4194, 0x00000000);
++
++   /* DPU_RDMA. */
++   R_RDMA(0x500c, 0x0000006f); /* out_w-1 */
++   R_RDMA(0x5010, 0x0000006f); /* out_h-1 */
++   R_RDMA(0x5014, 0x0000001f); /* out_ch-1 */
++   R_RDMA(0x5018, 0x00000000);
++   R_RDMA(0x501c, 0x00000710);
++   R_RDMA(0x5020, bias_addr);          /* bias (BS) base addr */
++   R_RDMA(0x5024, bias_addr + 0x100);  /* bias second buffer (+0x100 per board) */
++   R_RDMA(0x5028, 0x00000000);
++   R_RDMA(0x502c, 0x00000000);
++   R_RDMA(0x5030, 0x00000000);
++   R_RDMA(0x5034, 0x00000041);
++   R_RDMA(0x5038, 0x00000000);
++   R_RDMA(0x5040, 0x00000000);
++   R_RDMA(0x5044, 0x40000010);
++   R_RDMA(0x5048, 0x00000000);
++   R_RDMA(0x504c, 0x00000000);
++   R_RDMA(0x5064, 0x00000000);
++   R_RDMA(0x506c, 0x00000000);
++   R_RDMA(0x5078, 0x00000000);
++   R_RDMA(0x507c, 0x00000000);
++
++   /* Broadcast op_en (target 0x81): start all units. Kernel also pulses PC_OP_EN. */
++   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d);
++
++#undef R_CNA
++#undef R_CORE
++#undef R_DPU
++#undef R_RDMA
++}
++
+ static void
+ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+                   const struct rkt_operation *operation,
+@@ -41,6 +225,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    unsigned weights_zero_point = task->weights_zero_point;
+    unsigned offset = output_zero_point - 0x80;
+ 
++   /*
++    * PP_CLEAR fires at the END of this regcmd (just before 0x0041), after all
++    * shadow registers have been written.  This ensures each job triggers its
++    * OWN task rather than the previous job's task (which was the 1-task PP
++    * delay bug: PP_CLEAR at the start fired the previous job's shadow, meaning
++    * the last task never ran because no subsequent job existed to fire it).
++    *
++    * POINTER=0 throughout: PRODUCER=Group 0, config lands in Group 0, and
++    * PP_CLEAR fires Group 0 (CONSUMER=0) with the current task's params.
++    */
+    uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
+                    CNA_CBUF_CON0_DATA_BANK(task->input_banks);
+    if (task_num > 0 && operation->reuse_weights_cbuf)
+@@ -48,6 +242,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CBUF_CON0, con0);
+ 
++   /*
++    * RK3576 CNA registers the RK3588-era path omits entirely (found by testing
++    * the board's working register sequence). These are layer-independent:
++    *   CLK_GATE(0x1090)=0x2a — disable clock-gating on the CNA CBUF/CS/CSC
++    *     compute sub-blocks. Left at the 0 default the CNA accepts config and
++    *     op_en but its datapath stays clock-gated and the executer never runs
++    *     (configured + enabled but PENDING forever). This is the engage gate.
++    *   0x101c=0x600, 0x108c=0x000f000f — the other fixed CNA setup words the
++    *     working sequence always writes.
++    */
++   EMIT(REG_CNA_CLK_GATE, 0x2a);
++   emit_raw(regs, 0x201, 0x101c, 0x600);
++   emit_raw(regs, 0x201, 0x108c, 0x000f000f);
++   /*
++    * PROOF TEST (first conv 3->32 values from the working sequence): the rest of
++    * the CNA registers the RK3588-era path omits. These are layer-DEPENDENT
++    * (hardcoded here for the first conv only — generalise later). Now that the
++    * executer actually runs (PC_DMA descriptor dispatch), these data-path regs
++    * matter: without them the CNA "runs" but stages/reads no feature data.
++    */
++   emit_raw(regs, 0x201, 0x1018, 0x40000404);
++   emit_raw(regs, 0x201, 0x103c, 0x000f0000);
++   emit_raw(regs, 0x201, 0x1048, 0x000e38e0);
++   emit_raw(regs, 0x201, 0x106c, 0x00000000);
++   emit_raw(regs, 0x201, 0x1094, 0x000024c0);
++   emit_raw(regs, 0x201, 0x1098, 0x000024c0);
++   emit_raw(regs, 0x201, 0x109c, 0x00000000);
++   emit_raw(regs, 0x201, 0x118c, 0x000e000d);
++
+    EMIT(REG_CNA_DCOMP_REGNUM, 0);
+    EMIT(REG_CNA_DCOMP_CTRL, 0);
+ 
+@@ -62,6 +285,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CONV_CON1, con1);
+ 
++   /* Re-arm A: keep POINTER=0 so subsequent writes go to Group 0 shadow. */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1));
+    EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+                               DPU_S_POINTER_EXECUTER_PP_EN(1) |
+                               DPU_S_POINTER_POINTER_PP_EN(1));
+@@ -70,6 +297,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+            DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+            DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
+    EMIT(REG_CNA_CONV_CON1, con1);
++
+    EMIT(REG_CNA_CONV_CON2,
+         CNA_CONV_CON2_FEATURE_GRAINS(
+            50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
+@@ -96,6 +324,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CBUF_CON0, con0);
+ 
++   /* Re-arm C: keep POINTER=0, remaining CNA config stays in Group 0. */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1));
++
++   /*
++    * Re-emit geometry defensively in case any intermediate write drifted
++    * POINTER.  All writes land in Group 0 shadow (POINTER=0 from Re-arm C).
++    */
++   EMIT(REG_CNA_CONV_CON2,
++        CNA_CONV_CON2_FEATURE_GRAINS(50 + task->stride_y + 1));
++   EMIT(REG_CNA_CONV_CON3, CNA_CONV_CON3_CONV_X_STRIDE(task->stride_x) |
++                              CNA_CONV_CON3_CONV_Y_STRIDE(task->stride_y));
++   EMIT(REG_CNA_DATA_SIZE0,
++        CNA_DATA_SIZE0_DATAIN_WIDTH(task->input_width) |
++           CNA_DATA_SIZE0_DATAIN_HEIGHT(task->input_height));
++   EMIT(REG_CNA_DATA_SIZE1,
++        CNA_DATA_SIZE1_DATAIN_CHANNEL_REAL(task->input_channels_real - 1) |
++           CNA_DATA_SIZE1_DATAIN_CHANNEL(task->input_channels));
++   EMIT(REG_CNA_DATA_SIZE2, CNA_DATA_SIZE2_DATAOUT_WIDTH(task->output_width));
++   EMIT(REG_CNA_DATA_SIZE3, CNA_DATA_SIZE3_DATAOUT_ATOMICS(task->atomic_count));
++   EMIT(REG_CNA_WEIGHT_SIZE0, task->weights_width * task->weights_height *
++                                 task->input_channels * task->weights_kernels);
++   EMIT(REG_CNA_WEIGHT_SIZE1,
++        task->weights_width * task->weights_height * task->input_channels);
++   EMIT(REG_CNA_WEIGHT_SIZE2,
++        CNA_WEIGHT_SIZE2_WEIGHT_WIDTH(task->weights_width) |
++           CNA_WEIGHT_SIZE2_WEIGHT_HEIGHT(task->weights_height) |
++           CNA_WEIGHT_SIZE2_WEIGHT_KERNELS(task->weights_kernels));
++
+    EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
+ 
+    if (task->input_channels_real == 1) {
+@@ -189,7 +447,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_PAD_CON1, pad_con1);
+ 
+-   uint32_t misc_cfg = CORE_MISC_CFG_QD_EN(1);
++   /*
++    * Un-gate the CORE MAC array. The vendor BSP writes MAC_GATING = 0
++    * (SLCG_OP_EN = 0, second-level clock gating off) before MISC_CFG; mainline
++    * mesa never writes it, so the MAC stays at its gated reset value and the
++    * conv core reads weights + the first window but never produces output
++    * (dt_wr_core = 0). The external CBUF clocks being on isn't enough — this is
++    * the per-unit SLCG inside the core block.
++    */
++   EMIT(REG_CORE_MAC_GATING, 0);
++
++   /*
++    * Match the BSP CORE_MISC_CFG: SOFT_GATING(28) plus the two fields the
++    * register XML still calls RESERVED_0/RESERVED_2 (the BSP sets them to 2/9).
++    * mesa only set QD_EN, leaving the core soft-gated.
++    */
++   uint32_t misc_cfg = CORE_MISC_CFG_QD_EN(1) |
++                       CORE_MISC_CFG_SOFT_GATING(28) |
++                       CORE_MISC_CFG_RESERVED_0(2) |
++                       CORE_MISC_CFG_RESERVED_2(9);
+    if (operation->depthwise)
+       misc_cfg |= CORE_MISC_CFG_DW_EN(1);
+ 
+@@ -203,8 +479,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+         CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
+    emit_raw(regs, CORE | 0x1, 0x3030, 0);
+ 
++   /*
++    * Re-arm CORE S_POINTER.  POINTER=0 throughout.
++    */
++   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
++                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_EN(1));
++
++   /* Re-arm DPU and DPU_RDMA: POINTER=0. */
++   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
++                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_EN(1));
++   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
++        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
++
+    uint32_t feat_mode_cfg =
+-      DPU_FEATURE_MODE_CFG_BURST_LEN(15) | DPU_FEATURE_MODE_CFG_OUTPUT_MODE(2);
++      DPU_FEATURE_MODE_CFG_BURST_LEN(2) | DPU_FEATURE_MODE_CFG_OUTPUT_MODE(4);
+    if (operation->depthwise)
+       feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
+ 
+@@ -244,7 +536,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
+ 
+    EMIT(REG_DPU_WDMA_SIZE_0,
+-        DPU_WDMA_SIZE_0_CHANNEL_WDMA(task->output_channels - 1));
++        DPU_WDMA_SIZE_0_CHANNEL_WDMA(task->output_channels - 1) |
++        DPU_WDMA_SIZE_0_SIZE_C_WDMA(task->output_channels / ATOMIC_K_SIZE - 1));
+    EMIT(REG_DPU_WDMA_SIZE_1,
+         DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
+            DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
+@@ -522,13 +815,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_PC_REGISTER_AMOUNTS, 0);
+ 
+-   /* TRM: before op_en, 64'h0041_xxxx_xxxx_xxxx must be set. */
+-   util_dynarray_append(regs, uint64_t, 0x0041000000000000);
++   /*
++    * NOTE (RK3576): the board's working sequence does NOT issue any in-stream
++    * PP_CLEAR / re-arm / 0x0041 — it is pure per-unit config and is started by
++    * the kernel's PC_OP_EN pulse. We previously fired each task via an in-stream
++    * PP_CLEAR (0x1e) for all four units; on RK3576 that left the compute
++    * executers configured+enabled but never running. Drop the PP_CLEAR/re-arm/
++    * 0x0041 block entirely and rely on the broadcast op_en below + kernel
++    * PC_OP_EN, matching the working sequence.
++    */
+ 
+-   /* TRM: 64'h0081_0000_007f_0008 will set each block's op_en(CNA, CORE, ...,
+-    * PPU_RDMA). */
+-   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE,
+-            PC_OPERATION_ENABLE_RESERVED_0(14) | PC_OPERATION_ENABLE_OP_EN(1));
++   /*
++    * Broadcast op_en (target 0x81, reg 0x08). The board's working sequence uses
++    * value 0x1d here (matching the per-task enable_mask=0x1d), NOT 0x7f. We had
++    * switched to 0x7f on a wrong assumption that 0x1d left the MAC stage off; the
++    * working sequence proves 0x1d is correct. 0x7f over-enables sub-units and is
++    * the value that kept the RK3576 compute executers from running.
++    */
++   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d);
+ }
+ 
+ void
+@@ -536,6 +840,17 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+                 const struct rkt_operation *operation,
+                 struct util_dynarray *regs, unsigned task_num)
+ {
++   /*
++    * RK3576 Phase 1: the 224x224x3 first convolution (in_ch<=4 ARGB path) uses
++    * the validated RK3576 register layout. Other layers still use the legacy
++    * (RK3588-map) path until the RK3576 normal/depthwise encoder lands.
++    */
++   if (operation->input_channels <= 4 && operation->input_width == 224 &&
++       !operation->depthwise) {
++      fill_first_regcmd_rk3576_firstconv(subgraph, operation, regs, task_num);
++      return;
++   }
++
+    /*
+     * TODO: We should only need to set all the registers on the regcmd for the first
+     * task in an operation, but for now set them all to be sure.
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 6dbb278..0c51770 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -74,10 +74,10 @@ calc_explicit_padding(const struct rkt_operation *operation,
+          MAX2((operation->output_height - 1) * operation->stride +
+                  operation->weights_height - operation->input_height,
+               0);
+-      *pad_left = pad_along_height / 2;
+-      *pad_right = pad_along_height - *pad_left;
+-      *pad_top = pad_along_width / 2;
+-      *pad_bottom = pad_along_width - *pad_top;
++      *pad_left = pad_along_width / 2;
++      *pad_right = pad_along_width - *pad_left;
++      *pad_top = pad_along_height / 2;
++      *pad_bottom = pad_along_height - *pad_top;
+    } else {
+       *pad_left = 0;
+       *pad_right = 0;
+@@ -137,9 +137,9 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+          task->input_surface_stride =
+             (float)task->input_line_stride * (((float)task->input_height) - 1);
+    } else {
+-      task->input_line_stride = calc_line_stride(operation->input_width) / 4;
++      task->input_line_stride = calc_line_stride(operation->input_width) / FEATURE_ATOMIC_SIZE;
+       task->input_surface_stride =
+-         (float)task->input_line_stride * (((float)task->input_height / 4) - 1);
++         (float)task->input_line_stride * (((float)task->input_height) - 1);
+    }
+ 
+    if (task->input_width == 8 &&
+@@ -172,7 +172,15 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+    else
+       task->weights_kernels = ALIGN(operation->output_channels, 2);
+ 
+-   task->surfaces_per_row = task->output_width * task->output_height * 2;
++   /*
++    * DPU_SURFACE_ADD stores the stride between output surfaces in units of
++    * 16 bytes (ATOMIC_K_SIZE).  One surface covers output_width × output_height
++    * pixels × ATOMIC_K_SIZE bytes = output_width × output_height atoms.
++    * The previous formula included an extra ×2 which produced a 2× surface
++    * stride, causing DPU to address the wrong memory locations on write-back.
++    * DST_SURF_STRIDE uses the same W×H formula with no extra multiplier.
++    */
++   task->surfaces_per_row = task->output_width * task->output_height;
+    if (operation->depthwise)
+       task->surfaces_per_row *= 2;
+ }
+@@ -214,6 +222,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+       fill_task(subgraph, operation, &task);
+       task.input_banks = input_banks_required;
+       task.weights_banks = CBUF_BANKS - task.input_banks;
++      task.input_data_entries = task.input_banks * CBUF_ENTRIES_PER_BANK;
+       task.input_height = operation->input_height;
+ 
+       task.pad_top = pad_top;
+@@ -346,6 +355,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+ 
+       cur_task->input_banks = available_input_banks;
+       cur_task->weights_banks = available_weights_banks;
++      cur_task->input_data_entries = cur_task->input_banks * CBUF_ENTRIES_PER_BANK;
+ 
+       output_height_processed += cur_task->output_height;
+    }
