@@ -1,0 +1,59 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Boot-time RK3576 NPU inference + automatic output diagnostic.
+#
+# At boot: waits for the accel device, clears the kernel log, runs one Teflon
+# MobileNetV1 inference, captures dmesg, then runs npu-diag.sh to print a
+# root-cause verdict for the all-zero-output problem. Everything lands on the
+# console and in /tmp so it can be read over serial without manual grepping.
+# ---------------------------------------------------------------------------
+
+NPU_DIR=/opt/npu-test
+MODEL="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+IMG="$NPU_DIR/grace_hopper.jpg"
+INFER_LOG=/tmp/npu-infer.log
+DMESG_LOG=/tmp/npu-dmesg.log
+export TEFLON_LIB=/usr/lib/libteflon.so
+
+start() {
+	# Wait up to ~10s for the accel char device to appear.
+	i=0
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do
+		sleep 0.5; i=$((i + 1))
+	done
+	if [ ! -c /dev/accel/accel0 ]; then
+		echo "npudiag: /dev/accel/accel0 never appeared — skipping" > /dev/console
+		return 0
+	fi
+
+	{
+		echo ""
+		echo "==> npudiag: running boot-time NPU inference..."
+	} > /dev/console 2>&1
+
+	# Fresh ring buffer so the diagnostic only sees this run's driver output.
+	dmesg -n 8 2>/dev/null
+	dmesg -C 2>/dev/null
+
+	python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG" 2>&1
+
+	dmesg > "$DMESG_LOG" 2>/dev/null
+
+	# Print the inference summary, then the automated verdict, to the console.
+	{
+		echo ""
+		grep -E "Raw non-zero|Top-1 index|CPU Top-1|INFERENCE OK|FAIL" "$INFER_LOG" 2>/dev/null
+		echo ""
+		sh "$NPU_DIR/npu-diag.sh" "$DMESG_LOG" "$INFER_LOG"
+		echo ""
+		echo "==> npudiag: full logs in $INFER_LOG and $DMESG_LOG"
+	} > /dev/console 2>&1
+}
+
+case "$1" in
+	start) start ;;
+	stop) : ;;
+	restart) start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

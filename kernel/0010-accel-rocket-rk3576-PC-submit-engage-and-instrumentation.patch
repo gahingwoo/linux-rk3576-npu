@@ -1,0 +1,520 @@
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index eb6291826..23ce40d39 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -73,18 +73,31 @@ int rocket_core_init(struct rocket_core *core)
+ 		core->dpu_rdma_iomem = NULL;
+ 	}
+ 
++	/*
++	 * RK3576: the "pc" resource covers 0x1000 bytes (0x27700000–0x27700FFF).
++	 * pc_res->start + 0x2000 = 0x27702000 page holds the IOMMU regs (0x00–0x1FF)
++	 * AND the vendor perf/bandwidth counters (top @ +0x200, core @ +0x400).
++	 * A devm_platform_ioremap_resource for "stats" would request_mem_region and
++	 * collide with the IOMMU driver, so use a plain ioremap (no region request)
++	 * and only ever touch offsets >= 0x200 (the dt_wr/dt_rd/wt_rd counters),
++	 * never the IOMMU registers below 0x200.
++	 */
+ 	{
+-		struct resource *pc_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pc");
+-
+-		if (pc_res) {
+-			core->stats_iomem = devm_ioremap(dev, pc_res->start + 0x2000, 0x1000);
+-			if (IS_ERR_OR_NULL(core->stats_iomem))
+-				core->stats_iomem = NULL;
+-		} else {
+-			core->stats_iomem = NULL;
+-		}
++		struct resource *pc_res =
++			platform_get_resource_byname(pdev, IORESOURCE_MEM, "pc");
++
++		core->stats_iomem = NULL;
++		if (pc_res)
++			core->stats_iomem = ioremap(pc_res->start + 0x2000, 0x1000);
++		if (!core->stats_iomem)
++			dev_warn(dev, "no perf-counter mapping; dt_wr stats disabled\n");
+ 	}
+ 
++	/* Page for the RK3576 PC_DMA task descriptor (rknpu_task). */
++	core->task_desc = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
++	if (!core->task_desc)
++		dev_warn(dev, "no task-descriptor page; PC_DMA dispatch disabled\n");
++
+ 	dma_set_max_seg_size(dev, UINT_MAX);
+ 
+ 	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
+@@ -118,6 +131,8 @@ int rocket_core_init(struct rocket_core *core)
+ 		return err;
+ 	}
+ 
++	rocket_core_pp_state_init(core);
++
+ 	version = rocket_pc_readl(core, VERSION);
+ 	version += rocket_pc_readl(core, VERSION_NUM) & 0xffff;
+ 
+@@ -146,3 +161,33 @@ void rocket_core_reset(struct rocket_core *core)
+ 
+ 	reset_control_bulk_deassert(ARRAY_SIZE(core->resets), core->resets);
+ }
++
++/*
++ * RK3576 PP state machine init (mirrors rk3576_state_init in vendor rknpu).
++ * Must run on every power-up, not just at probe, because the PP state machine
++ * is reset by the power domain and its group registers are cleared.  Without
++ * this, the first task after each autosuspend cycle fires both PP groups
++ * simultaneously (CNA_STAT=0x5) using uninitialized Group-1 params (FDA=0),
++ * producing zero output that propagates through the entire inference graph.
++ */
++void rocket_core_pp_state_init(struct rocket_core *core)
++{
++	rocket_pc_writel(core, BASE_ADDRESS, 0x1);
++	rocket_cna_writel(core, S_POINTER, 0x0);          /* POINTER=0, PP disabled */
++	rocket_cna_writel(core, DATA_SIZE1, 0x80000000);  /* activate Group 0 */
++	rocket_cna_writel(core, S_POINTER, 0x1);          /* POINTER=1, PP disabled */
++	rocket_cna_writel(core, DATA_SIZE1, 0x80000000);  /* activate Group 1 */
++	/*
++	 * Final write = 0x1e, matching vendor rk3576_state_init EXACTLY
++	 * (writel(0x1e, base+0x1004)): POINTER=0 | PP_MODE | EXECUTER_PP_EN |
++	 * POINTER_PP_EN | POINTER_PP_CLEAR. We previously used 0x1f (POINTER=1)
++	 * to dodge a task-1 STAT=0x5 double-fire, but the compute executers never
++	 * engage at all (bit16 never sets on CNA/CORE/DPU), so match the
++	 * authoritative vendor sequence and re-measure.
++	 */
++	rocket_cna_writel(core, S_POINTER,
++			  CNA_S_POINTER_POINTER_PP_MODE(1) |
++			  CNA_S_POINTER_EXECUTER_PP_EN(1)  |
++			  CNA_S_POINTER_POINTER_PP_EN(1)   |
++			  CNA_S_POINTER_POINTER_PP_CLEAR(1));
++}
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 48eca77ab..963d7d3aa 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -50,6 +50,7 @@ struct rocket_core {
+ 	void __iomem *dpu_iomem;
+ 	void __iomem *dpu_rdma_iomem;
+ 	void __iomem *stats_iomem; /* NPU base+0x2000: dt_wr/dt_rd counters */
++	void *task_desc;	/* page for the RK3576 PC_DMA task descriptor */
+ 	struct clk_bulk_data clks[6];
+ 	struct reset_control_bulk_data resets[1];
+ 
+@@ -75,6 +76,16 @@ struct rocket_core {
+ 	struct work_struct poll_work;
+ 	atomic_t poll_active;
+ 
++	/*
++	 * Diagnostic: per-job record of whether each unit's EXECUTER bit
++	 * (S_POINTER bit16, HW-set while the executer is actively running) was
++	 * EVER observed set during execution.  Reading S_POINTER only at "done"
++	 * (post-completion) misses fast units, so hw_submit densely samples this
++	 * during the run.  Bitmask: 1=CNA 2=CORE 4=DPU 8=DPU_RDMA.
++	 */
++	u32 exec_ever;
++	u32 exec_samples;
++
+ 	struct drm_gpu_scheduler sched;
+ 	u64 fence_context;
+ 	u64 emit_seqno;
+@@ -83,5 +94,6 @@ struct rocket_core {
+ int rocket_core_init(struct rocket_core *core);
+ void rocket_core_fini(struct rocket_core *core);
+ void rocket_core_reset(struct rocket_core *core);
++void rocket_core_pp_state_init(struct rocket_core *core);
+ 
+ #endif
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 8f6a02d50..532d35f3d 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -247,6 +247,8 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 		return err;
+ 	}
+ 
++	rocket_core_pp_state_init(&rdev->cores[core]);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
+index 21223cc63..b40801479 100644
+--- a/drivers/accel/rocket/rocket_gem.c
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -6,7 +6,9 @@
+ #include <drm/drm_utils.h>
+ #include <drm/rocket_accel.h>
+ #include <linux/dma-mapping.h>
++#include <linux/io.h>
+ #include <linux/iommu.h>
++#include <linux/iosys-map.h>
+ 
+ #include "rocket_drv.h"
+ #include "rocket_gem.h"
+@@ -138,6 +140,7 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
+ {
+ 	struct drm_rocket_prep_bo *args = data;
+ 	unsigned long timeout = drm_timeout_abs_to_jiffies(args->timeout_ns);
++	struct rocket_gem_object *rkt_obj;
+ 	struct drm_gem_object *gem_obj;
+ 	struct drm_gem_shmem_object *shmem_obj;
+ 	long ret = 0;
+@@ -157,10 +160,45 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
+ 	else if (ret > 0)
+ 		ret = 0;
+ 
+-	shmem_obj = &to_rocket_bo(gem_obj)->base;
++	rkt_obj = to_rocket_bo(gem_obj);
++	shmem_obj = &rkt_obj->base;
+ 
+ 	dma_sync_sgtable_for_cpu(dev->dev, shmem_obj->sgt, DMA_BIDIRECTIONAL);
+ 
++	/*
++	 * Dual-path diagnostic: read the first four words via both the
++	 * CPU-cache path (page_address) and a write-combining mapping
++	 * (memremap MEMREMAP_WC) that bypasses the CPU cache and reads
++	 * directly from DRAM.
++	 *
++	 * Interpretation:
++	 *   cached==wc==0      → NPU wrote zeros (or never wrote); computation
++	 *                        bug or 1-task PP delay — last task never ran.
++	 *   cached==0, wc!=0   → NPU wrote correctly but dma_sync did not
++	 *                        invalidate the CPU cache; cache-sync bug.
++	 *   cached==wc!=0      → data is correct end-to-end; look elsewhere.
++	 */
++	if (shmem_obj->pages && shmem_obj->pages[0]) {
++		phys_addr_t phys   = page_to_phys(shmem_obj->pages[0]);
++		const u32  *cached = page_address(shmem_obj->pages[0]);
++		const u32  *wc     = memremap(phys, PAGE_SIZE, MEMREMAP_WC);
++
++		drm_info(dev,
++			 "rocket dbg prep_bo: iova=0x%llx size=0x%zx "
++			 "cached=%08x %08x %08x %08x  "
++			 "wc=%08x %08x %08x %08x\n",
++			 (unsigned long long)rkt_obj->mm.start,
++			 rkt_obj->size,
++			 cached[0], cached[1], cached[2], cached[3],
++			 wc ? wc[0] : 0xdeadbeef,
++			 wc ? wc[1] : 0xdeadbeef,
++			 wc ? wc[2] : 0xdeadbeef,
++			 wc ? wc[3] : 0xdeadbeef);
++
++		if (wc)
++			memunmap((void *)wc);
++	}
++
+ 	drm_gem_object_put(gem_obj);
+ 
+ 	return ret;
+@@ -185,6 +223,9 @@ int rocket_ioctl_fini_bo(struct drm_device *dev, void *data, struct drm_file *fi
+ 	rkt_obj = to_rocket_bo(gem_obj);
+ 	shmem_obj = &rkt_obj->base;
+ 
++	drm_dbg(dev, "rocket dbg fini_bo: iova=0x%llx size=0x%zx\n",
++		(unsigned long long)rkt_obj->mm.start, rkt_obj->size);
++
+ 	dma_sync_sgtable_for_device(dev->dev, shmem_obj->sgt, DMA_BIDIRECTIONAL);
+ 
+ 	drm_gem_object_put(gem_obj);
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 2c0b9bdff..b3e0d58c8 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -9,9 +9,12 @@
+ #include <drm/rocket_accel.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/dma-map-ops.h>
+ #include <linux/hrtimer.h>
+ #include <linux/interrupt.h>
+ #include <linux/iommu.h>
++#include <linux/mm.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ 
+@@ -24,7 +27,12 @@
+ #define JOB_TIMEOUT_MS 500
+ 
+ /* ---- one-shot regcmd dump for DPU debug --------------------------------- */
+-static atomic_t regcmd_dump_done = ATOMIC_INIT(0);
++/*
++ * Each inference task is a separate DRM job (task_count=1, next_task_idx=0
++ * always), so a per-job guard never fires.  Use a module-level counter to
++ * dump only the first two jobs across all submissions.
++ */
++static atomic_t regcmd_dump_job_count = ATOMIC_INIT(0);
+ 
+ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ {
+@@ -33,9 +41,7 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 	void __iomem *vaddr;
+ 	size_t size;
+ 	u32 i;
+-
+-	if (atomic_xchg(&regcmd_dump_done, 1))
+-		return;
++	int count;
+ 
+ 	task = &job->tasks[job->next_task_idx];
+ 	size = task->regcmd_count * sizeof(u64);
+@@ -47,6 +53,34 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 		return;
+ 	}
+ 
++	count = atomic_inc_return(&regcmd_dump_job_count);
++
++	/*
++	 * Compact FDA+DST for every job — reads entries [37] (CNA FDA) and
++	 * [77] (DPU DST) via the kernel linear map (phys_to_virt) without
++	 * the overhead of ioremap.  Shmem pages are lowmem on RK3576, so
++	 * pfn_valid + phys_to_virt is safe.  The regcmd was DMA_TO_DEVICE
++	 * mapped (CPU writes, NPU reads), so cache was cleaned before DMA;
++	 * reading through the linear map gives the same data.
++	 *
++	 * Indices updated after PP_CLEAR was moved from the start of the
++	 * regcmd to the end (Mesa fix for the 1-task PP delay): entries
++	 * shifted by -4, so old [41]/[81] become [37]/[77].
++	 */
++	if (task->regcmd_count >= 78 && pfn_valid(PFN_DOWN(phys))) {
++		const u64 *rv = (const u64 *)phys_to_virt(phys);
++		u32 fda = (u32)((rv[37] >> 16) & 0xffffffffu);
++		u32 dst = (u32)((rv[77] >> 16) & 0xffffffffu);
++
++		dev_info(core->dev,
++			 "rocket dbg regcmd[%d]: count=%u fda=0x%08x dst=0x%08x\n",
++			 count, task->regcmd_count, fda, dst);
++	}
++
++	/* Full entry-by-entry dump for the first two jobs only. */
++	if (count > 2)
++		return;
++
+ 	vaddr = ioremap_cache(phys, ALIGN(size, PAGE_SIZE));
+ 	if (!vaddr) {
+ 		dev_err(core->dev, "regcmd dump: ioremap_cache failed\n");
+@@ -67,9 +101,6 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 		value  = (u32)((entry >> 16) & 0xffffffff);
+ 		reg    = (u16)(entry & 0xffff);
+ 
+-		/* Diagnostic: print ALL regcmd entries (incl. CNA tgt=0x0201,
+-		 * CORE tgt=0x0801) so CNA_CBUF_CON1 DATA_ENTRIES and every
+-		 * op_en / enable write is visible. */
+ 		dev_info(core->dev,
+ 			 "  [%3u] tgt=%04x reg=%04x val=%08x\n",
+ 			 i, target, reg, value);
+@@ -246,29 +277,93 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 * Bits 28-29 (PC_DONE_0/1) are read-only in INTERRUPT_MASK on RK3576, so
+ 	 * completion detection uses hrtimer polling instead of interrupts.
+ 	 */
+-	rocket_pc_writel(core, INTERRUPT_MASK,
+-			 PC_INTERRUPT_MASK_DPU_0    | PC_INTERRUPT_MASK_DPU_1    |
+-			 PC_INTERRUPT_MASK_CORE_0   | PC_INTERRUPT_MASK_CORE_1   |
+-			 PC_INTERRUPT_MASK_PPU_0    | PC_INTERRUPT_MASK_PPU_1    |
+-			 PC_INTERRUPT_MASK_CNA_CSC_0| PC_INTERRUPT_MASK_CNA_CSC_1|
+-			 PC_INTERRUPT_MASK_DMA_READ_ERROR |
+-			 PC_INTERRUPT_MASK_DMA_WRITE_ERROR);
+-	rocket_pc_writel(core, INTERRUPT_CLEAR,
+-			 PC_INTERRUPT_CLEAR_DPU_0    | PC_INTERRUPT_CLEAR_DPU_1    |
+-			 PC_INTERRUPT_CLEAR_CORE_0   | PC_INTERRUPT_CLEAR_CORE_1   |
+-			 PC_INTERRUPT_CLEAR_PPU_0    | PC_INTERRUPT_CLEAR_PPU_1    |
+-			 PC_INTERRUPT_CLEAR_CNA_CSC_0| PC_INTERRUPT_CLEAR_CNA_CSC_1|
+-			 PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+-			 PC_INTERRUPT_MASK_RK3576_PC_DONE_1);
++	/*
++	 * Vendor submit writes int_mask to BOTH PC INTERRUPT_MASK and INTERRUPT_CLEAR
++	 * (REG_WRITE(last_task->int_mask, INT_MASK); REG_WRITE(first_task->int_mask,
++	 * INT_CLEAR)). For one task first==last==0x300.
++	 */
++	rocket_pc_writel(core, INTERRUPT_MASK, 0x300);
++	rocket_pc_writel(core, INTERRUPT_CLEAR, 0x300);
+ 
+-	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+-					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+-					 PC_TASK_CON_TASK_NUMBER(1) |
+-					 PC_TASK_CON_TASK_PP_EN(1));
++	/*
++	 * RK3576 uses a 16-bit task-number field in PC_TASK_CON (vendor
++	 * pc_task_number_bits = 16), not the 12-bit layout the rocket register
++	 * header (RK3588-derived) assumes. With the 12-bit PC_TASK_CON_* macros the
++	 * value comes out 0x7001, which on RK3576 the PC reads as task_number=0x7001
++	 * (28673 tasks) with the ping-pong/count-clear control bits in the wrong
++	 * place, so the task sequencer never dispatches the single real task and the
++	 * compute executers never engage. Write the vendor value directly:
++	 *   ((0x6 | pingpong) << 16) | task_number  ==  (0x7 << 16) | 1.
++	 */
++	rocket_pc_writel(core, TASK_CON, (0x7u << 16) | 0x1u);
+ 
+-	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
++	/*
++	 * Live capture of the vendor RK3576 submit shows PC_DMA_BASE_ADDR = 0 (no
++	 * task-descriptor dispatch — the descriptor experiment was wrong). The
++	 * working submit is just PC_DATA_ADDR=regcmd + INT_MASK/INT_CLEAR=0x300 +
++	 * TASK_CON=0x70001 + the PC_OP_EN pulse.
++	 */
++	rocket_pc_writel(core, TASK_DMA_BASE_ADDR,
++			 PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
++
++	/*
++	 * Clear + enable the vendor DMA bandwidth counters right before GO, so the
++	 * post-job readback reflects only this task.  Vendor sequence: write
++	 * 0x80000101 (clear, bit31) then 0x101 (enable) to each clr_all register.
++	 * top clr_all = +0x210, core clr_all = +0x410 (offsets into stats page).
++	 */
++	if (core->stats_iomem) {
++		writel(0x80000101, core->stats_iomem + 0x210);
++		writel(0x00000101, core->stats_iomem + 0x210);
++		writel(0x80000101, core->stats_iomem + 0x410);
++		writel(0x00000101, core->stats_iomem + 0x410);
++	}
+ 
++	/*
++	 * START the task. Vendor PULSES PC_OP_EN (write 1 then 0, rknpu_job.c:371)
++	 * — the compute task executes on the pulse. rocket previously only wrote 1
++	 * and left it high; the units got armed + op_en'd but the CBUF-backed
++	 * executers never engaged (bit16 never set) and PC_DONE fired instantly.
++	 * Match the vendor 1->0 pulse. Because we now drive OP_EN to 0 ourselves,
++	 * OPERATION_ENABLE can no longer be used as a completion signal — rely on
++	 * PC_DONE (INTERRUPT_RAW_STATUS bits 28/29) exclusively.
++	 */
+ 	rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
++	rocket_pc_writel(core, OPERATION_ENABLE, 0);
++
++	/*
++	 * Diagnostic: densely sample each unit's EXECUTER bit (S_POINTER bit16)
++	 * THROUGHOUT execution. Reading only at "done" (post-completion) misses
++	 * fast units — bit16 is "currently running", so a unit that engages and
++	 * finishes before the done-read shows 0. Loop up to ~4 ms at 1 µs spacing,
++	 * breaking as soon as PC_DONE fires, recording whether each unit's bit16
++	 * was EVER set. exec_ever bitmask: 1=CNA 2=CORE 4=DPU 8=DPU_RDMA.
++	 */
++	core->exec_ever = 0;
++	core->exec_samples = 0;
++	{
++		int s;
++
++		for (s = 0; s < 4000; s++) {
++			if (rocket_cna_readl(core, S_POINTER) & 0x10000)
++				core->exec_ever |= 1;
++			if (rocket_core_readl(core, S_POINTER) & 0x10000)
++				core->exec_ever |= 2;
++			if (core->dpu_iomem &&
++			    (rocket_dpu_readl(core, S_POINTER) & 0x10000))
++				core->exec_ever |= 4;
++			if (core->dpu_rdma_iomem &&
++			    (rocket_dpu_rdma_readl(core, RDMA_S_POINTER) & 0x10000))
++				core->exec_ever |= 8;
++			core->exec_samples++;
++
++			if (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
++			    (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++			     PC_INTERRUPT_MASK_RK3576_PC_DONE_1))
++				break;
++			udelay(1);
++		}
++	}
+ 
+ 	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
+ 	atomic_set(&core->poll_active, 1);
+@@ -464,13 +559,13 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+ 		return HRTIMER_NORESTART;
+ 
+ 	/*
+-	 * On RK3576, OPERATION_ENABLE is not cleared by hardware on completion;
+-	 * check INTERRUPT_RAW_STATUS bits 28-29 (PC_DONE_0/1) instead.
++	 * Completion = PC_DONE (INTERRUPT_RAW_STATUS bits 28-29). We pulse
++	 * OPERATION_ENABLE 1->0 at submit (vendor behaviour), so OP_EN==0 is no
++	 * longer a valid completion signal — check PC_DONE exclusively.
+ 	 */
+-	if (rocket_pc_readl(core, OPERATION_ENABLE) == 0 ||
+-	    (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
+-	     (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+-	      PC_INTERRUPT_MASK_RK3576_PC_DONE_1))) {
++	if (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
++	    (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++	     PC_INTERRUPT_MASK_RK3576_PC_DONE_1)) {
+ 		atomic_set(&core->poll_active, 0);
+ 		schedule_work(&core->poll_work);
+ 		return HRTIMER_NORESTART;
+@@ -502,6 +597,46 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
+ 		 rocket_cna_readl(core, S_STATUS),
+ 		 rocket_core_readl(core, S_STATUS));
++
++	/*
++	 * Vendor DMA bandwidth counters (scale = 2 on RK3576).  dt_wr is the
++	 * decisive signal: if the DPU actually wrote output to DRAM, dt_wr > 0.
++	 * dt_wr == 0 with dt_rd/wt_rd > 0 means "reads input+weights but never
++	 * writes" — a compute/config gate, not a cache or fence-timing problem.
++	 * top @ +0x234/0x238/0x23c, core @ +0x434/0x438/0x43c.
++	 */
++	if (core->stats_iomem) {
++		dev_info(core->dev,
++			 "rocket dbg perf: top[dt_wr=%u dt_rd=%u wt_rd=%u] core[dt_wr=%u dt_rd=%u wt_rd=%u]\n",
++			 readl(core->stats_iomem + 0x234),
++			 readl(core->stats_iomem + 0x238),
++			 readl(core->stats_iomem + 0x23c),
++			 readl(core->stats_iomem + 0x434),
++			 readl(core->stats_iomem + 0x438),
++			 readl(core->stats_iomem + 0x43c));
++	}
++
++	/*
++	 * EXECUTER engage, sampled DURING execution (see hw_submit). This is the
++	 * reliable answer to "did the unit's executer ever run", unlike the
++	 * post-completion S_POINTER read below.
++	 */
++	dev_info(core->dev,
++		 "rocket dbg exec: ever_bit16 CNA=%d CORE=%d DPU=%d RDMA=%d (samples=%u)\n",
++		 !!(core->exec_ever & 1), !!(core->exec_ever & 2),
++		 !!(core->exec_ever & 4), !!(core->exec_ever & 8),
++		 core->exec_samples);
++
++	/*
++	 * Per-unit OPERATION_ENABLE readback: does the broadcast op_en (target
++	 * 0x81 = 0x7f) actually reach the CBUF-backed compute units? If CNA/CORE
++	 * read 0 while DPU reads 1, the broadcast isn't enabling the compute path.
++	 */
++	dev_info(core->dev,
++		 "rocket dbg open: CNA_OPEN=0x%x CORE_OPEN=0x%x DPU_OPEN=0x%x\n",
++		 rocket_cna_readl(core, OPERATION_ENABLE),
++		 rocket_core_readl(core, OPERATION_ENABLE),
++		 core->dpu_iomem ? rocket_dpu_readl(core, OPERATION_ENABLE) : 0);
+ 	if (core->dpu_iomem) {
+ 		u32 sptr_live = rocket_dpu_readl(core, S_POINTER);
+ 		u32 dst_live  = rocket_dpu_readl(core, DST_BASE_ADDR);
+@@ -535,12 +670,30 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_STATUS),
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_POINTER),
+ 			 rocket_dpu_rdma_readl(core, RDMA_SRC_BASE_ADDR));
+-	if (core->stats_iomem)
+-		dev_info(core->dev, "rocket dbg stats: dt_wr_top=0x%08x dt_rd_top=0x%08x dt_wr_core=0x%08x dt_rd_core=0x%08x\n",
+-			 readl(core->stats_iomem + 0x0234),
+-			 readl(core->stats_iomem + 0x0238),
+-			 readl(core->stats_iomem + 0x0434),
+-			 readl(core->stats_iomem + 0x0438));
++	{
++		/* CNA per-group readback: switch POINTER to read both groups */
++		u32 cna_sptr_live = rocket_cna_readl(core, S_POINTER);
++		u32 ds0_g0, ds1_g0, fda_g0;
++		u32 ds0_g1, ds1_g1, fda_g1;
++
++		rocket_cna_writel(core, S_POINTER, cna_sptr_live & ~0x1u); /* POINTER=0 */
++		ds0_g0 = rocket_cna_readl(core, DATA_SIZE0);
++		ds1_g0 = rocket_cna_readl(core, DATA_SIZE1);
++		fda_g0 = rocket_cna_readl(core, FEATURE_DATA_ADDR);
++		rocket_cna_writel(core, S_POINTER, cna_sptr_live | 0x1u);  /* POINTER=1 */
++		ds0_g1 = rocket_cna_readl(core, DATA_SIZE0);
++		ds1_g1 = rocket_cna_readl(core, DATA_SIZE1);
++		fda_g1 = rocket_cna_readl(core, FEATURE_DATA_ADDR);
++		rocket_cna_writel(core, S_POINTER, cna_sptr_live);          /* restore */
++
++		dev_info(core->dev,
++			 "rocket dbg CNA: SPTR=0x%08x G0_DS0=0x%08x(h=%u,w=%u) G0_DS1=0x%08x G0_FDA=0x%08x G1_DS0=0x%08x(h=%u,w=%u) G1_DS1=0x%08x G1_FDA=0x%08x\n",
++			 cna_sptr_live,
++			 ds0_g0, ds0_g0 & 0x7ff, (ds0_g0 >> 16) & 0x7ff,
++			 ds1_g0, fda_g0,
++			 ds0_g1, ds0_g1 & 0x7ff, (ds0_g1 >> 16) & 0x7ff,
++			 ds1_g1, fda_g1);
++	}
+ 
+ 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR,

@@ -1,0 +1,135 @@
+diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
+index 04dea3d..ced9bc0 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.h
++++ b/src/gallium/drivers/rocket/rkt_ml.h
+@@ -11,9 +11,14 @@
+ #include "rkt_device.h"
+ 
+ // http://nvdla.org/hw/v1/ias/unit_description.html#convolution-buffer
+-#define CBUF_BANK_SIZE        32768
+-#define CBUF_BANKS            12
+-#define CBUF_ENTRIES_PER_BANK 256
++// RK3576 CBUF geometry: 16 banks, 1 MiB total (64 KiB/bank), found by testing
++// against the board (the previous 12-bank / 384 KiB values are RK3588's and made
++// the CNA stage feature data to the wrong CBUF entries, so its executer stayed
++// PENDING and never ran). Keep the 128-byte entry width (HW atomic), so a
++// 64 KiB bank holds 512 entries.
++#define CBUF_BANK_SIZE        65536
++#define CBUF_BANKS            16
++#define CBUF_ENTRIES_PER_BANK 512
+ #define CBUF_ENTRY_SIZE       (CBUF_BANK_SIZE / CBUF_ENTRIES_PER_BANK)
+ #define FEATURE_ATOMIC_SIZE   16
+ #define WEIGHT_ATOMIC_SIZE    32
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index a3b0be3..990140b 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -58,6 +58,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CBUF_CON0, con0);
+ 
++   /*
++    * RK3576 CNA registers the RK3588-era path omits entirely (found by testing
++    * the board's working register sequence). These are layer-independent:
++    *   CLK_GATE(0x1090)=0x2a — disable clock-gating on the CNA CBUF/CS/CSC
++    *     compute sub-blocks. Left at the 0 default the CNA accepts config and
++    *     op_en but its datapath stays clock-gated and the executer never runs
++    *     (configured + enabled but PENDING forever). This is the engage gate.
++    *   0x101c=0x600, 0x108c=0x000f000f — the other fixed CNA setup words the
++    *     working sequence always writes.
++    */
++   EMIT(REG_CNA_CLK_GATE, 0x2a);
++   emit_raw(regs, 0x201, 0x101c, 0x600);
++   emit_raw(regs, 0x201, 0x108c, 0x000f000f);
++   /*
++    * PROOF TEST (first conv 3->32 values from the working sequence): the rest of
++    * the CNA registers the RK3588-era path omits. These are layer-DEPENDENT
++    * (hardcoded here for the first conv only — generalise later). Now that the
++    * executer actually runs (PC_DMA descriptor dispatch), these data-path regs
++    * matter: without them the CNA "runs" but stages/reads no feature data.
++    */
++   emit_raw(regs, 0x201, 0x1018, 0x40000404);
++   emit_raw(regs, 0x201, 0x103c, 0x000f0000);
++   emit_raw(regs, 0x201, 0x1048, 0x000e38e0);
++   emit_raw(regs, 0x201, 0x106c, 0x00000000);
++   emit_raw(regs, 0x201, 0x1094, 0x000024c0);
++   emit_raw(regs, 0x201, 0x1098, 0x000024c0);
++   emit_raw(regs, 0x201, 0x109c, 0x00000000);
++   emit_raw(regs, 0x201, 0x118c, 0x000e000d);
++
+    EMIT(REG_CNA_DCOMP_REGNUM, 0);
+    EMIT(REG_CNA_DCOMP_CTRL, 0);
+ 
+@@ -603,59 +632,23 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    EMIT(REG_PC_REGISTER_AMOUNTS, 0);
+ 
+    /*
+-    * PP_CLEAR fires here, AFTER all shadow registers have been written.
+-    * This triggers the CURRENT task's params (just written above), so each
+-    * job fires its own task.  Previously PP_CLEAR was at the top and fired
+-    * the previous job's shadow, causing a 1-task delay where the last task
+-    * never ran.
+-    *
+-    * 0x1e = POINTER_PP_MODE | EXECUTER_PP_EN | POINTER_PP_EN | POINTER_PP_CLEAR
++    * NOTE (RK3576): the board's working sequence does NOT issue any in-stream
++    * PP_CLEAR / re-arm / 0x0041 — it is pure per-unit config and is started by
++    * the kernel's PC_OP_EN pulse. We previously fired each task via an in-stream
++    * PP_CLEAR (0x1e) for all four units; on RK3576 that left the compute
++    * executers configured+enabled but never running. Drop the PP_CLEAR/re-arm/
++    * 0x0041 block entirely and rely on the broadcast op_en below + kernel
++    * PC_OP_EN, matching the working sequence.
+     */
+-   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
+-                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
+-                              CNA_S_POINTER_POINTER_PP_EN(1) |
+-                              CNA_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
+-                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
+-                               CORE_S_POINTER_POINTER_PP_EN(1) |
+-                               CORE_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+-                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
+-                              DPU_S_POINTER_POINTER_PP_EN(1) |
+-                              DPU_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
+-        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
+-           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+-           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
+-           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_CLEAR(1));
+-   /* Re-arm to POINTER=0 so the next job's shadow writes land in Group 0. */
+-   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
+-                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
+-                              CNA_S_POINTER_POINTER_PP_EN(1));
+-   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
+-                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
+-                               CORE_S_POINTER_POINTER_PP_EN(1));
+-   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+-                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
+-                              DPU_S_POINTER_POINTER_PP_EN(1));
+-   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
+-        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
+-           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+-           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
+-
+-   /* TRM: before op_en, 64'h0041_xxxx_xxxx_xxxx must be set. */
+-   util_dynarray_append(regs, uint64_t, 0x0041000000000000);
+ 
+    /*
+-    * TRM: 64'h0081_0000_007f_0008 sets each sub-unit's op_en (CNA, CMAC, CORE,
+-    * DPU, DPU_RDMA, PPU, PPU_RDMA) via the broadcast target 0x81 — the value
+-    * 0x7f is a per-sub-unit enable bitmask. The previous 0x1d
+-    * (RESERVED_0(14)|OP_EN(1)) only set bits 0,2,3,4 and left bit1 clear, so the
+-    * MAC/CMAC stage never engaged: CORE read weights+first window but produced
+-    * no output (dt_wr_core=0), starving the DPU write-back (dt_wr_top=0). Use
+-    * the documented 0x7f so all sub-units arm.
++    * Broadcast op_en (target 0x81, reg 0x08). The board's working sequence uses
++    * value 0x1d here (matching the per-task enable_mask=0x1d), NOT 0x7f. We had
++    * switched to 0x7f on a wrong assumption that 0x1d left the MAC stage off; the
++    * working sequence proves 0x1d is correct. 0x7f over-enables sub-units and is
++    * the value that kept the RK3576 compute executers from running.
+     */
+-   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x7f);
++   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d);
+ }
+ 
+ void

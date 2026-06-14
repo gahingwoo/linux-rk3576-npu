@@ -54,7 +54,7 @@ timeout 30
 label linux
     kernel /Image
     fdt /rk3576-rock-4d.dtb
-    append console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused
+    append console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
 EOF
 mmd  -i "${BOOT_FAT_IMG}" ::extlinux
 mcopy -i "${BOOT_FAT_IMG}" "${EXTLINUX_CONF}" ::extlinux/extlinux.conf
