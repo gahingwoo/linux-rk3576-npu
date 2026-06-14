@@ -1,7 +1,7 @@
 From 77634fc960efb8da85671eea2a527f8be796a87b Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <huhuvmb88@gmail.com>
 Date: Fri, 12 Jun 2026 19:17:32 +1200
-Subject: [PATCH] rocket: fix RK3576 ping-pong sequencing, CBUF re-arm, and
+Subject: [PATCH 1/3] rocket: fix RK3576 ping-pong sequencing, CBUF re-arm, and
  DPU/RDMA grouping
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -323,6 +323,271 @@ index 6dbb278..0c51770 100644
  
        output_height_processed += cur_task->output_height;
     }
+-- 
+2.43.0
+
+
+From ab2dea9a513c56eb499e88607f6821ea7f18e7dd Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@gmail.com>
+Date: Fri, 12 Jun 2026 22:56:00 +1200
+Subject: [PATCH 2/3] rocket: re-emit CNA geometry registers into the execution
+ PP group
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CONV_CON1 is a "trigger" register whose write flips the CNA ping-pong
+POINTER from group 0 to group 1.  The second CONV_CON1 write (line 116)
+therefore leaves group 1 as the producer when the nine geometry registers
+(CONV_CON2, CONV_CON3, DATA_SIZE0-3, WEIGHT_SIZE0-2) are emitted; they
+all land in group 1 instead of the execution group (group 0).  The
+subsequent CBUF_CON0 write flips back 1→0 and the re-arm confirms
+POINTER=0, but by then all geometry writes are gone.
+
+Consequence: CNA executes group 0 with reset-default DATAIN_HEIGHT (≈1),
+loads exactly one input row from DRAM, and stalls — seen as dt_rd_top
+stuck at 0xe00 for all 252 tasks.
+
+Fix: after the final CNA S_POINTER re-arm (POINTER=0, group 0 confirmed),
+re-emit the nine geometry registers so group 0 has valid DATAIN_WIDTH,
+DATAIN_HEIGHT, channel counts, output atomics, and weight dimensions
+before op_en fires.
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 30 +++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 66387f0..817462b 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -152,6 +152,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+                               CNA_S_POINTER_EXECUTER_PP_EN(1) |
+                               CNA_S_POINTER_POINTER_PP_EN(1));
+ 
++   /*
++    * The CONV_CON1 write above flipped POINTER 0→1; the geometry registers
++    * (CONV_CON2/3, DATA_SIZE*, WEIGHT_SIZE*) that follow it therefore land in
++    * Group 1 (the non-executing group).  CBUF_CON0 then flips back 1→0 and
++    * the re-arm above confirms POINTER=0 (Group 0 = execution group).
++    * Re-emit the geometry registers now so Group 0 has valid input dimensions;
++    * without this CNA uses the reset-default DATAIN_HEIGHT (≈1) and stalls
++    * after loading one input row (dt_rd_top stuck at 0xe00).
++    */
++   EMIT(REG_CNA_CONV_CON2,
++        CNA_CONV_CON2_FEATURE_GRAINS(50 + task->stride_y + 1));
++   EMIT(REG_CNA_CONV_CON3, CNA_CONV_CON3_CONV_X_STRIDE(task->stride_x) |
++                              CNA_CONV_CON3_CONV_Y_STRIDE(task->stride_y));
++   EMIT(REG_CNA_DATA_SIZE0,
++        CNA_DATA_SIZE0_DATAIN_WIDTH(task->input_width) |
++           CNA_DATA_SIZE0_DATAIN_HEIGHT(task->input_height));
++   EMIT(REG_CNA_DATA_SIZE1,
++        CNA_DATA_SIZE1_DATAIN_CHANNEL_REAL(task->input_channels_real - 1) |
++           CNA_DATA_SIZE1_DATAIN_CHANNEL(task->input_channels));
++   EMIT(REG_CNA_DATA_SIZE2, CNA_DATA_SIZE2_DATAOUT_WIDTH(task->output_width));
++   EMIT(REG_CNA_DATA_SIZE3, CNA_DATA_SIZE3_DATAOUT_ATOMICS(task->atomic_count));
++   EMIT(REG_CNA_WEIGHT_SIZE0, task->weights_width * task->weights_height *
++                                 task->input_channels * task->weights_kernels);
++   EMIT(REG_CNA_WEIGHT_SIZE1,
++        task->weights_width * task->weights_height * task->input_channels);
++   EMIT(REG_CNA_WEIGHT_SIZE2,
++        CNA_WEIGHT_SIZE2_WEIGHT_WIDTH(task->weights_width) |
++           CNA_WEIGHT_SIZE2_WEIGHT_HEIGHT(task->weights_height) |
++           CNA_WEIGHT_SIZE2_WEIGHT_KERNELS(task->weights_kernels));
++
+    EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
+ 
+    if (task->input_channels_real == 1) {
+-- 
+2.43.0
+
+
+From e9d11c9c88e07400408c04bef1fad0be02afaed2 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@gmail.com>
+Date: Sat, 13 Jun 2026 14:06:57 +1200
+Subject: [PATCH 3/3] rocket: correct comment on CORE S_POINTER re-arm
+
+The comment incorrectly claimed that CORE_MAC_GATING / MISC_CFG writes
+flip the ping-pong POINTER from group 0 to group 1.  Unlike CNA's
+CBUF_CON0 / CONV_CON1, those are plain configuration registers that do
+not trigger a PP advance; POINTER remains 0 throughout the CORE write
+block, and all CORE registers land in group 0 (the execution group).
+The re-arm is therefore redundant but kept as a defensive reset.
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 122 +++++++++++-------------
+ 1 file changed, 55 insertions(+), 67 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 817462b..a3b0be3 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -42,38 +42,15 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    unsigned offset = output_zero_point - 0x80;
+ 
+    /*
+-    * Arm each sub-unit's ping-pong executer from inside the command stream, as
+-    * the vendor BSP does at the very top of its regcmd. mesa relied on the
+-    * kernel CPU-writing S_POINTER before submit, but the executer "engaged"
+-    * bit (S_POINTER bit16) is HW-set only when the PC writes these into the
+-    * *active* ping-pong group in-stream — a CPU write at submit time lands in
+-    * the inactive group. Without this, RDMA engages but CNA/CORE/DPU never do
+-    * (dt_wr stays 0). 0x1e = 0xe | POINTER_PP_CLEAR: the CLEAR pulse resets
+-    * the PP state machine so both groups are in "post-completion IDLE" before
+-    * the first job.  Without CLEAR, group 0 is queued PENDING but waits for
+-    * group 1 (consumer) to have completed at least once — it never has at cold
+-    * boot, causing an indefinite deadlock (CNA STATUS_0=PENDING forever,
+-    * dt_rd_top stuck at one row).  POINTER_PP_CLEAR self-clears after the
+-    * reset; all subsequent re-arm writes use 0xe (no CLEAR needed).
++    * PP_CLEAR fires at the END of this regcmd (just before 0x0041), after all
++    * shadow registers have been written.  This ensures each job triggers its
++    * OWN task rather than the previous job's task (which was the 1-task PP
++    * delay bug: PP_CLEAR at the start fired the previous job's shadow, meaning
++    * the last task never ran because no subsequent job existed to fire it).
++    *
++    * POINTER=0 throughout: PRODUCER=Group 0, config lands in Group 0, and
++    * PP_CLEAR fires Group 0 (CONSUMER=0) with the current task's params.
+     */
+-   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
+-                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
+-                              CNA_S_POINTER_POINTER_PP_EN(1) |
+-                              CNA_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
+-                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
+-                               CORE_S_POINTER_POINTER_PP_EN(1) |
+-                               CORE_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+-                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
+-                              DPU_S_POINTER_POINTER_PP_EN(1) |
+-                              DPU_S_POINTER_POINTER_PP_CLEAR(1));
+-   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
+-        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
+-           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+-           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
+-           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_CLEAR(1));
+-
+    uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
+                    CNA_CBUF_CON0_DATA_BANK(task->input_banks);
+    if (task_num > 0 && operation->reuse_weights_cbuf)
+@@ -95,14 +72,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CONV_CON1, con1);
+ 
+-   /*
+-    * Re-arm CNA, DPU, and DPU_RDMA S_POINTER after the initial CNA register
+-    * block.  Writing CNA_CBUF_CON0 / DCOMP / CONV_CON1 resets the ping-pong
+-    * POINTER for CNA, DPU, and DPU_RDMA from group 0 to group 1; without
+-    * re-arming here all subsequent CNA config writes land in the unarmed
+-    * group 1, CNA never engages (dt_rd_top stuck at one row), and the entire
+-    * pipeline stalls.  Vendor BSP re-arms all three units at this point.
+-    */
++   /* Re-arm A: keep POINTER=0 so subsequent writes go to Group 0 shadow. */
+    EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
+                               CNA_S_POINTER_EXECUTER_PP_EN(1) |
+                               CNA_S_POINTER_POINTER_PP_EN(1));
+@@ -141,25 +111,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_CNA_CBUF_CON0, con0);
+ 
+-   /*
+-    * Re-arm CNA S_POINTER again: the second CNA_CBUF_CON0 write above has the
+-    * same side-effect as the first — it flips POINTER 0→1 once more.  Without
+-    * this re-arm, all remaining CNA config (CBUF_CON1, CVT, FC, DMA, DCOMP …)
+-    * lands in the unarmed group 1, op_en still targets group 1, and CNA never
+-    * engages (dt_rd_top stuck at one row).
+-    */
++   /* Re-arm C: keep POINTER=0, remaining CNA config stays in Group 0. */
+    EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
+                               CNA_S_POINTER_EXECUTER_PP_EN(1) |
+                               CNA_S_POINTER_POINTER_PP_EN(1));
+ 
+    /*
+-    * The CONV_CON1 write above flipped POINTER 0→1; the geometry registers
+-    * (CONV_CON2/3, DATA_SIZE*, WEIGHT_SIZE*) that follow it therefore land in
+-    * Group 1 (the non-executing group).  CBUF_CON0 then flips back 1→0 and
+-    * the re-arm above confirms POINTER=0 (Group 0 = execution group).
+-    * Re-emit the geometry registers now so Group 0 has valid input dimensions;
+-    * without this CNA uses the reset-default DATAIN_HEIGHT (≈1) and stalls
+-    * after loading one input row (dt_rd_top stuck at 0xe00).
++    * Re-emit geometry defensively in case any intermediate write drifted
++    * POINTER.  All writes land in Group 0 shadow (POINTER=0 from Re-arm C).
+     */
+    EMIT(REG_CNA_CONV_CON2,
+         CNA_CONV_CON2_FEATURE_GRAINS(50 + task->stride_y + 1));
+@@ -308,25 +267,13 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    emit_raw(regs, CORE | 0x1, 0x3030, 0);
+ 
+    /*
+-    * Re-arm CORE S_POINTER after CORE_MAC_GATING / MISC_CFG writes.
+-    * These writes flip CORE's ping-pong POINTER from group 0 to group 1;
+-    * without this re-arm op_en targets the unarmed group and CORE never
+-    * engages (dt_wr_core stays 0, DPU has no CBUF input, output = zeros).
++    * Re-arm CORE S_POINTER.  POINTER=0 throughout.
+     */
+    EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
+                                CORE_S_POINTER_EXECUTER_PP_EN(1) |
+                                CORE_S_POINTER_POINTER_PP_EN(1));
+ 
+-   /*
+-    * Re-arm DPU and DPU_RDMA S_POINTER before their config blocks.  The
+-    * second CNA_CBUF_CON0 write (entry [21] in the stream) has the same
+-    * side-effect as the first: it flips POINTER 0→1 for CNA, DPU, and
+-    * DPU_RDMA simultaneously.  Edit-C re-armed CNA only; DPU and DPU_RDMA
+-    * have been at POINTER=1 since then.  Without these re-arms, all DPU
+-    * and DPU_RDMA config writes below go to group 1, but OP_EN fires
+-    * group 0 (the HW-active group), so DPU/RDMA execute with stale
+-    * uninitialized registers and produce no output.
+-    */
++   /* Re-arm DPU and DPU_RDMA: POINTER=0. */
+    EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
+                               DPU_S_POINTER_EXECUTER_PP_EN(1) |
+                               DPU_S_POINTER_POINTER_PP_EN(1));
+@@ -655,6 +602,47 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+ 
+    EMIT(REG_PC_REGISTER_AMOUNTS, 0);
+ 
++   /*
++    * PP_CLEAR fires here, AFTER all shadow registers have been written.
++    * This triggers the CURRENT task's params (just written above), so each
++    * job fires its own task.  Previously PP_CLEAR was at the top and fired
++    * the previous job's shadow, causing a 1-task delay where the last task
++    * never ran.
++    *
++    * 0x1e = POINTER_PP_MODE | EXECUTER_PP_EN | POINTER_PP_EN | POINTER_PP_CLEAR
++    */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
++                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
++                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_CLEAR(1));
++   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
++        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_CLEAR(1));
++   /* Re-arm to POINTER=0 so the next job's shadow writes land in Group 0. */
++   EMIT(REG_CNA_S_POINTER, CNA_S_POINTER_POINTER_PP_MODE(1) |
++                              CNA_S_POINTER_EXECUTER_PP_EN(1) |
++                              CNA_S_POINTER_POINTER_PP_EN(1));
++   EMIT(REG_CORE_S_POINTER, CORE_S_POINTER_POINTER_PP_MODE(1) |
++                               CORE_S_POINTER_EXECUTER_PP_EN(1) |
++                               CORE_S_POINTER_POINTER_PP_EN(1));
++   EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
++                              DPU_S_POINTER_EXECUTER_PP_EN(1) |
++                              DPU_S_POINTER_POINTER_PP_EN(1));
++   EMIT(REG_DPU_RDMA_RDMA_S_POINTER,
++        DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++           DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++           DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
++
+    /* TRM: before op_en, 64'h0041_xxxx_xxxx_xxxx must be set. */
+    util_dynarray_append(regs, uint64_t, 0x0041000000000000);
+ 
 -- 
 2.43.0
 
