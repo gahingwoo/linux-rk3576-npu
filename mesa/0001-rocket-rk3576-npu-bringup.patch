@@ -178,7 +178,7 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..44fa0f3 100644
+index 1f616df..4767b2b 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
 @@ -119,8 +119,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
@@ -212,6 +212,34 @@ index 1f616df..44fa0f3 100644
     operation->depthwise = rkt_is_depthwise(poperation);
     operation->padding_same = poperation->conv.padding_same;
     operation->stride = poperation->conv.stride_x;
+@@ -191,7 +204,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+    operation->weights_width = poperation->conv.weight_tensor->dims[1];
+    operation->weights_height = poperation->conv.weight_tensor->dims[2];
+    operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
+-   operation->weights_scale = poperation->conv.weight_tensor->scale;
++   /*
++    * MobileNet conv/depthwise weights are PER-AXIS quantized: the real scales
++    * live in weight_tensor->scales[output_channel], while the singular
++    * ->scale field is left ~1.0. Using the singular scale made the OUT_CVT
++    * requant multiplier ~320x too large, so every normal-path layer saturated
++    * to the output offset (depthwise -> 0x80, pointwise -> 0x00) and the whole
++    * graph after the first conv came out constant/zero. The DPU OUT_CVT is a
++    * single global scale, so collapse the per-channel scales to their mean as
++    * a first-order requant (per-channel correction belongs in the weight-buffer
++    * tail, like the vendor, and is a TODO).
++    */
++   if (poperation->conv.weight_tensor->scales) {
++      unsigned n = poperation->output_tensors[0]->dims[3];
++      float sum = 0.0f;
++      for (unsigned c = 0; c < n; c++)
++         sum += poperation->conv.weight_tensor->scales[c];
++      operation->weights_scale = n ? sum / n : poperation->conv.weight_tensor->scale;
++   } else {
++      operation->weights_scale = poperation->conv.weight_tensor->scale;
++   }
+ 
+    operation->weights = rkt_fill_weights(subgraph, poperation);
+    operation->biases =
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
 index 04dea3d..f4937c1 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
@@ -913,7 +941,7 @@ index be992fd..66efb4a 100644
      * task in an operation, but for now set them all to be sure.
      */
 diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
-index 6dbb278..c19ae11 100644
+index 6dbb278..84cccb2 100644
 --- a/src/gallium/drivers/rocket/rkt_task.c
 +++ b/src/gallium/drivers/rocket/rkt_task.c
 @@ -30,7 +30,7 @@ calc_input_banks(struct rkt_operation *operation)
@@ -987,7 +1015,7 @@ index 6dbb278..c19ae11 100644
     unsigned pad_top;
     unsigned pad_bottom;
     unsigned pad_left;
-@@ -195,14 +203,58 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -195,14 +203,70 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
     calc_explicit_padding(operation, &pad_top, &pad_bottom, &pad_left,
                           &pad_right);
  
@@ -1013,7 +1041,19 @@ index 6dbb278..c19ae11 100644
 +   if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
 +       operation->input_width >= 112 && operation->stride == 1) {
 +      unsigned full_oh = operation->output_height;
-+      unsigned max_owin = operation->input_channels <= 32 ? 90 : 44;
++      /*
++       * Use a single full-height window for the 112-wide layers. The earlier
++       * multi-window "capped" path (0x1014 bit28, 0x1018=...0606,
++       * 0x1040=0x30000000) does not match the vendor, which windows WITHOUT the
++       * capped flags (0x1014=0x09, 0x1018=...0505, 0x1040=0x14000000); fed the
++       * capped flags the DPU engaged but wrote nothing. A single window
++       * (capped=false, vendor-style flags) makes the normal/depthwise path
++       * write its output, and the 112-row input window fits the RK3576 CBUF, so
++       * no row-window split is needed for MobileNet. Matching the vendor's
++       * non-capped multi-window split (for models that overflow the CBUF) is a
++       * TODO.
++       */
++      unsigned max_owin = full_oh;
 +      unsigned num_win = DIV_ROUND_UP(full_oh, max_owin);
 +      unsigned base = DIV_ROUND_UP(full_oh, num_win);
 +      unsigned overlap = (operation->weights_height - 1) / 2;
@@ -1048,7 +1088,7 @@ index 6dbb278..c19ae11 100644
     }
  
     if (input_banks_required <= available_input_banks) {
-@@ -213,7 +265,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -213,7 +277,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
        task.num = 0;
        fill_task(subgraph, operation, &task);
        task.input_banks = input_banks_required;
@@ -1058,7 +1098,7 @@ index 6dbb278..c19ae11 100644
        task.input_height = operation->input_height;
  
        task.pad_top = pad_top;
-@@ -230,7 +283,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -230,7 +295,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
     struct split_task task = {0};
     unsigned available_slices =
@@ -1067,7 +1107,7 @@ index 6dbb278..c19ae11 100644
  
     task.num = 0;
     fill_task(subgraph, operation, &task);
-@@ -346,6 +399,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -346,6 +411,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
        cur_task->input_banks = available_input_banks;
        cur_task->weights_banks = available_weights_banks;
