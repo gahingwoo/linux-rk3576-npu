@@ -113,10 +113,28 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..e08a0b8 100644
+index 1f616df..44fa0f3 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
-@@ -170,6 +170,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -119,8 +119,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+       struct split_task *task =
+          util_dynarray_element(&operation->tasks, struct split_task, i);
+ 
+-      if (i < num_tasks - 1) {
+-         /* Patch next address and amount of regs to fetch, positions are relative
++      if (i < num_tasks - 1 && operation->soc != RKT_SOC_RK3576) {
++         /*
++          * RK3588 chains tasks inside one PC run by patching the next task's
++          * regcmd address into the trailing PC_BASE_ADDRESS/PC_REGISTER_AMOUNTS
++          * slots. RK3576 instead dispatches each task as its own PC submit (the
++          * kernel iterates the drm_rocket_task array), and the per-window regcmd
++          * ends in real unit registers — so this patch would corrupt them.
++          *
++          * Patch next address and amount of regs to fetch, positions are relative
+           * to end */
+          unsigned reg_count = util_dynarray_num_elements(&regcfgs[i], uint64_t);
+          uint64_t *next_address_reg =
+@@ -170,6 +177,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
  {
     util_dynarray_init(&operation->tasks, NULL);
  
