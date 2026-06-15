@@ -1,3 +1,68 @@
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 82258e7..a35ee1f 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -42,6 +42,60 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, weights_size);
+    weights_out = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
+ 
++   enum rkt_soc soc = rkt_screen(subgraph->base.context->screen)->soc;
++
++   /*
++    * RK3576 depthwise weight layout.
++    *
++    * Established on hardware by capturing the vendor runtime weight buffer for
++    * a depthwise layer whose kernel encodes its own (channel, ky, kx) position,
++    * then reading back which byte tracks which weight.  The CMAC consumes the
++    * depthwise weights in a different format than the RK3588 contiguous packing
++    * below; feeding it the RK3588 layout leaves the depthwise CORE unit unable
++    * to start (it never opens, the job hangs).
++    *
++    * The buffer is KH*KW spatial blocks in row-major (ky outer, kx inner)
++    * order.  Each block packs the channels two at a time, every channel pair
++    * followed by two weight-zero-point pad bytes, i.e. two bytes per channel:
++    *
++    *   buf[p*block + g*4 + 0] = w[2g  ][ky][kx]   (p = ky*KW + kx)
++    *   buf[p*block + g*4 + 1] = w[2g+1][ky][kx]
++    *   buf[p*block + g*4 + 2] = zp
++    *   buf[p*block + g*4 + 3] = zp
++    *
++    * block = DIV_ROUND_UP(channels, 2) * 4, so for the 32-channel layers the
++    * block is 64 bytes and the whole buffer is 9*64 = 576 bytes, matching the
++    * size the CNA weight DMA is programmed with (0x101c).
++    */
++   if (soc == RKT_SOC_RK3576 && rkt_is_depthwise(poperation)) {
++      unsigned channels = input_channels_real;
++      uint8_t pad = zero_point - 0x80;
++      unsigned n = 0;
++
++      for (int y = 0; y < weights_width; y++) {        /* ky (dims[1]) */
++         for (int x = 0; x < weights_height; x++) {     /* kx (dims[2]) */
++            for (unsigned g = 0; g < DIV_ROUND_UP(channels, 2); g++) {
++               for (unsigned s = 0; s < 2; s++) {
++                  unsigned c = g * 2 + s;
++                  weights_out[n++] =
++                     c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
++               }
++               weights_out[n++] = pad;
++               weights_out[n++] = pad;
++            }
++         }
++      }
++
++      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
++         static int task = 0;
++         rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
++      }
++
++      pipe_buffer_unmap(pcontext, transfer_out);
++      pipe_buffer_unmap(pcontext, transfer_in);
++      return rsc;
++   }
++
+    unsigned input_channel_groups = WEIGHT_ATOMIC_SIZE;
+    if (rkt_is_depthwise(poperation))
+       input_channel_groups *= 2;
 diff --git a/src/gallium/drivers/rocket/rkt_device.c b/src/gallium/drivers/rocket/rkt_device.c
 index 9c2da6a..6025c06 100644
 --- a/src/gallium/drivers/rocket/rkt_device.c
@@ -182,10 +247,10 @@ index 04dea3d..f4937c1 100644
  };
  
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..7df760f 100644
+index be992fd..66dfafa 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
-@@ -28,6 +28,424 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +28,426 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -457,12 +522,14 @@ index be992fd..7df760f 100644
 +#define R_DPU(reg, val)  emit_raw(regs, 0x1001, (reg), (val))
 +#define R_RDMA(reg, val) emit_raw(regs, 0x2001, (reg), (val))
 +
-+   /* arming */
-+   R_CNA(0x1004, 0x0000000e);
-+   R_CORE(0x3004, 0x0000000e);
++   /*
++    * S_POINTER arming is done by the kernel (rocket_job_hw_submit), which sets
++    * the POINTER bit to the ping-pong group the producer is on for this task.
++    * Emitting S_POINTER here would override that back to POINTER=0 and desync the
++    * executer from the producer on odd-numbered tasks. Only the non-S_POINTER
++    * setup word (0x1038) stays in the stream.
++    */
 +   R_CNA(0x1038, 0x00000007);
-+   R_DPU(0x4004, 0x0000000e);
-+   R_RDMA(0x5004, 0x0000000e);
 +
 +   /* CNA (verified geometry/channel formulas; CVT = bypass; quant via DPU). */
 +   R_CNA(0x100c, dw ? 0x1 : 0x0);
@@ -610,7 +677,7 @@ index be992fd..7df760f 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +459,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,6 +461,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -627,7 +694,7 @@ index be992fd..7df760f 100644
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
     if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +476,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -48,6 +478,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -663,7 +730,7 @@ index be992fd..7df760f 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +519,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -62,6 +521,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CONV_CON1, con1);
  
@@ -674,7 +741,7 @@ index be992fd..7df760f 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +531,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +533,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -682,7 +749,7 @@ index be992fd..7df760f 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +558,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +560,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -719,7 +786,7 @@ index be992fd..7df760f 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +681,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,7 +683,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -746,7 +813,7 @@ index be992fd..7df760f 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +713,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +715,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -772,7 +839,7 @@ index be992fd..7df760f 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +770,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +772,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -782,7 +849,7 @@ index be992fd..7df760f 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1049,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1051,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -813,7 +880,7 @@ index be992fd..7df760f 100644
  }
  
  void
-@@ -536,7 +1074,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1076,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
