@@ -349,7 +349,7 @@ index 1f616df..4767b2b 100644
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
-index 04dea3d..f4937c1 100644
+index 04dea3d..b8b4166 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
 +++ b/src/gallium/drivers/rocket/rkt_ml.h
 @@ -11,10 +11,11 @@
@@ -368,7 +368,19 @@ index 04dea3d..f4937c1 100644
  #define FEATURE_ATOMIC_SIZE   16
  #define WEIGHT_ATOMIC_SIZE    32
  #define ATOMIC_K_SIZE         16
-@@ -108,6 +109,13 @@ struct rkt_operation {
+@@ -46,6 +47,11 @@ struct split_task {
+    int input_line_stride;
+    int input_surface_stride;
+    unsigned input_offset;
++   /* RK3576 row-window: cumulative staged input rows of the windows before this
++    * one (-> CNA CBUF input offset, 0x1040 low) and this window's first real
++    * input row (-> CNA DATA_REUSE base, 0x103c low). */
++   unsigned cbuf_input_row_start;
++   unsigned cbuf_reuse_row;
+ 
+    unsigned output_width;
+    unsigned output_height;
+@@ -108,6 +114,13 @@ struct rkt_operation {
  
     int add_tensor;
  
@@ -383,7 +395,7 @@ index 04dea3d..f4937c1 100644
  };
  
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..c554931 100644
+index be992fd..919756d 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -3,10 +3,26 @@
@@ -413,7 +425,7 @@ index be992fd..c554931 100644
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +44,449 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +44,448 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -663,14 +675,14 @@ index be992fd..c554931 100644
 +   unsigned surf = inw * ic / 64;                /* input CBUF surface stride */
 +   unsigned wbpk = dw ? (k * k * ic / 8) : (ic * k * k * 2); /* weight bytes/kernel */
 +   unsigned k_word = (k >= 3) ? 0x0202 : 0;
-+   uint32_t reuse = (capped && wnum > 0) ? 0x1800 : 0;  /* DATA_REUSE overlap rows */
++   uint32_t reuse = (wnum > 0) ? task->cbuf_reuse_row * surf : 0;  /* DATA_REUSE base */
 +
 +   /*
 +    * DPU/CORE output-height field: non-windowed layers pack two output rows per
 +    * surface line ((oh-1)>>1); windowed layers emit one line per output row of
 +    * the window (win_orows-1), matching how the windowed CNA feeds the DPU.
 +    */
-+   unsigned dpu_lines = capped ? (win_orows - 1) : ((full_oh - 1) >> 1);
++   unsigned dpu_lines = win_orows - 1;
 +
 +   uint32_t feature_addr =
 +      rkt_get_tensor(subgraph, operation->input_index)->phys_addr +
@@ -718,8 +730,8 @@ index be992fd..c554931 100644
 +   /* CNA (verified geometry/channel formulas; CVT = bypass; quant via DPU). */
 +   R_CNA(0x100c, dw ? 0x1 : 0x0);
 +   R_CNA(0x1010, 0x00000fff);
-+   R_CNA(0x1014, ((s << 3) | s) | (capped ? 0x10000000 : 0));
-+   R_CNA(0x1018, capped ? (wnum > 0 ? 0x4000060c : 0x40000606) : 0x40000505);
++   R_CNA(0x1014, (s << 3) | s);
++   R_CNA(0x1018, 0x40000505 | (wnum > 0 ? 0x80000000 : 0));
 +   R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
 +   R_CNA(0x1020, (dw ? oc : ic) * k * k);
 +   R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc - 1)));
@@ -727,9 +739,9 @@ index be992fd..c554931 100644
 +   R_CNA(0x102c, ((inw - 1) << 16) | (win_irows - 1));
 +   R_CNA(0x1030, (wbpk << 16) | (ow - 1));
 +   R_CNA(0x1034, ow * win_orows - 1);
-+   R_CNA(0x1038, capped ? (wnum > 0 ? 0x80000010 : 0x10) : 0x07);
++   R_CNA(0x1038, 0x07 | (wnum > 0 ? 0x80000000 : 0));
 +   R_CNA(0x103c, (surf << 16) | reuse);
-+   R_CNA(0x1040, capped ? (0x30000000 | reuse) : 0x14000000);
++   R_CNA(0x1040, 0x14000000 | (wnum > 0 ? task->cbuf_input_row_start * surf : 0));
 +   R_CNA(0x1044, (inw << 16) | surf);
 +   R_CNA(0x1048, 0x0000000b);
 +   R_CNA(0x104c, 0x00010001);   /* CVT bypass (requant is in DPU OUT_CVT) */
@@ -807,8 +819,7 @@ index be992fd..c554931 100644
 +   R_DPU(0x40ac, (uint32_t)out_offset);          /* OUT_CVT offset */
 +   R_DPU(0x40b0, cvt_scale);                      /* OUT_CVT scale */
 +   R_DPU(0x40b4, shift - 1 + rkt_out_shift_add()); /* OUT_CVT shift (+0x80 de-scale) */
-+   R_DPU(0x40b8, capped ? ow * ((dw ? 3 : 1) * full_oh + win_orows)
-+                        : ow * full_oh * (dw ? 3 : 1));
++   R_DPU(0x40b8, ow * ((dw ? 4 : 2) * full_oh - win_orows));
 +   R_DPU(0x40bc, 0x00000000);
 +   R_DPU(0x40c0, 0x04440100);
 +   R_DPU(0x40c8, 0x00000000);
@@ -863,7 +874,7 @@ index be992fd..c554931 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +500,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,6 +499,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -880,7 +891,7 @@ index be992fd..c554931 100644
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
     if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +517,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -48,6 +516,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -916,7 +927,7 @@ index be992fd..c554931 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +560,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -62,6 +559,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CONV_CON1, con1);
  
@@ -927,7 +938,7 @@ index be992fd..c554931 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +572,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +571,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -935,7 +946,7 @@ index be992fd..c554931 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +599,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +598,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -972,7 +983,7 @@ index be992fd..c554931 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +722,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,7 +721,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -999,7 +1010,7 @@ index be992fd..c554931 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +754,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +753,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -1025,7 +1036,7 @@ index be992fd..c554931 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +811,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +810,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -1035,7 +1046,7 @@ index be992fd..c554931 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1090,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1089,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -1066,7 +1077,7 @@ index be992fd..c554931 100644
  }
  
  void
-@@ -536,7 +1115,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1114,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
@@ -1091,7 +1102,7 @@ index be992fd..c554931 100644
      * task in an operation, but for now set them all to be sure.
      */
 diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
-index 6dbb278..84cccb2 100644
+index 6dbb278..15e634e 100644
 --- a/src/gallium/drivers/rocket/rkt_task.c
 +++ b/src/gallium/drivers/rocket/rkt_task.c
 @@ -30,7 +30,7 @@ calc_input_banks(struct rkt_operation *operation)
@@ -1165,7 +1176,7 @@ index 6dbb278..84cccb2 100644
     unsigned pad_top;
     unsigned pad_bottom;
     unsigned pad_left;
-@@ -195,14 +203,70 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -195,14 +203,78 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
     calc_explicit_padding(operation, &pad_top, &pad_bottom, &pad_left,
                           &pad_right);
  
@@ -1191,54 +1202,62 @@ index 6dbb278..84cccb2 100644
 +   if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
 +       operation->input_width >= 112 && operation->stride == 1) {
 +      unsigned full_oh = operation->output_height;
++      unsigned in_h = operation->input_height;
 +      /*
-+       * Use a single full-height window for the 112-wide layers. The earlier
-+       * multi-window "capped" path (0x1014 bit28, 0x1018=...0606,
-+       * 0x1040=0x30000000) does not match the vendor, which windows WITHOUT the
-+       * capped flags (0x1014=0x09, 0x1018=...0505, 0x1040=0x14000000); fed the
-+       * capped flags the DPU engaged but wrote nothing. A single window
-+       * (capped=false, vendor-style flags) makes the normal/depthwise path
-+       * write its output, and the 112-row input window fits the RK3576 CBUF, so
-+       * no row-window split is needed for MobileNet. Matching the vendor's
-+       * non-capped multi-window split (for models that overflow the CBUF) is a
-+       * TODO.
++       * Vendor row-window tiling for the 112-wide stride-1 layers. The CNA stages
++       * at most ~91 input rows per task -- smaller than the bank math above would
++       * allow (the CBUF is split for ping-pong double buffering) -- so each layer
++       * is dispatched as input-row windows. The window is sized on INPUT rows; the
++       * output rows follow from the kernel: dw1 (3x3) -> 90 + 22 output (91 + 23
++       * input), pw1 (1x1) -> 91 + 21 (91 + 21). Each window is "capped"
++       * (win_orows < full_oh), so the encoder emits one surface line per output row
++       * with the vendor's non-"capped"-flag form (it never uses the bit28 /
++       * 0x30000000 flags). Window N's CNA CBUF input offset (0x1040 low) is the
++       * cumulative staged input rows of the earlier windows, carried in the task.
 +       */
-+      unsigned max_owin = full_oh;
-+      unsigned num_win = DIV_ROUND_UP(full_oh, max_owin);
-+      unsigned base = DIV_ROUND_UP(full_oh, num_win);
++      unsigned max_iwin = 91;
 +      unsigned overlap = (operation->weights_height - 1) / 2;
 +      unsigned line_in = calc_line_stride(operation->input_width);
 +      unsigned line_out = calc_line_stride(operation->output_width);
 +      unsigned out_start = 0;
++      unsigned cbuf_rows = 0;
 +
-+      for (unsigned i = 0; i < num_win; i++) {
++      while (out_start < full_oh) {
 +         struct split_task task = {0};
-+         unsigned out_rows = MIN2(base, full_oh - out_start);
++         unsigned in_lo = (out_start >= overlap) ? out_start - overlap : 0;
++         unsigned out_end = MIN2(full_oh, in_lo + max_iwin - overlap);
++         unsigned win_orows = out_end - out_start;
++         unsigned in_hi = MIN2(in_h - 1, (out_end - 1) + overlap);
++         unsigned win_irows = in_hi - in_lo + 1;
++         bool last = out_end >= full_oh;
 +
-+         task.num = i;
++         task.num =
++            util_dynarray_num_elements(&operation->tasks, struct split_task);
 +         fill_task(subgraph, operation, &task);
 +         task.input_banks = available_input_banks;
 +         task.weights_banks = available_weights_banks;
 +         task.input_data_entries = task.input_banks * operation->cbuf_entries_per_bank;
-+         task.output_height = out_rows;
-+         task.input_height = out_rows + overlap;
-+         task.input_offset =
-+            (out_start >= overlap ? out_start - overlap : 0) * line_in;
++         task.output_height = win_orows;
++         task.input_height = win_irows;
++         task.input_offset = in_lo * line_in;
 +         task.output_offset = out_start * line_out;
-+         task.pad_top = (i == 0) ? pad_top : 0;
-+         task.pad_bottom = (i == num_win - 1) ? pad_bottom : 0;
++         task.cbuf_input_row_start = cbuf_rows;
++         task.cbuf_reuse_row = in_lo;
++         task.pad_top = (out_start == 0) ? pad_top : 0;
++         task.pad_bottom = last ? pad_bottom : 0;
 +         task.pad_left = pad_left;
 +         task.pad_right = pad_right;
-+         task.atomic_count = task.output_width * out_rows;
++         task.atomic_count = task.output_width * win_orows;
 +
 +         util_dynarray_append(&operation->tasks, struct split_task, task);
-+         out_start += out_rows;
++         cbuf_rows += win_irows;
++         out_start = out_end;
 +      }
 +      return;
     }
  
     if (input_banks_required <= available_input_banks) {
-@@ -213,7 +277,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -213,7 +285,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
        task.num = 0;
        fill_task(subgraph, operation, &task);
        task.input_banks = input_banks_required;
@@ -1248,7 +1267,7 @@ index 6dbb278..84cccb2 100644
        task.input_height = operation->input_height;
  
        task.pad_top = pad_top;
-@@ -230,7 +295,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -230,7 +303,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
     struct split_task task = {0};
     unsigned available_slices =
@@ -1257,7 +1276,7 @@ index 6dbb278..84cccb2 100644
  
     task.num = 0;
     fill_task(subgraph, operation, &task);
-@@ -346,6 +411,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -346,6 +419,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
        cur_task->input_banks = available_input_banks;
        cur_task->weights_banks = available_weights_banks;
