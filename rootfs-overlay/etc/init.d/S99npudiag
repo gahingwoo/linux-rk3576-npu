@@ -28,14 +28,24 @@ start() {
 
 	{
 		echo ""
-		echo "==> npudiag: running boot-time NPU inference..."
+		echo "==> npudiag: running boot-time NPU inference (OUT_CVT shift sweep)..."
 	} > /dev/console 2>&1
 
 	# Fresh ring buffer so the diagnostic only sees this run's driver output.
 	dmesg -n 8 2>/dev/null
-	dmesg -C 2>/dev/null
+	dmesg -c 2>/dev/null >/dev/null
 
-	python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG" 2>&1
+	# Sweep the RK3576 OUT_CVT extra shift. The kernel resets its per-layer
+	# buffer-dump counter on the >250 ms gap between these runs, so each run
+	# re-dumps its first 8 layers. A kmsg marker before each run makes the
+	# matching dump group easy to find in the captured dmesg.
+	for add in 0 7 25; do
+		echo "==================== npudiag SWEEP ROCKET_OUT_SHIFT_ADD=$add" > /dev/kmsg 2>/dev/null
+		ROCKET_OUT_SHIFT_ADD=$add \
+			python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG.$add" 2>&1
+		sleep 1
+	done
+	cp "$INFER_LOG.7" "$INFER_LOG" 2>/dev/null
 
 	dmesg > "$DMESG_LOG" 2>/dev/null
 

@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..6131682 100644
+index 82258e7..f390ec5 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -3,6 +3,8 @@
@@ -104,7 +104,7 @@ index 82258e7..6131682 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +228,55 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +228,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -129,6 +129,17 @@ index 82258e7..6131682 100644
 +      unsigned bufsize = groups * 64 + 0x100;   /* structure + zeroed X2 pad */
 +      uint8_t *b8;
 +
++      /*
++       * A = 0x80 * (sw + bias). The 0x80 (2^7) matches the RK3576 CMAC
++       * accumulator, which runs 2^7 hotter than an unscaled integer conv; the
++       * OUT_CVT shift carries a matching +7 to divide both the conv and this
++       * bias back down (see rkt_out_shift_add). Dropping the 0x80 here was
++       * tried on the board and did not de-saturate (the conv accumulator is
++       * scaled regardless of A), confirming the factor belongs on both terms.
++       * ROCKET_BIAS_NOSCALE=1 drops it for comparison.
++       */
++      int a_scale = getenv("ROCKET_BIAS_NOSCALE") ? 1 : 0x80;
++
 +      *truncate_bits = 0;
 +      rsc = pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, bufsize);
 +      b8 = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
@@ -136,7 +147,7 @@ index 82258e7..6131682 100644
 +
 +      for (unsigned oc = 0; oc < output_channels; oc++) {
 +         int32_t sw = calculate_weight_sum(poperation, oc, weights);
-+         int32_t A = 0x80 * (sw + biases_in[oc]);
++         int32_t A = a_scale * (sw + biases_in[oc]);
 +         int16_t B = (int16_t)(0x80 - (int32_t)wt_zp);
 +         int16_t C = (int16_t)(0x4000 - (in_zp - 0x80) * sw);
 +         uint8_t *gb = b8 + (oc / 8) * 64;
@@ -372,10 +383,37 @@ index 04dea3d..f4937c1 100644
  };
  
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..63b7439 100644
+index be992fd..c554931 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
-@@ -28,6 +28,456 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -3,10 +3,26 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <stdlib.h>
++
+ #include "rkt_regcmd.h"
+ #include "rkt_ml.h"
+ #include "rkt_registers.h"
+ 
++/*
++ * RK3576 OUT_CVT extra right-shift, a board-debug knob for the normal encoder.
++ * Default 0 (no change to the computed shift). ROCKET_OUT_SHIFT_ADD=N adds N to
++ * the computed OUT_CVT shift so the per-layer requant magnitude can be swept on
++ * the board without a rebuild while the remaining layers' requant is closed out
++ * against the vendor capture.
++ */
++static unsigned
++rkt_out_shift_add(void)
++{
++   const char *s = getenv("ROCKET_OUT_SHIFT_ADD");
++   return s ? (unsigned)atoi(s) : 0;
++}
++
+ static void
+ emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
+          uint32_t value)
+@@ -28,6 +44,449 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -446,7 +484,10 @@ index be992fd..63b7439 100644
 +   R_CNA(0x1058, 0xffffff80);
 +   R_CNA(0x105c, 0xffffff80);
 +   R_CNA(0x1060, 0x00000000);
-+   R_CNA(0x1064, 0x00000777);
++   R_CNA(0x1064, 0x00000000);   /* FC_CON1 DATA_OFFSET=0 (vendor); 0x777 made the
++                                 * CNA fetch the feature from a 1911-off position,
++                                 * so the CMAC convolved garbage -> conv0 output
++                                 * collapsed to +-(one constant) across the map. */
 +   R_CNA(0x1068, 0x00000000);
 +   R_CNA(0x106c, 0x00000000);
 +   R_CNA(0x1070, 0x00000000);
@@ -510,28 +551,18 @@ index be992fd..63b7439 100644
 +   R_DPU(0x40a4, 0x80000000);
 +   R_DPU(0x40a8, 0x7fffffff);
 +   /*
-+    * OUT_CVT requant from THIS conv's real scales. The previously hardcoded
-+    * 0xfffffffe/0x5391/0x19 were captured from a different (random-weight)
-+    * first conv, so they saturated MobileNet's conv0 output to the ReLU6
-+    * extremes and every downstream layer then clamped. Compute it the same way
-+    * the normal encoder does.
++    * OUT_CVT requant for conv0, vendor-exact. A register-by-register diff of
++    * the live vendor RK3576 conv0 regcmd against this encoder showed these three
++    * are this conv0's real captured values (offset -2, scale 0x5391, shift 25) --
++    * NOT, as a previous comment guessed, leftovers from a random-weight conv.
++    * Computing them instead (the block that used to live here) put offset -128 /
++    * scale 0x76be / shift 22, which is wrong for conv0. The output saturation we
++    * chased to here was actually the CNA FC_CON1=0x777 feature-offset bug below;
++    * with that fixed these vendor values are the correct requant.
 +    */
-+   {
-+      float fc_conv_scale =
-+         (task->input_scale * task->weights_scale) / task->output_scale;
-+      uint32_t fc_scale_bits = fui(fc_conv_scale);
-+      unsigned fc_shift = 127 + 31 - 32 - (fc_scale_bits >> 23) + 16;
-+      unsigned fc_cvt_scale = ((fc_scale_bits >> 9) & 0x7fff) + 1;
-+
-+      if (operation->truncate_bits > 0)
-+         fc_shift--;
-+      if (fc_cvt_scale < (1 << 14))
-+         fc_cvt_scale |= (1 << 14);
-+
-+      R_DPU(0x40ac, (uint32_t)((int32_t)task->output_zero_point - 0x80));
-+      R_DPU(0x40b0, fc_cvt_scale);   /* OUT_CVT requant scale */
-+      R_DPU(0x40b4, fc_shift - 1);   /* OUT_CVT shift */
-+   }
++   R_DPU(0x40ac, 0xfffffffe);   /* OUT_CVT offset */
++   R_DPU(0x40b0, 0x00005391);   /* OUT_CVT requant scale */
++   R_DPU(0x40b4, 0x00000019);   /* OUT_CVT shift */
 +   R_DPU(0x40b8, 0x00003100); /* out_w*out_h */
 +   R_DPU(0x40bc, 0x00000000);
 +   R_DPU(0x40c0, 0x04440100);
@@ -775,7 +806,7 @@ index be992fd..63b7439 100644
 +   R_DPU(0x40a8, 0x7fffffff);
 +   R_DPU(0x40ac, (uint32_t)out_offset);          /* OUT_CVT offset */
 +   R_DPU(0x40b0, cvt_scale);                      /* OUT_CVT scale */
-+   R_DPU(0x40b4, shift - 1);                      /* OUT_CVT shift */
++   R_DPU(0x40b4, shift - 1 + rkt_out_shift_add()); /* OUT_CVT shift (+0x80 de-scale) */
 +   R_DPU(0x40b8, capped ? ow * ((dw ? 3 : 1) * full_oh + win_orows)
 +                        : ow * full_oh * (dw ? 3 : 1));
 +   R_DPU(0x40bc, 0x00000000);
@@ -832,7 +863,7 @@ index be992fd..63b7439 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +491,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,6 +500,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -849,7 +880,7 @@ index be992fd..63b7439 100644
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
     if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +508,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -48,6 +517,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -885,7 +916,7 @@ index be992fd..63b7439 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +551,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -62,6 +560,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CONV_CON1, con1);
  
@@ -896,7 +927,7 @@ index be992fd..63b7439 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +563,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +572,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -904,7 +935,7 @@ index be992fd..63b7439 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +590,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +599,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -941,7 +972,7 @@ index be992fd..63b7439 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +713,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,7 +722,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -968,7 +999,7 @@ index be992fd..63b7439 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +745,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +754,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -994,7 +1025,7 @@ index be992fd..63b7439 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +802,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +811,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -1004,7 +1035,7 @@ index be992fd..63b7439 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1081,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1090,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -1035,7 +1066,7 @@ index be992fd..63b7439 100644
  }
  
  void
-@@ -536,7 +1106,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1115,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
