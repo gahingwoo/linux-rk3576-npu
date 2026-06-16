@@ -286,10 +286,104 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..4767b2b 100644
+index 1f616df..d4c5e6f 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
-@@ -119,8 +119,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+@@ -86,6 +86,93 @@ calc_raw_output_size(struct rkt_operation *operation)
+           output_channels_1 * output_channels_2;
+ }
+ 
++/*
++ * RK3576: repack every operation's per-task regcmds into ONE subgraph buffer at a
++ * uniform stride, so rkt_ml_subgraph_invoke can dispatch the whole graph as a
++ * single PC job (task_number = total tasks, one OP_EN) the way the vendor does.
++ *
++ * The PC sequencer, given PC_DATA_ADDR = first task's regcmd and task_number = N,
++ * runs N tasks back-to-back by striding a fixed (pc_data_amount+1)*scale u64 each
++ * time; pc_data_amount is derived (in the kernel) from task[0]'s regcmd_count. So
++ * every task must occupy the SAME stride. We size the stride from the largest task
++ * and zero-pad the rest (the PC reads padding entries as NOPs: tgt=0/reg=0/val=0).
++ *
++ * Each per-task regcmd ends with an in-stream broadcast OP_EN (target 0x81, reg
++ * 0x08 = 0x1d). The vendor's per-task regcmd has none because the vendor PC reads
++ * a per-task enable_mask from its DMA task descriptor; rocket does NOT replicate
++ * that descriptor path, so this in-stream broadcast OP_EN is what actually engages
++ * the CNA/CORE/DPU units for each task. Keep it (dropping it leaves every task
++ * configured-but-never-running: STAT=0, no bit16 engage, all-zero output).
++ */
++static void
++rkt_pack_graph_regcmd(struct rkt_ml_subgraph *subgraph)
++{
++   struct pipe_context *pcontext = subgraph->base.context;
++   unsigned total_tasks = 0;
++   unsigned max_amount = 0;
++
++   util_dynarray_foreach (&subgraph->operations, struct rkt_operation, operation) {
++      if (operation->soc != RKT_SOC_RK3576)
++         return;
++      util_dynarray_foreach (&operation->tasks, struct split_task, task) {
++         total_tasks++;
++         max_amount = MAX2(max_amount, task->regcfg_amount);
++      }
++   }
++
++   if (total_tasks == 0)
++      return;
++
++   /* Uniform stride (u64) = (pc_data_amount + 1) * scale, matching the kernel's
++    * PC_DATA_AMOUNT = (amount + EXTRA(4) + scale(2) - 1)/scale - 1 from the max. */
++   unsigned stride_amount = ((max_amount + 4 + 2 - 1) / 2) * 2;
++   unsigned stride_bytes = stride_amount * sizeof(uint64_t);
++
++   subgraph->graph_regcmd =
++      pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT,
++                         stride_bytes * total_tasks);
++   subgraph->graph_task_count = total_tasks;
++   subgraph->graph_stride_amount = stride_amount;
++
++   struct pipe_transfer *wtransfer = NULL;
++   uint8_t *dst = pipe_buffer_map(pcontext, subgraph->graph_regcmd,
++                                  PIPE_MAP_WRITE, &wtransfer);
++   memset(dst, 0, stride_bytes * total_tasks);
++
++   uint64_t graph_addr = rkt_resource(subgraph->graph_regcmd)->phys_addr;
++   unsigned g = 0;
++
++   util_dynarray_foreach (&subgraph->operations, struct rkt_operation, operation) {
++      struct pipe_transfer *rtransfer = NULL;
++      uint8_t *src = pipe_buffer_map(pcontext, operation->regcmd,
++                                     PIPE_MAP_READ, &rtransfer);
++      uint64_t op_addr = rkt_resource(operation->regcmd)->phys_addr;
++
++      util_dynarray_foreach (&operation->tasks, struct split_task, task) {
++         unsigned src_off = task->regcfg_addr - op_addr;
++         /* copy the whole task regcmd incl. its trailing in-stream OP_EN */
++         memcpy(dst + g * stride_bytes, src + src_off,
++                task->regcfg_amount * sizeof(uint64_t));
++
++         task->regcfg_addr = graph_addr + g * stride_bytes;
++         /*
++          * Report the (uniform) REAL amount, not the padded stride: the kernel
++          * derives PC_DATA_AMOUNT = (regcmd_count + EXTRA(4) + scale(2) - 1)/scale
++          * - 1 from task[0], and the PC then strides (PC_DATA_AMOUNT + 1)*scale
++          * u64. With max_amount that stride equals stride_amount (our packing
++          * pitch); passing stride_amount here would add EXTRA twice and make the
++          * PC stride 4 u64 too far, misaligning every task after the first.
++          */
++         task->regcfg_amount = max_amount;
++         g++;
++      }
++
++      pipe_buffer_unmap(pcontext, rtransfer);
++   }
++
++   pipe_buffer_unmap(pcontext, wtransfer);
++}
++
+ static void
+ compile_operation(struct rkt_ml_subgraph *subgraph,
+                   struct rkt_operation *operation)
+@@ -119,8 +206,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
        struct split_task *task =
           util_dynarray_element(&operation->tasks, struct split_task, i);
  
@@ -307,7 +401,7 @@ index 1f616df..4767b2b 100644
            * to end */
           unsigned reg_count = util_dynarray_num_elements(&regcfgs[i], uint64_t);
           uint64_t *next_address_reg =
-@@ -170,6 +177,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -170,6 +264,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
  {
     util_dynarray_init(&operation->tasks, NULL);
  
@@ -320,7 +414,7 @@ index 1f616df..4767b2b 100644
     operation->depthwise = rkt_is_depthwise(poperation);
     operation->padding_same = poperation->conv.padding_same;
     operation->stride = poperation->conv.stride_x;
-@@ -191,7 +204,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -191,7 +291,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
     operation->weights_width = poperation->conv.weight_tensor->dims[1];
     operation->weights_height = poperation->conv.weight_tensor->dims[2];
     operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
@@ -348,8 +442,114 @@ index 1f616df..4767b2b 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
+@@ -387,6 +506,9 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+       compile_operation(subgraph, operation);
+    }
+ 
++   /* RK3576: repack all tasks into one buffer for whole-graph single-job dispatch. */
++   rkt_pack_graph_regcmd(subgraph);
++
+    return &subgraph->base;
+ }
+ 
+@@ -477,6 +599,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+    struct util_dynarray jobs = {0};
+    util_dynarray_init(&jobs, NULL);
+ 
++   if (subgraph->graph_regcmd) {
++      /*
++       * RK3576: dispatch the ENTIRE graph as ONE PC job (vendor model). All tasks
++       * were repacked at a uniform stride by rkt_pack_graph_regcmd, so the kernel
++       * issues one PC submit with task_number = total tasks and a single OP_EN.
++       * This keeps the producer/consumer ping-pong in lockstep across the whole
++       * graph, so the first layer (conv0) is task 0 of a warm pipeline instead of
++       * a cold standalone kick that never engages.
++       *
++       * BO sync set: outputs = every op's output tensor (each written once);
++       * inputs = only EXTERNAL inputs (op inputs / add tensors not produced by any
++       * op). Intermediates are ordered by the hardware within the single job, so
++       * they must not appear in both lists (that would double-lock the BO).
++       */
++      struct util_dynarray out_set = {0};
++      struct util_dynarray in_set = {0};
++      util_dynarray_init(&out_set, NULL);
++      util_dynarray_init(&in_set, NULL);
++
++      util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
++                             operation) {
++         uint32_t h = rkt_get_tensor(subgraph, operation->output_index)->handle;
++         util_dynarray_append(&out_set, uint32_t, h);
++      }
++
++      util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
++                             operation) {
++         unsigned idxs[2];
++         unsigned n = 0;
++         idxs[n++] = operation->input_index;
++         if (operation->add_tensor != -1)
++            idxs[n++] = operation->add_tensor;
++
++         for (unsigned k = 0; k < n; k++) {
++            uint32_t h = rkt_get_tensor(subgraph, idxs[k])->handle;
++            bool skip = false;
++            util_dynarray_foreach (&out_set, uint32_t, oh)
++               if (*oh == h)
++                  skip = true;
++            util_dynarray_foreach (&in_set, uint32_t, ih)
++               if (*ih == h)
++                  skip = true;
++            if (!skip)
++               util_dynarray_append(&in_set, uint32_t, h);
++         }
++      }
++
++      unsigned in_count = util_dynarray_num_elements(&in_set, uint32_t);
++      unsigned out_count = util_dynarray_num_elements(&out_set, uint32_t);
++      uint32_t *in_bo_handles = malloc(in_count * sizeof(uint32_t));
++      uint32_t *out_bo_handles = malloc(out_count * sizeof(uint32_t));
++      memcpy(in_bo_handles, util_dynarray_begin(&in_set),
++             in_count * sizeof(uint32_t));
++      memcpy(out_bo_handles, util_dynarray_begin(&out_set),
++             out_count * sizeof(uint32_t));
++      util_dynarray_fini(&in_set);
++      util_dynarray_fini(&out_set);
++
++      struct drm_rocket_task *tasks =
++         calloc(subgraph->graph_task_count, sizeof(*tasks));
++      unsigned task_count = 0;
++      util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
++                             operation) {
++         util_dynarray_foreach (&operation->tasks, struct split_task, task) {
++            tasks[task_count].regcmd = task->regcfg_addr;
++            tasks[task_count].regcmd_count = task->regcfg_amount;
++            task_count++;
++         }
++      }
++
++      struct drm_rocket_job job = {0};
++      job.task_struct_size = sizeof(struct drm_rocket_task);
++      job.in_bo_handles = (uint64_t)(uintptr_t)in_bo_handles;
++      job.in_bo_handle_count = in_count;
++      job.out_bo_handles = (uint64_t)(uintptr_t)out_bo_handles;
++      job.out_bo_handle_count = out_count;
++      job.tasks = (uint64_t)tasks;
++      job.task_count = task_count;
++      util_dynarray_append(&jobs, struct drm_rocket_job, job);
++   } else
+    util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
+                           operation) {
+       unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
+@@ -622,6 +824,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+       free_operation(operation);
+    util_dynarray_fini(&subgraph->operations);
+ 
++   pipe_resource_reference(&subgraph->graph_regcmd, NULL);
++
+    util_dynarray_foreach (&subgraph->tensors, struct pipe_resource *, tensor)
+       if (tensor)
+          pipe_resource_reference(tensor, NULL);
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
-index 04dea3d..b8b4166 100644
+index 04dea3d..60d309a 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
 +++ b/src/gallium/drivers/rocket/rkt_ml.h
 @@ -11,10 +11,11 @@
@@ -394,6 +594,24 @@ index 04dea3d..b8b4166 100644
     struct util_dynarray tasks; /* struct split_task */
  };
  
+@@ -116,6 +129,17 @@ struct rkt_ml_subgraph {
+ 
+    struct util_dynarray operations; /* rkt_operation */
+    struct util_dynarray tensors;    /* pipe_resource* */
++
++   /*
++    * RK3576 whole-graph dispatch: the vendor submits every task of every layer
++    * as ONE PC job (task_number = total tasks, uniform per-task regcmd stride,
++    * a single OP_EN). All operations' per-task regcmds are repacked contiguously
++    * at that uniform stride into this one buffer; each split_task.regcfg_addr is
++    * rewritten to point into it. NULL on RK3588 (per-operation dispatch).
++    */
++   struct pipe_resource *graph_regcmd;
++   unsigned graph_task_count;
++   unsigned graph_stride_amount; /* uniform per-task regcmd u64 count (== stride) */
+ };
+ 
+ bool
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
 index be992fd..919756d 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
