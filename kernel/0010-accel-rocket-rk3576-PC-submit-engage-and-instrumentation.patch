@@ -1,5 +1,5 @@
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
-index eb6291826..c1f3d032b 100644
+index eb6291826..17ac6f9cb 100644
 --- a/drivers/accel/rocket/rocket_core.c
 +++ b/drivers/accel/rocket/rocket_core.c
 @@ -73,18 +73,31 @@ int rocket_core_init(struct rocket_core *core)
@@ -52,7 +52,7 @@ index eb6291826..c1f3d032b 100644
  	version = rocket_pc_readl(core, VERSION);
  	version += rocket_pc_readl(core, VERSION_NUM) & 0xffff;
  
-@@ -146,3 +161,37 @@ void rocket_core_reset(struct rocket_core *core)
+@@ -146,3 +161,36 @@ void rocket_core_reset(struct rocket_core *core)
  
  	reset_control_bulk_deassert(ARRAY_SIZE(core->resets), core->resets);
  }
@@ -69,7 +69,6 @@ index eb6291826..c1f3d032b 100644
 +{
 +	/* This resets the producer ping-pong pointer to group 0. */
 +	core->pp_task_idx = 0;
-+	core->pp_warmed = false;
 +
 +	rocket_pc_writel(core, BASE_ADDRESS, 0x1);
 +	rocket_cna_writel(core, S_POINTER, 0x0);          /* POINTER=0, PP disabled */
@@ -91,7 +90,7 @@ index eb6291826..c1f3d032b 100644
 +			  CNA_S_POINTER_POINTER_PP_CLEAR(1));
 +}
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 48eca77ab..bbfe57eec 100644
+index 48eca77ab..200cec626 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
 @@ -13,6 +13,8 @@
@@ -125,7 +124,7 @@ index 48eca77ab..bbfe57eec 100644
  
  	struct mutex job_lock;
  	struct rocket_job *in_flight_job;
-@@ -75,6 +88,29 @@ struct rocket_core {
+@@ -75,6 +88,24 @@ struct rocket_core {
  	struct work_struct poll_work;
  	atomic_t poll_active;
  
@@ -146,16 +145,11 @@ index 48eca77ab..bbfe57eec 100644
 +	 * hw_submit can arm the executer's S_POINTER POINTER bit to match.
 +	 */
 +	u32 pp_task_idx;
-+	/* First-task ping-pong warmup: the first task after pp_state_init lands on a
-+	 * cold PP and its CNA geometry doesn't latch (group 0 stays empty), so it
-+	 * comes back degenerate. Re-running it once on the now-warm PP lands the
-+	 * geometry. pp_warmed tracks whether the warmup retry has been consumed. */
-+	bool pp_warmed;
 +
  	struct drm_gpu_scheduler sched;
  	u64 fence_context;
  	u64 emit_seqno;
-@@ -83,5 +119,6 @@ struct rocket_core {
+@@ -83,5 +114,6 @@ struct rocket_core {
  int rocket_core_init(struct rocket_core *core);
  void rocket_core_fini(struct rocket_core *core);
  void rocket_core_reset(struct rocket_core *core);
@@ -302,7 +296,7 @@ index a5fffa51f..b40801479 100644
  
  	drm_gem_object_put(gem_obj);
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 142e973f0..280bf12df 100644
+index 142e973f0..4141084fc 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -7,9 +7,15 @@
@@ -422,7 +416,7 @@ index 142e973f0..280bf12df 100644
  
  	/* Don't queue the job if a reset is in progress */
  	if (atomic_read(&core->reset.pending)) {
-@@ -127,57 +220,251 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+@@ -127,57 +220,222 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
  		return;
  	}
  
@@ -442,13 +436,12 @@ index 142e973f0..280bf12df 100644
  
 +	/*
 +	 * Re-run the PP state init (S_POINTER 0x1004 = 0x1e, POINTER_PP_CLEAR) at the
-+	 * head of EVERY job, not just per resume. cnastart shows the executer pointer
-+	 * drifts to group 1 while the regcmd writes the geometry into group 0 (the one
-+	 * non-engaged job reads G0_DS0=0x30); the producer is reset to 0 each job by
-+	 * the regcmd's 0x0e but the consumer/executer keeps auto-advancing. The CLEAR
-+	 * bit resets BOTH pointers to 0, so producer and consumer realign on group 0.
-+	 * (Also a direct test of whether a per-job CNA CLEAR write latches at submit
-+	 * time, or only post-reset as on RK3568.)
++	 * head of EVERY job, not just per resume. Without it the executer pointer
++	 * drifts to group 1 while the regcmd keeps writing the geometry into group 0
++	 * (the producer is reset to 0 each job by the regcmd's 0x0e but the consumer/
++	 * executer keeps auto-advancing), so the executer reads an empty group. The
++	 * CLEAR bit resets BOTH pointers to 0, realigning producer and consumer on
++	 * group 0. The per-job CNA CLEAR write does latch at submit time on RK3576.
 +	 */
 +	rocket_core_pp_state_init(core);
 +
@@ -571,7 +564,8 @@ index 142e973f0..280bf12df 100644
 +	 *   ((0x6 | pingpong) << 16) | task_number  ==  (0x7 << 16) | 1.
 +	 */
 +	rocket_pc_writel(core, TASK_CON, (0x7u << 16) | (job->task_count & 0xffffu));
-+
+ 
+-	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
 +	/*
 +	 * Live capture of the vendor RK3576 submit shows PC_DMA_BASE_ADDR = 0 (no
 +	 * task-descriptor dispatch — the descriptor experiment was wrong). The
@@ -580,8 +574,7 @@ index 142e973f0..280bf12df 100644
 +	 */
 +	rocket_pc_writel(core, TASK_DMA_BASE_ADDR,
 +			 PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
- 
--	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
++
 +	/*
 +	 * Clear + enable the vendor DMA bandwidth counters right before GO, so the
 +	 * post-job readback reflects only this task.  Vendor sequence: write
@@ -606,34 +599,6 @@ index 142e973f0..280bf12df 100644
 +	 */
  	rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
 +	rocket_pc_writel(core, OPERATION_ENABLE, 0);
-+
-+	/*
-+	 * One-shot snapshot, immediately after OP_EN, of BOTH CNA ping-pong groups:
-+	 * which group did the regcmd's geometry land in (DATA_SIZE0 / FEATURE_DATA_
-+	 * ADDR), and which group is the executer's pointer on (SPTR bit0)? cnalive
-+	 * shows the *currently-pointed* group is empty all run — this says whether
-+	 * the geometry is sitting in the OTHER group (producer/consumer parity miss)
-+	 * or in neither (never committed). Toggling POINTER to read both perturbs the
-+	 * run, but it's already degenerate and we restore S_POINTER after.
-+	 */
-+	{
-+		u32 sp = rocket_cna_readl(core, S_POINTER);
-+		u32 g0_ds0, g0_fda, g1_ds0, g1_fda;
-+
-+		rocket_cna_writel(core, S_POINTER, sp & ~0x1u);
-+		g0_ds0 = rocket_cna_readl(core, DATA_SIZE0);
-+		g0_fda = rocket_cna_readl(core, FEATURE_DATA_ADDR);
-+		rocket_cna_writel(core, S_POINTER, sp | 0x1u);
-+		g1_ds0 = rocket_cna_readl(core, DATA_SIZE0);
-+		g1_fda = rocket_cna_readl(core, FEATURE_DATA_ADDR);
-+		rocket_cna_writel(core, S_POINTER, sp);
-+
-+		dev_info(core->dev,
-+			 "rocket dbg cnastart: SPTR=0x%08x(ptr=%u) G0_DS0=0x%08x(h=%u,w=%u) G0_FDA=0x%08x G1_DS0=0x%08x(h=%u,w=%u) G1_FDA=0x%08x\n",
-+			 sp, sp & 0x1u,
-+			 g0_ds0, g0_ds0 & 0x7ff, (g0_ds0 >> 16) & 0x7ff, g0_fda,
-+			 g1_ds0, g1_ds0 & 0x7ff, (g1_ds0 >> 16) & 0x7ff, g1_fda);
-+	}
 +
 +	/*
 +	 * Diagnostic: densely sample each unit's EXECUTER bit (S_POINTER bit16)
@@ -700,7 +665,7 @@ index 142e973f0..280bf12df 100644
  
  	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
  	atomic_set(&core->poll_active, 1);
-@@ -349,10 +636,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+@@ -349,10 +607,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
  		return fence;
  	}
  
@@ -729,7 +694,7 @@ index 142e973f0..280bf12df 100644
  	}
  
  	scoped_guard(mutex, &core->job_lock) {
-@@ -373,13 +674,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+@@ -373,13 +645,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
  		return HRTIMER_NORESTART;
  
  	/*
@@ -757,7 +722,7 @@ index 142e973f0..280bf12df 100644
  		atomic_set(&core->poll_active, 0);
  		schedule_work(&core->poll_work);
  		return HRTIMER_NORESTART;
-@@ -407,6 +716,283 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -407,6 +687,270 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  
  	pm_runtime_mark_last_busy(core->dev);
  
@@ -765,19 +730,6 @@ index 142e973f0..280bf12df 100644
 +		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
 +		 rocket_cna_readl(core, S_STATUS),
 +		 rocket_core_readl(core, S_STATUS));
-+
-+	/*
-+	 * How far did the PC sequencer actually iterate? PC_TASK_CON (0x30) is
-+	 * written with task_number; PC_TASK_STATUS (0x3c) and the vendor
-+	 * pc_task_status_offset (0x48) report progress. If the whole-graph job
-+	 * dispatched N tasks but only ~1 ran, these reveal it directly instead of
-+	 * inferring from the output.
-+	 */
-+	dev_info(core->dev, "rocket dbg pctask: TASK_CON=0x%08x TASK_STATUS(0x3c)=0x%08x stat48=0x%08x op_en=0x%08x\n",
-+		 rocket_pc_readl(core, TASK_CON),
-+		 rocket_pc_readl(core, TASK_STATUS),
-+		 readl(core->pc_iomem + 0x48),
-+		 rocket_pc_readl(core, OPERATION_ENABLE));
 +
 +	/*
 +	 * Vendor DMA bandwidth counters (scale = 2 on RK3576).  dt_wr is the
@@ -1041,7 +993,7 @@ index 142e973f0..280bf12df 100644
  	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
  	rocket_pc_writel(core, INTERRUPT_CLEAR,
  			 0x1ffff |
-@@ -418,12 +1004,19 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -418,12 +962,19 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  		if (!job)
  			return;
  
@@ -1062,7 +1014,7 @@ index 142e973f0..280bf12df 100644
  		dma_fence_signal(job->done_fence);
  		pm_runtime_put_autosuspend(core->dev);
  		core->in_flight_job = NULL;
-@@ -448,7 +1041,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -448,7 +999,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  		job = core->in_flight_job;
  		if (job) {
  			pm_runtime_put_noidle(core->dev);
