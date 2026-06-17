@@ -1,0 +1,211 @@
+From 0d0e0ccb7236c2b5dc977a574869ec588b29388e Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Thu, 11 Jun 2026 23:28:11 +1200
+Subject: [PATCH 11/12] DEBUG: rocket: rk3576 regcmd/clock/counter
+ instrumentation (not for upstream)
+
+One-shot regcmd dump, per-job clock rate/enable logging, sub-unit
+S_POINTER/STATUS dumps, DMA byte-counter readout and BO iova logging used
+for RK3576 NPU bring-up. Also performs the DPU/DPU_RDMA S_POINTER pre-arm.
+Scaffolding only; drop before submission.
+---
+ drivers/accel/rocket/rocket_gem.c |   2 +
+ drivers/accel/rocket/rocket_job.c | 135 ++++++++++++++++++++++++++++++
+ 2 files changed, 137 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
+index a5fffa51f..21223cc63 100644
+--- a/drivers/accel/rocket/rocket_gem.c
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -108,6 +108,8 @@ int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *
+ 	rkt_obj->size = ret;
+ 	args->offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
+ 	args->dma_address = rkt_obj->mm.start;
++	drm_info(dev, "rocket dbg create_bo: iova=0x%llx size=0x%x\n",
++		 (unsigned long long)rkt_obj->mm.start, rkt_obj->size);
+ 
+ 	ret = drm_gem_handle_create(file, gem_obj, &args->handle);
+ 	if (ret)
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 142e973f0..2c0b9bdff 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -7,6 +7,8 @@
+ #include <drm/drm_file.h>
+ #include <drm/drm_gem.h>
+ #include <drm/rocket_accel.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
+ #include <linux/hrtimer.h>
+ #include <linux/interrupt.h>
+ #include <linux/iommu.h>
+@@ -21,6 +23,62 @@
+ 
+ #define JOB_TIMEOUT_MS 500
+ 
++/* ---- one-shot regcmd dump for DPU debug --------------------------------- */
++static atomic_t regcmd_dump_done = ATOMIC_INIT(0);
++
++static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
++{
++	struct rocket_task *task;
++	phys_addr_t phys;
++	void __iomem *vaddr;
++	size_t size;
++	u32 i;
++
++	if (atomic_xchg(&regcmd_dump_done, 1))
++		return;
++
++	task = &job->tasks[job->next_task_idx];
++	size = task->regcmd_count * sizeof(u64);
++
++	phys = iommu_iova_to_phys(job->domain->domain, task->regcmd);
++	if (!phys) {
++		dev_err(core->dev, "regcmd dump: iova_to_phys(0x%llx)=0\n",
++			(u64)task->regcmd);
++		return;
++	}
++
++	vaddr = ioremap_cache(phys, ALIGN(size, PAGE_SIZE));
++	if (!vaddr) {
++		dev_err(core->dev, "regcmd dump: ioremap_cache failed\n");
++		return;
++	}
++
++	dev_info(core->dev,
++		 "regcmd dump: count=%u iova=0x%llx phys=0x%llx\n",
++		 task->regcmd_count, (u64)task->regcmd, (u64)phys);
++
++	for (i = 0; i < task->regcmd_count; i++) {
++		u64 entry;
++		u16 target, reg;
++		u32 value;
++
++		memcpy_fromio(&entry, vaddr + i * sizeof(u64), sizeof(entry));
++		target = (entry >> 48) & 0xffff;
++		value  = (u32)((entry >> 16) & 0xffffffff);
++		reg    = (u16)(entry & 0xffff);
++
++		/* Diagnostic: print ALL regcmd entries (incl. CNA tgt=0x0201,
++		 * CORE tgt=0x0801) so CNA_CBUF_CON1 DATA_ENTRIES and every
++		 * op_en / enable write is visible. */
++		dev_info(core->dev,
++			 "  [%3u] tgt=%04x reg=%04x val=%08x\n",
++			 i, target, reg, value);
++	}
++
++	iounmap(vaddr);
++}
++/* ------------------------------------------------------------------------- */
++
+ /*
+  * RK3576: INTERRUPT_MASK bits 28-29 are read-only (hardware rejects the write),
+  * so the PC_DONE completion signal cannot be routed to the GIC via the normal
+@@ -121,12 +179,26 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	struct rocket_task *task;
+ 	unsigned int extra_bit;
+ 
++	dump_regcmd_dpu(core, job);
++
+ 	/* Don't queue the job if a reset is in progress */
+ 	if (atomic_read(&core->reset.pending)) {
+ 		dev_err(core->dev, "rocket_job_hw_submit: bailing, reset pending\n");
+ 		return;
+ 	}
+ 
++	/* Hard proof of clock state at job time: rate + framework enable flag. */
++	{
++		int ci;
++
++		for (ci = 0; ci < ARRAY_SIZE(core->clks); ci++)
++			dev_info(core->dev,
++				 "rocket dbg clk[%d] %-9s rate=%lu hw_enabled=%d\n",
++				 ci, core->clks[ci].id ? core->clks[ci].id : "?",
++				 core->clks[ci].clk ? clk_get_rate(core->clks[ci].clk) : 0,
++				 core->clks[ci].clk ? __clk_is_enabled(core->clks[ci].clk) : -1);
++	}
++
+ 	/* GO ! */
+ 
+ 	task = &job->tasks[job->next_task_idx];
+@@ -146,6 +218,25 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 					    CORE_S_POINTER_POINTER_PP_MODE(1) |
+ 					    extra_bit);
+ 
++	if (core->dpu_iomem)
++		rocket_dpu_writel(core, S_POINTER, DPU_S_POINTER_POINTER_PP_EN(1) |
++						   DPU_S_POINTER_EXECUTER_PP_EN(1) |
++						   DPU_S_POINTER_POINTER_PP_MODE(1) |
++						   extra_bit);
++
++	if (core->dpu_rdma_iomem)
++		rocket_dpu_rdma_writel(core, RDMA_S_POINTER,
++				       DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
++				       DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
++				       DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
++				       extra_bit);
++
++	dev_info(core->dev, "rocket dbg submit: CNA_SPTR=0x%08x CORE_SPTR=0x%08x DPU_SPTR=0x%08x RDMA_SPTR=0x%08x\n",
++		 rocket_cna_readl(core, S_POINTER),
++		 rocket_core_readl(core, S_POINTER),
++		 core->dpu_iomem      ? rocket_dpu_readl(core, S_POINTER)            : 0,
++		 core->dpu_rdma_iomem ? rocket_dpu_rdma_readl(core, RDMA_S_POINTER)  : 0);
++
+ 	rocket_pc_writel(core, BASE_ADDRESS, task->regcmd);
+ 	rocket_pc_writel(core, REGISTER_AMOUNTS,
+ 			 PC_REGISTER_AMOUNTS_PC_DATA_AMOUNT((task->regcmd_count + 1) / 2 - 1));
+@@ -407,6 +498,50 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 
+ 	pm_runtime_mark_last_busy(core->dev);
+ 
++	dev_info(core->dev, "rocket dbg done: PC_RAW=0x%08x CNA_STAT=0x%08x CORE_STAT=0x%08x\n",
++		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
++		 rocket_cna_readl(core, S_STATUS),
++		 rocket_core_readl(core, S_STATUS));
++	if (core->dpu_iomem) {
++		u32 sptr_live = rocket_dpu_readl(core, S_POINTER);
++		u32 dst_live  = rocket_dpu_readl(core, DST_BASE_ADDR);
++		u32 dst_g0, w, h, c, dst_wo_test;
++
++		/* Briefly switch pointer to group 0 to read the registers DPU actually used */
++		rocket_dpu_writel(core, S_POINTER, sptr_live & ~0x1u); /* POINTER=0 */
++		dst_g0 = rocket_dpu_readl(core, DST_BASE_ADDR);
++		w = rocket_dpu_readl(core, DATA_CUBE_WIDTH);
++		h = rocket_dpu_readl(core, DATA_CUBE_HEIGHT);
++		c = rocket_dpu_readl(core, DATA_CUBE_CHANNEL);
++
++		/* Write-only test: write sentinel to DST_BASE_ADDR, read back.
++		 * 0xdeadbeef -> R/W register (actual programmed value = dst_g0 above).
++		 * 0x00000000 -> write-only register (dst_g0 readback is meaningless). */
++		rocket_dpu_writel(core, DST_BASE_ADDR, 0xdeadbeef);
++		dst_wo_test = rocket_dpu_readl(core, DST_BASE_ADDR);
++
++		rocket_dpu_writel(core, S_POINTER, sptr_live); /* restore */
++
++		dev_info(core->dev,
++			 "rocket dbg DPU: STAT=0x%08x SPTR=0x%08x OP_EN=0x%08x DST_live=0x%08x DST_g0=0x%08x cube=%ux%ux%u DST_WO=%s\n",
++			 rocket_dpu_readl(core, S_STATUS),
++			 sptr_live,
++			 rocket_dpu_readl(core, OPERATION_ENABLE),
++			 dst_live, dst_g0, w, h, c,
++			 dst_wo_test == 0xdeadbeef ? "RW" : "WO");
++	}
++	if (core->dpu_rdma_iomem)
++		dev_info(core->dev, "rocket dbg RDMA: STAT=0x%08x SPTR=0x%08x SRC=0x%08x\n",
++			 rocket_dpu_rdma_readl(core, RDMA_S_STATUS),
++			 rocket_dpu_rdma_readl(core, RDMA_S_POINTER),
++			 rocket_dpu_rdma_readl(core, RDMA_SRC_BASE_ADDR));
++	if (core->stats_iomem)
++		dev_info(core->dev, "rocket dbg stats: dt_wr_top=0x%08x dt_rd_top=0x%08x dt_wr_core=0x%08x dt_rd_core=0x%08x\n",
++			 readl(core->stats_iomem + 0x0234),
++			 readl(core->stats_iomem + 0x0238),
++			 readl(core->stats_iomem + 0x0434),
++			 readl(core->stats_iomem + 0x0438));
++
+ 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR,
+ 			 0x1ffff |
+-- 
+2.43.0
+

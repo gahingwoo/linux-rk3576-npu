@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..f390ec5 100644
+index 82258e7..8977762 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -3,6 +3,8 @@
@@ -11,12 +11,39 @@ index 82258e7..f390ec5 100644
  #include "util/u_inlines.h"
  
  #include "rkt_coefs.h"
-@@ -42,6 +44,60 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
-       pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, weights_size);
-    weights_out = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
+@@ -29,19 +31,134 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    struct pipe_resource *rsc;
+    uint8_t *weights_out;
  
 +   enum rkt_soc soc = rkt_screen(subgraph->base.context->screen)->soc;
 +
+    input_channels = MAX2(input_channels, FEATURE_ATOMIC_SIZE);
+ 
+    output_channels = ALIGN(output_channels, 2);
+    if (rkt_is_depthwise(poperation))
+       output_channels = 1;
+ 
+-   weights_size = weights_width * weights_height * output_channels *
+-                  ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
++   /*
++    * RK3576 first-conv (ARGB, <=4 real input channels) uses a dedicated 1536-byte
++    * weight layout (see the packing branch below), not the generic 18432-byte
++    * RK3588 packing -- the CNA weight DMA reads exactly 1536 bytes.
++    */
++   bool is_rk3576_firstconv = soc == RKT_SOC_RK3576 &&
++                              !rkt_is_depthwise(poperation) &&
++                              input_channels_real <= 4;
++
++   if (is_rk3576_firstconv)
++      weights_size = weights_width * output_channels_real * 4 * 4;
++   else
++      weights_size = weights_width * weights_height * output_channels *
++                     ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
+ 
+    rsc =
+       pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, weights_size);
+    weights_out = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
+ 
 +   /*
 +    * RK3576 depthwise weight layout.
 +    *
@@ -69,10 +96,59 @@ index 82258e7..f390ec5 100644
 +      return rsc;
 +   }
 +
++   /*
++    * RK3576 first-conv (ARGB) weight layout.
++    *
++    * Established on hardware by capturing the board's working weight buffer for
++    * a first-conv whose kernel encodes its own (oc, ic, ky, kx) position, then
++    * reading back which byte tracks which weight. Unlike the generic RK3588
++    * packing below, the CNA reads a compact 1536-byte buffer (= 0x101c weight
++    * DMA byte count) for this 3-in/32-out 3x3 layer; feeding it the RK3588
++    * layout makes the CMAC convolve garbage weights (conv0 output = zero-point).
++    *
++    * Layout is ky-MAJOR, then oc, then kx, then ic:
++    *
++    *   buf[ky*(OC*16) + oc*16 + kx*4 + ic] = w[oc][ky][kx][ic] - 0x80   (ic 0..2)
++    *   buf[... + kx*4 + 3]                 = pad (weight_zp - 0x80)       (alpha lane)
++    *   the 4th kx slot (kx=3, bytes 12..15 of each oc unit)             = 0
++    *
++    * So each (ky, oc) is a 16-byte unit of three [R,G,B,pad] groups plus a zero
++    * group; ky stride = OC*16 = 512, oc stride = 16. Total = KH * OC * 16 = 1536.
++    */
++   if (is_rk3576_firstconv) {
++      uint8_t pad = zero_point - 0x80;
++      unsigned oc_n = output_channels_real;
++
++      memset(weights_out, 0, weights_size);
++
++      for (int ky = 0; ky < weights_width; ky++) {
++         for (unsigned oc = 0; oc < oc_n; oc++) {
++            for (int kx = 0; kx < weights_height; kx++) {
++               unsigned base = ky * (oc_n * 16) + oc * 16 + kx * 4;
++
++               for (unsigned ic = 0; ic < 3; ic++)
++                  weights_out[base + ic] =
++                     ic < input_channels_real
++                        ? weights_in[oc][ky][kx][ic] - 0x80 : pad;
++               weights_out[base + 3] = pad; /* alpha lane */
++            }
++         }
++      }
++
++      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
++         static int task = 0;
++         rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
++      }
++
++      pipe_buffer_unmap(pcontext, transfer_out);
++      pipe_buffer_unmap(pcontext, transfer_in);
++      return rsc;
++   }
++
     unsigned input_channel_groups = WEIGHT_ATOMIC_SIZE;
     if (rkt_is_depthwise(poperation))
        input_channel_groups *= 2;
-@@ -129,6 +185,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
+@@ -129,6 +246,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
     return correction;
  }
  
@@ -104,7 +180,7 @@ index 82258e7..f390ec5 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +228,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +289,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  

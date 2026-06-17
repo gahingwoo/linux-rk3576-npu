@@ -1,8 +1,57 @@
+From 86b983f51942275a40a6927de9c1924dde1200e9 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Thu, 18 Jun 2026 07:55:43 +1200
+Subject: [PATCH 12/12] rocket: RK3576 full NPU soft-reset (CBUF reset,
+ iommu-safe) + probes
+
+Add the two CBUF resets (SRST_A/H_RKNN_CBUF) to the NPU node and run the
+vendor's full NPU soft-reset once per power-up in runtime_resume, before
+any IOMMU domain is attached, so the reset's disturbance of the MMU banks
+lands on an unattached MMU and the first job re-attaches on a clean MMU
+(reset-before-attach is iommu-safe; the old per-job mid-op CBUF reset was
+not). Without the CBUF reset the CNA streams the full feature+weights from
+DRAM but the CMAC reads zero from an uninitialised CBUF. Also carries the
+session's conv0 instrumentation (CNA group / weight-buffer / counter probes).
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi |   5 +-
+ drivers/accel/rocket/rocket_core.c       |  77 ++-
+ drivers/accel/rocket/rocket_core.h       |  42 +-
+ drivers/accel/rocket/rocket_drv.c        |  39 ++
+ drivers/accel/rocket/rocket_drv.h        |   3 +
+ drivers/accel/rocket/rocket_gem.c        |  43 +-
+ drivers/accel/rocket/rocket_job.c        | 688 ++++++++++++++++++++---
+ 7 files changed, 821 insertions(+), 76 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index e812746ad..b622c6fee 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1824,8 +1824,9 @@ rknn_core_0: npu@27700000 {
+ 				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
+ 			clock-names = "aclk", "hclk", "npu", "pclk",
+ 				      "aclk_cbuf", "hclk_cbuf";
+-			resets = <&cru SRST_A_RKNN0>;
+-			reset-names = "srst_a";
++			resets = <&cru SRST_A_RKNN0>, <&cru SRST_A_RKNN_CBUF>,
++				 <&cru SRST_H_RKNN_CBUF>;
++			reset-names = "srst_a", "srst_cbuf_a", "srst_cbuf_h";
+ 			power-domains = <&power RK3576_PD_NPU0>;
+ 			iommus = <&rknn_mmu_0>;
+ 			status = "disabled";
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
-index eb6291826..17ac6f9cb 100644
+index eb6291826..00d12e5d9 100644
 --- a/drivers/accel/rocket/rocket_core.c
 +++ b/drivers/accel/rocket/rocket_core.c
-@@ -73,18 +73,31 @@ int rocket_core_init(struct rocket_core *core)
+@@ -22,6 +22,8 @@ int rocket_core_init(struct rocket_core *core)
+ 	int err = 0;
+ 
+ 	core->resets[0].id = "srst_a";
++	core->resets[1].id = "srst_cbuf_a";
++	core->resets[2].id = "srst_cbuf_h";
+ 	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, ARRAY_SIZE(core->resets),
+ 						    core->resets);
+ 	if (err)
+@@ -73,18 +75,31 @@ int rocket_core_init(struct rocket_core *core)
  		core->dpu_rdma_iomem = NULL;
  	}
  
@@ -43,7 +92,7 @@ index eb6291826..17ac6f9cb 100644
  	dma_set_max_seg_size(dev, UINT_MAX);
  
  	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
-@@ -118,6 +131,8 @@ int rocket_core_init(struct rocket_core *core)
+@@ -118,6 +133,8 @@ int rocket_core_init(struct rocket_core *core)
  		return err;
  	}
  
@@ -52,10 +101,27 @@ index eb6291826..17ac6f9cb 100644
  	version = rocket_pc_readl(core, VERSION);
  	version += rocket_pc_readl(core, VERSION_NUM) & 0xffff;
  
-@@ -146,3 +161,36 @@ void rocket_core_reset(struct rocket_core *core)
+@@ -138,6 +155,13 @@ void rocket_core_fini(struct rocket_core *core)
+ 	rocket_job_fini(core);
+ }
+ 
++/*
++ * Full NPU soft-reset, mirroring the vendor rknpu_soft_reset assert/deassert of
++ * all NPU resets (core AXI + both CBUF resets, see the resets[] comment). This
++ * resets the CBUF so the CNA->CBUF->CMAC path initialises; the caller is
++ * responsible for re-establishing the IOMMU (the reset also disturbs the MMU
++ * banks) and running rocket_core_pp_state_init() afterwards, in that order.
++ */
+ void rocket_core_reset(struct rocket_core *core)
+ {
+ 	reset_control_bulk_assert(ARRAY_SIZE(core->resets), core->resets);
+@@ -145,4 +169,39 @@ void rocket_core_reset(struct rocket_core *core)
+ 	udelay(10);
  
  	reset_control_bulk_deassert(ARRAY_SIZE(core->resets), core->resets);
- }
++
++	udelay(10);
++}
 +
 +/*
 + * RK3576 PP state machine init (mirrors rk3576_state_init in vendor rknpu).
@@ -88,9 +154,9 @@ index eb6291826..17ac6f9cb 100644
 +			  CNA_S_POINTER_EXECUTER_PP_EN(1)  |
 +			  CNA_S_POINTER_POINTER_PP_EN(1)   |
 +			  CNA_S_POINTER_POINTER_PP_CLEAR(1));
-+}
+ }
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 48eca77ab..200cec626 100644
+index 48eca77ab..2ee489f9b 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
 @@ -13,6 +13,8 @@
@@ -102,13 +168,22 @@ index 48eca77ab..200cec626 100644
  #define rocket_pc_readl(core, reg) \
  	readl((core)->pc_iomem + (REG_PC_##reg))
  #define rocket_pc_writel(core, reg, value) \
-@@ -50,10 +52,21 @@ struct rocket_core {
+@@ -50,10 +52,29 @@ struct rocket_core {
  	void __iomem *dpu_iomem;
  	void __iomem *dpu_rdma_iomem;
  	void __iomem *stats_iomem; /* NPU base+0x2000: dt_wr/dt_rd counters */
 +	void *task_desc;	/* page for the RK3576 PC_DMA task descriptor */
  	struct clk_bulk_data clks[6];
- 	struct reset_control_bulk_data resets[1];
+-	struct reset_control_bulk_data resets[1];
++	/*
++	 * RK3576: the vendor soft-reset asserts the core AXI reset AND both CBUF
++	 * resets together (SRST_A_RKNN0 + SRST_A_RKNN_CBUF + SRST_H_RKNN_CBUF),
++	 * then re-attaches the IOMMU and runs state_init. The CBUF (convolution
++	 * buffer) only initialises as part of this coordinated reset; a standalone
++	 * or per-job CBUF reset leaves CNA/CORE inconsistent with it. Carry all
++	 * three so rocket_core_reset() can perform the full NPU reset.
++	 */
++	struct reset_control_bulk_data resets[3];
  
  	struct iommu_group *iommu_group;
 +	/*
@@ -124,7 +199,7 @@ index 48eca77ab..200cec626 100644
  
  	struct mutex job_lock;
  	struct rocket_job *in_flight_job;
-@@ -75,6 +88,24 @@ struct rocket_core {
+@@ -75,6 +96,24 @@ struct rocket_core {
  	struct work_struct poll_work;
  	atomic_t poll_active;
  
@@ -149,7 +224,7 @@ index 48eca77ab..200cec626 100644
  	struct drm_gpu_scheduler sched;
  	u64 fence_context;
  	u64 emit_seqno;
-@@ -83,5 +114,6 @@ struct rocket_core {
+@@ -83,5 +122,6 @@ struct rocket_core {
  int rocket_core_init(struct rocket_core *core);
  void rocket_core_fini(struct rocket_core *core);
  void rocket_core_reset(struct rocket_core *core);
@@ -157,7 +232,7 @@ index 48eca77ab..200cec626 100644
  
  #endif
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 8f6a02d50..a6030de8e 100644
+index 8f6a02d50..1aa2a5384 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
 @@ -68,6 +68,23 @@ rocket_iommu_domain_put(struct rocket_iommu_domain *domain)
@@ -184,16 +259,29 @@ index 8f6a02d50..a6030de8e 100644
  static int
  rocket_open(struct drm_device *dev, struct drm_file *file)
  {
-@@ -247,6 +264,8 @@ static int rocket_device_runtime_resume(struct device *dev)
+@@ -247,6 +264,21 @@ static int rocket_device_runtime_resume(struct device *dev)
  		return err;
  	}
  
++	/*
++	 * Full NPU soft-reset on every power-up (mirrors the vendor, which resets
++	 * the NPU incl. the CBUF at init). Done here, with clocks on and BEFORE any
++	 * IOMMU domain is attached (runtime_suspend detached it), so the reset's
++	 * disturbance of the MMU banks lands on an unattached MMU and the first job
++	 * after resume re-attaches (rk_iommu_enable) on a freshly reset, clean MMU
++	 * -- instead of a mid-operation CBUF reset corrupting an active attachment,
++	 * which is what broke earlier per-job CBUF-reset attempts. Without the CBUF
++	 * reset the CNA streams the full feature+weights from DRAM but the CMAC
++	 * reads zero out of an uninitialised CBUF (conv output = zero-point).
++	 */
++	rocket_core_reset(&rdev->cores[core]);
++
 +	rocket_core_pp_state_init(&rdev->cores[core]);
 +
  	return 0;
  }
  
-@@ -261,6 +280,13 @@ static int rocket_device_runtime_suspend(struct device *dev)
+@@ -261,6 +293,13 @@ static int rocket_device_runtime_suspend(struct device *dev)
  	if (!rocket_job_is_idle(&rdev->cores[core]))
  		return -EBUSY;
  
@@ -207,8 +295,23 @@ index 8f6a02d50..a6030de8e 100644
  	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
  
  	return 0;
+diff --git a/drivers/accel/rocket/rocket_drv.h b/drivers/accel/rocket/rocket_drv.h
+index 2c673bb99..f910cb965 100644
+--- a/drivers/accel/rocket/rocket_drv.h
++++ b/drivers/accel/rocket/rocket_drv.h
+@@ -26,7 +26,10 @@ struct rocket_file_priv {
+ 	struct drm_sched_entity sched_entity;
+ };
+ 
++struct rocket_core;
++
+ struct rocket_iommu_domain *rocket_iommu_domain_get(struct rocket_file_priv *rocket_priv);
+ void rocket_iommu_domain_put(struct rocket_iommu_domain *domain);
++void rocket_core_detach_iommu(struct rocket_core *core);
+ 
+ #endif
 diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
-index a5fffa51f..b40801479 100644
+index 21223cc63..b40801479 100644
 --- a/drivers/accel/rocket/rocket_gem.c
 +++ b/drivers/accel/rocket/rocket_gem.c
 @@ -6,7 +6,9 @@
@@ -221,16 +324,7 @@ index a5fffa51f..b40801479 100644
  
  #include "rocket_drv.h"
  #include "rocket_gem.h"
-@@ -108,6 +110,8 @@ int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *
- 	rkt_obj->size = ret;
- 	args->offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
- 	args->dma_address = rkt_obj->mm.start;
-+	drm_info(dev, "rocket dbg create_bo: iova=0x%llx size=0x%x\n",
-+		 (unsigned long long)rkt_obj->mm.start, rkt_obj->size);
- 
- 	ret = drm_gem_handle_create(file, gem_obj, &args->handle);
- 	if (ret)
-@@ -136,6 +140,7 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
+@@ -138,6 +140,7 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
  {
  	struct drm_rocket_prep_bo *args = data;
  	unsigned long timeout = drm_timeout_abs_to_jiffies(args->timeout_ns);
@@ -238,7 +332,7 @@ index a5fffa51f..b40801479 100644
  	struct drm_gem_object *gem_obj;
  	struct drm_gem_shmem_object *shmem_obj;
  	long ret = 0;
-@@ -155,10 +160,45 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
+@@ -157,10 +160,45 @@ int rocket_ioctl_prep_bo(struct drm_device *dev, void *data, struct drm_file *fi
  	else if (ret > 0)
  		ret = 0;
  
@@ -285,7 +379,7 @@ index a5fffa51f..b40801479 100644
  	drm_gem_object_put(gem_obj);
  
  	return ret;
-@@ -183,6 +223,9 @@ int rocket_ioctl_fini_bo(struct drm_device *dev, void *data, struct drm_file *fi
+@@ -185,6 +223,9 @@ int rocket_ioctl_fini_bo(struct drm_device *dev, void *data, struct drm_file *fi
  	rkt_obj = to_rocket_bo(gem_obj);
  	shmem_obj = &rkt_obj->base;
  
@@ -296,16 +390,16 @@ index a5fffa51f..b40801479 100644
  
  	drm_gem_object_put(gem_obj);
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 142e973f0..4141084fc 100644
+index 2c0b9bdff..720cbff79 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -7,9 +7,15 @@
+@@ -7,11 +7,15 @@
  #include <drm/drm_file.h>
  #include <drm/drm_gem.h>
  #include <drm/rocket_accel.h>
 +#include <linux/bitmap.h>
-+#include <linux/clk.h>
-+#include <linux/clk-provider.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
 +#include <linux/delay.h>
 +#include <linux/dma-map-ops.h>
  #include <linux/hrtimer.h>
@@ -315,37 +409,35 @@ index 142e973f0..4141084fc 100644
  #include <linux/platform_device.h>
  #include <linux/pm_runtime.h>
  
-@@ -21,6 +27,90 @@
- 
+@@ -24,7 +28,12 @@
  #define JOB_TIMEOUT_MS 500
  
-+/* ---- one-shot regcmd dump for DPU debug --------------------------------- */
+ /* ---- one-shot regcmd dump for DPU debug --------------------------------- */
+-static atomic_t regcmd_dump_done = ATOMIC_INIT(0);
 +/*
 + * Each inference task is a separate DRM job (task_count=1, next_task_idx=0
 + * always), so a per-job guard never fires.  Use a module-level counter to
 + * dump only the first two jobs across all submissions.
 + */
 +static atomic_t regcmd_dump_job_count = ATOMIC_INIT(0);
-+
-+static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
-+{
-+	struct rocket_task *task;
-+	phys_addr_t phys;
-+	void __iomem *vaddr;
-+	size_t size;
-+	u32 i;
+ 
+ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ {
+@@ -33,9 +42,7 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 	void __iomem *vaddr;
+ 	size_t size;
+ 	u32 i;
+-
+-	if (atomic_xchg(&regcmd_dump_done, 1))
+-		return;
 +	int count;
-+
-+	task = &job->tasks[job->next_task_idx];
-+	size = task->regcmd_count * sizeof(u64);
-+
-+	phys = iommu_iova_to_phys(job->domain->domain, task->regcmd);
-+	if (!phys) {
-+		dev_err(core->dev, "regcmd dump: iova_to_phys(0x%llx)=0\n",
-+			(u64)task->regcmd);
-+		return;
-+	}
-+
+ 
+ 	task = &job->tasks[job->next_task_idx];
+ 	size = task->regcmd_count * sizeof(u64);
+@@ -47,6 +54,34 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 		return;
+ 	}
+ 
 +	count = atomic_inc_return(&regcmd_dump_job_count);
 +
 +	/*
@@ -374,64 +466,167 @@ index 142e973f0..4141084fc 100644
 +	if (count > 2)
 +		return;
 +
-+	vaddr = ioremap_cache(phys, ALIGN(size, PAGE_SIZE));
-+	if (!vaddr) {
-+		dev_err(core->dev, "regcmd dump: ioremap_cache failed\n");
+ 	vaddr = ioremap_cache(phys, ALIGN(size, PAGE_SIZE));
+ 	if (!vaddr) {
+ 		dev_err(core->dev, "regcmd dump: ioremap_cache failed\n");
+@@ -67,9 +102,6 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 		value  = (u32)((entry >> 16) & 0xffffffff);
+ 		reg    = (u16)(entry & 0xffff);
+ 
+-		/* Diagnostic: print ALL regcmd entries (incl. CNA tgt=0x0201,
+-		 * CORE tgt=0x0801) so CNA_CBUF_CON1 DATA_ENTRIES and every
+-		 * op_en / enable write is visible. */
+ 		dev_info(core->dev,
+ 			 "  [%3u] tgt=%04x reg=%04x val=%08x\n",
+ 			 i, target, reg, value);
+@@ -174,12 +206,145 @@ rocket_copy_tasks(struct drm_device *dev,
+ 	return ret;
+ }
+ 
++/*
++ * One-shot conv0 channel-cap probe (diagnostic only).
++ *
++ * Established: conv0 reads the full feature (top dt_rd=9408) + full weights
++ * (wt_rd=96=1536B) from DRAM, geometry latches, all units engage -- yet only
++ * ~2 of 32 output channels reach DRAM (core dt_wr=25088), and the compute runs
++ * its course (~200us) then STOPS (not cut short by PC_DONE). The channel count
++ * GROWS across consecutive un-cleared kicks (0->2->6) and resets on pp CLEAR,
++ * which points at CBUF state, not a static reg value.
++ *
++ * Two phases, one flash:
++ *   Phase ACC: 16 consecutive kicks with NO pp CLEAR between, per-kick dt_wr.
++ *     Does the channel count climb to 32/32 with enough iterations (=> the fix
++ *     is to iterate, find why vendor does it in one task), or ceiling?
++ *   Phase CBUF: patch CBUF_CON0 (regcmd reg 0x1040) in DRAM to several bank
++ *     values, one clean kick each, dt_wr => does any bank config unlock 32 ch?
++ * Each kick polls a FIXED 600us (no PC_DONE break) so dt_wr is the true final
++ * channel count. Self-contained: restores the regcmd + clean PP/INT after.
++ */
++static void rocket_conv0_pp_sweep(struct rocket_core *core, struct rocket_job *job)
++{
++	static atomic_t swept = ATOMIC_INIT(0);
++	static const u32 CBUF_CAND[] = {
++		0x10000000, /* control = vendor conv0 value */
++		0x1000000c, 0x10000020, 0x1000003d, 0x100000ff,
++		0x14000000, 0x1c000000, 0x1f000000,
++	};
++	struct rocket_task *task = &job->tasks[0];
++	phys_addr_t phys;
++	u64 *rv = NULL;
++	size_t size;
++	int idx1040 = -1;
++	u64 orig1040 = 0;
++	u32 amount;
++	int k, s;
++
++#define TL_KICK(_clear)                                                        \
++	do {                                                                   \
++		if (_clear)                                                    \
++			rocket_core_pp_state_init(core);                       \
++		rocket_pc_writel(core, BASE_ADDRESS, 0x1);                     \
++		rocket_cna_writel(core, S_POINTER, 0x0e);                      \
++		rocket_core_writel(core, S_POINTER, 0x0e);                     \
++		rocket_pc_writel(core, BASE_ADDRESS, task->regcmd);            \
++		rocket_pc_writel(core, REGISTER_AMOUNTS,                       \
++				 PC_REGISTER_AMOUNTS_PC_DATA_AMOUNT(amount));  \
++		rocket_pc_writel(core, INTERRUPT_MASK, 0x300);                 \
++		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x300 |               \
++				 PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |          \
++				 PC_INTERRUPT_MASK_RK3576_PC_DONE_1);          \
++		rocket_pc_writel(core, TASK_CON, (0x7u << 16) | 1);            \
++		rocket_pc_writel(core, TASK_DMA_BASE_ADDR, 0);                 \
++		writel(0x80000101, core->stats_iomem + 0x210);                \
++		writel(0x00000101, core->stats_iomem + 0x210);                \
++		writel(0x80000101, core->stats_iomem + 0x410);                \
++		writel(0x00000101, core->stats_iomem + 0x410);                \
++		rocket_pc_writel(core, OPERATION_ENABLE, 1);                   \
++		rocket_pc_writel(core, OPERATION_ENABLE, 0);                   \
++		for (s = 0; s < 600; s++)                                      \
++			udelay(1);                                             \
++	} while (0)
++
++	if (!core->stats_iomem || task->regcmd_count == 0)
 +		return;
-+	}
++	if (atomic_cmpxchg(&swept, 0, 1) != 0)
++		return;
 +
++	amount = (task->regcmd_count + 4 + 2 - 1) / 2 - 1;
++	size = task->regcmd_count * sizeof(u64);
 +	dev_info(core->dev,
-+		 "regcmd dump: count=%u iova=0x%llx phys=0x%llx\n",
-+		 task->regcmd_count, (u64)task->regcmd, (u64)phys);
++		 "rocket CONV0-CAP begin: regcmd=0x%08x count=%u (dt_wr 401408=32ch, 25088=2ch)\n",
++		 (u32)task->regcmd, task->regcmd_count);
 +
-+	for (i = 0; i < task->regcmd_count; i++) {
-+		u64 entry;
-+		u16 target, reg;
-+		u32 value;
++	/* ---- Phase ACC: accumulation across un-cleared kicks ---- */
++	rocket_core_pp_state_init(core);
++	for (k = 0; k < 16; k++) {
++		u32 cdw;
 +
-+		memcpy_fromio(&entry, vaddr + i * sizeof(u64), sizeof(entry));
-+		target = (entry >> 48) & 0xffff;
-+		value  = (u32)((entry >> 16) & 0xffffffff);
-+		reg    = (u16)(entry & 0xffff);
-+
++		TL_KICK(false);          /* no clear: let CBUF state accumulate */
++		cdw = readl(core->stats_iomem + 0x434);
 +		dev_info(core->dev,
-+			 "  [%3u] tgt=%04x reg=%04x val=%08x\n",
-+			 i, target, reg, value);
++			 "rocket CAP-ACC kick%2d: core_dt_wr=%-6u (~%u/32 ch)\n",
++			 k, cdw, cdw / 12544);
 +	}
 +
-+	iounmap(vaddr);
-+}
-+/* ------------------------------------------------------------------------- */
++	/* ---- Phase CBUF: patch CBUF_CON0 (reg 0x1040) and measure ---- */
++	phys = iommu_iova_to_phys(job->domain->domain, task->regcmd);
++	if (phys && pfn_valid(PFN_DOWN(phys))) {
++		rv = (u64 *)phys_to_virt(phys);
++		for (k = 0; k < (int)task->regcmd_count; k++) {
++			if ((rv[k] & 0xffffu) == 0x1040) {
++				idx1040 = k;
++				orig1040 = rv[k];
++				break;
++			}
++		}
++	}
 +
- /*
-  * RK3576: INTERRUPT_MASK bits 28-29 are read-only (hardware rejects the write),
-  * so the PC_DONE completion signal cannot be routed to the GIC via the normal
-@@ -120,6 +210,9 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
++	if (idx1040 >= 0) {
++		dev_info(core->dev, "rocket CAP-CBUF: 0x1040 at entry[%d] orig=0x%08x\n",
++			 idx1040, (u32)((orig1040 >> 16) & 0xffffffffu));
++		for (k = 0; k < (int)ARRAY_SIZE(CBUF_CAND); k++) {
++			u32 cdw;
++
++			rv[idx1040] = (orig1040 & ~(0xffffffffULL << 16)) |
++				      ((u64)CBUF_CAND[k] << 16);
++			arch_sync_dma_for_device(phys, size, DMA_TO_DEVICE);
++
++			TL_KICK(true);
++			cdw = readl(core->stats_iomem + 0x434);
++			dev_info(core->dev,
++				 "rocket CAP-CBUF[0x%08x]: core_dt_wr=%-6u (~%u/32 ch)\n",
++				 CBUF_CAND[k], cdw, cdw / 12544);
++		}
++		/* restore original regcmd value */
++		rv[idx1040] = orig1040;
++		arch_sync_dma_for_device(phys, size, DMA_TO_DEVICE);
++	} else {
++		dev_info(core->dev, "rocket CAP-CBUF: 0x1040 entry not found (phys=%pa)\n",
++			 &phys);
++	}
++
++	rocket_core_pp_state_init(core);
++	rocket_pc_writel(core, INTERRUPT_CLEAR,
++			 0x300 | PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++			 PC_INTERRUPT_MASK_RK3576_PC_DONE_1);
++	dev_info(core->dev, "rocket CONV0-CAP end\n");
++#undef TL_KICK
++}
++
+ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *job)
  {
  	struct rocket_task *task;
  	unsigned int extra_bit;
 +	unsigned int pp_pointer;
-+
-+	dump_regcmd_dpu(core, job);
+ 
+ 	dump_regcmd_dpu(core, job);
++	if (0) /* CAP probe disabled: mechanism understood, stopgap warm loop active */
++		rocket_conv0_pp_sweep(core, job);
  
  	/* Don't queue the job if a reset is in progress */
  	if (atomic_read(&core->reset.pending)) {
-@@ -127,57 +220,222 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
- 		return;
- 	}
+@@ -201,35 +366,58 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
  
-+	/* Hard proof of clock state at job time: rate + framework enable flag. */
-+	{
-+		int ci;
-+
-+		for (ci = 0; ci < ARRAY_SIZE(core->clks); ci++)
-+			dev_info(core->dev,
-+				 "rocket dbg clk[%d] %-9s rate=%lu hw_enabled=%d\n",
-+				 ci, core->clks[ci].id ? core->clks[ci].id : "?",
-+				 core->clks[ci].clk ? clk_get_rate(core->clks[ci].clk) : 0,
-+				 core->clks[ci].clk ? __clk_is_enabled(core->clks[ci].clk) : -1);
-+	}
-+
  	/* GO ! */
  
 +	/*
@@ -466,11 +661,17 @@ index 142e973f0..4141084fc 100644
 -					   CNA_S_POINTER_EXECUTER_PP_EN(1) |
 -					   CNA_S_POINTER_POINTER_PP_MODE(1) |
 -					   extra_bit);
- 
+-
 -	rocket_core_writel(core, S_POINTER, CORE_S_POINTER_POINTER_PP_EN(1) |
 -					    CORE_S_POINTER_EXECUTER_PP_EN(1) |
 -					    CORE_S_POINTER_POINTER_PP_MODE(1) |
 -					    extra_bit);
+-
+-	if (core->dpu_iomem)
+-		rocket_dpu_writel(core, S_POINTER, DPU_S_POINTER_POINTER_PP_EN(1) |
+-						   DPU_S_POINTER_EXECUTER_PP_EN(1) |
+-						   DPU_S_POINTER_POINTER_PP_MODE(1) |
++
 +	/*
 +	 * Per-job S_POINTER arming, EXACTLY matching the vendor commit path
 +	 * (rknpu_job_subcore_commit_pc): it writes S_POINTER=0x0e to CNA (0x1004)
@@ -487,20 +688,25 @@ index 142e973f0..4141084fc 100644
 +						   CNA_S_POINTER_POINTER_PP_EN(1) |
 +						   CNA_S_POINTER_EXECUTER_PP_EN(1) |
 +						   CNA_S_POINTER_POINTER_PP_MODE(1) |
-+						   extra_bit);
-+
+ 						   extra_bit);
+ 
+-	if (core->dpu_rdma_iomem)
+-		rocket_dpu_rdma_writel(core, RDMA_S_POINTER,
+-				       DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1) |
+-				       DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
+-				       DPU_RDMA_RDMA_S_POINTER_POINTER_PP_MODE(1) |
+-				       extra_bit);
 +		rocket_core_writel(core, S_POINTER, CORE_S_POINTER_POINTER(pp_pointer) |
 +						    CORE_S_POINTER_POINTER_PP_EN(1) |
 +						    CORE_S_POINTER_EXECUTER_PP_EN(1) |
 +						    CORE_S_POINTER_POINTER_PP_MODE(1) |
 +						    extra_bit);
 +	}
-+
-+	dev_info(core->dev, "rocket dbg submit: CNA_SPTR=0x%08x CORE_SPTR=0x%08x DPU_SPTR=0x%08x RDMA_SPTR=0x%08x\n",
-+		 rocket_cna_readl(core, S_POINTER),
-+		 rocket_core_readl(core, S_POINTER),
-+		 core->dpu_iomem      ? rocket_dpu_readl(core, S_POINTER)            : 0,
-+		 core->dpu_rdma_iomem ? rocket_dpu_rdma_readl(core, RDMA_S_POINTER)  : 0);
+ 
+ 	dev_info(core->dev, "rocket dbg submit: CNA_SPTR=0x%08x CORE_SPTR=0x%08x DPU_SPTR=0x%08x RDMA_SPTR=0x%08x\n",
+ 		 rocket_cna_readl(core, S_POINTER),
+@@ -238,37 +426,162 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 		 core->dpu_rdma_iomem ? rocket_dpu_rdma_readl(core, RDMA_S_POINTER)  : 0);
  
  	rocket_pc_writel(core, BASE_ADDRESS, task->regcmd);
 +	/*
@@ -574,7 +780,7 @@ index 142e973f0..4141084fc 100644
 +	 */
 +	rocket_pc_writel(core, TASK_DMA_BASE_ADDR,
 +			 PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
-+
+ 
 +	/*
 +	 * Clear + enable the vendor DMA bandwidth counters right before GO, so the
 +	 * post-job readback reflects only this task.  Vendor sequence: write
@@ -587,7 +793,7 @@ index 142e973f0..4141084fc 100644
 +		writel(0x80000101, core->stats_iomem + 0x410);
 +		writel(0x00000101, core->stats_iomem + 0x410);
 +	}
- 
++
 +	/*
 +	 * START the task. Vendor PULSES PC_OP_EN (write 1 then 0, rknpu_job.c:371)
 +	 * — the compute task executes on the pulse. rocket previously only wrote 1
@@ -624,11 +830,21 @@ index 142e973f0..4141084fc 100644
 +		 */
 +		int cna_ds0_first = -1;
 +		u32 cna_ds0_live = 0, cna_fda_live = 0, cna_stat_or = 0;
++		/*
++		 * Also capture DATA_SIZE1 (holds out_ch-1) and the live S_POINTER at
++		 * the moment DS0 first goes non-zero. ds1@first==0x80000000 means the
++		 * executer is reading the pp_state_init DEFAULT group (out_ch=0 → the
++		 * conv0 1/16 bug); ds1==<job value> means geometry latched. sptr@first
++		 * bit0 = which group the executer is on. If DS0 never goes non-zero,
++		 * also record the last DS1 seen so we know what the executer ran with.
++		 */
++		u32 cna_ds1_live = 0, cna_sptr_at = 0, cna_ds1_last = 0;
 +
 +		for (s = 0; s < 4000; s++) {
-+			u32 ds0, stat;
++			u32 ds0, stat, sptr;
 +
-+			if (rocket_cna_readl(core, S_POINTER) & 0x10000)
++			sptr = rocket_cna_readl(core, S_POINTER);
++			if (sptr & 0x10000)
 +				core->exec_ever |= 1;
 +			if (rocket_core_readl(core, S_POINTER) & 0x10000)
 +				core->exec_ever |= 2;
@@ -642,10 +858,13 @@ index 142e973f0..4141084fc 100644
 +			ds0 = rocket_cna_readl(core, DATA_SIZE0);
 +			stat = rocket_cna_readl(core, S_STATUS);
 +			cna_stat_or |= stat;
++			cna_ds1_last = rocket_cna_readl(core, DATA_SIZE1);
 +			if (ds0 && cna_ds0_first < 0) {
 +				cna_ds0_first = s;
 +				cna_ds0_live = ds0;
 +				cna_fda_live = rocket_cna_readl(core, FEATURE_DATA_ADDR);
++				cna_ds1_live = cna_ds1_last;
++				cna_sptr_at = sptr;
 +			}
 +			core->exec_samples++;
 +
@@ -657,15 +876,16 @@ index 142e973f0..4141084fc 100644
 +		}
 +
 +		dev_info(core->dev,
-+			 "rocket dbg cnalive: ds0_first=%d ds0=0x%08x(h=%u,w=%u) fda@first=0x%08x stat_or=0x%08x exec_ever=0x%x samples=%u\n",
++			 "rocket dbg cnalive: ds0_first=%d ds0=0x%08x(h=%u,w=%u) fda@first=0x%08x ds1@first=0x%08x ds1_last=0x%08x sptr@first=0x%08x stat_or=0x%08x exec_ever=0x%x samples=%u\n",
 +			 cna_ds0_first, cna_ds0_live, cna_ds0_live & 0x7ff,
-+			 (cna_ds0_live >> 16) & 0x7ff, cna_fda_live, cna_stat_or,
++			 (cna_ds0_live >> 16) & 0x7ff, cna_fda_live, cna_ds1_live,
++			 cna_ds1_last, cna_sptr_at, cna_stat_or,
 +			 core->exec_ever, core->exec_samples);
 +	}
  
  	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
  	atomic_set(&core->poll_active, 1);
-@@ -349,10 +607,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+@@ -440,10 +753,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
  		return fence;
  	}
  
@@ -694,7 +914,7 @@ index 142e973f0..4141084fc 100644
  	}
  
  	scoped_guard(mutex, &core->job_lock) {
-@@ -373,13 +645,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+@@ -464,13 +791,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
  		return HRTIMER_NORESTART;
  
  	/*
@@ -722,14 +942,10 @@ index 142e973f0..4141084fc 100644
  		atomic_set(&core->poll_active, 0);
  		schedule_work(&core->poll_work);
  		return HRTIMER_NORESTART;
-@@ -407,6 +687,270 @@ static void rocket_job_handle_irq(struct rocket_core *core)
- 
- 	pm_runtime_mark_last_busy(core->dev);
- 
-+	dev_info(core->dev, "rocket dbg done: PC_RAW=0x%08x CNA_STAT=0x%08x CORE_STAT=0x%08x\n",
-+		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
-+		 rocket_cna_readl(core, S_STATUS),
-+		 rocket_core_readl(core, S_STATUS));
+@@ -502,6 +837,208 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
+ 		 rocket_cna_readl(core, S_STATUS),
+ 		 rocket_core_readl(core, S_STATUS));
 +
 +	/*
 +	 * Vendor DMA bandwidth counters (scale = 2 on RK3576).  dt_wr is the
@@ -932,39 +1148,19 @@ index 142e973f0..4141084fc 100644
 +		 rocket_cna_readl(core, OPERATION_ENABLE),
 +		 core_open,
 +		 core->dpu_iomem ? rocket_dpu_readl(core, OPERATION_ENABLE) : 0);
-+	if (core->dpu_iomem) {
-+		u32 sptr_live = rocket_dpu_readl(core, S_POINTER);
-+		u32 dst_live  = rocket_dpu_readl(core, DST_BASE_ADDR);
-+		u32 dst_g0, w, h, c, dst_wo_test;
-+
-+		/* Briefly switch pointer to group 0 to read the registers DPU actually used */
-+		rocket_dpu_writel(core, S_POINTER, sptr_live & ~0x1u); /* POINTER=0 */
-+		dst_g0 = rocket_dpu_readl(core, DST_BASE_ADDR);
-+		w = rocket_dpu_readl(core, DATA_CUBE_WIDTH);
-+		h = rocket_dpu_readl(core, DATA_CUBE_HEIGHT);
-+		c = rocket_dpu_readl(core, DATA_CUBE_CHANNEL);
-+
-+		/* Write-only test: write sentinel to DST_BASE_ADDR, read back.
-+		 * 0xdeadbeef -> R/W register (actual programmed value = dst_g0 above).
-+		 * 0x00000000 -> write-only register (dst_g0 readback is meaningless). */
-+		rocket_dpu_writel(core, DST_BASE_ADDR, 0xdeadbeef);
-+		dst_wo_test = rocket_dpu_readl(core, DST_BASE_ADDR);
-+
-+		rocket_dpu_writel(core, S_POINTER, sptr_live); /* restore */
-+
-+		dev_info(core->dev,
-+			 "rocket dbg DPU: STAT=0x%08x SPTR=0x%08x OP_EN=0x%08x DST_live=0x%08x DST_g0=0x%08x cube=%ux%ux%u DST_WO=%s\n",
-+			 rocket_dpu_readl(core, S_STATUS),
-+			 sptr_live,
-+			 rocket_dpu_readl(core, OPERATION_ENABLE),
-+			 dst_live, dst_g0, w, h, c,
-+			 dst_wo_test == 0xdeadbeef ? "RW" : "WO");
-+	}
-+	if (core->dpu_rdma_iomem)
-+		dev_info(core->dev, "rocket dbg RDMA: STAT=0x%08x SPTR=0x%08x SRC=0x%08x\n",
-+			 rocket_dpu_rdma_readl(core, RDMA_S_STATUS),
-+			 rocket_dpu_rdma_readl(core, RDMA_S_POINTER),
-+			 rocket_dpu_rdma_readl(core, RDMA_SRC_BASE_ADDR));
+ 	if (core->dpu_iomem) {
+ 		u32 sptr_live = rocket_dpu_readl(core, S_POINTER);
+ 		u32 dst_live  = rocket_dpu_readl(core, DST_BASE_ADDR);
+@@ -535,12 +1072,30 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_STATUS),
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_POINTER),
+ 			 rocket_dpu_rdma_readl(core, RDMA_SRC_BASE_ADDR));
+-	if (core->stats_iomem)
+-		dev_info(core->dev, "rocket dbg stats: dt_wr_top=0x%08x dt_rd_top=0x%08x dt_wr_core=0x%08x dt_rd_core=0x%08x\n",
+-			 readl(core->stats_iomem + 0x0234),
+-			 readl(core->stats_iomem + 0x0238),
+-			 readl(core->stats_iomem + 0x0434),
+-			 readl(core->stats_iomem + 0x0438));
 +	{
 +		/* CNA per-group readback: switch POINTER to read both groups */
 +		u32 cna_sptr_live = rocket_cna_readl(core, S_POINTER);
@@ -989,11 +1185,10 @@ index 142e973f0..4141084fc 100644
 +			 ds0_g1, ds0_g1 & 0x7ff, (ds0_g1 >> 16) & 0x7ff,
 +			 ds1_g1, fda_g1);
 +	}
-+
+ 
  	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
  	rocket_pc_writel(core, INTERRUPT_CLEAR,
- 			 0x1ffff |
-@@ -418,12 +962,19 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -553,12 +1108,19 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  		if (!job)
  			return;
  
@@ -1014,7 +1209,7 @@ index 142e973f0..4141084fc 100644
  		dma_fence_signal(job->done_fence);
  		pm_runtime_put_autosuspend(core->dev);
  		core->in_flight_job = NULL;
-@@ -448,7 +999,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -583,7 +1145,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  		job = core->in_flight_job;
  		if (job) {
  			pm_runtime_put_noidle(core->dev);
@@ -1023,3 +1218,6 @@ index 142e973f0..4141084fc 100644
  			core->in_flight_job = NULL;
  		}
  	}
+-- 
+2.43.0
+

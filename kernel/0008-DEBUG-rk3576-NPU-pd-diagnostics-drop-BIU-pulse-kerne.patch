@@ -1,0 +1,119 @@
+From b5d8dc627bf649e6dc4a50c6196eb55cb10cc554 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Wed, 10 Jun 2026 16:24:51 +1200
+Subject: [PATCH 08/12] DEBUG: rk3576 NPU pd diagnostics + drop BIU pulse
+ (kernel #42, not for upstream)
+
+- pm-domains: log every NPU domain on/off transition; after npu0
+  powers on, read pc VERSION and write/read-back both MMU bank
+  DTE_ADDR regs to tell 'whole block dead' from 'MMU banks dead'.
+- rockchip-iommu: print bank/wrote/read on raw-reset failure and
+  dump_stack() to identify the resume path that hits it.
+- dts: drop SRST_A_RKNN0/1_BIU from the NPU0/NPU1 domain nodes --
+  the pulse never fixed anything (#36-#38 failed without it) and it
+  is an untested variable sitting in the power-on path; keep the
+  five-clock set from the previous commit.
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi |  2 --
+ drivers/iommu/rockchip-iommu.c           |  5 ++-
+ drivers/pmdomain/rockchip/pm-domains.c   | 41 ++++++++++++++++++++++++
+ 3 files changed, 45 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index bb4fe4b18..8645e4a2a 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1074,7 +1074,6 @@ power-domain@RK3576_PD_NPU0 {
+ 								 <&cru CLK_RKNN_DSU0>,
+ 								 <&cru ACLK_RKNN_CBUF>,
+ 								 <&cru HCLK_RKNN_CBUF>;
+-							resets = <&cru SRST_A_RKNN0_BIU>;
+ 							pm_qos = <&qos_npu_m0>;
+ 							#power-domain-cells = <0>;
+ 						};
+@@ -1085,7 +1084,6 @@ power-domain@RK3576_PD_NPU1 {
+ 								 <&cru CLK_RKNN_DSU0>,
+ 								 <&cru ACLK_RKNN_CBUF>,
+ 								 <&cru HCLK_RKNN_CBUF>;
+-							resets = <&cru SRST_A_RKNN1_BIU>;
+ 							pm_qos = <&qos_npu_m1>;
+ 							#power-domain-cells = <0>;
+ 						};
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index ce586919b..73af8191f 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -542,7 +542,10 @@ static int rk_iommu_force_reset(struct rk_iommu *iommu)
+ 		rk_iommu_write(iommu->bases[i], RK_MMU_DTE_ADDR, dte_addr);
+ 
+ 		if (dte_addr != rk_iommu_read(iommu->bases[i], RK_MMU_DTE_ADDR)) {
+-			dev_err(iommu->dev, "Error during raw reset. MMU_DTE_ADDR is not functioning\n");
++			dev_err(iommu->dev, "Error during raw reset. MMU_DTE_ADDR is not functioning (bank %d, wrote 0x%08x, read 0x%08x)\n",
++				i, dte_addr,
++				rk_iommu_read(iommu->bases[i], RK_MMU_DTE_ADDR));
++			dump_stack();	/* XXX rk3576 bring-up diagnostics */
+ 			return -EFAULT;
+ 		}
+ 	}
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index 7a88a9149..aa835c1ab 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -633,6 +633,43 @@ static int rockchip_do_pmu_set_power_domain(struct rockchip_pm_domain *pd,
+ 	return 0;
+ }
+ 
++/* XXX temporary RK3576 NPU bring-up diagnostics -- remove before upstream */
++#define RK3576_NPU_PD_DEBUG
++
++#ifdef RK3576_NPU_PD_DEBUG
++static void rk3576_npu_pd_debug(struct rockchip_pm_domain *pd, bool power_on)
++{
++	static void __iomem *npu0_base;
++	const char *name = pd->genpd.name;
++	u32 ver, rb0, rb1;
++
++	if (strncmp(name, "npu", 3))
++		return;
++
++	pr_info("rk3576-npu-pd: '%s' -> %s\n", name, power_on ? "ON" : "OFF");
++
++	if (!power_on || strcmp(name, "npu0"))
++		return;
++
++	if (!npu0_base)
++		npu0_base = ioremap(0x27700000, 0x4000);
++	if (!npu0_base)
++		return;
++
++	ver = readl(npu0_base + 0x0);		/* pc VERSION ("GKNF") */
++	writel(0xdeadb000, npu0_base + 0x2000);	/* MMU bank0 DTE_ADDR */
++	rb0 = readl(npu0_base + 0x2000);
++	writel(0xdeadb000, npu0_base + 0x2100);	/* MMU bank1 DTE_ADDR */
++	rb1 = readl(npu0_base + 0x2100);
++	writel(0, npu0_base + 0x2000);
++	writel(0, npu0_base + 0x2100);
++	pr_info("rk3576-npu-pd: npu0 ON: ver=0x%08x mmu_dte_rb=0x%08x/0x%08x%s\n",
++		ver, rb0, rb1,
++		(!ver && !rb0 && !rb1) ? " <- BLOCK DEAD" :
++		(ver && !rb0 && !rb1) ? " <- MMU BANKS DEAD, CORE ALIVE" : "");
++}
++#endif
++
+ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ {
+ 	struct rockchip_pmu *pmu = pd->pmu;
+@@ -682,6 +719,10 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ 		rockchip_pmu_restore_qos(pd);
+ 	}
+ 
++#ifdef RK3576_NPU_PD_DEBUG
++	rk3576_npu_pd_debug(pd, power_on);
++#endif
++
+ out:
+ 	rockchip_pmu_ungate_clk(pd, false);
+ 	clk_bulk_disable(pd->num_clks, pd->clks);
+-- 
+2.43.0
+
