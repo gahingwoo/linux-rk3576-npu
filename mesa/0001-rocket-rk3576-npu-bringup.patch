@@ -286,7 +286,7 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..d4c5e6f 100644
+index 1f616df..6fb340d 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
 @@ -86,6 +86,93 @@ calc_raw_output_size(struct rkt_operation *operation)
@@ -442,17 +442,25 @@ index 1f616df..d4c5e6f 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
-@@ -387,6 +506,9 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -387,6 +506,17 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
        compile_operation(subgraph, operation);
     }
  
-+   /* RK3576: repack all tasks into one buffer for whole-graph single-job dispatch. */
-+   rkt_pack_graph_regcmd(subgraph);
++   /*
++    * RK3576 whole-graph single-job dispatch is disabled: the PC does not iterate
++    * PC_TASK_CONTROL task_number on rocket (one OP_EN runs ~1 task and instant-
++    * dones), so packing the graph into one job just confounds per-layer debug.
++    * Leaving graph_regcmd NULL makes rkt_ml_subgraph_invoke use per-operation
++    * dispatch (one job per layer), so each layer — conv0 in particular — runs as
++    * its own task. rkt_pack_graph_regcmd() is kept for when PC iteration works.
++    */
++   if (0)
++      rkt_pack_graph_regcmd(subgraph);
 +
     return &subgraph->base;
  }
  
-@@ -477,6 +599,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -477,6 +607,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
     struct util_dynarray jobs = {0};
     util_dynarray_init(&jobs, NULL);
  
@@ -539,7 +547,7 @@ index 1f616df..d4c5e6f 100644
     util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
                            operation) {
        unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
-@@ -622,6 +824,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+@@ -622,6 +832,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
        free_operation(operation);
     util_dynarray_fini(&subgraph->operations);
  

@@ -91,10 +91,19 @@ index eb6291826..c1f3d032b 100644
 +			  CNA_S_POINTER_POINTER_PP_CLEAR(1));
 +}
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 48eca77ab..d8477a437 100644
+index 48eca77ab..bbfe57eec 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
-@@ -50,6 +50,7 @@ struct rocket_core {
+@@ -13,6 +13,8 @@
+ 
+ #include "rocket_registers.h"
+ 
++struct rocket_iommu_domain;
++
+ #define rocket_pc_readl(core, reg) \
+ 	readl((core)->pc_iomem + (REG_PC_##reg))
+ #define rocket_pc_writel(core, reg, value) \
+@@ -50,10 +52,21 @@ struct rocket_core {
  	void __iomem *dpu_iomem;
  	void __iomem *dpu_rdma_iomem;
  	void __iomem *stats_iomem; /* NPU base+0x2000: dt_wr/dt_rd counters */
@@ -102,7 +111,21 @@ index 48eca77ab..d8477a437 100644
  	struct clk_bulk_data clks[6];
  	struct reset_control_bulk_data resets[1];
  
-@@ -75,6 +76,29 @@ struct rocket_core {
+ 	struct iommu_group *iommu_group;
++	/*
++	 * Attach-once IOMMU: the domain currently attached to iommu_group. rocket
++	 * used to attach in rocket_job_run and detach in the completion handler, i.e.
++	 * once per job; every attach runs rk_iommu_enable's raw MMU reset, which fails
++	 * if a per-job CBUF reset has disturbed the CBUF MMU bank. Instead, attach
++	 * lazily and keep it: a job only (re)attaches when the domain differs from
++	 * this one (context switch) or after a power cycle (runtime_suspend clears
++	 * it so resume re-attaches on a freshly powered, clean MMU). Holds a kref.
++	 */
++	struct rocket_iommu_domain *attached_domain;
+ 
+ 	struct mutex job_lock;
+ 	struct rocket_job *in_flight_job;
+@@ -75,6 +88,29 @@ struct rocket_core {
  	struct work_struct poll_work;
  	atomic_t poll_active;
  
@@ -132,7 +155,7 @@ index 48eca77ab..d8477a437 100644
  	struct drm_gpu_scheduler sched;
  	u64 fence_context;
  	u64 emit_seqno;
-@@ -83,5 +107,6 @@ struct rocket_core {
+@@ -83,5 +119,6 @@ struct rocket_core {
  int rocket_core_init(struct rocket_core *core);
  void rocket_core_fini(struct rocket_core *core);
  void rocket_core_reset(struct rocket_core *core);
@@ -140,10 +163,34 @@ index 48eca77ab..d8477a437 100644
  
  #endif
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 8f6a02d50..532d35f3d 100644
+index 8f6a02d50..a6030de8e 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
-@@ -247,6 +247,8 @@ static int rocket_device_runtime_resume(struct device *dev)
+@@ -68,6 +68,23 @@ rocket_iommu_domain_put(struct rocket_iommu_domain *domain)
+ 	kref_put(&domain->kref, rocket_iommu_domain_destroy);
+ }
+ 
++/*
++ * Attach-once teardown: detach whatever domain is currently bound to the core's
++ * IOMMU group and drop the core's kref. Called on context switch (rocket_job_run
++ * about to attach a different domain), on reset, and on runtime suspend (so the
++ * next resume re-attaches on a freshly powered MMU). No-op if nothing is attached.
++ */
++void
++rocket_core_detach_iommu(struct rocket_core *core)
++{
++	if (!core->attached_domain)
++		return;
++
++	iommu_detach_group(core->attached_domain->domain, core->iommu_group);
++	rocket_iommu_domain_put(core->attached_domain);
++	core->attached_domain = NULL;
++}
++
+ static int
+ rocket_open(struct drm_device *dev, struct drm_file *file)
+ {
+@@ -247,6 +264,8 @@ static int rocket_device_runtime_resume(struct device *dev)
  		return err;
  	}
  
@@ -152,6 +199,20 @@ index 8f6a02d50..532d35f3d 100644
  	return 0;
  }
  
+@@ -261,6 +280,13 @@ static int rocket_device_runtime_suspend(struct device *dev)
+ 	if (!rocket_job_is_idle(&rdev->cores[core]))
+ 		return -EBUSY;
+ 
++	/*
++	 * Attach-once: the MMU loses its programming across this power-down, so drop
++	 * the attachment here (while still clocked) and let the first job after the
++	 * next resume re-attach on a clean, freshly powered MMU.
++	 */
++	rocket_core_detach_iommu(&rdev->cores[core]);
++
+ 	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
+ 
+ 	return 0;
 diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
 index a5fffa51f..b40801479 100644
 --- a/drivers/accel/rocket/rocket_gem.c
@@ -241,7 +302,7 @@ index a5fffa51f..b40801479 100644
  
  	drm_gem_object_put(gem_obj);
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 142e973f0..0ec93525b 100644
+index 142e973f0..280bf12df 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -7,9 +7,15 @@
@@ -510,8 +571,7 @@ index 142e973f0..0ec93525b 100644
 +	 *   ((0x6 | pingpong) << 16) | task_number  ==  (0x7 << 16) | 1.
 +	 */
 +	rocket_pc_writel(core, TASK_CON, (0x7u << 16) | (job->task_count & 0xffffu));
- 
--	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
++
 +	/*
 +	 * Live capture of the vendor RK3576 submit shows PC_DMA_BASE_ADDR = 0 (no
 +	 * task-descriptor dispatch — the descriptor experiment was wrong). The
@@ -520,7 +580,8 @@ index 142e973f0..0ec93525b 100644
 +	 */
 +	rocket_pc_writel(core, TASK_DMA_BASE_ADDR,
 +			 PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
-+
+ 
+-	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
 +	/*
 +	 * Clear + enable the vendor DMA bandwidth counters right before GO, so the
 +	 * post-job readback reflects only this task.  Vendor sequence: write
@@ -639,7 +700,36 @@ index 142e973f0..0ec93525b 100644
  
  	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
  	atomic_set(&core->poll_active, 1);
-@@ -373,13 +660,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+@@ -349,10 +636,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 		return fence;
+ 	}
+ 
+-	ret = iommu_attach_group(job->domain->domain, core->iommu_group);
+-	if (ret < 0) {
+-		dev_err(core->dev, "rocket_job_run: iommu_attach_group failed: %d\n", ret);
+-		return fence;
++	/*
++	 * Attach-once: only (re)attach when this job's domain isn't the one already
++	 * bound. Within a powered session the same context's jobs reuse the existing
++	 * attachment, so we don't re-run rk_iommu_enable's raw MMU reset per job (which
++	 * fails once a per-job CBUF reset has touched the CBUF MMU bank). runtime
++	 * suspend clears attached_domain, so the first job after a resume re-attaches
++	 * on a freshly powered, clean MMU.
++	 */
++	if (core->attached_domain != job->domain) {
++		rocket_core_detach_iommu(core);
++
++		ret = iommu_attach_group(job->domain->domain, core->iommu_group);
++		if (ret < 0) {
++			dev_err(core->dev, "rocket_job_run: iommu_attach_group failed: %d\n", ret);
++			return fence;
++		}
++		kref_get(&job->domain->kref);
++		core->attached_domain = job->domain;
+ 	}
+ 
+ 	scoped_guard(mutex, &core->job_lock) {
+@@ -373,13 +674,21 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
  		return HRTIMER_NORESTART;
  
  	/*
@@ -667,7 +757,7 @@ index 142e973f0..0ec93525b 100644
  		atomic_set(&core->poll_active, 0);
  		schedule_work(&core->poll_work);
  		return HRTIMER_NORESTART;
-@@ -407,6 +702,283 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -407,6 +716,283 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  
  	pm_runtime_mark_last_busy(core->dev);
  
@@ -951,7 +1041,7 @@ index 142e973f0..0ec93525b 100644
  	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
  	rocket_pc_writel(core, INTERRUPT_CLEAR,
  			 0x1ffff |
-@@ -418,6 +990,13 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -418,12 +1004,19 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  		if (!job)
  			return;
  
@@ -965,3 +1055,19 @@ index 142e973f0..0ec93525b 100644
  		if (job->next_task_idx < job->task_count) {
  			rocket_job_hw_submit(core, job);
  			return;
+ 		}
+ 
+-		iommu_detach_group(job->domain->domain, core->iommu_group);
++		/* Attach-once: keep the domain attached (detached on suspend/switch). */
+ 		dma_fence_signal(job->done_fence);
+ 		pm_runtime_put_autosuspend(core->dev);
+ 		core->in_flight_job = NULL;
+@@ -448,7 +1041,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 		job = core->in_flight_job;
+ 		if (job) {
+ 			pm_runtime_put_noidle(core->dev);
+-			iommu_detach_group(job->domain->domain, core->iommu_group);
++			rocket_core_detach_iommu(core);
+ 			core->in_flight_job = NULL;
+ 		}
+ 	}
