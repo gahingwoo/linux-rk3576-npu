@@ -404,10 +404,10 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..8af488e 100644
+index 1f616df..70c0e36 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
-@@ -86,6 +86,93 @@ calc_raw_output_size(struct rkt_operation *operation)
+@@ -86,6 +86,121 @@ calc_raw_output_size(struct rkt_operation *operation)
            output_channels_1 * output_channels_2;
  }
  
@@ -479,6 +479,34 @@ index 1f616df..8af488e 100644
 +         memcpy(dst + g * stride_bytes, src + src_off,
 +                task->regcfg_amount * sizeof(uint64_t));
 +
++         /*
++          * Replace the per-task in-stream broadcast OP_EN (target 0x81, reg
++          * 0x08, value 0x1d) with FOUR per-unit OP_EN writes. The broadcast
++          * engages the units but it writes reg 0x08, and the PC's own reg 0x08
++          * is PC_OPERATION_ENABLE -> it RESTARTS the PC each task and stalls the
++          * task iteration (PC_TASK_STATUS stuck). Each unit has its own OP_EN at
++          * domain+0x08 (CNA 0x1008, CORE 0x3008, DPU 0x4008, RDMA 0x5008), so
++          * writing those engages the units WITHOUT touching the PC -> the PC can
++          * iterate task_number tasks. The 4 writes go into the broadcast slot +
++          * the next 3 (padding within the stride; the broadcast is the task's
++          * last real entry, the rest of the stride is zero-pad NOPs).
++          */
++         uint64_t *task_dst = (uint64_t *)(dst + g * stride_bytes);
++         static const struct { uint16_t tgt, reg; } unit_open[4] = {
++            { 0x201, 0x1008 }, { 0x801, 0x3008 },
++            { 0x1001, 0x4008 }, { 0x2001, 0x5008 },
++         };
++         for (unsigned e = 0; e < task->regcfg_amount; e++) {
++            if (((task_dst[e] >> 48) & 0xffff) == 0x81 &&
++                (task_dst[e] & 0xffff) == 0x08) {
++               for (int k = 0; k < 4 && (e + k) < stride_amount; k++)
++                  task_dst[e + k] = ((uint64_t)unit_open[k].tgt << 48) |
++                                    ((uint64_t)0x1u << 16) |
++                                    (uint64_t)unit_open[k].reg;
++               break;
++            }
++         }
++
 +         task->regcfg_addr = graph_addr + g * stride_bytes;
 +         /*
 +          * Report the (uniform) REAL amount, not the padded stride: the kernel
@@ -501,7 +529,7 @@ index 1f616df..8af488e 100644
  static void
  compile_operation(struct rkt_ml_subgraph *subgraph,
                    struct rkt_operation *operation)
-@@ -119,8 +206,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+@@ -119,8 +234,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
        struct split_task *task =
           util_dynarray_element(&operation->tasks, struct split_task, i);
  
@@ -519,7 +547,7 @@ index 1f616df..8af488e 100644
            * to end */
           unsigned reg_count = util_dynarray_num_elements(&regcfgs[i], uint64_t);
           uint64_t *next_address_reg =
-@@ -170,6 +264,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -170,6 +292,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
  {
     util_dynarray_init(&operation->tasks, NULL);
  
@@ -532,7 +560,7 @@ index 1f616df..8af488e 100644
     operation->depthwise = rkt_is_depthwise(poperation);
     operation->padding_same = poperation->conv.padding_same;
     operation->stride = poperation->conv.stride_x;
-@@ -191,7 +291,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -191,7 +319,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
     operation->weights_width = poperation->conv.weight_tensor->dims[1];
     operation->weights_height = poperation->conv.weight_tensor->dims[2];
     operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
@@ -560,7 +588,7 @@ index 1f616df..8af488e 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
-@@ -357,13 +476,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -357,13 +504,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
     }
  
     /* Create input tensors */
@@ -594,25 +622,54 @@ index 1f616df..8af488e 100644
  
        create_tensor(subgraph, operation->input_index, input_size);
     }
-@@ -387,6 +521,17 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -387,6 +549,46 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
        compile_operation(subgraph, operation);
     }
  
 +   /*
-+    * RK3576 whole-graph single-job dispatch is disabled: the PC does not iterate
-+    * PC_TASK_CONTROL task_number on rocket (one OP_EN runs ~1 task and instant-
-+    * dones), so packing the graph into one job just confounds per-layer debug.
-+    * Leaving graph_regcmd NULL makes rkt_ml_subgraph_invoke use per-operation
-+    * dispatch (one job per layer), so each layer — conv0 in particular — runs as
-+    * its own task. rkt_pack_graph_regcmd() is kept for when PC iteration works.
++    * RK3576 whole-graph single-job dispatch -- DISABLED again. Re-enabling it
++    * (even with the per-resume soft-reset now in place) made the kernel re-kick
++    * each task from a mid-graph regcmd address and mis-stride the PC: ALL layers,
++    * conv0 included, went to distinct=1. The vendor runs the whole graph in ONE
++    * PC submit (task_number=N) and its PC iterates task_number off ONE OP_EN with
++    * a commit sequence byte-identical to rocket's -- but rocket's PC stops after
++    * ~1 task. Per-op keeps conv0 working (distinct=163); the chain breaks because
++    * intermediate layers in their own submit don't read their DRAM input. The
++    * remaining work is making rocket's PC actually iterate task_number off one
++    * OP_EN (true whole-graph), not the per-task re-kick. Keep per-op for now.
 +    */
-+   if (0)
++   /*
++    * RK3576 whole-graph single-job dispatch -- DISABLED (back to per-op).
++    * Whole-graph needs the PC to iterate task_number tasks off one OP_EN, but
++    * rocket's units only engage via an in-stream broadcast OP_EN (target 0x81 ->
++    * all units' reg 0x08 = 0x1d), which ALSO hits the PC's reg 0x08 and restarts
++    * the PC each task -> PC_TASK_STATUS stays 0/N, nothing iterates. Stripping
++    * the in-stream OP_EN and pulsing PC_OP_EN=0x1d from the kernel does NOT
++    * engage the units (a plain pc_writel only writes the PC, not the broadcast),
++    * so all units stay at exec_ever=0. The vendor's units engage straight from
++    * the S_POINTER arming (EXECUTER_PP_EN) with NO in-stream OP_EN; rocket's do
++    * not -- that executer-engages-from-arming gap is the single root of both the
++    * whole-graph PC stall AND the per-op first-job ping-pong race, and it is
++    * undocumented HW state. Keep per-op (conv0 computes occasionally) until it's
++    * cracked. The kernel rocket.multitask_poll path + the strip in
++    * rkt_pack_graph_regcmd remain for the next attempt.
++    */
++   /*
++    * RK3576 whole-graph, gated on ROCKET_WHOLE_GRAPH so the DEFAULT stays the
++    * known-good per-op path (normal inference still runs without the env).
++    * The vendor-exact test: ROCKET_WHOLE_GRAPH=1 (this strips the in-stream
++    * OP_EN) + kernel rocket.multitask_poll=1 + rocket.perjob_ppinit=0 (the vendor
++    * never re-inits the PP state per job) + rocket.wg_open=0x1 (vendor PC_OP_EN
++    * pulse) -- let the units engage from the arming the way the vendor's do,
++    * instead of the in-stream broadcast that restarts the PC.
++    */
++   if (getenv("ROCKET_WHOLE_GRAPH"))
 +      rkt_pack_graph_regcmd(subgraph);
 +
     return &subgraph->base;
  }
  
-@@ -416,6 +561,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -416,6 +618,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
            !operation->addition_input && (operation->add_tensor == -1)) {
           pipe_buffer_copy(pcontext, &input_tensor->base, input, 0, 0,
                            pipe_buffer_size(input));
@@ -639,7 +696,7 @@ index 1f616df..8af488e 100644
        } else {
           unsigned input_width = operation->input_width;
           unsigned input_height = operation->input_height;
-@@ -477,6 +642,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -477,6 +699,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
     struct util_dynarray jobs = {0};
     util_dynarray_init(&jobs, NULL);
  
@@ -726,7 +783,7 @@ index 1f616df..8af488e 100644
     util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
                            operation) {
        unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
-@@ -622,6 +867,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+@@ -622,6 +924,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
        free_operation(operation);
     util_dynarray_fini(&subgraph->operations);
  
@@ -800,10 +857,10 @@ index 04dea3d..60d309a 100644
  
  bool
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..abf2bdd 100644
+index be992fd..3a00353 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
-@@ -3,10 +3,26 @@
+@@ -3,10 +3,42 @@
   * SPDX-License-Identifier: MIT
   */
  
@@ -827,10 +884,26 @@ index be992fd..abf2bdd 100644
 +   return s ? (unsigned)atoi(s) : 0;
 +}
 +
++/*
++ * RK3576 firstconv OUT_CVT board-sweep override. Default = the vendor capture
++ * value (no change). ROCKET_FC_OFFSET / ROCKET_FC_SCALE / ROCKET_FC_SHIFT let
++ * the conv0 requant (DPU 0x40ac/0x40b0/0x40b4) be swept on the board without a
++ * rebuild, to decide whether conv0's flat (distinct=2) output is a real-MAC
++ * being crushed by requant (output lights up when scale is raised / shift
++ * lowered) or a genuine MAC=0 (output stays flat across the whole sweep).
++ * strtoul base 0 accepts 0x.. hex and decimal.
++ */
++static uint32_t
++rkt_env_u32(const char *name, uint32_t def)
++{
++   const char *s = getenv(name);
++   return s ? (uint32_t)strtoul(s, NULL, 0) : def;
++}
++
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +44,454 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +60,454 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -983,9 +1056,9 @@ index be992fd..abf2bdd 100644
 +    * chased to here was actually the CNA FC_CON1=0x777 feature-offset bug below;
 +    * with that fixed these vendor values are the correct requant.
 +    */
-+   R_DPU(0x40ac, 0xfffffffe);   /* OUT_CVT offset */
-+   R_DPU(0x40b0, 0x00005391);   /* OUT_CVT requant scale */
-+   R_DPU(0x40b4, 0x00000019);   /* OUT_CVT shift */
++   R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", 0xfffffffe)); /* OUT_CVT offset */
++   R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", 0x00005391));  /* OUT_CVT requant scale */
++   R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", 0x00000019));  /* OUT_CVT shift */
 +   R_DPU(0x40b8, 0x00003100); /* out_w*out_h */
 +   R_DPU(0x40bc, 0x00000000);
 +   R_DPU(0x40c0, 0x04440100);
@@ -1285,7 +1358,7 @@ index be992fd..abf2bdd 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +505,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,6 +521,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -1302,7 +1375,7 @@ index be992fd..abf2bdd 100644
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
     if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +522,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -48,6 +538,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1338,7 +1411,7 @@ index be992fd..abf2bdd 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +565,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -62,6 +581,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CONV_CON1, con1);
  
@@ -1349,7 +1422,7 @@ index be992fd..abf2bdd 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +577,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +593,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -1357,7 +1430,7 @@ index be992fd..abf2bdd 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +604,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +620,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1394,7 +1467,7 @@ index be992fd..abf2bdd 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +727,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,7 +743,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -1421,7 +1494,7 @@ index be992fd..abf2bdd 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +759,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +775,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -1447,7 +1520,7 @@ index be992fd..abf2bdd 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +816,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +832,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -1457,7 +1530,7 @@ index be992fd..abf2bdd 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1095,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1111,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -1488,7 +1561,7 @@ index be992fd..abf2bdd 100644
  }
  
  void
-@@ -536,7 +1120,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1136,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {

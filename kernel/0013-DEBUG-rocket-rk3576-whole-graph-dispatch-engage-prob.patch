@@ -1,0 +1,471 @@
+From ad7584095721c1e14d810254a507c5c8573187b7 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Thu, 18 Jun 2026 22:21:51 +1200
+Subject: [PATCH] DEBUG: rocket: rk3576 whole-graph dispatch + engage probes
+ (not for upstream)
+
+Whole-graph PC iteration investigation: PC_TASK_STATUS (rk3576 offset 0x48)
+multi-task completion poll with a 50ms cap, full CNA/CORE live register-block
+dump, and per-unit-vs-broadcast OP_EN engage. Adds board-debug module params
+(soft_reset, cpu_replay, double_kick, sptr_override, multitask_poll,
+perjob_ppinit, wg_open, wg_intmask), all default to the working per-op path.
+---
+ drivers/accel/rocket/rocket_core.h |   4 +
+ drivers/accel/rocket/rocket_drv.c  |  19 +-
+ drivers/accel/rocket/rocket_job.c  | 314 ++++++++++++++++++++++++++++-
+ 3 files changed, 331 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 2ee489f9b..78e374463 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -106,6 +106,10 @@ struct rocket_core {
+ 	u32 exec_ever;
+ 	u32 exec_samples;
+ 
++	/* Whole-graph multi-task completion poll: 1ms-tick counter (cap to avoid
++	 * a stalled PC hanging the poll -> sched timeout -> reset cascade). */
++	u32 poll_iters;
++
+ 	/*
+ 	 * Ping-pong parity. The CNA producer alternates register group 0/1 per
+ 	 * dispatched task; the executer must read the same group. Counts tasks
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 1aa2a5384..ed8bc01b2 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -13,11 +13,25 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ 
++#include <linux/moduleparam.h>
++
+ #include "rocket_device.h"
+ #include "rocket_drv.h"
+ #include "rocket_gem.h"
+ #include "rocket_job.h"
+ 
++/*
++ * Board-debug knob: gate the full NPU soft-reset in runtime_resume. Default on
++ * (=1, current behaviour). Set rocket.soft_reset=0 (cmdline) or write 0 to
++ * /sys/module/rocket/parameters/soft_reset to test whether the soft-reset is
++ * what leaves the CBUF/CMAC unable to compute (conv0 MAC=0). Read on every
++ * power-up, so toggling at runtime + a fresh inference after autosuspend picks
++ * up the new value.
++ */
++static int rocket_soft_reset = 1;
++module_param_named(soft_reset, rocket_soft_reset, int, 0644);
++MODULE_PARM_DESC(soft_reset, "Run the full NPU soft-reset on power-up (default 1)");
++
+ /*
+  * Facade device, used to expose a single DRM device to userspace, that
+  * schedules jobs to any RKNN cores in the system.
+@@ -275,7 +289,10 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 	 * reset the CNA streams the full feature+weights from DRAM but the CMAC
+ 	 * reads zero out of an uninitialised CBUF (conv output = zero-point).
+ 	 */
+-	rocket_core_reset(&rdev->cores[core]);
++	if (rocket_soft_reset)
++		rocket_core_reset(&rdev->cores[core]);
++	else
++		dev_info(dev, "rocket dbg: soft_reset=0, skipping full NPU reset\n");
+ 
+ 	rocket_core_pp_state_init(&rdev->cores[core]);
+ 
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 720cbff79..21034c866 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -18,11 +18,108 @@
+ #include <linux/mm.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/moduleparam.h>
+ 
+ #include "rocket_core.h"
+ #include "rocket_device.h"
+ #include "rocket_drv.h"
+ #include "rocket_job.h"
++
++/*
++ * Board-debug knob: before the PC OP_EN, replay the task's regcmd register
++ * writes with the CPU (writel straight to each unit's iomem). The live
++ * register read-back shows the regcmd's ping-pong-grouped CNA registers
++ * (DATA_SIZE0/1, conv config, addrs) never reach the executer's active group
++ * -- both groups sit at the pp_state_init default (DS1=0x80000000) while CPU
++ * writes (pp_state_init's own) DO latch -- so the PC isn't committing the
++ * regcmd writes and every conv runs on empty geometry (MAC=0). If CPU-replaying
++ * the regcmd makes the conv compute, that's the proof + the fix direction.
++ * rocket.cpu_replay=1 (cmdline) or /sys/module/rocket/parameters/cpu_replay.
++ */
++static int rocket_cpu_replay;
++module_param_named(cpu_replay, rocket_cpu_replay, int, 0644);
++MODULE_PARM_DESC(cpu_replay, "CPU-replay the regcmd register writes before OP_EN (default 0)");
++
++/*
++ * Board-debug knob: pulse OP_EN TWICE per job (warmup kick + real kick, with a
++ * settle delay between). conv0 (the first job of each inference) loses a
++ * ping-pong-latch race ~90% of the time -- the regcmd geometry lands in the
++ * producer group but the executer reads the stale group (pp_init default
++ * DS1=0x80000000), so it runs an empty conv (MAC=0); once in a while it commits
++ * in time and conv0 produces a real distinct=93 feature map. The warmup kick
++ * advances the pp pointers so the second (real) kick's executer reads the group
++ * the first kick wrote the geometry into -> reliable latch. rocket.double_kick=1
++ * or /sys/module/rocket/parameters/double_kick.
++ */
++static int rocket_double_kick;
++module_param_named(double_kick, rocket_double_kick, int, 0644);
++MODULE_PARM_DESC(double_kick, "Warmup-kick each job before the real OP_EN (default 0)");
++
++/*
++ * Board-debug knob: override the CNA/CORE S_POINTER arming value (and patch the
++ * regcmd's own 0x1004/0x3004 S_POINTER entries to match) so the ping-pong
++ * group selection can be swept on the board. conv0's geometry lands in the
++ * producer group but the executer reads the stale group -> empty conv. Default
++ * -1 = no override (current 0x0e = POINTER 0, PP on). Try 0x0f (POINTER 1),
++ * 0x00 / 0x01 (PP off, single group: producer == executer). Set via
++ * rocket.sptr_override=0xN (cmdline) or /sys/module/rocket/parameters/sptr_override.
++ */
++static int rocket_sptr_override = -1;
++module_param_named(sptr_override, rocket_sptr_override, int, 0644);
++MODULE_PARM_DESC(sptr_override, "Override CNA/CORE S_POINTER arming + regcmd entries (default -1=off)");
++
++/*
++ * Whole-graph multi-task completion. The current poll finalises on the FIRST
++ * PC_DONE = one task only. The vendor instead reads PC_TASK_STATUS (RK3576
++ * offset 0x48, not the RK3588 header's 0x3c) & task_number_mask (0xffff) for the
++ * count of COMPLETED tasks and waits until it reaches task_number. With this on,
++ * the poll waits for all N tasks of a whole-graph job (and logs the count's
++ * progression -> does the PC iterate 1->2->..->N, or stall at 1?), with a hard
++ * tick cap so a stalled PC can't hang the poll -> sched-timeout -> reset/iommu
++ * cascade. rocket.multitask_poll=1 or /sys/module/rocket/parameters/multitask_poll.
++ */
++static int rocket_multitask_poll;
++module_param_named(multitask_poll, rocket_multitask_poll, int, 0644);
++MODULE_PARM_DESC(multitask_poll, "Wait for PC_TASK_STATUS==task_count, not first PC_DONE (default 0)");
++
++/* RK3576 PC_TASK_STATUS lives at 0x48 (vendor pc_task_status_offset), low 16
++ * bits = completed task count; the RK3588-derived header puts it at 0x3c. */
++#define RK3576_PC_TASK_STATUS_OFF   0x48
++#define RK3576_PC_TASK_NUMBER_MASK  0xffff
++
++/*
++ * Per-job PP state init. rocket re-runs rocket_core_pp_state_init (S_POINTER
++ * group reset + DS1=0x80000000 to both groups + POINTER_PP_CLEAR) at the head of
++ * EVERY job. The vendor does NOT: rk3576_state_init runs only at probe / after a
++ * soft-reset, never in commit_pc. That per-job reset (which writes the degenerate
++ * DS1 default into both groups and clears the pointers right before the regcmd
++ * writes the real geometry) is a prime suspect for why rocket's executers don't
++ * engage from the arming the way the vendor's do. Default 1 = current; set 0 to
++ * match the vendor (init/resume only). rocket.perjob_ppinit.
++ */
++static int rocket_perjob_ppinit = 1;
++module_param_named(perjob_ppinit, rocket_perjob_ppinit, int, 0644);
++MODULE_PARM_DESC(perjob_ppinit, "Re-run pp_state_init at the head of every job (default 1)");
++
++/*
++ * Whole-graph PC_OP_EN pulse value. Vendor pulses 0x1 (PC start; units engage
++ * from the arming). 0x1d is the broadcast that also force-engages the units but
++ * restarts the PC. Default 0x1 (vendor) -- pair with ROCKET_WHOLE_GRAPH=1 +
++ * multitask_poll=1 + perjob_ppinit=0 to test arming-engage. rocket.wg_open.
++ */
++static int rocket_wg_open = 0x1;
++module_param_named(wg_open, rocket_wg_open, int, 0644);
++MODULE_PARM_DESC(wg_open, "PC_OP_EN pulse value for whole-graph jobs (default 0x1)");
++
++/*
++ * INTERRUPT_MASK for whole-graph jobs. The PC finalises (OP_EN->0) after task 0
++ * with the fixed 0x300; the vendor sets it to the LAST task's int_mask and the
++ * PC auto-tracks task_number for the others. Try 0 (don't arm PC_DONE per task)
++ * to see if the PC then iterates past task 0. rocket.wg_intmask (default 0x300).
++ */
++static int rocket_wg_intmask = 0x300;
++module_param_named(wg_intmask, rocket_wg_intmask, int, 0644);
++MODULE_PARM_DESC(wg_intmask, "INTERRUPT_MASK for whole-graph jobs (default 0x300)");
+ #include "rocket_registers.h"
+ 
+ #define JOB_TIMEOUT_MS 500
+@@ -346,6 +443,37 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	if (0) /* CAP probe disabled: mechanism understood, stopgap warm loop active */
+ 		rocket_conv0_pp_sweep(core, job);
+ 
++	/*
++	 * REVERTED (per-op chain bit26 test): clearing CNA CBUF_CON0 (0x1040)
++	 * bit26 on intermediate tasks did NOT make them read the prior layer's
++	 * DRAM output (board run: intermediate feature still distinct=1), and the
++	 * regcmd scan/arch_sync in hw_submit is a suspect for conv0 regressing to
++	 * distinct=2. Disabled (if (0)) to isolate; conv0 was untouched by it
++	 * anyway (0x1040 already 0x10000000). Left in tree for reference.
++	 */
++	if (0)
++	for (int ti = 0; ti < job->task_count; ti++) {
++		struct rocket_task *t = &job->tasks[ti];
++		phys_addr_t p = t->regcmd_count ?
++			iommu_iova_to_phys(job->domain->domain, t->regcmd) : 0;
++		u64 *rv;
++		int i;
++
++		if (!p || !pfn_valid(PFN_DOWN(p)))
++			continue;
++		rv = (u64 *)phys_to_virt(p);
++		for (i = 0; i < (int)t->regcmd_count; i++) {
++			if ((rv[i] & 0xffffu) == 0x1040 &&
++			    (rv[i] & (0x04000000ULL << 16))) {
++				rv[i] &= ~(0x04000000ULL << 16);
++				arch_sync_dma_for_device(p,
++					t->regcmd_count * sizeof(u64),
++					DMA_TO_DEVICE);
++				break;
++			}
++		}
++	}
++
+ 	/* Don't queue the job if a reset is in progress */
+ 	if (atomic_read(&core->reset.pending)) {
+ 		dev_err(core->dev, "rocket_job_hw_submit: bailing, reset pending\n");
+@@ -374,8 +502,13 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 * executer keeps auto-advancing), so the executer reads an empty group. The
+ 	 * CLEAR bit resets BOTH pointers to 0, realigning producer and consumer on
+ 	 * group 0. The per-job CNA CLEAR write does latch at submit time on RK3576.
++	 *
++	 * BUT the vendor does NOT do this per job (only at init/reset) -- see the
++	 * rocket.perjob_ppinit knob; skipping it tests whether this per-job reset is
++	 * what stops the executers engaging from the arming.
+ 	 */
+-	rocket_core_pp_state_init(core);
++	if (rocket_perjob_ppinit)
++		rocket_core_pp_state_init(core);
+ 
+ 	task = &job->tasks[job->next_task_idx];
+ 	/*
+@@ -405,7 +538,42 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	pp_pointer = 0;
+ 	core->pp_task_idx++;
+ 
+-	{
++	if (rocket_sptr_override >= 0) {
++		u32 sp = (u32)rocket_sptr_override | extra_bit;
++
++		rocket_cna_writel(core, S_POINTER, sp);
++		rocket_core_writel(core, S_POINTER, sp);
++
++		/*
++		 * The regcmd's own entry[0]/[1] re-write S_POINTER (CNA 0x1004,
++		 * CORE 0x3004) to 0x0e on every kick, undoing the arming above.
++		 * Patch those entries in DRAM so the swept value sticks.
++		 */
++		{
++			phys_addr_t rp = task->regcmd_count ?
++				iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
++
++			if (rp && pfn_valid(PFN_DOWN(rp))) {
++				u64 *rv = (u64 *)phys_to_virt(rp);
++				int i;
++
++				for (i = 0; i < (int)task->regcmd_count; i++) {
++					u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
++					u16 reg = (u16)(rv[i] & 0xffff);
++
++					if ((tgt == 0x0201 && reg == 0x1004) ||
++					    (tgt == 0x0801 && reg == 0x3004)) {
++						rv[i] = ((u64)tgt << 48) |
++							((u64)(u32)rocket_sptr_override << 16) |
++							reg;
++					}
++				}
++				arch_sync_dma_for_device(rp,
++					task->regcmd_count * sizeof(u64),
++					DMA_TO_DEVICE);
++			}
++		}
++	} else {
+ 		rocket_cna_writel(core, S_POINTER, CNA_S_POINTER_POINTER(pp_pointer) |
+ 						   CNA_S_POINTER_POINTER_PP_EN(1) |
+ 						   CNA_S_POINTER_EXECUTER_PP_EN(1) |
+@@ -445,7 +613,8 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 * (REG_WRITE(last_task->int_mask, INT_MASK); REG_WRITE(first_task->int_mask,
+ 	 * INT_CLEAR)). For one task first==last==0x300.
+ 	 */
+-	rocket_pc_writel(core, INTERRUPT_MASK, 0x300);
++	rocket_pc_writel(core, INTERRUPT_MASK,
++			 (job->task_count > 1) ? (u32)rocket_wg_intmask : 0x300);
+ 	/*
+ 	 * Clear 0x300 (vendor int_mask) AND the PC_DONE bits (28/29). PC_DONE is
+ 	 * INTERRUPT_RAW_STATUS-only and latched; if a previous job's PC_DONE is still
+@@ -472,6 +641,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 */
+ 	rocket_pc_writel(core, TASK_CON, (0x7u << 16) | (job->task_count & 0xffffu));
+ 
++	if (job->task_count > 1)
++		dev_info(core->dev,
++			 "rocket dbg wgsubmit: task_count=%u TASK_CON=0x%08x DATA_ADDR=0x%08x DATA_AMOUNT=0x%08x INT_MASK=0x%08x TASK_STATUS=%u\n",
++			 job->task_count,
++			 rocket_pc_readl(core, TASK_CON),
++			 rocket_pc_readl(core, BASE_ADDRESS),
++			 rocket_pc_readl(core, REGISTER_AMOUNTS),
++			 rocket_pc_readl(core, INTERRUPT_MASK),
++			 readl(core->pc_iomem + RK3576_PC_TASK_STATUS_OFF) &
++				 RK3576_PC_TASK_NUMBER_MASK);
++
+ 	/*
+ 	 * Live capture of the vendor RK3576 submit shows PC_DMA_BASE_ADDR = 0 (no
+ 	 * task-descriptor dispatch — the descriptor experiment was wrong). The
+@@ -503,8 +683,68 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 * OPERATION_ENABLE can no longer be used as a completion signal — rely on
+ 	 * PC_DONE (INTERRUPT_RAW_STATUS bits 28/29) exclusively.
+ 	 */
+-	rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
+-	rocket_pc_writel(core, OPERATION_ENABLE, 0);
++	if (rocket_cpu_replay) {
++		phys_addr_t rp = task->regcmd_count ?
++			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
++
++		if (rp && pfn_valid(PFN_DOWN(rp))) {
++			const u64 *rv = (const u64 *)phys_to_virt(rp);
++			int n = 0, i;
++
++			for (i = 0; i < (int)task->regcmd_count; i++) {
++				u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
++				u16 reg = (u16)(rv[i] & 0xffff);
++				u32 val = (u32)((rv[i] >> 16) & 0xffffffff);
++				void __iomem *base = NULL;
++				u32 off = 0;
++
++				switch (tgt) {
++				case 0x0201: base = core->cna_iomem;      off = reg - 0x1000; break;
++				case 0x0801: base = core->core_iomem;     off = reg - 0x3000; break;
++				case 0x1001: base = core->dpu_iomem;      off = reg - 0x4000; break;
++				case 0x2001: base = core->dpu_rdma_iomem; off = reg - 0x5000; break;
++				default: continue; /* 0x81 broadcast op_en, etc. */
++				}
++				if (base) { writel(val, base + off); n++; }
++			}
++			dev_info(core->dev,
++				 "rocket dbg cpu_replay: wrote %d regcmd entries via CPU\n", n);
++		}
++	}
++
++	if (rocket_double_kick) {
++		/*
++		 * Warmup kick: run the task once on the (stale) executer group to
++		 * advance the ping-pong pointers, settle past the ~200us conv, then
++		 * clear PC_DONE. The real kick below then runs with the executer
++		 * pointing at the group this warmup wrote the geometry into.
++		 */
++		rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
++		rocket_pc_writel(core, OPERATION_ENABLE, 0);
++		udelay(600);
++		rocket_pc_writel(core, INTERRUPT_CLEAR,
++				 0x300 |
++				 PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++				 PC_INTERRUPT_MASK_RK3576_PC_DONE_1);
++	}
++
++	/*
++	 * Whole-graph: pulse PC_OP_EN with the unit-enable broadcast value 0x1d
++	 * (the vendor's enable_mask) ONCE, instead of 0x1. The per-task in-stream
++	 * broadcast OP_EN that mesa used to engage the units writes 0x1d to this
++	 * same PC reg 0x08 -- which RESTARTS the PC mid-stream and stalls the task
++	 * iteration (TASK_STATUS stuck at 0). mesa now strips that in-stream OP_EN
++	 * from the packed graph (multitask_poll path), so a single 0x1d pulse here
++	 * starts the PC AND engages the units, letting the PC iterate task_number
++	 * tasks. Per-op (task_count==1) keeps the 0x1 pulse + in-stream OP_EN.
++	 */
++	if (rocket_multitask_poll && job->task_count > 1) {
++		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
++		rocket_pc_writel(core, OPERATION_ENABLE, 0);
++	} else {
++		rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
++		rocket_pc_writel(core, OPERATION_ENABLE, 0);
++	}
+ 
+ 	/*
+ 	 * Diagnostic: densely sample each unit's EXECUTER bit (S_POINTER bit16)
+@@ -584,6 +824,7 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	}
+ 
+ 	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
++	core->poll_iters = 0;
+ 	atomic_set(&core->poll_active, 1);
+ 	hrtimer_start(&core->poll_timer, ns_to_ktime(RK3576_POLL_INTERVAL_NS),
+ 		      HRTIMER_MODE_REL);
+@@ -803,6 +1044,39 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+ 	 * iteration isn't working yet anyway, so finalise on the first PC_DONE (one
+ 	 * task) to keep the engine stable while that is debugged separately.
+ 	 */
++	/*
++	 * Whole-graph: wait for ALL task_count tasks (PC_TASK_STATUS count), not
++	 * the first PC_DONE. Hard cap at 50 ticks (50ms, well under the sched
++	 * timeout) so a stalled PC finalises gracefully instead of hanging ->
++	 * reset -> iommu death. Logs the count so a 1->N climb (PC iterates) vs a
++	 * stuck-at-1 (PC stalls) is visible.
++	 */
++	if (rocket_multitask_poll && core->in_flight_job &&
++	    core->in_flight_job->task_count > 1) {
++		u32 ntasks = core->in_flight_job->task_count;
++		u32 done = readl(core->pc_iomem + RK3576_PC_TASK_STATUS_OFF) &
++			   RK3576_PC_TASK_NUMBER_MASK;
++		u32 raw = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
++
++		core->poll_iters++;
++		if (done >= ntasks || core->poll_iters >= 50) {
++			dev_info(core->dev,
++				 "rocket dbg multitask: %u/%u tasks done after %ums (PC_RAW=0x%08x OP_EN=0x%x)\n",
++				 done, ntasks, core->poll_iters, raw,
++				 rocket_pc_readl(core, OPERATION_ENABLE));
++			atomic_set(&core->poll_active, 0);
++			schedule_work(&core->poll_work);
++			return HRTIMER_NORESTART;
++		}
++		if (core->poll_iters <= 12 || (core->poll_iters % 10) == 0)
++			dev_info(core->dev,
++				 "rocket dbg multitask: %u/%u tasks @%ums (PC_RAW=0x%08x OP_EN=0x%x)\n",
++				 done, ntasks, core->poll_iters, raw,
++				 rocket_pc_readl(core, OPERATION_ENABLE));
++		hrtimer_forward_now(timer, ns_to_ktime(RK3576_POLL_INTERVAL_NS));
++		return HRTIMER_RESTART;
++	}
++
+ 	if (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
+ 	    (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+ 	     PC_INTERRUPT_MASK_RK3576_PC_DONE_1)) {
+@@ -1097,6 +1371,36 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 			 ds1_g1, fda_g1);
+ 	}
+ 
++	{
++		/*
++		 * Full CNA (0x1000-0x11fc) + CORE (0x3000-0x30fc) LIVE register-block
++		 * dump, ONCE per inference (first job after a >250ms gap = the conv0/
++		 * first conv of that run). Lets a vendor-vs-rocket diff of the post-conv
++		 * hardware state -- and a live-vs-regcmd diff (any register the regcmd
++		 * programmed that reads back different = it never latched) -- find the
++		 * one CNA/CORE register that gates the MAC=0 wall. cna_iomem maps to
++		 * REG_CNA_S_STATUS=0x1000, core_iomem to REG_CORE_S_STATUS=0x3000.
++		 */
++		static atomic_t blk_jobs = ATOMIC_INIT(0);
++		static unsigned long blk_last;
++		unsigned long now = jiffies;
++		u32 off;
++
++		if (blk_last && time_after(now, blk_last + HZ / 4))
++			atomic_set(&blk_jobs, 0);
++		blk_last = now;
++		if (atomic_inc_return(&blk_jobs) == 1) {
++			for (off = 0x1000; off <= 0x11fc; off += 4)
++				dev_info(core->dev,
++					 "rocket dbg CNAREG 0x%04x = 0x%08x\n",
++					 off, readl(core->cna_iomem + (off - 0x1000)));
++			for (off = 0x3000; off <= 0x30fc; off += 4)
++				dev_info(core->dev,
++					 "rocket dbg COREREG 0x%04x = 0x%08x\n",
++					 off, readl(core->core_iomem + (off - 0x3000)));
++		}
++	}
++
+ 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR,
+ 			 0x1ffff |
+-- 
+2.43.0
+
