@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..8977762 100644
+index 82258e7..4f6ccc5 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -3,6 +3,8 @@
@@ -11,7 +11,7 @@ index 82258e7..8977762 100644
  #include "util/u_inlines.h"
  
  #include "rkt_coefs.h"
-@@ -29,19 +31,134 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+@@ -29,19 +31,176 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint8_t *weights_out;
  
@@ -34,8 +34,21 @@ index 82258e7..8977762 100644
 +                              !rkt_is_depthwise(poperation) &&
 +                              input_channels_real <= 4;
 +
++   /*
++    * RK3576 pointwise (1x1) conv uses a compact [oc][ic] weight buffer of
++    * ic*oc bytes (= the 0x101c weight-DMA count), not the generic RK3588
++    * oc*ALIGN(ic,32)*2 packing (2x too big + wrong order). Captured from the
++    * board's working weight buffer.
++    */
++   bool is_rk3576_pointwise = soc == RKT_SOC_RK3576 &&
++                              !rkt_is_depthwise(poperation) &&
++                              input_channels_real > 4 &&
++                              weights_width == 1 && weights_height == 1;
++
 +   if (is_rk3576_firstconv)
 +      weights_size = weights_width * output_channels_real * 4 * 4;
++   else if (is_rk3576_pointwise)
++      weights_size = input_channels_real * output_channels_real;
 +   else
 +      weights_size = weights_width * weights_height * output_channels *
 +                     ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
@@ -145,10 +158,39 @@ index 82258e7..8977762 100644
 +      return rsc;
 +   }
 +
++   /*
++    * RK3576 pointwise (1x1) weight layout, captured from the board's working
++    * weight buffer with a position-encoded pointwise conv: a plain oc-major,
++    * ic-contiguous buffer
++    *
++    *   buf[oc*IC + ic] = w[oc][ic] - 0x80
++    *
++    * IC*OC bytes total (= the 0x101c weight-DMA count), no atomic padding or
++    * interleave. The generic RK3588 packing below writes oc*ALIGN(ic,32)*2 in a
++    * different order, which the CMAC can't consume on a 1x1 layer.
++    */
++   if (is_rk3576_pointwise) {
++      unsigned ic_n = input_channels_real;
++      unsigned oc_n = output_channels_real;
++
++      for (unsigned oc = 0; oc < oc_n; oc++)
++         for (unsigned ic = 0; ic < ic_n; ic++)
++            weights_out[oc * ic_n + ic] = weights_in[oc][0][0][ic] - 0x80;
++
++      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
++         static int task = 0;
++         rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
++      }
++
++      pipe_buffer_unmap(pcontext, transfer_out);
++      pipe_buffer_unmap(pcontext, transfer_in);
++      return rsc;
++   }
++
     unsigned input_channel_groups = WEIGHT_ATOMIC_SIZE;
     if (rkt_is_depthwise(poperation))
        input_channel_groups *= 2;
-@@ -129,6 +246,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
+@@ -129,6 +288,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
     return correction;
  }
  
@@ -180,7 +222,7 @@ index 82258e7..8977762 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +289,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +331,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -362,7 +404,7 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..6fb340d 100644
+index 1f616df..8af488e 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
 @@ -86,6 +86,93 @@ calc_raw_output_size(struct rkt_operation *operation)
@@ -518,7 +560,41 @@ index 1f616df..6fb340d 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
-@@ -387,6 +506,17 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -357,13 +476,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+    }
+ 
+    /* Create input tensors */
++   enum rkt_soc soc = rkt_screen(subgraph->base.context->screen)->soc;
+    util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
+                           operation) {
+-      unsigned input_channels_1 =
+-         DIV_ROUND_UP(operation->input_channels, FEATURE_ATOMIC_SIZE) * 2;
+-      unsigned input_channels_2 = FEATURE_ATOMIC_SIZE;
+-      unsigned input_size = operation->input_width * operation->input_height *
+-                            input_channels_1 * input_channels_2;
++      unsigned input_size;
++
++      if (soc == RKT_SOC_RK3576 && !operation->depthwise &&
++          operation->input_channels <= 4) {
++         /*
++          * RK3576 first-conv (ARGB) reads a TIGHT NHWC input -- 3 bytes/pixel,
++          * row-major buf[(h*W+w)*3+c], no 16-byte-atomic padding (captured from
++          * the board's feature BO). The generic atomic layout (32 B/pixel) makes
++          * the CNA read garbage and the conv output collapses to the zero-point.
++          */
++         input_size = operation->input_width * operation->input_height *
++                      operation->input_channels;
++      } else {
++         unsigned input_channels_1 =
++            DIV_ROUND_UP(operation->input_channels, FEATURE_ATOMIC_SIZE) * 2;
++         unsigned input_channels_2 = FEATURE_ATOMIC_SIZE;
++         input_size = operation->input_width * operation->input_height *
++                      input_channels_1 * input_channels_2;
++      }
+ 
+       create_tensor(subgraph, operation->input_index, input_size);
+    }
+@@ -387,6 +521,17 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
        compile_operation(subgraph, operation);
     }
  
@@ -536,7 +612,34 @@ index 1f616df..6fb340d 100644
     return &subgraph->base;
  }
  
-@@ -477,6 +607,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -416,6 +561,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+           !operation->addition_input && (operation->add_tensor == -1)) {
+          pipe_buffer_copy(pcontext, &input_tensor->base, input, 0, 0,
+                           pipe_buffer_size(input));
++      } else if (screen->soc == RKT_SOC_RK3576 && !operation->depthwise &&
++                 input_channels <= 4) {
++         /*
++          * RK3576 first-conv: copy the NHWC image into the input BO TIGHT and
++          * RAW -- buf[(h*W+w)*3+c] = input[(h*W+w)*3+c], 3 bytes/pixel, no atomic
++          * padding and no -0x80 centering (the captured feature BO holds the raw
++          * pixel bytes; the CNA subtracts the input zero-point itself).
++          */
++         struct pipe_transfer *transfer_out;
++         uint8_t *map = pipe_buffer_map(pcontext, &input_tensor->base,
++                                        PIPE_MAP_WRITE, &transfer_out);
++
++         memcpy(map, inputs[i],
++                operation->input_width * operation->input_height *
++                input_channels);
++         pipe_buffer_unmap(pcontext, transfer_out);
++
++         if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS))
++            rkt_dump_buffer(map, "input", 0, 0, 0,
++                            rkt_get_tensor(subgraph, input_idxs[i])->bo_size);
+       } else {
+          unsigned input_width = operation->input_width;
+          unsigned input_height = operation->input_height;
+@@ -477,6 +642,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
     struct util_dynarray jobs = {0};
     util_dynarray_init(&jobs, NULL);
  
@@ -623,7 +726,7 @@ index 1f616df..6fb340d 100644
     util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
                            operation) {
        unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
-@@ -622,6 +832,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+@@ -622,6 +867,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
        free_operation(operation);
     util_dynarray_fini(&subgraph->operations);
  
