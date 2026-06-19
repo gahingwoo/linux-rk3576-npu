@@ -1,0 +1,46 @@
+From f6668e11332004e0e30e595feb678fd8322e9bcd Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 20 Jun 2026 00:37:58 +1200
+Subject: [PATCH 18/18] DEBUG: rocket: force + log SCMI npu clk_set_rate
+ (PVTPLL test, not for upstream)
+
+assigned-clocks on <&scmi_clk CLK_RKNN_DSU0> silently no-op'd (npu reads 0,
+gates stay on the 786 MHz CRU GPLL path). Default rocket.npu_clk_hz=300000000
+so runtime_resume issues an explicit clk_set_rate on the SCMI npu clock, and
+log req/ret/got to see whether the SCMI NPU clock is settable from the kernel
+(out-of-spec rate-descriptor quirk is suspected).
+---
+ drivers/accel/rocket/rocket_drv.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 728efbd2d..b32516e90 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -42,7 +42,7 @@ MODULE_PARM_DESC(soft_reset, "Run the full NPU soft-reset on power-up (default 1
+  * time relative to the CMAC -- makes conv0 fill MORE channel-banks, that race is
+  * confirmed and a clock ratio is the workaround. clks: [0]aclk [2]npu [4]aclk_cbuf.
+  */
+-static int rocket_npu_clk_hz;
++static int rocket_npu_clk_hz = 300000000;	/* force SCMI/PVTPLL 300 MHz; 0 = leave DT/default */
+ module_param_named(npu_clk_hz, rocket_npu_clk_hz, int, 0644);
+ MODULE_PARM_DESC(npu_clk_hz, "Force the npu (compute) clock rate in Hz on power-up (0=default)");
+ 
+@@ -316,8 +316,12 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 	{
+ 		struct clk_bulk_data *clks = rdev->cores[core].clks;
+ 
+-		if (rocket_npu_clk_hz)
+-			clk_set_rate(clks[2].clk, rocket_npu_clk_hz);
++		if (rocket_npu_clk_hz) {
++			int r = clk_set_rate(clks[2].clk, rocket_npu_clk_hz);
++
++			dev_info(dev, "rocket dbg npu_clk_set: req=%d ret=%d got=%lu\n",
++				 rocket_npu_clk_hz, r, clk_get_rate(clks[2].clk));
++		}
+ 		if (rocket_aclk_hz)
+ 			clk_set_rate(clks[0].clk, rocket_aclk_hz);
+ 		if (rocket_cbuf_clk_hz)
+-- 
+2.43.0
+
