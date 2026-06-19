@@ -1,0 +1,44 @@
+From bda8d9b552289bca6ae84639269b5a3e9bd982b4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Fri, 19 Jun 2026 23:51:53 +1200
+Subject: [PATCH 17/17] arm64: dts: rk3576: route NPU compute clock (DSU0) via
+ SCMI/PVTPLL
+
+The vendor sources clk_rknn_dsu0 through SCMI so TF-A can drive it from the
+PVTPLL (silicon-tracking), which the kernel CRU path cannot (it only muxes the
+fixed PLLs). ACLK_RKNN0/ACLK_RKNN_CBUF are bare gates off DSU0 and follow it.
+Route rknn_core_0's "npu" clock to <&scmi_clk CLK_RKNN_DSU0> and pin a
+conservative 200 MHz (slowest PVTPLL rate) for timing margin. The board's BL31
+already serves CLK_RKNN_DSU0 via SCMI.
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index b622c6fee..b4e7932fe 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1820,10 +1820,19 @@ rknn_core_0: npu@27700000 {
+ 			reg-names = "pc", "cna", "core", "dpu", "dpu_rdma";
+ 			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
+-				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
++				 <&scmi_clk CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
+ 				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
+ 			clock-names = "aclk", "hclk", "npu", "pclk",
+ 				      "aclk_cbuf", "hclk_cbuf";
++			/*
++			 * Route the NPU compute clock (DSU0) through SCMI so TF-A
++			 * sources it from the PVTPLL (silicon-tracking), matching the
++			 * vendor; the CRU path can only mux the fixed PLLs, and ACLK_RKNN0
++			 * / ACLK_RKNN_CBUF are bare gates off DSU0 so they follow it.
++			 * Pin a conservative 200 MHz (slowest PVTPLL rate) for margin.
++			 */
++			assigned-clocks = <&scmi_clk CLK_RKNN_DSU0>;
++			assigned-clock-rates = <200000000>;
+ 			resets = <&cru SRST_A_RKNN0>, <&cru SRST_A_RKNN_CBUF>,
+ 				 <&cru SRST_H_RKNN_CBUF>;
+ 			reset-names = "srst_a", "srst_cbuf_a", "srst_cbuf_h";
+-- 
+2.43.0
+
