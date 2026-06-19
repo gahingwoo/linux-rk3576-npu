@@ -1,0 +1,450 @@
+From f7dcb0c87328c46e74388839f12bba0ce0e86a65 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Fri, 19 Jun 2026 19:29:23 +1200
+Subject: [PATCH] DEBUG: rocket: rk3576 conv0 channel-bank truncation probes
+ (not for upstream)
+
+conv0 still computes a degenerate output ~98% of runs. New done-handler
+instrumentation localises it: a dense 25x16KB output-BO cover map plus a 256-byte
+fine transition scan that pins the exact zero->real boundary. Across many runs the
+boundary lands on 8-channel-bank limits (out 32ch = 4 banks of 8ch, 100352B each),
+filled high-bank-first (ch24-31 -> ch0-7) and cut short at a variable bank, so the
+low channel-banks read back zero. So conv0 is a channel-bank truncation, not a
+random MAC=0 and not a row/input-staging cut.
+
+Also adds rocket.readback_delay_ms (a settle delay before the readback proved the
+truncation is NOT read-too-early), and raises the multitask completion-poll cap to
+500ms (JOB_TIMEOUT_MS 1000) so a slow whole-graph submit finalises gracefully. All
+default to the working per-op path.
+---
+ drivers/accel/rocket/rocket_job.c | 307 ++++++++++++++++++++++++++++--
+ 1 file changed, 295 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 21034c866..4a60a7a44 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -19,6 +19,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/moduleparam.h>
++#include <linux/reset.h>
++#include <linux/io.h>
+ 
+ #include "rocket_core.h"
+ #include "rocket_device.h"
+@@ -82,6 +84,18 @@ static int rocket_multitask_poll;
+ module_param_named(multitask_poll, rocket_multitask_poll, int, 0644);
+ MODULE_PARM_DESC(multitask_poll, "Wait for PC_TASK_STATUS==task_count, not first PC_DONE (default 0)");
+ 
++/*
++ * Board-debug knob: mdelay this many ms in the done-handler BEFORE the output-BO
++ * cover readback. conv0 output fills a growing SUFFIX [k..end] of the buffer (k
++ * varies, occasionally the whole thing) -> looks like the DPU is still draining /
++ * the job was finalised before the write completed. If a delay here fills the
++ * suffix (k->0), the compute is correct but READ TOO EARLY (premature completion);
++ * if the suffix stays partial, the compute genuinely truncates. Default 0.
++ */
++static int rocket_readback_delay_ms;
++module_param_named(readback_delay_ms, rocket_readback_delay_ms, int, 0644);
++MODULE_PARM_DESC(readback_delay_ms, "mdelay before output cover readback (default 0)");
++
+ /* RK3576 PC_TASK_STATUS lives at 0x48 (vendor pc_task_status_offset), low 16
+  * bits = completed task count; the RK3588-derived header puts it at 0x3c. */
+ #define RK3576_PC_TASK_STATUS_OFF   0x48
+@@ -120,9 +134,86 @@ MODULE_PARM_DESC(wg_open, "PC_OP_EN pulse value for whole-graph jobs (default 0x
+ static int rocket_wg_intmask = 0x300;
+ module_param_named(wg_intmask, rocket_wg_intmask, int, 0644);
+ MODULE_PARM_DESC(wg_intmask, "INTERRUPT_MASK for whole-graph jobs (default 0x300)");
++
++/*
++ * Geometry-into-both-groups. The regcmd's ping-pong-grouped CNA/CORE config
++ * (DATA_SIZE0/1, conv config, addrs) does NOT latch via the PC -- both groups
++ * read back the pp_state_init default (DS1=0x80000000); the regcmd value only
++ * reaches the executer's group on the ~1-in-10 commit race. CPU writes DO latch
++ * (pp_state_init's own do). So before OP_EN, CPU-replicate the real config into
++ * BOTH ping-pong groups (same S_POINTER=group sequence pp_state_init uses, but
++ * with the regcmd's values, skipping S_POINTER/OP_EN) -> the executer reads the
++ * real geometry whichever group it consumes. rocket.geom_both=1.
++ */
++static int rocket_geom_both;
++module_param_named(geom_both, rocket_geom_both, int, 0644);
++MODULE_PARM_DESC(geom_both, "CPU-write the regcmd CNA/CORE config into both PP groups (default 0)");
++
++/*
++ * Per-job CBUF reset. conv0 only computes (~1 in 10) on a fresh state right
++ * after a full power-up soft-reset; geom_both ruled out the register geometry,
++ * leaving the CNA->CBUF->CMAC data staging as the racy part (stale CBUF data on
++ * a warm job). Assert+deassert the CBUF reset at the head of each job to give
++ * the CMAC a fresh CBUF. resets[1]=srst_cbuf_a (AXI; disturbs the CBUF MMU bank
++ * -> iommu hazard), resets[2]=srst_cbuf_h (control; iommu-safe but historically
++ * left CORE inconsistent -- the per-job pp_state_init + arming should re-open
++ * it now). rocket.cbuf_reset: 1=H only (safe), 2=A+H, 3=all incl core AXI.
++ */
++static int rocket_cbuf_reset;
++module_param_named(cbuf_reset, rocket_cbuf_reset, int, 0644);
++MODULE_PARM_DESC(cbuf_reset, "Per-job CBUF reset: 1=H, 2=A+H, 3=all (default 0)");
++
++/*
++ * ENABLE_MASK (vendor RKNPU_OFFSET_ENABLE_MASK = NPU base + 0xf008, value 0x1d).
++ * The in-stream "broadcast op_en" (regcmd target 0x81 / reg 0x08) is NOT a PC
++ * op_en -- target 0x81 maps to base 0xf000, so it writes 0xf008 = ENABLE_MASK,
++ * the global engine-enable. rocket's blocks (pc/cna/core/dpu/dpu_rdma) don't map
++ * 0xf008; only the PC reaches it when it processes that regcmd entry. Hypothesis
++ * (per the "missing auto-start mode bit, not an extra GO" reframe): ENABLE_MASK
++ * is a persistent mode that makes the executers auto-start from the S_POINTER
++ * arming. Write it ONCE from the CPU (ioremap NPU+0xf008) before OP_EN to test
++ * whether it makes conv0 reliable / the whole-graph PC iterate. -1 = off.
++ */
++static int rocket_enable_mask = -1;
++module_param_named(enable_mask, rocket_enable_mask, int, 0644);
++MODULE_PARM_DESC(enable_mask, "Write this to NPU+0xf008 ENABLE_MASK before OP_EN (default -1=off)");
++
++#define RK3576_NPU_PHYS_BASE   0x27700000UL
++#define RK3576_ENABLE_MASK_OFF 0xf008
++static void __iomem *rocket_enable_mask_io;
++
++/*
++ * ARM-DBG: rocket-side twin of the vendor capture. Snapshot the full PC control
++ * block (pc_iomem 0x00-0x4c) and each unit's S_POINTER (0x_004, bit16=executer
++ * running) + OPERATION_ENABLE (0x_008) at pre-arm / post-arm / post-op, to diff
++ * against the vendor. Vendor finding: units engage via S_POINTER bit16 (set by
++ * PC_OP_EN), the 0x_008 regs stay 0, and PC 0x18 = 0x8000000f throughout -- the
++ * prime "engage-from-PC mode" candidate. Does rocket's 0x18 match?
++ */
++static void rocket_armdump(struct rocket_core *core, const char *tag)
++{
++	void __iomem *p = core->pc_iomem;
++
++	dev_info(core->dev,
++		 "rocket armdbg %s PC 00=%08x 04=%08x 08=%08x 0c=%08x 10=%08x 14=%08x 18=%08x 1c=%08x 20=%08x 24=%08x 28=%08x 2c=%08x 30=%08x 34=%08x 38=%08x 3c=%08x 40=%08x 44=%08x 48=%08x 4c=%08x\n",
++		 tag, readl(p+0x00), readl(p+0x04), readl(p+0x08), readl(p+0x0c),
++		 readl(p+0x10), readl(p+0x14), readl(p+0x18), readl(p+0x1c),
++		 readl(p+0x20), readl(p+0x24), readl(p+0x28), readl(p+0x2c),
++		 readl(p+0x30), readl(p+0x34), readl(p+0x38), readl(p+0x3c),
++		 readl(p+0x40), readl(p+0x44), readl(p+0x48), readl(p+0x4c));
++	dev_info(core->dev,
++		 "rocket armdbg %s UNIT cna_sp=%08x cna_oe=%08x core_sp=%08x core_oe=%08x dpu_sp=%08x dpu_oe=%08x rdma_sp=%08x rdma_oe=%08x\n",
++		 tag, readl(core->cna_iomem + 0x04), readl(core->cna_iomem + 0x08),
++		 readl(core->core_iomem + 0x04), readl(core->core_iomem + 0x08),
++		 core->dpu_iomem ? readl(core->dpu_iomem + 0x04) : 0,
++		 core->dpu_iomem ? readl(core->dpu_iomem + 0x08) : 0,
++		 core->dpu_rdma_iomem ? readl(core->dpu_rdma_iomem + 0x04) : 0,
++		 core->dpu_rdma_iomem ? readl(core->dpu_rdma_iomem + 0x08) : 0);
++}
++static int rocket_armdbg_done;
+ #include "rocket_registers.h"
+ 
+-#define JOB_TIMEOUT_MS 500
++#define JOB_TIMEOUT_MS 1000
+ 
+ /* ---- one-shot regcmd dump for DPU debug --------------------------------- */
+ /*
+@@ -494,6 +585,47 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 
+ 	/* GO ! */
+ 
++	/*
++	 * ENABLE_MASK (NPU+0xf008) = the global engine-enable the in-stream broadcast
++	 * op_en writes via the PC. Set it from the CPU here, as a persistent mode,
++	 * BEFORE the arming -- to test whether the executers then auto-start from the
++	 * S_POINTER arming alone (the "missing mode bit" hypothesis).
++	 */
++	if (rocket_enable_mask >= 0) {
++		if (!rocket_enable_mask_io)
++			rocket_enable_mask_io = ioremap(RK3576_NPU_PHYS_BASE +
++							RK3576_ENABLE_MASK_OFF, 4);
++		if (rocket_enable_mask_io) {
++			writel((u32)rocket_enable_mask, rocket_enable_mask_io);
++			dev_info(core->dev,
++				 "rocket dbg enable_mask: wrote 0x%x to NPU+0xf008 (read 0x%x)\n",
++				 rocket_enable_mask, readl(rocket_enable_mask_io));
++		}
++	}
++
++	/*
++	 * Per-job CBUF reset (rocket.cbuf_reset) to give the CMAC a fresh CBUF.
++	 * Done here, at the head of the job, before pp_state_init + arming re-apply
++	 * the state. resets[1]=cbuf_a (AXI), resets[2]=cbuf_h (control). H-only is
++	 * iommu-safe (doesn't touch the CBUF MMU bank).
++	 */
++	if (rocket_cbuf_reset) {
++		if (rocket_cbuf_reset & 0x4)        /* 3..7: incl core AXI reset */
++			reset_control_assert(core->resets[0].rstc);
++		if (rocket_cbuf_reset & 0x2)        /* 2,3: + CBUF AXI */
++			reset_control_assert(core->resets[1].rstc);
++		reset_control_assert(core->resets[2].rstc); /* always CBUF ctrl (H) */
++		udelay(10);
++		reset_control_deassert(core->resets[2].rstc);
++		if (rocket_cbuf_reset & 0x2)
++			reset_control_deassert(core->resets[1].rstc);
++		if (rocket_cbuf_reset & 0x4)
++			reset_control_deassert(core->resets[0].rstc);
++		udelay(10);
++		dev_info(core->dev, "rocket dbg cbuf_reset: per-job reset mode %d\n",
++			 rocket_cbuf_reset);
++	}
++
+ 	/*
+ 	 * Re-run the PP state init (S_POINTER 0x1004 = 0x1e, POINTER_PP_CLEAR) at the
+ 	 * head of EVERY job, not just per resume. Without it the executer pointer
+@@ -538,6 +670,9 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	pp_pointer = 0;
+ 	core->pp_task_idx++;
+ 
++	if (!rocket_armdbg_done)
++		rocket_armdump(core, "pre-arm");
++
+ 	if (rocket_sptr_override >= 0) {
+ 		u32 sp = (u32)rocket_sptr_override | extra_bit;
+ 
+@@ -587,6 +722,9 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 						    extra_bit);
+ 	}
+ 
++	if (!rocket_armdbg_done)
++		rocket_armdump(core, "post-arm");
++
+ 	dev_info(core->dev, "rocket dbg submit: CNA_SPTR=0x%08x CORE_SPTR=0x%08x DPU_SPTR=0x%08x RDMA_SPTR=0x%08x\n",
+ 		 rocket_cna_readl(core, S_POINTER),
+ 		 rocket_core_readl(core, S_POINTER),
+@@ -712,6 +850,44 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 		}
+ 	}
+ 
++	if (rocket_geom_both) {
++		phys_addr_t rp = task->regcmd_count ?
++			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
++
++		if (rp && pfn_valid(PFN_DOWN(rp))) {
++			const u64 *rv = (const u64 *)phys_to_virt(rp);
++			u32 sp_cna = rocket_cna_readl(core, S_POINTER);
++			u32 sp_core = rocket_core_readl(core, S_POINTER);
++			int g, i, n = 0;
++
++			for (g = 0; g <= 1; g++) {
++				/* Select group g (POINTER bit), like pp_state_init. */
++				rocket_cna_writel(core, S_POINTER, g);
++				rocket_core_writel(core, S_POINTER, g);
++				for (i = 0; i < (int)task->regcmd_count; i++) {
++					u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
++					u16 reg = (u16)(rv[i] & 0xffff);
++					u32 val = (u32)((rv[i] >> 16) & 0xffffffff);
++
++					if (tgt == 0x0201 && reg != 0x1004 && reg != 0x1008) {
++						writel(val, core->cna_iomem + (reg - 0x1000));
++						n++;
++					} else if (tgt == 0x0801 && reg != 0x3004 &&
++						   reg != 0x3008) {
++						writel(val, core->core_iomem + (reg - 0x3000));
++						n++;
++					}
++				}
++			}
++			/* Restore the armed S_POINTER for the executer. */
++			rocket_cna_writel(core, S_POINTER, sp_cna);
++			rocket_core_writel(core, S_POINTER, sp_core);
++			dev_info(core->dev,
++				 "rocket dbg geom_both: wrote %d CNA/CORE regs into both groups\n",
++				 n);
++		}
++	}
++
+ 	if (rocket_double_kick) {
+ 		/*
+ 		 * Warmup kick: run the task once on the (stale) executer group to
+@@ -740,11 +916,19 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 */
+ 	if (rocket_multitask_poll && job->task_count > 1) {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
++		if (!rocket_armdbg_done)
++			rocket_armdump(core, "post-op1");
+ 		rocket_pc_writel(core, OPERATION_ENABLE, 0);
+ 	} else {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
++		if (!rocket_armdbg_done)
++			rocket_armdump(core, "post-op1");
+ 		rocket_pc_writel(core, OPERATION_ENABLE, 0);
+ 	}
++	if (!rocket_armdbg_done) {
++		rocket_armdump(core, "post-op0");
++		rocket_armdbg_done = 1;
++	}
+ 
+ 	/*
+ 	 * Diagnostic: densely sample each unit's EXECUTER bit (S_POINTER bit16)
+@@ -779,9 +963,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 		 * also record the last DS1 seen so we know what the executer ran with.
+ 		 */
+ 		u32 cna_ds1_live = 0, cna_sptr_at = 0, cna_ds1_last = 0;
++		/*
++		 * OR every INTERRUPT_RAW_STATUS (0x2c) seen across the run, so the CNA
++		 * sub-stage events that fire during the conv accumulate: bit0/1 =
++		 * CNA_FEATURE_0/1, bit2/3 = CNA_WEIGHT_0/1, bit4/5 = CNA_CSC_0/1, 6/7
++		 * CORE, 8/9 DPU, 12/13 DMA_RD/WR_ERROR. Does FEATURE fire (operand
++		 * staged) or only WEIGHT (MAC runs on no feature -> zero)?
++		 */
++		u32 raw_or = 0;
+ 
+ 		for (s = 0; s < 4000; s++) {
+-			u32 ds0, stat, sptr;
++			u32 ds0, stat, sptr, raw;
+ 
+ 			sptr = rocket_cna_readl(core, S_POINTER);
+ 			if (sptr & 0x10000)
+@@ -808,9 +1000,10 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 			}
+ 			core->exec_samples++;
+ 
+-			if (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
+-			    (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+-			     PC_INTERRUPT_MASK_RK3576_PC_DONE_1))
++			raw = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
++			raw_or |= raw;
++			if (raw & (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++				   PC_INTERRUPT_MASK_RK3576_PC_DONE_1))
+ 				break;
+ 			udelay(1);
+ 		}
+@@ -821,6 +1014,12 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 			 (cna_ds0_live >> 16) & 0x7ff, cna_fda_live, cna_ds1_live,
+ 			 cna_ds1_last, cna_sptr_at, cna_stat_or,
+ 			 core->exec_ever, core->exec_samples);
++		dev_info(core->dev,
++			 "rocket dbg rawor: 0x%08x [FEAT0=%d FEAT1=%d WT0=%d WT1=%d CSC0=%d CSC1=%d CORE0=%d CORE1=%d DPU0=%d DPU1=%d RDERR=%d WRERR=%d]\n",
++			 raw_or, !!(raw_or & 0x1), !!(raw_or & 0x2), !!(raw_or & 0x4),
++			 !!(raw_or & 0x8), !!(raw_or & 0x10), !!(raw_or & 0x20),
++			 !!(raw_or & 0x40), !!(raw_or & 0x80), !!(raw_or & 0x100),
++			 !!(raw_or & 0x200), !!(raw_or & 0x1000), !!(raw_or & 0x2000));
+ 	}
+ 
+ 	/* Poll for completion: bits 28-29 (PC_DONE) can't be enabled in INTERRUPT_MASK. */
+@@ -1059,7 +1258,16 @@ static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
+ 		u32 raw = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
+ 
+ 		core->poll_iters++;
+-		if (done >= ntasks || core->poll_iters >= 50) {
++		/*
++		 * Cap raised 50->500 ticks (500ms, under the 1000ms sched timeout) to
++		 * discriminate: with ROCKET_STRIP_OPEN the units engage from the pulse
++		 * (bit16=1) but conv0/task0 output came back distinct=1 (DPU never wrote)
++		 * as often as distinct=2 (wrote zero-point). If a longer wait turns the
++		 * distinct=1 (unwritten) into a written output, 50ms was finalising before
++		 * the DPU committed (cut-short); if it stays distinct=1 with TASK_STATUS
++		 * stuck at 0, the engaged units genuinely stall (no completion handshake).
++		 */
++		if (done >= ntasks || core->poll_iters >= 500) {
+ 			dev_info(core->dev,
+ 				 "rocket dbg multitask: %u/%u tasks done after %ums (PC_RAW=0x%08x OP_EN=0x%x)\n",
+ 				 done, ntasks, core->poll_iters, raw,
+@@ -1162,6 +1370,14 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		last_dump_jiffies = now;
+ 		bdj = atomic_inc_return(&buf_dump_jobs);
+ 
++		/*
++		 * Optionally wait before reading the output BO: if conv0's growing
++		 * suffix fills with this delay, the compute finished but we read too
++		 * early (premature completion); if not, the compute truly truncates.
++		 */
++		if (bdj <= 8 && rocket_readback_delay_ms > 0)
++			mdelay(rocket_readback_delay_ms);
++
+ 		/* CNA input feature (0x1088), CNA weights (0x1110), DPU out (0x4018). */
+ 		static const struct { u16 reg; const char *tag; } probes[] = {
+ 			{ 0x1088, "in " }, { 0x1110, "wt " }, { 0x4018, "out" },
+@@ -1248,7 +1464,13 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 				 */
+ 				{
+ 					static const u32 offs[] = {
+-						0x0, 0x4000, 0x10000, 0x40000
++						0x00000, 0x04000, 0x08000, 0x0c000,
++						0x10000, 0x14000, 0x18000, 0x1c000,
++						0x20000, 0x24000, 0x28000, 0x2c000,
++						0x30000, 0x34000, 0x38000, 0x3c000,
++						0x40000, 0x44000, 0x48000, 0x4c000,
++						0x50000, 0x54000, 0x58000, 0x5c000,
++						0x60000
+ 					};
+ 					u8 sample[ARRAY_SIZE(offs)];
+ 					u8 sdist[ARRAY_SIZE(offs)];
+@@ -1280,11 +1502,72 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 						sdist[o] = min_t(u32, 255,
+ 								 bitmap_weight(seen, 256));
+ 					}
+-					dev_info(core->dev,
+-						 "rocket dbg buf[%d] %s spatial @0/0x4000/0x10000/0x40000: %02x %02x %02x %02x distinct: %u %u %u %u\n",
+-						 bdj, probes[p].tag,
+-						 sample[0], sample[1], sample[2], sample[3],
+-						 sdist[0], sdist[1], sdist[2], sdist[3]);
++					{
++						char covln[200];
++						int cp = 0;
++						u32 oo;
++
++						for (oo = 0; oo < ARRAY_SIZE(offs); oo++)
++							cp += scnprintf(covln + cp, sizeof(covln) - cp,
++									"%u ", sdist[oo]);
++						dev_info(core->dev,
++							 "rocket dbg buf[%d] %s @0x40000=%02x cover16K[0..0x60000]: %s\n",
++							 bdj, probes[p].tag, sample[16], covln);
++					}
++
++					/*
++					 * Fine 256B transition scan (out BO only): pin the exact
++					 * zero->real boundary. lo/3584 integer => NHWC row boundary
++					 * (row-truncation); lo a multiple of 1792 or == 200704 =>
++					 * surface-tiled (channel-surface truncation).
++					 */
++					if (probes[p].reg == 0x4018) {
++						u32 bo = 0x62000, win = 256, off;
++						u32 lo = 0xffffffff, hi = 0, nreal = 0;
++						u32 i2, d2, inpg;
++						phys_addr_t cpage = 1, pg, ph;
++						const u8 *cv = NULL;
++						struct scatterlist sg3;
++						DECLARE_BITMAP(fseen, 256);
++
++						for (off = 0; off + win <= bo; off += win) {
++							pg = (iova + off) & ~0xfffUL;
++							inpg = (iova + off) & 0xfff;
++							if (pg != cpage) {
++								ph = iommu_iova_to_phys(j->domain->domain, pg);
++								cv = NULL;
++								if (ph && pfn_valid(PFN_DOWN(ph))) {
++									sg_init_table(&sg3, 1);
++									sg_set_page(&sg3, pfn_to_page(PFN_DOWN(ph)), PAGE_SIZE, 0);
++									dma_sync_sg_for_cpu(core->dev, &sg3, 1, DMA_FROM_DEVICE);
++									cv = (const u8 *)phys_to_virt(ph);
++								}
++								cpage = pg;
++							}
++							if (!cv)
++								continue;
++							bitmap_zero(fseen, 256);
++							for (i2 = 0; i2 < win; i2++)
++								__set_bit(cv[inpg + i2], fseen);
++							d2 = bitmap_weight(fseen, 256);
++							if (d2 > 2) {
++								if (off < lo)
++									lo = off;
++								if (off > hi)
++									hi = off;
++								nreal++;
++							}
++						}
++						if (nreal)
++							dev_info(core->dev,
++								 "rocket dbg buf[%d] out fine256: lo=0x%x hi=0x%x nreal=%u  lo/3584=%u.%02u lo/1792=%u.%02u (surf=200704)\n",
++								 bdj, lo, hi, nreal,
++								 lo / 3584, (lo % 3584) * 100 / 3584,
++								 lo / 1792, (lo % 1792) * 100 / 1792);
++						else
++							dev_info(core->dev,
++								 "rocket dbg buf[%d] out fine256: no real window\n", bdj);
++					}
+ 				}
+ 			}
+ 		}
+-- 
+2.43.0
+

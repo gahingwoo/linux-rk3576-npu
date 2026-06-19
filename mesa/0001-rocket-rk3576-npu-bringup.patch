@@ -404,10 +404,10 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..70c0e36 100644
+index 1f616df..af3f902 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
-@@ -86,6 +86,121 @@ calc_raw_output_size(struct rkt_operation *operation)
+@@ -86,6 +86,147 @@ calc_raw_output_size(struct rkt_operation *operation)
            output_channels_1 * output_channels_2;
  }
  
@@ -496,13 +496,39 @@ index 1f616df..70c0e36 100644
 +            { 0x201, 0x1008 }, { 0x801, 0x3008 },
 +            { 0x1001, 0x4008 }, { 0x2001, 0x5008 },
 +         };
++         /*
++          * ROCKET_STRIP_OPEN: FULLY strip the in-stream OP_EN (zero the broadcast
++          * slot to a NOP,RATHER than replace it with the 4 per-unit OP_EN writes).
++          * This reproduces the EXACT vendor regcmd (pure config, no in-stream OP_EN)
++          * so the units must engage from the kernel's single PC_OP_EN=0x1 pulse +
++          * S_POINTER arming alone -- the vendor's proven path (post-op1 fingerprint:
++          * every unit S_POINTER -> 0001000f with unit OP_EN 0x_008 staying 0). If
++          * bit16 engages with this, the per-unit-OP_EN workaround is unnecessary and
++          * the PC iterates; if not, engage needs HW state no register carries.
++          */
++         bool do_strip = getenv("ROCKET_STRIP_OPEN") != NULL;
++         /*
++          * ROCKET_UNIT_OPEN: the VALUE written to each unit's OP_EN (default 0x1).
++          * STRIP proved bit16 engages from the pulse but the units never COMPLETE
++          * (PC stuck OP_EN=1, 0/29 tasks, conv0 unwritten) -- so the in-stream OP_EN
++          * drives completion, not just engage. The per-op broadcast that DOES
++          * complete writes 0x1d (the RKNPU enable_mask), while the per-unit path used
++          * only 0x1 (reaches 1/29 then stalls). Try 0x1d per-unit to give the units
++          * the full enable the broadcast gives them, without touching the PC's 0x08.
++          */
++         const char *uo = getenv("ROCKET_UNIT_OPEN");
++         uint32_t unit_open_val = uo ? (uint32_t)strtoul(uo, NULL, 0) : 0x1u;
 +         for (unsigned e = 0; e < task->regcfg_amount; e++) {
 +            if (((task_dst[e] >> 48) & 0xffff) == 0x81 &&
 +                (task_dst[e] & 0xffff) == 0x08) {
-+               for (int k = 0; k < 4 && (e + k) < stride_amount; k++)
-+                  task_dst[e + k] = ((uint64_t)unit_open[k].tgt << 48) |
-+                                    ((uint64_t)0x1u << 16) |
-+                                    (uint64_t)unit_open[k].reg;
++               if (do_strip) {
++                  task_dst[e] = 0; /* NOP: tgt=0 reg=0 val=0 */
++               } else {
++                  for (int k = 0; k < 4 && (e + k) < stride_amount; k++)
++                     task_dst[e + k] = ((uint64_t)unit_open[k].tgt << 48) |
++                                       ((uint64_t)unit_open_val << 16) |
++                                       (uint64_t)unit_open[k].reg;
++               }
 +               break;
 +            }
 +         }
@@ -529,7 +555,7 @@ index 1f616df..70c0e36 100644
  static void
  compile_operation(struct rkt_ml_subgraph *subgraph,
                    struct rkt_operation *operation)
-@@ -119,8 +234,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+@@ -119,8 +260,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
        struct split_task *task =
           util_dynarray_element(&operation->tasks, struct split_task, i);
  
@@ -547,7 +573,7 @@ index 1f616df..70c0e36 100644
            * to end */
           unsigned reg_count = util_dynarray_num_elements(&regcfgs[i], uint64_t);
           uint64_t *next_address_reg =
-@@ -170,6 +292,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -170,6 +318,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
  {
     util_dynarray_init(&operation->tasks, NULL);
  
@@ -560,7 +586,7 @@ index 1f616df..70c0e36 100644
     operation->depthwise = rkt_is_depthwise(poperation);
     operation->padding_same = poperation->conv.padding_same;
     operation->stride = poperation->conv.stride_x;
-@@ -191,7 +319,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -191,7 +345,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
     operation->weights_width = poperation->conv.weight_tensor->dims[1];
     operation->weights_height = poperation->conv.weight_tensor->dims[2];
     operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
@@ -588,7 +614,7 @@ index 1f616df..70c0e36 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
-@@ -357,13 +504,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -357,13 +530,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
     }
  
     /* Create input tensors */
@@ -622,7 +648,7 @@ index 1f616df..70c0e36 100644
  
        create_tensor(subgraph, operation->input_index, input_size);
     }
-@@ -387,6 +549,46 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -387,6 +575,46 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
        compile_operation(subgraph, operation);
     }
  
@@ -669,7 +695,7 @@ index 1f616df..70c0e36 100644
     return &subgraph->base;
  }
  
-@@ -416,6 +618,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -416,6 +644,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
            !operation->addition_input && (operation->add_tensor == -1)) {
           pipe_buffer_copy(pcontext, &input_tensor->base, input, 0, 0,
                            pipe_buffer_size(input));
@@ -696,7 +722,7 @@ index 1f616df..70c0e36 100644
        } else {
           unsigned input_width = operation->input_width;
           unsigned input_height = operation->input_height;
-@@ -477,6 +699,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -477,6 +725,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
     struct util_dynarray jobs = {0};
     util_dynarray_init(&jobs, NULL);
  
@@ -783,7 +809,7 @@ index 1f616df..70c0e36 100644
     util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
                            operation) {
        unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
-@@ -622,6 +924,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+@@ -622,6 +950,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
        free_operation(operation);
     util_dynarray_fini(&subgraph->operations);
  
