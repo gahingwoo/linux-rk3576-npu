@@ -1,0 +1,297 @@
+From fb65293ef161fb9dbd7e67103c2d81a5d317a254 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Fri, 19 Jun 2026 23:37:55 +1200
+Subject: [PATCH 16/16] DEBUG: rocket: rk3576 conv0 regcmd one-shot dump +
+ bring-up probes (not for upstream)
+
+Adds rocket.dump_regcmd=<count> (one-shot full regcmd dump of the next job with
+that entry count, for register-by-register diff against the vendor stream), plus
+accumulated bring-up instrumentation (clock-rate readback, NPU_GRF urgent,
+top-down iova, BO nents/cover probes).
+---
+ drivers/accel/rocket/rocket_drv.c | 66 ++++++++++++++++++++++++
+ drivers/accel/rocket/rocket_gem.c | 25 +++++++--
+ drivers/accel/rocket/rocket_gem.h |  5 ++
+ drivers/accel/rocket/rocket_job.c | 85 +++++++++++++++++++++++++++++--
+ 4 files changed, 174 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index ed8bc01b2..728efbd2d 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -32,6 +32,41 @@ static int rocket_soft_reset = 1;
+ module_param_named(soft_reset, rocket_soft_reset, int, 0644);
+ MODULE_PARM_DESC(soft_reset, "Run the full NPU soft-reset on power-up (default 1)");
+ 
++/*
++ * Board-debug knobs: force NPU clock RATES on power-up (Hz; 0 = leave default).
++ * The vendor manages these via devfreq/OPP (408MHz..1200MHz); rocket only enables
++ * the clocks and runs at the bootloader default. conv0 truncates at a variable
++ * channel-bank, which looks like a CNA-load (DRAM->CBUF) vs CMAC-consume race
++ * across the CBUF's separate clock domain (aclk_cbuf/hclk_cbuf vs npu/aclk). If
++ * SLOWING the compute clock (npu) or the AXI (aclk) -- giving the CNA load more
++ * time relative to the CMAC -- makes conv0 fill MORE channel-banks, that race is
++ * confirmed and a clock ratio is the workaround. clks: [0]aclk [2]npu [4]aclk_cbuf.
++ */
++static int rocket_npu_clk_hz;
++module_param_named(npu_clk_hz, rocket_npu_clk_hz, int, 0644);
++MODULE_PARM_DESC(npu_clk_hz, "Force the npu (compute) clock rate in Hz on power-up (0=default)");
++
++static int rocket_aclk_hz;
++module_param_named(aclk_hz, rocket_aclk_hz, int, 0644);
++MODULE_PARM_DESC(aclk_hz, "Force the aclk (AXI/DMA) clock rate in Hz on power-up (0=default)");
++
++static int rocket_cbuf_clk_hz;
++module_param_named(cbuf_clk_hz, rocket_cbuf_clk_hz, int, 0644);
++MODULE_PARM_DESC(cbuf_clk_hz, "Force the aclk_cbuf clock rate in Hz on power-up (0=default)");
++
++/*
++ * Enable the NPU's DDR URGENT QoS. TRM (RK3576 Part2 11.3.2): RKNN is a high-
++ * bandwidth DDR master on port 1 and contends with VOP etc. NPU_GRF_URGENT_CON0-3
++ * (0x26018000 + 0x6c/0x70/0x74/0x78) bit8 = *_urgent_sel: default 0 = "use internal
++ * shaping" (NOT urgent), bit[7:0] = urgent packet count = 0xff. With sel=0 the NPU's
++ * CBUF load from DRAM is NOT prioritised under contention -> starves -> the conv
++ * truncates a variable channel-bank suffix (the ~10% win = low-contention moments).
++ * Set sel=1 (write-enable in bits[31:16]) so the NPU gets urgent priority. Default 1.
++ */
++static int rocket_npu_urgent = 1;
++module_param_named(npu_urgent, rocket_npu_urgent, int, 0644);
++MODULE_PARM_DESC(npu_urgent, "Enable NPU DDR urgent QoS via NPU_GRF (default 1)");
++
+ /*
+  * Facade device, used to expose a single DRM device to userspace, that
+  * schedules jobs to any RKNN cores in the system.
+@@ -278,6 +313,37 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 		return err;
+ 	}
+ 
++	{
++		struct clk_bulk_data *clks = rdev->cores[core].clks;
++
++		if (rocket_npu_clk_hz)
++			clk_set_rate(clks[2].clk, rocket_npu_clk_hz);
++		if (rocket_aclk_hz)
++			clk_set_rate(clks[0].clk, rocket_aclk_hz);
++		if (rocket_cbuf_clk_hz)
++			clk_set_rate(clks[4].clk, rocket_cbuf_clk_hz);
++		dev_info(dev,
++			 "rocket dbg clk: aclk=%lu hclk=%lu npu=%lu pclk=%lu aclk_cbuf=%lu hclk_cbuf=%lu\n",
++			 clk_get_rate(clks[0].clk), clk_get_rate(clks[1].clk),
++			 clk_get_rate(clks[2].clk), clk_get_rate(clks[3].clk),
++			 clk_get_rate(clks[4].clk), clk_get_rate(clks[5].clk));
++	}
++
++	if (rocket_npu_urgent) {
++		void __iomem *grf = ioremap(0x26018000, 0x100);
++
++		if (grf) {
++			/* URGENT_CON0..3: write-enable bits[8:0], set urgent_sel(bit8)=1, urgent=0xff */
++			writel(0x01ff01ff, grf + 0x6c);
++			writel(0x01ff01ff, grf + 0x70);
++			writel(0x01ff01ff, grf + 0x74);
++			writel(0x01ff01ff, grf + 0x78);
++			dev_info(dev, "rocket dbg npu_urgent: set NPU_GRF URGENT sel=1 (rb0=0x%08x)\n",
++				 readl(grf + 0x6c));
++			iounmap(grf);
++		}
++	}
++
+ 	/*
+ 	 * Full NPU soft-reset on every power-up (mirrors the vendor, which resets
+ 	 * the NPU incl. the CBUF at init). Done here, with clocks on and BEFORE any
+diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
+index b40801479..e896c74be 100644
+--- a/drivers/accel/rocket/rocket_gem.c
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -10,9 +10,23 @@
+ #include <linux/iommu.h>
+ #include <linux/iosys-map.h>
+ 
++#include <linux/moduleparam.h>
++
+ #include "rocket_drv.h"
+ #include "rocket_gem.h"
+ 
++/*
++ * Allocate BO iovas TOP-DOWN (DRM_MM_INSERT_HIGH) instead of best-fit-from-low.
++ * conv0 only computes a correct output when its BOs land at a HIGH iova
++ * (>= ~16MB): board data shows iova < 0x01000000 NEVER computes (0/29) while
++ * iova >= 0x01000000 wins ~60%. rocket's default best-fit packs from the low end,
++ * so most BOs are low and conv0 reads zero; the vendor's iova allocator hands out
++ * high iovas (top-down from the aperture limit) and always computes. Match it.
++ */
++static int rocket_iova_high = 1;
++module_param_named(iova_high, rocket_iova_high, int, 0644);
++MODULE_PARM_DESC(iova_high, "Allocate BO iovas top-down, matching the vendor (default 1)");
++
+ static void rocket_gem_bo_free(struct drm_gem_object *obj)
+ {
+ 	struct rocket_gem_object *bo = to_rocket_bo(obj);
+@@ -89,8 +103,8 @@ int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *
+ 
+ 	mutex_lock(&rocket_priv->mm_lock);
+ 	ret = drm_mm_insert_node_generic(&rocket_priv->mm, &rkt_obj->mm,
+-					 rkt_obj->size, PAGE_SIZE,
+-					 0, 0);
++					 rkt_obj->size, PAGE_SIZE, 0,
++					 rocket_iova_high ? DRM_MM_INSERT_HIGH : 0);
+ 	mutex_unlock(&rocket_priv->mm_lock);
+ 	if (ret)
+ 		goto err;
+@@ -110,8 +124,11 @@ int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *
+ 	rkt_obj->size = ret;
+ 	args->offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
+ 	args->dma_address = rkt_obj->mm.start;
+-	drm_info(dev, "rocket dbg create_bo: iova=0x%llx size=0x%x\n",
+-		 (unsigned long long)rkt_obj->mm.start, rkt_obj->size);
++	drm_info(dev, "rocket dbg create_bo: iova=0x%llx size=0x%x nents=%u orig_nents=%u pages=%u\n",
++		 (unsigned long long)rkt_obj->mm.start, rkt_obj->size,
++		 shmem_obj->sgt ? shmem_obj->sgt->nents : 0,
++		 shmem_obj->sgt ? shmem_obj->sgt->orig_nents : 0,
++		 (unsigned)(rkt_obj->size >> PAGE_SHIFT));
+ 
+ 	ret = drm_gem_handle_create(file, gem_obj, &args->handle);
+ 	if (ret)
+diff --git a/drivers/accel/rocket/rocket_gem.h b/drivers/accel/rocket/rocket_gem.h
+index 240430334..039dbcabf 100644
+--- a/drivers/accel/rocket/rocket_gem.h
++++ b/drivers/accel/rocket/rocket_gem.h
+@@ -15,6 +15,11 @@ struct rocket_gem_object {
+ 	struct drm_mm_node mm;
+ 	size_t size;
+ 	u32 offset;
++
++	/* RK3576 CBUF SRAM (0x3fe80000) backing: the BO's first cache_size bytes are
++	 * mapped to the on-chip SRAM instead of DRAM (the vendor's nbuf/cache_sgt). */
++	struct drm_mm_node sram_node;
++	unsigned long cache_size;
+ };
+ 
+ struct drm_gem_object *rocket_gem_create_object(struct drm_device *dev, size_t size);
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 4a60a7a44..f2067a1e8 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -96,6 +96,19 @@ static int rocket_readback_delay_ms;
+ module_param_named(readback_delay_ms, rocket_readback_delay_ms, int, 0644);
+ MODULE_PARM_DESC(readback_delay_ms, "mdelay before output cover readback (default 0)");
+ 
++/*
++ * Flush the NPU IOMMU TLB before each submit. rk_iommu only zaps the first+last
++ * page on map (assuming the middle pages were never previously mapped) -- but
++ * rocket REUSES iovas via drm_mm, so a large BO's middle pages can keep a prior
++ * BO's stale translation, and the unmap-time full zap is skipped when the IOMMU
++ * is runtime-suspended. The CNA then DMAs stale/zero pages -> conv reads partial
++ * garbage (the channel-bank truncation). The vendor flushes the whole iotlb after
++ * every map (rknpu_gem iommu_flush_iotlb_all); rocket never did. Default ON.
++ */
++static int rocket_tlb_flush = 1;
++module_param_named(tlb_flush, rocket_tlb_flush, int, 0644);
++MODULE_PARM_DESC(tlb_flush, "iommu_flush_iotlb_all before each submit (default 1)");
++
+ /* RK3576 PC_TASK_STATUS lives at 0x48 (vendor pc_task_status_offset), low 16
+  * bits = completed task count; the RK3588-derived header puts it at 0x3c. */
+ #define RK3576_PC_TASK_STATUS_OFF   0x48
+@@ -223,6 +236,16 @@ static int rocket_armdbg_done;
+  */
+ static atomic_t regcmd_dump_job_count = ATOMIC_INIT(0);
+ 
++/*
++ * Set rocket.dump_regcmd=<N> (e.g. 140 for conv0) at runtime to dump the full
++ * entry-by-entry regcmd of the NEXT job whose regcmd_count == N, then it
++ * auto-clears.  Lets us capture a specific op's stream in a fresh dmesg window
++ * (the first-two-jobs boot dump scrolls off before the test loop runs).
++ */
++static int rocket_dump_regcmd;
++module_param_named(dump_regcmd, rocket_dump_regcmd, int, 0644);
++MODULE_PARM_DESC(dump_regcmd, "Dump full regcmd of next job with this regcmd_count (one-shot)");
++
+ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ {
+ 	struct rocket_task *task;
+@@ -266,9 +289,19 @@ static void dump_regcmd_dpu(struct rocket_core *core, struct rocket_job *job)
+ 			 count, task->regcmd_count, fda, dst);
+ 	}
+ 
+-	/* Full entry-by-entry dump for the first two jobs only. */
+-	if (count > 2)
+-		return;
++	/*
++	 * Full entry-by-entry dump: the first two jobs at boot, OR a one-shot
++	 * triggered at runtime via rocket.dump_regcmd=<regcmd_count> (clears
++	 * itself after firing, so it captures exactly one matching job).
++	 */
++	{
++		bool want_oneshot = rocket_dump_regcmd &&
++				    (u32)rocket_dump_regcmd == task->regcmd_count;
++		if (want_oneshot)
++			rocket_dump_regcmd = 0;
++		else if (count > 2)
++			return;
++	}
+ 
+ 	vaddr = ioremap_cache(phys, ALIGN(size, PAGE_SIZE));
+ 	if (!vaddr) {
+@@ -1213,6 +1246,16 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 		core->attached_domain = job->domain;
+ 	}
+ 
++	/*
++	 * Evict any stale NPU-IOMMU TLB entries before the CNA DMAs this job's
++	 * input/weights. rk_iommu's map only zaps first+last page and its unmap zap
++	 * is skipped while runtime-suspended, so a reused iova can carry a previous
++	 * BO's translation -> stale/zero reads -> partial (channel-bank) conv output.
++	 * Vendor does iommu_flush_iotlb_all after every map; mirror it here per-job.
++	 */
++	if (rocket_tlb_flush)
++		iommu_flush_iotlb_all(job->domain->domain);
++
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		core->in_flight_job = job;
+ 		rocket_job_hw_submit(core, job);
+@@ -1338,6 +1381,42 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 			 readl(core->stats_iomem + 0x43c));
+ 	}
+ 
++	/*
++	 * RK3576 has a 1MB CBUF SRAM at 0x3fe80000 (TRM: "CBUF") that RK3588 lacks and
++	 * that rocket (RK3588-derived) never sets up. The CMAC reads the staged feature+
++	 * weights from this CBUF. Dump a few regions post-completion: distinct>2 = the
++	 * CNA staged real data; distinct<=2/nz=0 = empty. Correlate with the conv0 win.
++	 */
++	{
++		static void __iomem *cbuf;
++
++		if (!cbuf)
++			cbuf = ioremap(0x3fe80000, 0x100000);
++		if (cbuf) {
++			static const u32 offs[] = { 0x0, 0x20000, 0x40000, 0x60000, 0x70000 };
++			char ln[180];
++			int lp = 0;
++			u32 o;
++
++			for (o = 0; o < ARRAY_SIZE(offs); o++) {
++				DECLARE_BITMAP(seen, 256);
++				u32 k, d, nz = 0;
++
++				bitmap_zero(seen, 256);
++				for (k = 0; k < 1024; k++) {
++					u8 b = readb(cbuf + offs[o] + k);
++
++					__set_bit(b, seen);
++					nz += !!b;
++				}
++				d = bitmap_weight(seen, 256);
++				lp += scnprintf(ln + lp, sizeof(ln) - lp,
++						"@0x%x:d%u/nz%u ", offs[o], d, nz);
++			}
++			dev_info(core->dev, "rocket dbg cbuf-sram: %s\n", ln);
++		}
++	}
++
+ 	/*
+ 	 * DECISIVE: read the DRAM the just-completed task told the DPU to write.
+ 	 * The perf counters and the DPU DST/cube registers are unreliable (the
+-- 
+2.43.0
+

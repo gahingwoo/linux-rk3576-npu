@@ -1,0 +1,71 @@
+From 760e325dc9c06f4b291b5a906b272db1c37c0c57 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Fri, 19 Jun 2026 23:37:54 +1200
+Subject: [PATCH 15/16] accel/rocket: rk3576: attach both NPU power domains
+ (PD_NPU0 + PD_NPU1)
+
+The vendor's NPU node holds both PD_NPU0 and PD_NPU1 from a single node even
+when computing on one core; the CBUF->CMAC read path is only fully powered
+with NPU1 up. List both power-domains on rknn_core_0 and attach the multi-PD
+list explicitly (a multi-PD device skips the driver-core single-PD auto-attach).
+---
+ .../arm64/boot/dts/rockchip/rk3576-rock-4d.dts |  6 ++++++
+ drivers/accel/rocket/rocket_core.c             | 18 ++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+index 965e0906b..09d2fc98b 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+@@ -873,6 +873,12 @@ vp0_out_hdmi: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
+ 
+ &rknn_core_0 {
+ 	npu-supply = <&vdd_npu_s0>;
++	/*
++	 * Power BOTH NPU domains (NPU0 + NPU1) like the vendor's single NPU node,
++	 * even though rocket computes only on core 0: the CBUF->CMAC read path is
++	 * only fully powered with NPU1 up. rocket attaches the multi-PD list.
++	 */
++	power-domains = <&power RK3576_PD_NPU0>, <&power RK3576_PD_NPU1>;
+ 	status = "okay";
+ };
+ 
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 00d12e5d9..c94793119 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -8,6 +8,7 @@
+ #include <linux/err.h>
+ #include <linux/iommu.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ 
+@@ -115,6 +116,23 @@ int rocket_core_init(struct rocket_core *core)
+ 		return err;
+ 	}
+ 
++	/*
++	 * RK3576: the NPU spans TWO power domains (PD_NPU0 + PD_NPU1). The vendor
++	 * powers BOTH from its single NPU node even when computing on one core --
++	 * the CBUF->CMAC read path only works fully with NPU1 powered. The board DT
++	 * lists both power-domains on rknn_core_0; a multi-PD device skips the
++	 * driver-core single-PD auto-attach, so attach the list explicitly. With
++	 * one PD in DT this is a no-op (returns 1) and behaves as before.
++	 */
++	{
++		struct dev_pm_domain_list *pd_list;
++
++		err = devm_pm_domain_attach_list(dev, NULL, &pd_list);
++		if (err < 0)
++			return dev_err_probe(dev, err,
++					     "failed to attach NPU power domains\n");
++	}
++
+ 	pm_runtime_use_autosuspend(dev);
+ 
+ 	/*
+-- 
+2.43.0
+

@@ -1,63 +1,103 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Boot-time RK3576 NPU inference + automatic output diagnostic.
+# Boot-time RK3576 NPU conv0 KNOB SWEEP — fully automatic, prints to serial.
 #
-# At boot: waits for the accel device, clears the kernel log, runs one Teflon
-# MobileNetV1 inference, captures dmesg, then runs npu-diag.sh to print a
-# root-cause verdict for the all-zero-output problem. Everything lands on the
-# console and in /tmp so it can be read over serial without manual grepping.
+# conv0's regcmd is byte-identical to the vendor, but the executer runs the
+# default ping-pong group (geometry never reaches it) -> all-zero output.
+# This sweeps kernel-knob COMBINATIONS and, per combo, reports:
+#     Top-1 (653 = full win)   nz (non-zero outputs)
+#     out_distinct (conv0's own output: 2 = degenerate 0x7f/0x80, >2 = real)
+#
+# Console kernel spam is silenced during the sweep, and a SUMMARY of every
+# combo is reprinted at the end (+ saved to /tmp/sweep.txt) so nothing scrolls
+# off the serial buffer. The earlier sptr_override=0xe nudged conv0 (2->3), so
+# the sptr/geom_both region is explored more here.
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
 MODEL="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
 IMG="$NPU_DIR/grace_hopper.jpg"
-INFER_LOG=/tmp/npu-infer.log
-DMESG_LOG=/tmp/npu-dmesg.log
+VEND="$NPU_DIR/vendor-conv0.txt"
+P=/sys/module/rocket/parameters
+RES=/tmp/sweep.txt
 export TEFLON_LIB=/usr/lib/libteflon.so
+C=/dev/console
+
+# combos: "cpu_replay geom_both perjob_ppinit sptr_override cbuf_reset"
+COMBOS="
+0 0 1 -1 0
+0 1 1 -1 0
+1 0 1 -1 0
+1 1 1 -1 0
+0 0 0 -1 0
+0 1 0 -1 0
+0 0 1 14 0
+0 1 1 14 0
+1 0 1 14 0
+0 1 0 14 0
+1 1 1 14 0
+0 0 1 30 0
+0 0 1 15 0
+0 0 1 -1 2
+"
+
+run_one() {
+	cr=$1; gb=$2; pp=$3; sp=$4; cb=$5
+	echo "$cr" > $P/cpu_replay     2>/dev/null
+	echo "$gb" > $P/geom_both      2>/dev/null
+	echo "$pp" > $P/perjob_ppinit  2>/dev/null
+	echo "$sp" > $P/sptr_override  2>/dev/null
+	echo "$cb" > $P/cbuf_reset     2>/dev/null
+	dmesg -c >/dev/null 2>&1
+	OUT=$(python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" 2>/dev/null)
+	D=$(dmesg 2>/dev/null)
+	top1=$(echo "$OUT" | sed -n 's/.*Top-1 index: *\([0-9]*\).*/\1/p' | head -1)
+	nz=$(echo "$OUT"   | sed -n 's/.*Raw non-zero: *\([0-9]*\).*/\1/p' | head -1)
+	odist=$(echo "$D"  | grep "buf\[1\] out" | sed -n 's/.*distinct=\([0-9]*\).*/\1/p' | head -1)
+	[ -z "$top1" ] && top1="?"; [ -z "$nz" ] && nz="?"; [ -z "$odist" ] && odist="?"
+	flag=""
+	[ "$top1" = "653" ] && flag="  <<< FULL WIN (653)"
+	[ "$odist" != "?" ] && [ "$odist" != "2" ] && [ "$odist" != "1" ] && [ -z "$flag" ] && flag="  <- conv0 progress"
+	line=$(printf "  cr=%s gb=%s pp=%s sp=%-3s cb=%s -> Top1=%-4s nz=%-5s out_distinct=%s%s" \
+		"$cr" "$gb" "$pp" "$sp" "$cb" "$top1" "$nz" "$odist" "$flag")
+	echo "$line" >> "$RES"
+	echo "$line" > "$C"
+}
 
 start() {
-	# Wait up to ~10s for the accel char device to appear.
 	i=0
-	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do
-		sleep 0.5; i=$((i + 1))
-	done
-	if [ ! -c /dev/accel/accel0 ]; then
-		echo "npudiag: /dev/accel/accel0 never appeared — skipping" > /dev/console
-		return 0
-	fi
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -c /dev/accel/accel0 ] || { echo "npudiag: no accel device — skip" > "$C"; return 0; }
 
+	: > "$RES"
+	dmesg -n 1 2>/dev/null     # silence kernel console spam; ring buffer still grep-able
+	echo "" > "$C"
+	echo "############### NPU conv0 KNOB SWEEP (live) ###############" > "$C"
+
+	echo "$COMBOS" | while read cr gb pp sp cb; do
+		[ -z "$cr" ] && continue
+		run_one "$cr" "$gb" "$pp" "$sp" "$cb"
+	done
+
+	# Reprint the whole table at the end so nothing scrolled off.
 	{
 		echo ""
-		echo "==> npudiag: running boot-time NPU inference (OUT_CVT shift sweep)..."
-	} > /dev/console 2>&1
-
-	# Fresh ring buffer so the diagnostic only sees this run's driver output.
-	dmesg -n 8 2>/dev/null
-	dmesg -c 2>/dev/null >/dev/null
-
-	# Sweep the RK3576 OUT_CVT extra shift. The kernel resets its per-layer
-	# buffer-dump counter on the >250 ms gap between these runs, so each run
-	# re-dumps its first 8 layers. A kmsg marker before each run makes the
-	# matching dump group easy to find in the captured dmesg.
-	for add in 0 7 25; do
-		echo "==================== npudiag SWEEP ROCKET_OUT_SHIFT_ADD=$add" > /dev/kmsg 2>/dev/null
-		ROCKET_OUT_SHIFT_ADD=$add \
-			python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG.$add" 2>&1
-		sleep 1
-	done
-	cp "$INFER_LOG.7" "$INFER_LOG" 2>/dev/null
-
-	dmesg > "$DMESG_LOG" 2>/dev/null
-
-	# Print the inference summary, then the automated verdict, to the console.
-	{
+		echo "############### SWEEP SUMMARY (all combos) ###############"
+		echo "  legend: out_distinct 2 = degenerate 0x7f/0x80, >2 = conv0 computed real values"
+		cat "$RES"
+		echo "  best:"
+		sort -t= -k8 -n "$RES" 2>/dev/null | tail -1
+		echo "----- conv0 regcmd diff vs vendor (default knobs) -----"
+		echo 0 > $P/cpu_replay; echo 0 > $P/geom_both; echo 1 > $P/perjob_ppinit
+		echo -1 > $P/sptr_override; echo 0 > $P/cbuf_reset; echo 140 > $P/dump_regcmd
+		dmesg -c >/dev/null 2>&1
+		python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" >/dev/null 2>&1
+		dmesg > /tmp/npu-dmesg.log 2>/dev/null
+		sh "$NPU_DIR/conv0-diff.sh" /tmp/npu-dmesg.log "$VEND" 2>/dev/null | grep -vE "^    "
+		echo "----- saved: /tmp/sweep.txt  /tmp/npu-dmesg.log -----"
+		echo "############### END (sweep done) ###############"
 		echo ""
-		grep -E "Raw non-zero|Top-1 index|CPU Top-1|INFERENCE OK|FAIL" "$INFER_LOG" 2>/dev/null
-		echo ""
-		sh "$NPU_DIR/npu-diag.sh" "$DMESG_LOG" "$INFER_LOG"
-		echo ""
-		echo "==> npudiag: full logs in $INFER_LOG and $DMESG_LOG"
-	} > /dev/console 2>&1
+	} > "$C" 2>&1
 }
 
 case "$1" in
