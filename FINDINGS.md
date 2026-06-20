@@ -1,0 +1,79 @@
+# RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
+
+**Status:** platform bring-up is solid; **compute is wrong.** Every convolution computes to
+the quantized zero-point. The wall is below the register surface and is handed upstream here.
+
+- HW: Radxa ROCK 4D (RK3576). Stack: mainline **rocket** accel driver + **Mesa Teflon**.
+- Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
+- CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
+
+## Symptom (precise)
+
+- Full graph runs end-to-end: no IOMMU fault, no PC timeout (on the GPLL clock), every layer
+  reads its own real feature data from DRAM (bandwidth counters confirm the CNA pulls the whole
+  input + weights into the CBUF).
+- The **CMAC reads ~0 out of the (correctly loaded) CBUF**: `core[wt_rd=0, dt_rd≈0]`, writes a
+  degenerate output (`dt_wr` = a fraction of the full volume). conv0 output is `distinct=2`
+  (min=0x7f, max=0x80) — i.e. ±(one constant), not a feature map.
+- No per-unit completion ever fires (`INTERRUPT_RAW_STATUS` FEAT/WT/CSC/CORE/DPU all 0); only the
+  PC asserts done, and it does so ~1 µs after OP_EN (`samples=1`) — a hollow, instant "done".
+
+## Confirmed byte-identical to the vendor
+
+Verified on the board with an automated register-by-register diff against a live vendor capture
+(instrumented `rknpu`, real IOMMU addresses):
+
+- **conv0 regcmd**: 138/138 non-address CNA/CORE/DPU/RDMA entries match. The only delta is the
+  broadcast `op_en` word rocket appends (`tgt=0x81 reg=0x08 val=0x1d`) where the vendor folds the
+  same value into its submit header `enable_mask`.
+- **Kernel submit** matches `rknpu_job_subcore_commit_pc` register-for-register: `PC_DATA_ADDR`,
+  `PC_DATA_AMOUNT` (same formula → 71), `INT_MASK`/`INT_CLEAR` = 0x300, `PC_TASK_CONTROL` =
+  `(0x7<<16)|1`, `PC_DMA_BASE` = 0, the `OP_EN` 1→0 pulse, and the `PC_DATA_ADDR=1` pre-write.
+- CBUF geometry (16 banks × 512 × 128 B = 1 MiB), `state_init` (0x1004/0x1024/0x1e), the full
+  soft-reset (srst_a + both CBUF resets) + IOMMU re-attach, the clocks-on set — all match.
+
+## Ruled out (each tested on hardware)
+
+| Hypothesis | Result |
+|---|---|
+| regcmd content / values | byte-identical to vendor (above) |
+| submit/kick sequence | identical to `commit_pc` |
+| ping-pong producer/consumer group mismatch | swept `geom_both` (geometry into BOTH groups) + cpu_replay + per-job pp_state_init + per-job CBUF reset + fixed S_POINTER, 14 combinations — all degenerate |
+| op_en mechanism / broadcast value (0x1d vs 0x7f) | no change |
+| dual power domain (PD_NPU0 + PD_NPU1) | added multi-PD attach (`dev_pm_domain_attach_list`) — no change |
+| NPU_GRF URGENT QoS | set sel=1 — no change |
+| DDR contention | 6-core hog + urgent — no change |
+| readback-too-early / cache coherency | dual-path (cached vs MEMREMAP_WC) readback; delay — no change |
+| IOMMU faults / stale TLB | none; rk_iommu has no `.flush_iotlb_all` |
+| clock **rate** (GPLL 198 MHz … 786 MHz) | no change |
+| clock **source** PVTPLL (see below) | makes it worse — 0 jobs complete |
+
+## Clock-ID finding (useful, upstreamable) and the PVTPLL dead end
+
+The vendor sources the compute clock `CLK_RKNN_DSU0` via **SCMI** (TF-A → PVTPLL); mainline routes
+it via `&cru` (fixed PLLs). `aclk_rknn0` and `aclk_rknn_cbuf` are bare gates off DSU0, so CBUF and
+compute share one clock — they cannot be decoupled, on either driver.
+
+Routing rocket's `npu` clock to `<&scmi_clk CLK_RKNN_DSU0>` silently no-ops: **the kernel CRU
+binding numbers the clock 232, but our TF-A `clock_table` keys it at 238.** `<&scmi_clk 238>` is
+settable (rate reads back). But on PVTPLL — correct index, correct rate, OPP voltage raised first
+(800 MHz needs 800 mV), rate-set moved after the soft-reset — the NPU completes **0 jobs** (~83
+`drm_sched` timeouts / 90 s). PVTPLL needs the full vendor stack (per-chip leakage cal via nvmem +
+OPP/devfreq governor) to be a usable clock; the GPLL path at least runs and computes its wrong
+answer. The clock theory (that the failure is a timing race) was never testable — PVTPLL never ran
+cleanly. Reverted to GPLL.
+
+## Localization / the open question
+
+The gap is the on-chip **CBUF → CMAC** hand-off, the one place with no register window: the CNA
+stages the full operands in (bandwidth counters prove it), the vendor's identical command stream
+then computes, and rocket's identical stream reads zero. Nothing pollable distinguishes the two.
+
+**What would crack it:** an NVDLA-derived microarchitecture reference for the RK3576 CBUF/CMAC, or
+a register-write trace from a *working* RK3588 rocket run to diff the execution (not just the
+command stream) against, or silicon-level visibility. This is past what black-box probing from the
+mainline driver + DT + as-flashed firmware can reach.
+
+A sister-chip bring-up (RK3568, mainline rocket) is stuck at the same class of wall, a stage
+earlier (engage), which suggests one real SoC-family issue, not ten imagined ones —
+see https://github.com/gahingwoo/linux-rk3576-npu/issues/1.
