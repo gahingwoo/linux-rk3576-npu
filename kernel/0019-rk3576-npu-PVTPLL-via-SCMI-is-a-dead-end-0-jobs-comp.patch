@@ -1,0 +1,180 @@
+From fc470726225d8243df1296ac45e52204c5da7c16 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 20 Jun 2026 14:54:12 +1200
+Subject: [PATCH 19/19] rk3576 npu: PVTPLL via SCMI is a dead end (0 jobs
+ complete); revert to GPLL
+
+Findings from the PVTPLL investigation, kept for the record; DT reverted to the
+working CRU/GPLL clock so the board runs.
+
+- Clock-ID: mainline CRU binding numbers the NPU clock CLK_RKNN_DSU0 = 232, but
+  TF-A's SCMI clock_table keys it at 238. <&scmi_clk CLK_RKNN_DSU0> addresses an
+  empty SCMI slot (set_rate no-ops, clock reads 0). <&scmi_clk 238> is settable.
+- Voltage: the vendor OPP pairs 800 MHz with 800 mV; rocket runs the rail at its
+  default. Added an npu-supply get + raise-voltage-before-freq (OPP order).
+- Result: with the right index AND voltage AND set-after-reset ordering, PVTPLL
+  still leaves the NPU unable to complete a single job (0 dbg-done / 83 sched
+  timeouts). PVTPLL needs the full vendor DVFS + per-chip leakage calibration
+  (nvmem) + devfreq, and even then its effect on the conv0 zero-output is
+  unproven (the clock never ran cleanly to test it). Not pursued further.
+
+The regulator get + npu_uv/npu_clk_hz knobs are left inert (default 0) as
+OPP-voltage scaffolding for any future devfreq port.
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 13 +-------
+ drivers/accel/rocket/rocket_core.c       |  9 ++++++
+ drivers/accel/rocket/rocket_core.h       |  8 +++++
+ drivers/accel/rocket/rocket_drv.c        | 40 +++++++++++++++++++-----
+ 4 files changed, 51 insertions(+), 19 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index 1891a12f2..b622c6fee 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1820,21 +1820,10 @@ rknn_core_0: npu@27700000 {
+ 			reg-names = "pc", "cna", "core", "dpu", "dpu_rdma";
+ 			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
+-				 <&scmi_clk CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
++				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
+ 				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
+ 			clock-names = "aclk", "hclk", "npu", "pclk",
+ 				      "aclk_cbuf", "hclk_cbuf";
+-			/*
+-			 * Route the NPU compute clock (DSU0) through SCMI so TF-A
+-			 * sources it from the PVTPLL (silicon-tracking), matching the
+-			 * vendor; the CRU path can only mux the fixed PLLs, and ACLK_RKNN0
+-			 * / ACLK_RKNN_CBUF are bare gates off DSU0 so they follow it.
+-			 * Must use a rate whose PVTPLL ring length is non-zero (300 MHz+);
+-			 * 200 MHz has length 0 and falls back to a plain GPLL divider, so
+-			 * pin 300 MHz (slowest real PVTPLL rate) for margin + edge-tracking.
+-			 */
+-			assigned-clocks = <&scmi_clk CLK_RKNN_DSU0>;
+-			assigned-clock-rates = <300000000>;
+ 			resets = <&cru SRST_A_RKNN0>, <&cru SRST_A_RKNN_CBUF>,
+ 				 <&cru SRST_H_RKNN_CBUF>;
+ 			reset-names = "srst_a", "srst_cbuf_a", "srst_cbuf_h";
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index c94793119..df85fcc80 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -10,6 +10,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+ 
+ #include "rocket_core.h"
+@@ -46,6 +47,14 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+ 
++	/* NPU rail (npu-supply); optional — only used to pair PVTPLL freq+voltage. */
++	core->npu_supply = devm_regulator_get_optional(dev, "npu");
++	if (IS_ERR(core->npu_supply)) {
++		if (PTR_ERR(core->npu_supply) == -EPROBE_DEFER)
++			return PTR_ERR(core->npu_supply);
++		core->npu_supply = NULL;
++	}
++
+ 	core->pc_iomem = devm_platform_ioremap_resource_byname(pdev, "pc");
+ 	if (IS_ERR(core->pc_iomem)) {
+ 		dev_err(dev, "couldn't find PC registers %ld\n", PTR_ERR(core->pc_iomem));
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 78e374463..d2c37666c 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -54,6 +54,14 @@ struct rocket_core {
+ 	void __iomem *stats_iomem; /* NPU base+0x2000: dt_wr/dt_rd counters */
+ 	void *task_desc;	/* page for the RK3576 PC_DMA task descriptor */
+ 	struct clk_bulk_data clks[6];
++
++	/*
++	 * RK3576 NPU rail (npu-supply = vdd_npu_s0). PVTPLL rates must be paired
++	 * with the matching OPP voltage (e.g. 800 MHz needs 800 mV); the default
++	 * rail voltage undervolts the higher PVTPLL rates and hangs the NPU, so
++	 * raise voltage before setting the PVTPLL frequency on resume.
++	 */
++	struct regulator *npu_supply;
+ 	/*
+ 	 * RK3576: the vendor soft-reset asserts the core AXI reset AND both CBUF
+ 	 * resets together (SRST_A_RKNN0 + SRST_A_RKNN_CBUF + SRST_H_RKNN_CBUF),
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index b32516e90..116c3925d 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -12,6 +12,7 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
+ 
+ #include <linux/moduleparam.h>
+ 
+@@ -42,10 +43,15 @@ MODULE_PARM_DESC(soft_reset, "Run the full NPU soft-reset on power-up (default 1
+  * time relative to the CMAC -- makes conv0 fill MORE channel-banks, that race is
+  * confirmed and a clock ratio is the workaround. clks: [0]aclk [2]npu [4]aclk_cbuf.
+  */
+-static int rocket_npu_clk_hz = 300000000;	/* force SCMI/PVTPLL 300 MHz; 0 = leave DT/default */
++static int rocket_npu_clk_hz;	/* 0 = GPLL default; PVTPLL via SCMI = 0 jobs complete (dead) */
+ module_param_named(npu_clk_hz, rocket_npu_clk_hz, int, 0644);
+ MODULE_PARM_DESC(npu_clk_hz, "Force the npu (compute) clock rate in Hz on power-up (0=default)");
+ 
++/* OPP voltage to set BEFORE the PVTPLL rate (800 MHz needs 800 mV; 300-700 need 725 mV). */
++static int rocket_npu_uv;
++module_param_named(npu_uv, rocket_npu_uv, int, 0644);
++MODULE_PARM_DESC(npu_uv, "NPU rail microvolts to set before npu_clk_hz (0=leave default)");
++
+ static int rocket_aclk_hz;
+ module_param_named(aclk_hz, rocket_aclk_hz, int, 0644);
+ MODULE_PARM_DESC(aclk_hz, "Force the aclk (AXI/DMA) clock rate in Hz on power-up (0=default)");
+@@ -315,12 +321,18 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 
+ 	{
+ 		struct clk_bulk_data *clks = rdev->cores[core].clks;
+-
+-		if (rocket_npu_clk_hz) {
+-			int r = clk_set_rate(clks[2].clk, rocket_npu_clk_hz);
+-
+-			dev_info(dev, "rocket dbg npu_clk_set: req=%d ret=%d got=%lu\n",
+-				 rocket_npu_clk_hz, r, clk_get_rate(clks[2].clk));
++		struct regulator *vnpu = rdev->cores[core].npu_supply;
++
++		/*
++		 * OPP ordering: raise the rail voltage to the target OPP BEFORE
++		 * raising the PVTPLL frequency, so the higher PVTPLL rates aren't
++		 * undervolted (which hangs the NPU). vdd_npu_s0 range 550-950 mV.
++		 */
++		if (vnpu && rocket_npu_uv) {
++			int rv = regulator_set_voltage(vnpu, rocket_npu_uv, 950000);
++
++			dev_info(dev, "rocket dbg npu_uv_set: req=%d ret=%d got=%d\n",
++				 rocket_npu_uv, rv, regulator_get_voltage(vnpu));
+ 		}
+ 		if (rocket_aclk_hz)
+ 			clk_set_rate(clks[0].clk, rocket_aclk_hz);
+@@ -366,6 +378,20 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 
+ 	rocket_core_pp_state_init(&rdev->cores[core]);
+ 
++	/*
++	 * Set the PVTPLL compute rate LAST — after reset + pp_state_init have
++	 * brought the NPU up on the GPLL default — so the reset and register init
++	 * don't run over the PVTPLL clock (which left the NPU unable to complete a
++	 * single job: 0 done / 83 sched timeouts). Voltage was already raised above.
++	 */
++	if (rocket_npu_clk_hz) {
++		struct clk *npu_clk = rdev->cores[core].clks[2].clk;
++		int r = clk_set_rate(npu_clk, rocket_npu_clk_hz);
++
++		dev_info(dev, "rocket dbg npu_clk_set(post-init): req=%d ret=%d got=%lu\n",
++			 rocket_npu_clk_hz, r, clk_get_rate(npu_clk));
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+

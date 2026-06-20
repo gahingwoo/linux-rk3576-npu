@@ -1,101 +1,65 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Boot-time RK3576 NPU conv0 KNOB SWEEP — fully automatic, prints to serial.
+# Boot-time RK3576 NPU PVTPLL-crawl diagnostic — one inference, full telemetry.
 #
-# conv0's regcmd is byte-identical to the vendor, but the executer runs the
-# default ping-pong group (geometry never reaches it) -> all-zero output.
-# This sweeps kernel-knob COMBINATIONS and, per combo, reports:
-#     Top-1 (653 = full win)   nz (non-zero outputs)
-#     out_distinct (conv0's own output: 2 = degenerate 0x7f/0x80, >2 = real)
-#
-# Console kernel spam is silenced during the sweep, and a SUMMARY of every
-# combo is reprinted at the end (+ saved to /tmp/sweep.txt) so nothing scrolls
-# off the serial buffer. The earlier sptr_override=0xe nudged conv0 (2->3), so
-# the sptr/geom_both region is explored more here.
+# PVTPLL (scmi 238 @ 800 MHz, 800 mV) makes the NPU crawl. Run a SINGLE
+# inference in the background, let it run ~90 s, kill it, then print to serial:
+#   - the clk/voltage that got set (captured BEFORE clearing dmesg)
+#   - how many jobs timed out / reset (the crawl signature)
+#   - the first couple of layers' done/perf/rawor/cnalive
+# So we learn WHY it crawls (job timeout vs slow compute vs reset loop).
+# (No `timeout` applet in busybox, so use bg + sleep + kill.)
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
 MODEL="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
 IMG="$NPU_DIR/grace_hopper.jpg"
-VEND="$NPU_DIR/vendor-conv0.txt"
-P=/sys/module/rocket/parameters
-RES=/tmp/sweep.txt
+INFER_LOG=/tmp/npu-infer.log
+DMESG_LOG=/tmp/npu-dmesg.log
+CLK_LOG=/tmp/npu-clk.txt
 export TEFLON_LIB=/usr/lib/libteflon.so
 C=/dev/console
-
-# combos: "cpu_replay geom_both perjob_ppinit sptr_override cbuf_reset"
-COMBOS="
-0 0 1 -1 0
-0 1 1 -1 0
-1 0 1 -1 0
-1 1 1 -1 0
-0 0 0 -1 0
-0 1 0 -1 0
-0 0 1 14 0
-0 1 1 14 0
-1 0 1 14 0
-0 1 0 14 0
-1 1 1 14 0
-0 0 1 30 0
-0 0 1 15 0
-0 0 1 -1 2
-"
-
-run_one() {
-	cr=$1; gb=$2; pp=$3; sp=$4; cb=$5
-	echo "$cr" > $P/cpu_replay     2>/dev/null
-	echo "$gb" > $P/geom_both      2>/dev/null
-	echo "$pp" > $P/perjob_ppinit  2>/dev/null
-	echo "$sp" > $P/sptr_override  2>/dev/null
-	echo "$cb" > $P/cbuf_reset     2>/dev/null
-	dmesg -c >/dev/null 2>&1
-	OUT=$(python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" 2>/dev/null)
-	D=$(dmesg 2>/dev/null)
-	top1=$(echo "$OUT" | sed -n 's/.*Top-1 index: *\([0-9]*\).*/\1/p' | head -1)
-	nz=$(echo "$OUT"   | sed -n 's/.*Raw non-zero: *\([0-9]*\).*/\1/p' | head -1)
-	odist=$(echo "$D"  | grep "buf\[1\] out" | sed -n 's/.*distinct=\([0-9]*\).*/\1/p' | head -1)
-	[ -z "$top1" ] && top1="?"; [ -z "$nz" ] && nz="?"; [ -z "$odist" ] && odist="?"
-	flag=""
-	[ "$top1" = "653" ] && flag="  <<< FULL WIN (653)"
-	[ "$odist" != "?" ] && [ "$odist" != "2" ] && [ "$odist" != "1" ] && [ -z "$flag" ] && flag="  <- conv0 progress"
-	line=$(printf "  cr=%s gb=%s pp=%s sp=%-3s cb=%s -> Top1=%-4s nz=%-5s out_distinct=%s%s" \
-		"$cr" "$gb" "$pp" "$sp" "$cb" "$top1" "$nz" "$odist" "$flag")
-	echo "$line" >> "$RES"
-	echo "$line" > "$C"
-}
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { echo "npudiag: no accel device — skip" > "$C"; return 0; }
+	[ -c /dev/accel/accel0 ] || { echo "npudiag: no accel device" > "$C"; return 0; }
 
-	: > "$RES"
-	dmesg -n 1 2>/dev/null     # silence kernel console spam; ring buffer still grep-able
+	dmesg -n 8 2>/dev/null
+	# Capture the boot-time clock/voltage lines BEFORE clearing the ring.
+	dmesg 2>/dev/null | grep -E "npu_uv_set|npu_clk_set|rocket dbg clk:" > "$CLK_LOG"
+	dmesg -c >/dev/null 2>&1
+
 	echo "" > "$C"
-	echo "############### NPU conv0 KNOB SWEEP (live) ###############" > "$C"
+	echo "########## NPU PVTPLL-CRAWL DIAG (one inference, ~90s) ##########" > "$C"
 
-	echo "$COMBOS" | while read cr gb pp sp cb; do
-		[ -z "$cr" ] && continue
-		run_one "$cr" "$gb" "$pp" "$sp" "$cb"
-	done
+	# Single inference in the background; let it run, then kill it.
+	t0=$(cut -d. -f1 /proc/uptime)
+	python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG" 2>&1 &
+	PID=$!
+	w=0
+	while [ "$w" -lt 90 ] && kill -0 "$PID" 2>/dev/null; do sleep 5; w=$((w + 5)); done
+	finished=1; kill -0 "$PID" 2>/dev/null && finished=0
+	kill "$PID" 2>/dev/null; kill -9 "$PID" 2>/dev/null
+	t1=$(cut -d. -f1 /proc/uptime)
+	dmesg > "$DMESG_LOG" 2>/dev/null
 
-	# Reprint the whole table at the end so nothing scrolled off.
 	{
-		echo ""
-		echo "############### SWEEP SUMMARY (all combos) ###############"
-		echo "  legend: out_distinct 2 = degenerate 0x7f/0x80, >2 = conv0 computed real values"
-		cat "$RES"
-		echo "  best:"
-		sort -t= -k8 -n "$RES" 2>/dev/null | tail -1
-		echo "----- conv0 regcmd diff vs vendor (default knobs) -----"
-		echo 0 > $P/cpu_replay; echo 0 > $P/geom_both; echo 1 > $P/perjob_ppinit
-		echo -1 > $P/sptr_override; echo 0 > $P/cbuf_reset; echo 140 > $P/dump_regcmd
-		dmesg -c >/dev/null 2>&1
-		python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" >/dev/null 2>&1
-		dmesg > /tmp/npu-dmesg.log 2>/dev/null
-		sh "$NPU_DIR/conv0-diff.sh" /tmp/npu-dmesg.log "$VEND" 2>/dev/null | grep -vE "^    "
-		echo "----- saved: /tmp/sweep.txt  /tmp/npu-dmesg.log -----"
-		echo "############### END (sweep done) ###############"
+		echo "----- clock/voltage that got set -----"
+		cat "$CLK_LOG" 2>/dev/null
+		echo "----- crawl signature -----"
+		printf "  job 'timed out':   %s\n" "$(grep -ic 'timed out\|timedout\|drm_sched' "$DMESG_LOG" 2>/dev/null)"
+		printf "  'reset' lines:     %s\n" "$(grep -ic 'reset' "$DMESG_LOG" 2>/dev/null)"
+		printf "  'dbg done' lines:  %s  (= jobs that completed in the window)\n" "$(grep -c 'rocket dbg done' "$DMESG_LOG" 2>/dev/null)"
+		echo "----- first 2 layers' telemetry -----"
+		for tag in "rocket dbg done" "rocket dbg perf" "rocket dbg rawor" "rocket dbg cnalive"; do
+			grep "$tag" "$DMESG_LOG" 2>/dev/null | head -2
+		done
+		echo "----- inference outcome -----"
+		printf "  infer finished=%s in window  wall=%ss\n" "$finished" "$((t1 - t0))"
+		grep -E "Raw non-zero|Top-1 index|CPU Top-1|INFERENCE OK|FAIL|Traceback|Error" "$INFER_LOG" 2>/dev/null | head -5
+		echo "----- raw: $INFER_LOG  $DMESG_LOG -----"
+		echo "########## END PVTPLL-CRAWL DIAG ##########"
 		echo ""
 	} > "$C" 2>&1
 }
