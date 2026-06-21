@@ -1,0 +1,37 @@
+From d905b5237df63af9ceac225f209dcb93e8034535 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 21 Jun 2026 16:37:09 +1200
+Subject: [PATCH 21/21] =?UTF-8?q?DEBUG:=20probe=20CBUF=20SRAM=20weight=20r?=
+ =?UTF-8?q?egion=20(0xe0000/0xf0000)=20vs=20data=20region=20=E2=80=94=20is?=
+ =?UTF-8?q?=20the=20CMAC's=20weight=20bank=20staged=3F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/accel/rocket/rocket_job.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 7b0a6946f..9e3409e1a 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -1419,7 +1419,14 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		if (!cbuf)
+ 			cbuf = ioremap(0x3fe80000, 0x100000);
+ 		if (cbuf) {
+-			static const u32 offs[] = { 0x0, 0x20000, 0x40000, 0x60000, 0x70000 };
++			/*
++			 * Probe the vendor cache_sgt layout: data region 0..448KB
++			 * (0x0, 0x70000) vs the gap (0xc0000, 768KB) vs the WEIGHT
++			 * blocks at 896KB (0xe0000) and 960KB (0xf0000). If the data
++			 * region is full but the weight blocks read empty (d<=2/nz=0),
++			 * the CMAC has no weights to read -> degenerate output.
++			 */
++			static const u32 offs[] = { 0x0, 0x70000, 0xc0000, 0xe0000, 0xf0000 };
+ 			char ln[180];
+ 			int lp = 0;
+ 			u32 o;
+-- 
+2.43.0
+

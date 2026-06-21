@@ -18,6 +18,27 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - No per-unit completion ever fires (`INTERRUPT_RAW_STATUS` FEAT/WT/CSC/CORE/DPU all 0); only the
   PC asserts done, and it does so ~1 µs after OP_EN (`samples=1`) — a hollow, instant "done".
 
+### The whole bug, pinned to one counter (2026-06-21)
+
+A counter-level read of conv0 isolates it past any doubt — everything upstream of the CMAC weight
+read is confirmed correct, and the failure is a single zero:
+
+- `top[dt_rd=9408×16 = 150528]` = the **full** 224×224×3 input is DMA'd from DRAM into the CBUF.
+- `top[wt_rd=96×16 = 1536]` = the conv0 weights are DMA'd into the CBUF, in the **RK3576-specific
+  first-conv (ARGB) pack** (ky-major, 1536 B — board-derived; the RK3588 pack is a known wrong path).
+- The CBUF SRAM readback (`@0x3fe80000`) shows the data region staged (`@0x0 d164/nz717`) and the
+  weight blocks the vendor's `cache_sgt` defines (`@0xe0000/0xf0000`) holding dense packed weights.
+- `0x3018=0x10000081` (first-conv mode 0x81), the per-channel weight zero-points (`0x1054/58/5c =
+  0xffffff80`) and every CNA/CORE weight register are byte-identical to the vendor; the executers
+  engage (`exec_ever=0xf`).
+- **And still `core wt_rd = 0`** — the CMAC reads none of the loaded, correctly-formatted weights.
+  Weightless MACs → zero-point → the DPU writes a fixed 2-channel (`dt_wr=25088`) degenerate output,
+  which starves every downstream layer (they then read `top[…=0]` and repeat the same 25088).
+
+So the bug is **not** staging, format, banks, mode, or any command-stream value — it is solely the
+CNA-weight-subunit → CMAC weight-read handoff: the weight-load-done that should kick the CMAC's CBUF
+read never asserts (matching the dead WT/CSC interrupt). One latch, no register window.
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture

@@ -1,0 +1,61 @@
+From 6d8fd6b7357fce2afd1b234b8a2135516e98ff9f Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 21 Jun 2026 08:19:36 +1200
+Subject: [PATCH 20/21] =?UTF-8?q?DEBUG:=20rocket=20kick=5Fdelay=5Fus=20?=
+ =?UTF-8?q?=E2=80=94=20pure=20pre-OP=5FEN=20busy-wait=20(conv0=20race=20di?=
+ =?UTF-8?q?scriminator)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/accel/rocket/rocket_job.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index f2067a1e8..7b0a6946f 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -57,6 +57,18 @@ static int rocket_double_kick;
+ module_param_named(double_kick, rocket_double_kick, int, 0644);
+ MODULE_PARM_DESC(double_kick, "Warmup-kick each job before the real OP_EN (default 0)");
+ 
++/*
++ * Board-debug knob: pure busy-wait (microseconds) inserted right BEFORE the real
++ * PC OP_EN pulse, after all config + arming. Discriminates the conv0 race model:
++ * a TIMING race (CMAC reads the CBUF before the staging DMA retires) gets better
++ * with delay; the ping-pong-LATCH race (executer reads the stale pp group) does
++ * not (a delay doesn't advance the consumer pointer -- only double_kick does).
++ * Writable at runtime: /sys/module/rocket/parameters/kick_delay_us. Default 0.
++ */
++static int rocket_kick_delay_us;
++module_param_named(kick_delay_us, rocket_kick_delay_us, int, 0644);
++MODULE_PARM_DESC(kick_delay_us, "Busy-wait this many us before the real OP_EN (default 0)");
++
+ /*
+  * Board-debug knob: override the CNA/CORE S_POINTER arming value (and patch the
+  * regcmd's own 0x1004/0x3004 S_POINTER entries to match) so the ping-pong
+@@ -947,6 +959,20 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	 * starts the PC AND engages the units, letting the PC iterate task_number
+ 	 * tasks. Per-op (task_count==1) keeps the 0x1 pulse + in-stream OP_EN.
+ 	 */
++	/*
++	 * Pure pre-kick busy-wait (rocket.kick_delay_us). Sits after all config +
++	 * arming, immediately before the OP_EN pulse. Capped-chunk udelay so values
++	 * past udelay's range still work. See the param comment for what it tests.
++	 */
++	if (rocket_kick_delay_us > 0) {
++		int us = rocket_kick_delay_us;
++
++		while (us > 0) {
++			udelay(us > 1000 ? 1000 : us);
++			us -= 1000;
++		}
++	}
++
+ 	if (rocket_multitask_poll && job->task_count > 1) {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
+ 		if (!rocket_armdbg_done)
+-- 
+2.43.0
+
