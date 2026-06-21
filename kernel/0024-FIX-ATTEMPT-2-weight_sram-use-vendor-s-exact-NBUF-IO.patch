@@ -1,0 +1,54 @@
+From badb4898bcf338642b43beeefbb89396f19b2f8e Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 21 Jun 2026 20:19:27 +1200
+Subject: [PATCH 24/24] FIX ATTEMPT #2: weight_sram use vendor's exact NBUF
+ IOVA window (0xffff8000 / SRAM 0xf8000)
+
+---
+ drivers/accel/rocket/rocket_job.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index e4aa94202..ec1aa38f7 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -1060,8 +1060,15 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 
+ 		if (!wsram)
+ 			wsram = ioremap(0x3fe80000, 0x100000);
++		/*
++		 * fix #2: map the on-chip SRAM at the vendor's EXACT NBUF IOVA window
++		 * (base 0xfff00000 -> phys 0x3fe80000), so the weight IOVA 0xffff8000
++		 * lands at SRAM offset 0xf8000. Tests whether the specific NBUF window
++		 * (a HW fast path to on-chip SRAM) is the lever, vs an arbitrary IOMMU
++		 * mapping (fix #1, which didn't move core wt_rd).
++		 */
+ 		if (wsram && !wmapped &&
+-		    !iommu_map(job->domain->domain, 0xfe000000, 0x3fe80000,
++		    !iommu_map(job->domain->domain, 0xfff00000, 0x3fe80000,
+ 			       0x100000, IOMMU_READ | IOMMU_WRITE, GFP_ATOMIC))
+ 			wmapped = true;
+ 
+@@ -1079,14 +1086,16 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 					continue;
+ 				wp = iommu_iova_to_phys(job->domain->domain, waddr);
+ 				if (wp && pfn_valid(PFN_DOWN(wp))) {
+-					memcpy_toio(wsram, phys_to_virt(wp), 4096);
++					/* weight IOVA 0xffff8000 -> SRAM offset 0xf8000 */
++					memcpy_toio(wsram + 0xf8000,
++						    phys_to_virt(wp), 4096);
+ 					rv[i] = ((u64)tgt << 48) |
+-						((u64)0xfe000000 << 16) | reg;
++						((u64)0xffff8000 << 16) | reg;
+ 					arch_sync_dma_for_device(rp,
+ 						task->regcmd_count * sizeof(u64),
+ 						DMA_TO_DEVICE);
+ 					dev_info(core->dev,
+-						 "rocket dbg weight_sram: staged weights 0x%x->SRAM, 0x1110->0xfe000000\n",
++						 "rocket dbg weight_sram: staged weights 0x%x->SRAM@0xf8000, 0x1110->0xffff8000\n",
+ 						 waddr);
+ 				}
+ 				break;
+-- 
+2.43.0
+

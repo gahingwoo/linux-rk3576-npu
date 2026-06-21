@@ -1,0 +1,108 @@
+From 94ae7826a38ae8fca676b246d13c75c129ad59f0 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 21 Jun 2026 20:04:07 +1200
+Subject: [PATCH 23/24] =?UTF-8?q?FIX=20ATTEMPT:=20rocket.weight=5Fsram=20?=
+ =?UTF-8?q?=E2=80=94=20stage=20conv0=20weights=20into=20on-chip=20SRAM=20+?=
+ =?UTF-8?q?=20repoint=200x1110;=20widen=20audit=20sweep?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/accel/rocket/rocket_job.c | 66 ++++++++++++++++++++++++++++++-
+ 1 file changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 63bbfeca4..e4aa94202 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -81,6 +81,19 @@ static int rocket_audit_arm = 1;
+ module_param_named(audit_arm, rocket_audit_arm, int, 0644);
+ MODULE_PARM_DESC(audit_arm, "Dump CBUF SRAM PRE/POST for the next job, then self-clear (default 1)");
+ 
++/*
++ * FIX ATTEMPT (rocket.weight_sram): the audit proved the weights never reach
++ * the on-chip CBUF SRAM (PRE==POST on the weight blocks) while the vendor's
++ * weight source (CNA 0x1110 / DCOMP_ADDR0) points at the NBUF (0xffff8000), not
++ * DRAM. When set, stage this job's weights from their DRAM buffer into the
++ * on-chip SRAM, IOMMU-map the SRAM into the NPU domain, and repoint 0x1110 at
++ * the SRAM IOVA -- testing whether the RK3576 weight path needs an on-chip
++ * source. Self-clears (one job per arm), so the boot diag can A/B it.
++ */
++static int rocket_weight_sram;
++module_param_named(weight_sram, rocket_weight_sram, int, 0644);
++MODULE_PARM_DESC(weight_sram, "Stage the next job's weights into on-chip SRAM + repoint 0x1110 (default 0)");
++
+ /*
+  * Board-debug knob: override the CNA/CORE S_POINTER arming value (and patch the
+  * regcmd's own 0x1004/0x3004 S_POINTER entries to match) so the ping-pong
+@@ -591,7 +604,8 @@ static void rocket_conv0_pp_sweep(struct rocket_core *core, struct rocket_job *j
+ static void rocket_cbuf_audit(struct rocket_core *core, const char *tag)
+ {
+ 	static void __iomem *cbuf;
+-	static const u32 offs[] = { 0x0, 0x70000, 0xe0000, 0xf0000 };
++	static const u32 offs[] = { 0x0, 0x20000, 0x40000, 0x60000,
++				    0x80000, 0xc0000, 0xe0000, 0xf0000 };
+ 	u32 o;
+ 
+ 	if (!cbuf)
+@@ -1031,6 +1045,56 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	if (rocket_audit_arm)
+ 		rocket_cbuf_audit(core, "PRE ");
+ 
++	/*
++	 * FIX ATTEMPT (rocket.weight_sram): stage this job's weights into the
++	 * on-chip SRAM and repoint the CNA weight source (0x1110) at the SRAM, so
++	 * the weight path has an on-chip source like the vendor's. Map the SRAM
++	 * into the NPU IOMMU once at a fixed high IOVA; copy a page of weights to
++	 * SRAM offset 0; patch the regcmd's 0x1110 to the SRAM IOVA.
++	 */
++	if (rocket_weight_sram) {
++		static void __iomem *wsram;
++		static bool wmapped;
++		phys_addr_t rp = task->regcmd_count ?
++			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
++
++		if (!wsram)
++			wsram = ioremap(0x3fe80000, 0x100000);
++		if (wsram && !wmapped &&
++		    !iommu_map(job->domain->domain, 0xfe000000, 0x3fe80000,
++			       0x100000, IOMMU_READ | IOMMU_WRITE, GFP_ATOMIC))
++			wmapped = true;
++
++		if (rp && pfn_valid(PFN_DOWN(rp)) && wsram && wmapped) {
++			u64 *rv = (u64 *)phys_to_virt(rp);
++			int i;
++
++			for (i = 0; i < (int)task->regcmd_count; i++) {
++				u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
++				u16 reg = (u16)(rv[i] & 0xffff);
++				u32 waddr = (u32)((rv[i] >> 16) & 0xffffffff);
++				phys_addr_t wp;
++
++				if (tgt != 0x0201 || reg != 0x1110 || !waddr)
++					continue;
++				wp = iommu_iova_to_phys(job->domain->domain, waddr);
++				if (wp && pfn_valid(PFN_DOWN(wp))) {
++					memcpy_toio(wsram, phys_to_virt(wp), 4096);
++					rv[i] = ((u64)tgt << 48) |
++						((u64)0xfe000000 << 16) | reg;
++					arch_sync_dma_for_device(rp,
++						task->regcmd_count * sizeof(u64),
++						DMA_TO_DEVICE);
++					dev_info(core->dev,
++						 "rocket dbg weight_sram: staged weights 0x%x->SRAM, 0x1110->0xfe000000\n",
++						 waddr);
++				}
++				break;
++			}
++		}
++		rocket_weight_sram = 0;
++	}
++
+ 	if (rocket_multitask_poll && job->task_count > 1) {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
+ 		if (!rocket_armdbg_done)
+-- 
+2.43.0
+

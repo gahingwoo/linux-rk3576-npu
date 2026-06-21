@@ -1,67 +1,64 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Boot-time RK3576 NPU PVTPLL-crawl diagnostic — one inference, full telemetry.
+# RK3576 NPU — conv2d coefficient-BO debug (Tomeu's track), auto-run at boot.
 #
-# PVTPLL (scmi 238 @ 800 MHz, 800 mV) makes the NPU crawl. Run a SINGLE
-# inference in the background, let it run ~90 s, kill it, then print to serial:
-#   - the clk/voltage that got set (captured BEFORE clearing dmesg)
-#   - how many jobs timed out / reset (the crawl signature)
-#   - the first couple of layers' done/perf/rawor/cnalive
-# So we learn WHY it crawls (job timeout vs slow compute vs reset loop).
-# (No `timeout` applet in busybox, so use bg + sleep + kill.)
+# The single-op test proved a STANDALONE conv goes degenerate on the NPU. This
+# image debugs WHY on that simple reproducer:
+#   1. NPU vs CPU value compare (the verdict)
+#   2. ROCKET_DEBUG=dump_bos -> dump what Mesa ENCODED for weights/bias/regcmd,
+#      and compare to the ORIGINAL tflite weights (is the coefficients BO sane?)
+#   3. TEFLON_DEBUG=verbose -> how Teflon parses the op (scales / zero-points)
+#   4. kernel CBUF audit -> do conv2d's weights reach the on-chip weight bank?
+#
+# (No `timeout` applet in busybox -> bg + sleep + kill.)
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
-MODEL="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
-IMG="$NPU_DIR/grace_hopper.jpg"
-INFER_LOG=/tmp/npu-infer.log
-DMESG_LOG=/tmp/npu-dmesg.log
-CLK_LOG=/tmp/npu-clk.txt
+M="$NPU_DIR/conv2d.tflite"
 export TEFLON_LIB=/usr/lib/libteflon.so
 C=/dev/console
+P=/sys/module/rocket/parameters
+
+log() { echo "$@" > "$C"; }
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { echo "npudiag: no accel device" > "$C"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "npu-test: no accel device"; return 0; }
+	dmesg -n 4 2>/dev/null
 
-	dmesg -n 8 2>/dev/null
-	# Capture the boot-time clock/voltage lines BEFORE clearing the ring.
-	dmesg 2>/dev/null | grep -E "npu_uv_set|npu_clk_set|rocket dbg clk:" > "$CLK_LOG"
+	log ""
+	log "########## conv2d COEFFICIENT-BO DEBUG ##########"
+
+	# 1. NPU vs CPU value compare
+	log "----- (1) NPU vs CPU -----"
+	python3 "$NPU_DIR/test_conv.py" "$M" > /tmp/cmp.log 2>&1 &
+	PID=$!; w=0; while [ "$w" -lt 60 ] && kill -0 "$PID" 2>/dev/null; do sleep 3; w=$((w+3)); done
+	kill -9 "$PID" 2>/dev/null
+	cat /tmp/cmp.log > "$C"
+
+	# 2+3. dump_bos + verbose + cbuf audit, all in one debug run (CWD=/tmp/dump)
+	rm -rf /tmp/dump; mkdir -p /tmp/dump; cd /tmp/dump
+	[ -w "$P/audit_arm" ] && echo 1 > "$P/audit_arm"
 	dmesg -c >/dev/null 2>&1
+	ROCKET_DEBUG=dump_bos TEFLON_DEBUG=verbose \
+		python3 "$NPU_DIR/test_conv.py" "$M" > /tmp/dbg.log 2>&1 &
+	PID=$!; w=0; while [ "$w" -lt 60 ] && kill -0 "$PID" 2>/dev/null; do sleep 3; w=$((w+3)); done
+	kill -9 "$PID" 2>/dev/null
 
-	echo "" > "$C"
-	echo "########## NPU PVTPLL-CRAWL DIAG (one inference, ~90s) ##########" > "$C"
+	log "----- (2) ORIGINAL weights vs MESA-encoded weights -----"
+	python3 "$NPU_DIR/analyze_dump.py" "$M" /tmp/dump > /tmp/an.log 2>&1
+	cat /tmp/an.log > "$C"
 
-	# Single inference in the background; let it run, then kill it.
-	t0=$(cut -d. -f1 /proc/uptime)
-	python3 "$NPU_DIR/infer.py" "$MODEL" "$IMG" > "$INFER_LOG" 2>&1 &
-	PID=$!
-	w=0
-	while [ "$w" -lt 90 ] && kill -0 "$PID" 2>/dev/null; do sleep 5; w=$((w + 5)); done
-	finished=1; kill -0 "$PID" 2>/dev/null && finished=0
-	kill "$PID" 2>/dev/null; kill -9 "$PID" 2>/dev/null
-	t1=$(cut -d. -f1 /proc/uptime)
-	dmesg > "$DMESG_LOG" 2>/dev/null
+	log "----- (3) Teflon verbose (op parse: scales / zero-points) -----"
+	grep -aiE 'teflon|tensor|operation|scale|zp|conv|weight|size' /tmp/dbg.log | head -24 > "$C"
 
-	{
-		echo "----- clock/voltage that got set -----"
-		cat "$CLK_LOG" 2>/dev/null
-		echo "----- crawl signature -----"
-		printf "  job 'timed out':   %s\n" "$(grep -ic 'timed out\|timedout\|drm_sched' "$DMESG_LOG" 2>/dev/null)"
-		printf "  'reset' lines:     %s\n" "$(grep -ic 'reset' "$DMESG_LOG" 2>/dev/null)"
-		printf "  'dbg done' lines:  %s  (= jobs that completed in the window)\n" "$(grep -c 'rocket dbg done' "$DMESG_LOG" 2>/dev/null)"
-		echo "----- first 2 layers' telemetry -----"
-		for tag in "rocket dbg done" "rocket dbg perf" "rocket dbg rawor" "rocket dbg cnalive"; do
-			grep "$tag" "$DMESG_LOG" 2>/dev/null | head -2
-		done
-		echo "----- inference outcome -----"
-		printf "  infer finished=%s in window  wall=%ss\n" "$finished" "$((t1 - t0))"
-		grep -E "Raw non-zero|Top-1 index|CPU Top-1|INFERENCE OK|FAIL|Traceback|Error" "$INFER_LOG" 2>/dev/null | head -5
-		echo "----- raw: $INFER_LOG  $DMESG_LOG -----"
-		echo "########## END PVTPLL-CRAWL DIAG ##########"
-		echo ""
-	} > "$C" 2>&1
+	log "----- (4) conv2d CBUF audit (weights reach the on-chip bank?) -----"
+	dmesg | grep -aE 'cbuf-audit|dbg perf' | head -20 > "$C"
+
+	log ""
+	log "########## END  (raw: /tmp/dbg.log /tmp/an.log /tmp/dump/) ##########"
+	log ""
 }
 
 case "$1" in

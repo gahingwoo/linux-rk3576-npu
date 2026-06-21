@@ -1,0 +1,156 @@
+From ea9dd22fcda8a827a5318bd873518d10232cc57d Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 21 Jun 2026 19:46:00 +1200
+Subject: [PATCH 22/24] =?UTF-8?q?DEBUG:=20comprehensive=20CBUF=20SRAM=20PR?=
+ =?UTF-8?q?E/POST=20audit=20(rocket.audit=5Farm)=20=E2=80=94=20does=20the?=
+ =?UTF-8?q?=20CNA=20write=20the=20weight=20blocks=3F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/accel/rocket/rocket_job.c | 106 +++++++++++++++++++-----------
+ 1 file changed, 67 insertions(+), 39 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 9e3409e1a..63bbfeca4 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -69,6 +69,18 @@ static int rocket_kick_delay_us;
+ module_param_named(kick_delay_us, rocket_kick_delay_us, int, 0644);
+ MODULE_PARM_DESC(kick_delay_us, "Busy-wait this many us before the real OP_EN (default 0)");
+ 
++/*
++ * Comprehensive audit arm: when set, the next job dumps the CBUF/NBUF SRAM
++ * (0x3fe80000) PRE-kick and POST-completion (entropy + 16-byte hexdump of the
++ * data region @0x0/0x70000 and the vendor weight blocks @0xe0000/0xf0000), then
++ * self-clears. The boot diag re-arms before each inference, so conv0 of each run
++ * is captured. PRE==POST on a weight block proves the CNA never wrote weights
++ * there (leftover, not staged); the hexdump tells packed weights from noise.
++ */
++static int rocket_audit_arm = 1;
++module_param_named(audit_arm, rocket_audit_arm, int, 0644);
++MODULE_PARM_DESC(audit_arm, "Dump CBUF SRAM PRE/POST for the next job, then self-clear (default 1)");
++
+ /*
+  * Board-debug knob: override the CNA/CORE S_POINTER arming value (and patch the
+  * regcmd's own 0x1004/0x3004 S_POINTER entries to match) so the ping-pong
+@@ -569,6 +581,47 @@ static void rocket_conv0_pp_sweep(struct rocket_core *core, struct rocket_job *j
+ #undef TL_KICK
+ }
+ 
++/*
++ * Comprehensive CBUF/NBUF SRAM audit (see rocket.audit_arm). For the vendor
++ * cache_sgt layout — data region (0x0, 0x70000) and the two weight blocks
++ * (0xe0000, 0xf0000) — print per-region entropy (distinct byte values + nonzero
++ * count over 1 KiB) AND the first 16 bytes as hex. Called PRE-kick and POST so
++ * the two can be diffed.
++ */
++static void rocket_cbuf_audit(struct rocket_core *core, const char *tag)
++{
++	static void __iomem *cbuf;
++	static const u32 offs[] = { 0x0, 0x70000, 0xe0000, 0xf0000 };
++	u32 o;
++
++	if (!cbuf)
++		cbuf = ioremap(0x3fe80000, 0x100000);
++	if (!cbuf)
++		return;
++
++	for (o = 0; o < ARRAY_SIZE(offs); o++) {
++		DECLARE_BITMAP(seen, 256);
++		u32 k, d, nz = 0;
++		char hex[40];
++		int hp = 0;
++
++		bitmap_zero(seen, 256);
++		for (k = 0; k < 1024; k++) {
++			u8 b = readb(cbuf + offs[o] + k);
++
++			__set_bit(b, seen);
++			nz += !!b;
++		}
++		d = bitmap_weight(seen, 256);
++		for (k = 0; k < 16; k++)
++			hp += scnprintf(hex + hp, sizeof(hex) - hp, "%02x",
++					readb(cbuf + offs[o] + k));
++		dev_info(core->dev,
++			 "rocket dbg cbuf-audit %s @0x%05x: d%u/nz%u [%s]\n",
++			 tag, offs[o], d, nz, hex);
++	}
++}
++
+ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *job)
+ {
+ 	struct rocket_task *task;
+@@ -973,6 +1026,11 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 		}
+ 	}
+ 
++	/* PRE-kick SRAM snapshot (rocket.audit_arm): the CBUF state the CMAC is
++	 * about to read from, before this job's CNA stages anything. */
++	if (rocket_audit_arm)
++		rocket_cbuf_audit(core, "PRE ");
++
+ 	if (rocket_multitask_poll && job->task_count > 1) {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
+ 		if (!rocket_armdbg_done)
+@@ -1408,46 +1466,16 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 	}
+ 
+ 	/*
+-	 * RK3576 has a 1MB CBUF SRAM at 0x3fe80000 (TRM: "CBUF") that RK3588 lacks and
+-	 * that rocket (RK3588-derived) never sets up. The CMAC reads the staged feature+
+-	 * weights from this CBUF. Dump a few regions post-completion: distinct>2 = the
+-	 * CNA staged real data; distinct<=2/nz=0 = empty. Correlate with the conv0 win.
++	 * POST-completion SRAM snapshot. Diff against the PRE dump: if a weight
++	 * block (0xe0000/0xf0000) reads byte-identical PRE and POST, the CNA never
++	 * wrote weights there this job (= leftover, not staged), which matches
++	 * core wt_rd=0. The data region (0x0) changing PRE->POST confirms the CNA
++	 * does stage *something*, so the weight-block result isn't a dead bus.
++	 * Self-clears audit_arm so only the first job after each (re)arm dumps.
+ 	 */
+-	{
+-		static void __iomem *cbuf;
+-
+-		if (!cbuf)
+-			cbuf = ioremap(0x3fe80000, 0x100000);
+-		if (cbuf) {
+-			/*
+-			 * Probe the vendor cache_sgt layout: data region 0..448KB
+-			 * (0x0, 0x70000) vs the gap (0xc0000, 768KB) vs the WEIGHT
+-			 * blocks at 896KB (0xe0000) and 960KB (0xf0000). If the data
+-			 * region is full but the weight blocks read empty (d<=2/nz=0),
+-			 * the CMAC has no weights to read -> degenerate output.
+-			 */
+-			static const u32 offs[] = { 0x0, 0x70000, 0xc0000, 0xe0000, 0xf0000 };
+-			char ln[180];
+-			int lp = 0;
+-			u32 o;
+-
+-			for (o = 0; o < ARRAY_SIZE(offs); o++) {
+-				DECLARE_BITMAP(seen, 256);
+-				u32 k, d, nz = 0;
+-
+-				bitmap_zero(seen, 256);
+-				for (k = 0; k < 1024; k++) {
+-					u8 b = readb(cbuf + offs[o] + k);
+-
+-					__set_bit(b, seen);
+-					nz += !!b;
+-				}
+-				d = bitmap_weight(seen, 256);
+-				lp += scnprintf(ln + lp, sizeof(ln) - lp,
+-						"@0x%x:d%u/nz%u ", offs[o], d, nz);
+-			}
+-			dev_info(core->dev, "rocket dbg cbuf-sram: %s\n", ln);
+-		}
++	if (rocket_audit_arm) {
++		rocket_cbuf_audit(core, "POST");
++		rocket_audit_arm = 0;
+ 	}
+ 
+ 	/*
+-- 
+2.43.0
+

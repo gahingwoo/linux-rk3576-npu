@@ -39,6 +39,27 @@ So the bug is **not** staging, format, banks, mode, or any command-stream value 
 CNA-weight-subunit → CMAC weight-read handoff: the weight-load-done that should kick the CMAC's CBUF
 read never asserts (matching the dead WT/CSC interrupt). One latch, no register window.
 
+### Single-op isolation (2026-06-21, Tomeu's method) — 2 of 3 suspects cleared
+
+Reproduced on the **simplest standalone conv** (Mesa's own `conv2d.tflite`, 5x5, 16→128, nothing to
+do with mobilenet): NPU output `distinct=2`, CPU output a real feature map. So the bug is **per-op,
+not whole-graph**, and it affects a **normal** conv, not just the first-conv. Tomeu's three suspects:
+
+- **coefficients BO — ruled out.** `ROCKET_DEBUG=dump_bos`: Mesa's encoded weights are varied
+  (distinct=241), same value range as the tflite, just NVDLA-repacked (51200→204800 + padding).
+- **input BO — ruled out.** PRE/POST CBUF SRAM dump: the input feature ramp stages in cleanly
+  (`@0x0` goes from garbage to the known ramp `80 81 82 …`).
+- **a kernel-side write — the remaining suspect.** Weights are DMA'd from DRAM (`top wt_rd=3200`) but
+  the weight blocks (`@0xe0000/@0xf0000`) read **byte-identical PRE and POST** and `core wt_rd=0`:
+  the weights are read but never deposited into the CBUF weight bank.
+
+Tried staging weights into the on-chip SRAM + repointing the CNA weight source (0x1110) to it (fix
+#1 at an arbitrary IOVA, fix #2 at the vendor's exact NBUF window 0xffff8000) — neither moved
+`core wt_rd`, so the weight *source location* is not the lever. The one structural gap vs the vendor:
+it places all BOs (incl. weights) in the on-chip **NBUF** (the `rk3576_cache_sgt_init` setup rocket
+lacks); rocket uses DRAM. Open question to Tomeu (flipper #55): what arms the CNA weight-load deposit
+into the CBUF on RK3576 — the NBUF residency, or a kernel register write.
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture
