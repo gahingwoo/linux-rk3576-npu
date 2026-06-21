@@ -60,6 +60,33 @@ it places all BOs (incl. weights) in the on-chip **NBUF** (the `rk3576_cache_sgt
 lacks); rocket uses DRAM. Open question to Tomeu (flipper #55): what arms the CNA weight-load deposit
 into the CBUF on RK3576 — the NBUF residency, or a kernel register write.
 
+### conv2d payload diff: operands vs Mesa (2026-06-21, Tomeu's ask)
+
+Dumped the full BO payload (weights/input/bias/output) the **vendor** stack hands the hardware for a
+standalone 16→128 5×5 conv and laid it next to **Mesa's**, both running the *same* conv (the vendor
+`.rknn` rebuilt from Mesa's own `conv2d.tflite` weights) fed the *same* ramp input. Vendor side:
+instrumented `rknpu_job.c` to translate the regcmd's BO addresses (0x1088 input / 0x1110 weights /
+0x4018 output / 0x5020 bias) through the IOMMU and print the bytes; Mesa side: `ROCKET_DEBUG=dump_bos`.
+Both emitted over the serial console as text (`rknpu cap:` / `mesa cap:`) and diffed with
+`vendor-capture/diff_payload.py`. Mechanism check: the vendor **input** BO reads back the exact ramp
+fed → the dump reads the right memory, not neighbouring garbage.
+
+- **weights** — dense and varied on both (~99% nonzero; distinct 256 vendor / 221 mesa). Mesa's
+  coefficient BO is **not** degenerate.
+- **input** — the same ramp on both (staging equivalent).
+- **bias** — populated on both.
+- **output** — the only divergent buffer: Mesa's computed output is degenerate (`distinct=2`). The
+  vendor output was caught at submit (pre-compute), so the *computed* results aren't compared here.
+
+What it establishes / what it does **not**: it rules out "Mesa hands the engine empty or zeroed
+operands" — they are well-formed. It does **not** separate a weight **packing-order** defect (right
+values, wrong layout → the CMAC reads them as noise) from a pure **execution** defect: the two
+toolchains quantize independently, so the weight bytes differ everywhere and the packing *order* can't
+be byte-compared. Both defects produce the identical signature (dense weight BO + degenerate output).
+Consistent with the `core wt_rd=0` CBUF→CMAC localization, **not proof** of it. Open lever: get the
+vendor toolkit to ingest the exact tflite int8 weights (it rejects `load_tflite` on arm64) for a
+byte-identical layout diff — handed back to Tomeu.
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture

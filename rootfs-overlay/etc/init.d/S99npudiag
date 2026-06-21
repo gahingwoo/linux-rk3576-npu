@@ -56,6 +56,12 @@ start() {
 	log "----- (4) conv2d CBUF audit (weights reach the on-chip bank?) -----"
 	dmesg | grep -aE 'cbuf-audit|dbg perf' | head -20 > "$C"
 
+	# (5) Print the dump_bos buffers as TEXT to the serial console, in the same
+	# "cap: BO" format the vendor kernel uses, so the Mesa payload comes back over
+	# serial (no USB needed) and diffs line-for-line against the vendor capture.
+	log "----- (5) MESA BO TEXT DUMP (copy these 'mesa cap:' lines for the diff) -----"
+	python3 "$NPU_DIR/dump_mesa_bos.py" /tmp/dump > "$C" 2>&1
+
 	log ""
 	log "########## END  (raw: /tmp/dbg.log /tmp/an.log /tmp/dump/) ##########"
 	log ""
