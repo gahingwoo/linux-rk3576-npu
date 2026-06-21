@@ -9,6 +9,14 @@ init.md
 build.md
 rootfs-overlay/opt/npu-test/*.tflite
 rootfs-overlay/usr/lib/python3.11/
-# local-only RK3576 capture/RE tooling and build artifacts
-vendor-capture/
+# vendor-capture: track the scripts/docs/small references; skip the heavy deps,
+# the local venv, build artifacts and large model/vendor blobs.
+vendor-capture/rkt2-venv/
+vendor-capture/__pycache__/
+vendor-capture/work/
+vendor-capture/*.whl
+vendor-capture/librknnrt.so
+vendor-capture/runner
+vendor-capture/mobilenet_v1_1.0_224_quant.tflite
 kernel/out/
+vendor-capture/check*.onnx
