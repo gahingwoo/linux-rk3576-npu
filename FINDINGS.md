@@ -47,6 +47,8 @@ Verified on the board with an automated register-by-register diff against a live
 | IOMMU faults / stale TLB | none; rk_iommu has no `.flush_iotlb_all` |
 | clock **rate** (GPLL 198 MHz … 786 MHz) | no change |
 | clock **source** PVTPLL (see below) | makes it worse — 0 jobs complete |
+| **submit-time timing race** (pure busy-wait 1 µs–1 ms before OP_EN, swept ×20 runs) | **no change** — conv0 writes exactly 2 of 32 channels (`core dt_wr`=25088) every run, every delay |
+| per-job ping-pong pointer advance (`double_kick` warmup pulse) | no change — same flat 2 channels |
 
 ## Clock-ID finding (useful, upstreamable) and the PVTPLL dead end
 
@@ -68,6 +70,14 @@ cleanly. Reverted to GPLL.
 The gap is the on-chip **CBUF → CMAC** hand-off, the one place with no register window: the CNA
 stages the full operands in (bandwidth counters prove it), the vendor's identical command stream
 then computes, and rocket's identical stream reads zero. Nothing pollable distinguishes the two.
+
+The truncation is **deterministic within a power cycle**, not a race: a 20-run × 5-point sweep of a
+pure pre-kick busy-wait (1 µs–1 ms) and a ping-pong pointer advance both left conv0 at exactly 2 of
+32 output channels every run (0 full-channel results in ~1000 jobs). A submit-time read-too-early or
+ping-pong race would vary and respond to delay; this does neither — the cut is locked *before* the
+job, in the CBUF power-up/reset state, which reads as a channel-bank truncation rather than a timing
+race. (An external NVDLA bring-up engineer independently called this "a race below observability";
+the sweep is the clean refutation of that for the submit window.)
 
 **What would crack it:** an NVDLA-derived microarchitecture reference for the RK3576 CBUF/CMAC, or
 a register-write trace from a *working* RK3588 rocket run to diff the execution (not just the
