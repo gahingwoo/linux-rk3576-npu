@@ -87,6 +87,40 @@ Consistent with the `core wt_rd=0` CBUF→CMAC localization, **not proof** of it
 vendor toolkit to ingest the exact tflite int8 weights (it rejects `load_tflite` on arm64) for a
 byte-identical layout diff — handed back to Tomeu.
 
+### Faithful payload replay through the vendor UABI — it computes (2026-06-22)
+
+The diff above caught the vendor output *pre-compute*. The fix: capture librknnrt's **entire**
+submission and replay those same bytes through the vendor `rknpu` DRM render node, so the *computed*
+result is observable. An `LD_PRELOAD` shim (`vendor-capture/capture.c`) records every BO librknnrt
+creates and, on the first `SUBMIT`, maps each itself and dumps the content + the raw submit struct.
+The standalone conv turns out to be **5 BOs over 3 tiled tasks** (a 4 KiB task-array, a 76 KiB
+weights+bias+3-regcmd BO, a 300 KiB scratch, the input, the output), not the single regcmd a naive
+replay assumed. `replay.c` re-creates those BOs (same order/size → same deterministic IOVAs, so the
+address-remap is a no-op as the first job), loads the bytes, and submits.
+
+Result: the replayed conv produces a **non-degenerate output** — `distinct=254`, `202547 / 204800`
+nonzero — written by the NPU into an output buffer the capture confirms was **all-zero** at submit.
+This is the first time the captured payload has computed a real result on this bench, and the
+control Tomeu's method needs: **the captured bytes + the vendor kernel are sound** — the payload was
+never the defect.
+
+The decisive variable was **not** in any BO or the regcmd — it was the submit struct's
+`subcore_task[5]` array, which an ioctl *type* trace can't see. librknnrt splits the 3 tiled tasks
+across subcore slots — `subcore[0]={start 0, num 1}`, `[1]={1,1}`, `[2]={-1,1}` (`task_counter=0`,
+`core_mask=0` AUTO). A hand-built submit that instead put all three on one slot (`subcore0={0,3}`)
+ran **task 0 then stalled task 0→1** — `INT_RAW_STATUS=0x30000000`, never the `0x300` the kernel
+waits for — i.e. it reproduces the long-standing "PC stalls task0→1" wall exactly. So that wall is a
+**dispatch artifact** (one multi-task dispatch the PC won't iterate), not the payload: split into
+single-task dispatches and the identical bytes compute. Soft-reset (vendor never issues one) and an
+explicit `POWER_ON` (the submit ioctl already `power_get`s via its wrapper macro) were both ruled out
+along the way. Tooling tracked in `replay/` + `vendor-capture/`.
+
+**Next:** replay the *same* captured bytes through the **rocket** UABI (`/dev/accel/accel0`). If it
+also computes, the rocket kernel is sound and the divergence is in Mesa's payload generation; if it
+diverges on identical bytes, the defect is isolated to the rocket kernel driver. The mainline rocket
+job model ("all tasks in one job run sequentially on the same core") vs the vendor's per-task subcore
+split is the lead to test.
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture
