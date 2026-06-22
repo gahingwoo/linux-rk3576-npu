@@ -121,6 +121,34 @@ diverges on identical bytes, the defect is isolated to the rocket kernel driver.
 job model ("all tasks in one job run sequentially on the same core") vs the vendor's per-task subcore
 split is the lead to test.
 
+### Same bytes through the rocket UABI — it computes too; the bug is Mesa's payload (2026-06-22)
+
+`replay_rocket.c` re-creates the four data BOs through the rocket UABI (`CREATE_BO` returns each
+one's rocket-assigned NPU IOVA), remaps every captured IOVA the regcmd references to those new
+addresses (the cross-UABI step the same-IOVA vendor replay didn't need), and submits each tiled task
+as its own one-task job (`DRM_ROCKET_SUBMIT`, the vendor's per-subcore split). The rocket kernel
+points the PC at the task's regcmd and pulses `OPERATION_ENABLE` itself, so the vendor regcmd (which
+folds `op_en` into the submit header rather than appending the broadcast entry Mesa does) runs as-is.
+
+Result: rocket computes the captured payload — output `distinct=254`, `202547/204800` nonzero, head
+`07 0e 09 04`, **byte-statistics identical to the rknn replay**, into a verified-zero output buffer.
+And in the *same boot*, Mesa's own conv on the same NPU stays degenerate (`distinct=2`). Repeated
+under both firmwares to kill the BL31/OP-TEE variable:
+
+| payload \ SPI firmware | vendor (Rockchip TF-A + OP-TEE) | mainline (TF-A v2.14.0, no OP-TEE) |
+|---|---|---|
+| **vendor** (replay_rocket, captured bytes) | COMPUTES | COMPUTES |
+| **Mesa** (its own encoded payload)         | degenerate | degenerate |
+
+The captured bytes compute through *both* UABIs under *both* firmwares; Mesa's payload degenerates
+under both. So the defect is **not** the rocket kernel, **not** the hardware/CBUF, **not** the
+firmware — it is isolated to **what Mesa encodes**. Since the conv0 regcmd already matches the vendor
+138/138 register-for-register and the input is the same ramp, the remaining operand is the
+**coefficient (weights+bias) BO** — the weight *packing order* the earlier diff couldn't separate
+from an execution defect. Execution is now proven sound, so it is the packing. (One aside: the rocket
+multi-task-per-job path NULL-derefs — `replay_rocket` runs one task per job, the shape Mesa uses
+anyway.) `replay_rocket.c` tracked in `replay/`.
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture
