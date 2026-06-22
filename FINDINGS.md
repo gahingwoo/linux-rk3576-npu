@@ -142,12 +142,39 @@ under both firmwares to kill the BL31/OP-TEE variable:
 
 The captured bytes compute through *both* UABIs under *both* firmwares; Mesa's payload degenerates
 under both. So the defect is **not** the rocket kernel, **not** the hardware/CBUF, **not** the
-firmware — it is isolated to **what Mesa encodes**. Since the conv0 regcmd already matches the vendor
-138/138 register-for-register and the input is the same ramp, the remaining operand is the
-**coefficient (weights+bias) BO** — the weight *packing order* the earlier diff couldn't separate
-from an execution defect. Execution is now proven sound, so it is the packing. (One aside: the rocket
-multi-task-per-job path NULL-derefs — `replay_rocket` runs one task per job, the shape Mesa uses
-anyway.) `replay_rocket.c` tracked in `replay/`.
+firmware — it is isolated to **what Mesa encodes**: the coefficient (weights+bias) BO. (One aside:
+the rocket multi-task-per-job path NULL-derefs — `replay_rocket` runs one task per job, the shape
+Mesa uses anyway.) `replay_rocket.c` tracked in `replay/`.
+
+### It is per-channel weight quantization, NOT packing order (2026-06-22, correction)
+
+A first read of the above guessed the coefficient defect was the weight **packing order**. Decoding
+the layout proved that wrong. Position-encoded convs (`vendor-capture/gen_id_generic.py`: three
+16→128 5×5 models with `w = ky*5+kx+1` / `ic+1` / `oc+1`) were converted to `.rknn`; the vendor
+toolkit packs the weights into the `.rknn` at build time, so the packed buffer is extractable on the
+**host** (the min-distinct 51200-byte window — no board flash). Decoded nesting, outer→inner:
+`oc1(/32) → ky → kx → oc2(0..31) → ic` — which **matches Mesa's generic `rkt_fill_weights` 100%**.
+Packing order is not the bug.
+
+The real difference is the **quantization**. `conv2d_rk3576.rknn` is built `do_quantization=False`, so
+it carries the *same* source int8 weights as Mesa; byte-comparing the vendor's packed weights against
+the source (in the now-known order) shows each output channel is a **per-oc affine** of the source —
+`|corr| = 1.000` for all 128 channels, slopes spanning **1.07–1.67×**. The vendor quantizes weights
+**per output channel**; Mesa uses one **per-tensor** `weight_tensor->scale` (`rkt_regcmd.c:334` → a
+single OUT_CVT scale/shift at DPU `0x40b0`/`0x40b4`; the `rkt_coefs.c:411` hardcoded-scale list is
+the non-RK3576 path). The vendor's SDP requant is itself **per-channel**: regcmd `0x5020` →
+`bo01[51200:52224]` is a 1024-byte struct of 16 groups ×`[8×i32 A | 8×i16 B | 8×i16 C]`, and A, B, C
+all vary per channel (B correlates −0.98 with the per-oc stored-weight sum; A carries a scale term
+plus a bias term). Mesa's RK3576 bias path treats B as the per-**layer** constant `0x80 − wt_zp`.
+
+So: **the RK3576 NPU expects per-output-channel weight quantization (and a per-channel SDP requant
+buffer); Mesa emits per-tensor.** This is consistent with — and likely the same root cause as — conv0's
+"~2 of 32 channels" channel-bank truncation: per-tensor quant scales every channel by the global max,
+crushing the small-magnitude channels toward zero. Open: the exact A/B/C formulas (per-channel
+scale-mult / shift / zero-point compensation) — to be cracked with single-variable isolation captures
+(vary bias-only / scale-only / zp-only per channel, extract from the `.rknn`, fit), then implement
+per-channel weight quant + the per-channel requant buffer in Mesa. Tooling:
+`vendor-capture/{gen_id_generic,gen_id_bias,decode_generic,abc_locate,convert_onnx_pt}.py`.
 
 ## Confirmed byte-identical to the vendor
 
