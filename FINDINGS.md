@@ -188,25 +188,32 @@ UABI as one task (re-pointing the address regs), with env knobs to swap a single
 vendor's. Baseline reproduced the grey (`distinct=2`); swapping the **requant**, the **CBUF** `0x1040`,
 and the **weights** each left it grey. None of the quantisation theory moved it.
 
-The kernel said why: the CNA's two ping-pong groups both read `DS0=0 (h=0,w=0)`, `DS1=0x80000000`
-(the `pp_state_init` default) — Mesa's regcmd **geometry never latches**, so the units engage on an
-empty-shape conv (`core wt_rd=0`) → MAC=0 → grey. This is the long-standing conv0 wall, now isolated
-on conv2d in a harness. Mesa's regcmd geometry is itself *valid* and near-identical to the vendor's
-(80×80 in, 40×40 out; the only deltas are `0x1018`/`0x1024` weight-format words + the appended op_en),
-so it is purely a latching failure, not a geometry-computation bug.
+It looked at first like a geometry-latch failure (the CNA ping-pong groups read the `pp_state_init`
+default `DS0=0`/`DS1=0x80000000`), and an earlier draft here claimed the appended in-stream op_en
+(`tgt=0x81 reg=0x08 val=0x1d`, the ENABLE_MASK, which the vendor folds into the submit instead) blocks
+the latch — removing it flips `G0_DS0` `0→0x190` and `DS1` `default→0x0202007f`. **That read was a
+measurement artifact and is retracted.** The `DS0`/`DS1` dump is taken *after* execution, and it
+correlates perfectly with whether the engine *ran*, not whether the geometry committed: every variant
+that engaged (`dt_wr=12800`) reads the default (the run consumes/resets the group), every variant that
+did NOT engage (`dt_wr=0`) reads the real value (it sits un-consumed). So "geometry latched" was mostly
+tracking "engine didn't run."
 
-**The cause of the non-latch: the in-stream broadcast op_en.** Mesa appends `tgt=0x81 reg=0x08
-val=0x1d` (the ENABLE_MASK) as the last regcmd entry; the vendor instead folds `0x1d` into the submit
-(the kernel writes ENABLE_MASK before OP_EN) and has *no* in-stream op_en. **Removing that one entry
-from Mesa's regcmd makes the geometry latch**: `G0_DS1` goes from the `0x80000000` default to the
-regcmd's real `0x0202007f`, `G0_DS0` from `0` to `0x190`. So the PC, reaching the op_en at the tail of
-the stream, engages/flips the ping-pong before the geometry-filled group is read. This is the
-**geometry-latch half** of the wall, cracked: the fix direction is that Mesa must not put op_en in the
-regcmd stream — fold it into the submit's enable_mask like the vendor. The **enable/run half** remains
-open: with the geometry latched + units enabled (kernel `enable_mask=0x1d`), the engine runs but hangs
-(a missing-scratch-BO or op_en-timing sub-wall). (The instrumented rocket kernel is also fragile — a
-`drm_mm_takedown` NULL-deref in BO cleanup crashes after ~2–3 submits, and an invalid-geometry OP_EN
-wedges the NPU, so each board run is one or two submits before a power-cycle.)
+The less-confounded signal is the *during-execution* `cnalive` sample (`ds0_first`): the vendor
+(computes) shows `ds0_first=0` (geometry present), Mesa baseline (saturates) shows `ds0_first=-1`
+(geometry never present) — so Mesa baseline does genuinely run on an empty shape. But the **decisive,
+un-artifacted result**: stripping op_en **and** the 4 trailing `(0,0,0)` pad entries **and** patching
+`0x1018`/`0x1024` makes Mesa's regcmd **byte-identical to the vendor's**, and it *still* saturates
+(`distinct=2`, `dt_wr=12800`) when run. **So the failure is NOT the regcmd structure** — with the
+vendor's exact regcmd, Mesa still fails. The remaining difference between Mesa (saturates) and the
+vendor (computes) is therefore the **coefficient data** (weights/bias/requant) or the **submit** (Mesa
+1 task vs the vendor's 3) — which revives the requant/bias direction the per-tensor argument had set
+aside. (Also learned: the 4 trailing pad entries are not junk — with op_en removed, keeping them lets
+the geometry sit and the engine not engage, removing them lets it engage; they buy ping-pong handoff
+time.) Open / decisive next: capture the `cnalive ds0_first` for the regcmd-identical variant (does the
+geometry reach the engine under the vendor's exact regcmd, or not) — the board crashed before that
+sample. (The instrumented rocket kernel is fragile — a `drm_mm_takedown` NULL-deref in BO cleanup
+crashes after ~2–3 submits, an invalid-geometry/enable_mask OP_EN wedges the NPU — so each boot yields
+one or two submits before a power-cycle; run the key variant first.)
 
 ## Confirmed byte-identical to the vendor
 

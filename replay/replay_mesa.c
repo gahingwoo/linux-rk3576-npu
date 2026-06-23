@@ -142,15 +142,17 @@ int main(int argc, char **argv)
 	 * compact it out + shrink the count, the way the vendor regcmd has none and
 	 * relies on the kernel's PC_OP_EN pulse to engage. (Zeroing it in place makes
 	 * a tgt=0/reg=0 entry the PC chokes on → hang; must actually drop it.) */
-	if (getenv("MESA_STRIPOPEN")) {
-		unsigned w = 0;
+	if (getenv("MESA_STRIPOPEN") || getenv("MESA_STRIPPAD")) {
+		int sop = getenv("MESA_STRIPOPEN") != NULL, spad = getenv("MESA_STRIPPAD") != NULL;
+		unsigned w = 0, nop = 0, npad = 0;
 		for (unsigned k = 0; k < n_entries; k++) {
-			if ((e[k] & 0xffff) == 0x0008 && ((e[k] >> 48) & 0xffff) == 0x81) {
-				printf("  removed op_en entry %u\n", k); continue;
-			}
+			uint32_t reg = e[k] & 0xffff, tgt = (e[k] >> 48) & 0xffff;
+			if (sop && reg == 0x0008 && tgt == 0x81) { nop++; continue; }
+			if (spad && tgt == 0 && reg == 0) { npad++; continue; }  /* (0,0,0) tail pad */
 			e[w++] = e[k];
 		}
 		n_entries = w;
+		printf("  cleaned tail: removed %u op_en + %u pad -> %u entries\n", nop, npad, n_entries);
 	}
 
 	for (int i = 0; i < NBO; i++) fini(i);
