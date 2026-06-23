@@ -200,20 +200,22 @@ tracking "engine didn't run."
 
 The less-confounded signal is the *during-execution* `cnalive` sample (`ds0_first`): the vendor
 (computes) shows `ds0_first=0` (geometry present), Mesa baseline (saturates) shows `ds0_first=-1`
-(geometry never present) — so Mesa baseline does genuinely run on an empty shape. But the **decisive,
-un-artifacted result**: stripping op_en **and** the 4 trailing `(0,0,0)` pad entries **and** patching
-`0x1018`/`0x1024` makes Mesa's regcmd **byte-identical to the vendor's**, and it *still* saturates
-(`distinct=2`, `dt_wr=12800`) when run. **So the failure is NOT the regcmd structure** — with the
-vendor's exact regcmd, Mesa still fails. The remaining difference between Mesa (saturates) and the
-vendor (computes) is therefore the **coefficient data** (weights/bias/requant) or the **submit** (Mesa
-1 task vs the vendor's 3) — which revives the requant/bias direction the per-tensor argument had set
-aside. (Also learned: the 4 trailing pad entries are not junk — with op_en removed, keeping them lets
-the geometry sit and the engine not engage, removing them lets it engage; they buy ping-pong handoff
-time.) Open / decisive next: capture the `cnalive ds0_first` for the regcmd-identical variant (does the
-geometry reach the engine under the vendor's exact regcmd, or not) — the board crashed before that
-sample. (The instrumented rocket kernel is fragile — a `drm_mm_takedown` NULL-deref in BO cleanup
-crashes after ~2–3 submits, an invalid-geometry/enable_mask OP_EN wedges the NPU — so each boot yields
-one or two submits before a power-cycle; run the key variant first.)
+(geometry never present) — so Mesa baseline does genuinely run on an empty shape. Stripping op_en **and**
+the 4 trailing `(0,0,0)` pad entries **and** patching `0x1018`/`0x1024` makes the regcmd's *structure*
+(its set of entries) match the vendor's, and it *still* saturates (`distinct=2`, `dt_wr=12800`) when run
+— so the regcmd **structure** (op_en / padding / geometry words) is not the bug. But that config did
+**not** patch the OUT_CVT requant words (`0x40ac`/`0x40b0`/`0x40b4`) or CBUF `0x1040` to the vendor's, so
+the regcmd was **not** byte-identical — those *values* still differ, and Mesa's `0x40b4` shift = 14 vs the
+vendor's 26 is exactly the signature of a requant run **~2^12 too hot → clamp to 0/255 = the saturation
+seen**. So the live suspects are now (1) the **OUT_CVT requant values** in the regcmd, and (2) the
+**coefficient data** (weights/bias) — reviving the requant/bias direction the per-tensor argument had set
+aside; the geometry/op_en/structure path is closed. (Also learned: the 4 trailing pad entries are not
+junk — with op_en removed they buy ping-pong handoff time.) **Decisive next:** `replay_mesa` with op_en+pad
+stripped **and** the OUT_CVT (`0x40ac=9`/`0x40b0=0x5d58`/`0x40b4=26`) patched to the vendor's — does the
+saturation clear? then swap the weights/bias. (Capture `cnalive ds0_first` alongside.) (The instrumented
+rocket kernel is fragile — a `drm_mm_takedown` NULL-deref crashes BO cleanup after ~2–3 submits, an
+invalid OP_EN wedges the NPU — so each boot yields one or two submits before a power-cycle; key variant
+first.)
 
 ## Confirmed byte-identical to the vendor
 
