@@ -141,7 +141,7 @@ weights/bias BOs for the vendor's. Therefore:
 > (2) the "geometry not latching / conv0 wall" framing is moot — geometry latches fine; the engine
 > was running on mis-encoded coefficients.
 
-Next: isolate **weights vs bias/requant** (one swap at a time). The mesa author's own note
+Next: isolate **weights vs bias/requant** (one swap at a time). My own note added to the driver
 (`rkt_ml.c:348-364`) flags the per-channel requant buffer as the suspect/TODO, and the weight
 *packing order* was already shown to match the vendor — so the bias/requant A·B·C buffer
 (`0x5020`/`0x5024`, per-tensor in Mesa vs per-channel in the vendor) is the leading candidate.
@@ -154,8 +154,9 @@ regcmd and **Mesa's own weights** but the **vendor bias buffer** (`MESA_BIAS` = 
 > conv2d defect is the **per-channel requant / bias buffer** at the weight-BO tail (regcmd
 > `0x5020` → A·B·C, `0x5024` → the second per-channel array). Mesa writes it per-tensor; the
 > vendor writes it per-channel. Swapping *only* that buffer to the vendor's makes the conv
-> compute. **This is exactly the mesa author's own TODO** (`rkt_ml.c:348-364`). The fix lives in
-> `rkt_coefs.c` (the bias/requant emit), and nothing else needs to change.
+> compute. **This is exactly the per-channel-requant TODO I noted in `rkt_ml.c:348-364`** — upstream
+> doesn't attempt it (it gates per-axis quant out as "not supported"); this note is my own. The fix
+> lives in `rkt_coefs.c` (the bias/requant emit), and nothing else needs to change.
 
 The remaining work is purely to decode the vendor's per-channel requant buffer
 (`vendor-bias.bin` = bo1[51200:72000], now a *known-good* reference because it computes) into a
@@ -191,7 +192,8 @@ and which I set to constants/zeros. Those did *not* fit the per-tensor quantitie
 fixed-point datapath (how `A`·`B`·`C`·`BS_MUL`·`OUT_CVT` combine bit-for-bit) is not recoverable
 from the known-good buffer + the quant params alone — every fixed-point model tried (shift=14 direct,
 shift=26 raw) was wrong on the board. So the *structure* is settled (bug = the bias/requant buffer;
-`A ∝ in_zp·sw - bias`, R²=0.99) and is upstreamable as-is to the author whose TODO this is, but the
+`A ∝ in_zp·sw - bias`, R²=0.99) and is upstreamable as-is (this is the per-channel-requant TODO I
+left in `rkt_ml.c`; upstream gates per-axis out rather than attempting it), but the
 exact scale constants need the RK3576 SDP datapath spec (the per-channel `BS_MUL`/`OUT_CVT` fixed-point
 semantics), not further blind arithmetic. That is the clean handoff line.
 
@@ -218,8 +220,9 @@ and every fixed-point model all fail on the board).
 (`0x5020` int `[A|B|C]` + `0x5024` float), of which Mesa writes only the first and gets the `A`-term
 wrong. The `A`-term is solved (`A ∝ in_zp·sw - bias`, R²=0.99). The remaining per-channel `B`/`C` +
 float surface are the vendor toolkit's per-channel re-quantisation and need the RK3576 SDP datapath
-semantics (how the int and float surfaces combine in the converter) — i.e. the author's per-channel
-requant TODO, now with the exact surfaces and the A-term pinned. That is the real handoff: a feature
+semantics (how the int and float surfaces combine in the converter) — i.e. the per-channel requant
+TODO I noted in `rkt_ml.c` (upstream doesn't attempt it), now with the exact surfaces and the A-term
+pinned. That is the real handoff: a feature
 (per-channel requant + the second BS surface), not a value left to guess.
 
 **Honest caveat / next step.** The earlier register-level diff used a *stale* `mesa-regcmd` dump
