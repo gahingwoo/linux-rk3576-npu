@@ -176,6 +176,38 @@ scale-mult / shift / zero-point compensation) — to be cracked with single-vari
 per-channel weight quant + the per-channel requant buffer in Mesa. Tooling:
 `vendor-capture/{gen_id_generic,gen_id_bias,decode_generic,abc_locate,convert_onnx_pt}.py`.
 
+### Bisection in a controllable harness: conv2d is the geometry-latch wall, and the in-stream op_en blocks the latch (2026-06-23)
+
+The per-channel requant above is real for the per-**axis** MobileNet layers, but it is a red herring
+for the standalone `conv2d` test: that `.tflite` is per-**tensor** (weights scale 3.912/zp 133, output
+scale 0.0235/**zp 0**), and Mesa's requant (OUT_CVT shift 14, out_zp 0) is *correct* for it — the vendor's
+shift 26 / zp 137 is just the vendor toolkit's own per-channel re-quantization, a different valid scheme.
+What actually fails conv2d was found by reproducing it in a controllable harness rather than by
+reasoning: `replay/replay_mesa.c` feeds Mesa's own dumped regcmd/weights/biases back through the rocket
+UABI as one task (re-pointing the address regs), with env knobs to swap a single component for the
+vendor's. Baseline reproduced the grey (`distinct=2`); swapping the **requant**, the **CBUF** `0x1040`,
+and the **weights** each left it grey. None of the quantisation theory moved it.
+
+The kernel said why: the CNA's two ping-pong groups both read `DS0=0 (h=0,w=0)`, `DS1=0x80000000`
+(the `pp_state_init` default) — Mesa's regcmd **geometry never latches**, so the units engage on an
+empty-shape conv (`core wt_rd=0`) → MAC=0 → grey. This is the long-standing conv0 wall, now isolated
+on conv2d in a harness. Mesa's regcmd geometry is itself *valid* and near-identical to the vendor's
+(80×80 in, 40×40 out; the only deltas are `0x1018`/`0x1024` weight-format words + the appended op_en),
+so it is purely a latching failure, not a geometry-computation bug.
+
+**The cause of the non-latch: the in-stream broadcast op_en.** Mesa appends `tgt=0x81 reg=0x08
+val=0x1d` (the ENABLE_MASK) as the last regcmd entry; the vendor instead folds `0x1d` into the submit
+(the kernel writes ENABLE_MASK before OP_EN) and has *no* in-stream op_en. **Removing that one entry
+from Mesa's regcmd makes the geometry latch**: `G0_DS1` goes from the `0x80000000` default to the
+regcmd's real `0x0202007f`, `G0_DS0` from `0` to `0x190`. So the PC, reaching the op_en at the tail of
+the stream, engages/flips the ping-pong before the geometry-filled group is read. This is the
+**geometry-latch half** of the wall, cracked: the fix direction is that Mesa must not put op_en in the
+regcmd stream — fold it into the submit's enable_mask like the vendor. The **enable/run half** remains
+open: with the geometry latched + units enabled (kernel `enable_mask=0x1d`), the engine runs but hangs
+(a missing-scratch-BO or op_en-timing sub-wall). (The instrumented rocket kernel is also fragile — a
+`drm_mm_takedown` NULL-deref in BO cleanup crashes after ~2–3 submits, and an invalid-geometry OP_EN
+wedges the NPU, so each board run is one or two submits before a power-cycle.)
+
 ## Confirmed byte-identical to the vendor
 
 Verified on the board with an automated register-by-register diff against a live vendor capture
