@@ -7,6 +7,52 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
+## 2026-06-23 (late) — the SDP requant buffer format, cracked from controlled captures
+
+The whole-session bisection had localised the saturation to the **SDP bias/requant buffer**
+(`rkt_coefs.c`): with the vendor's buffer the pipeline computes, with Mesa's it saturates, and
+**zeroing the `0x5024` "second buffer" alone re-saturates** (`iso-noFloat` → `distinct=2`), so that
+region is load-bearing, not padding. Three purpose-built convs were captured on the board to read the
+buffer the vendor runtime actually uploads (`dirty/ABC_test/{iso_scale,iso_sum,iso_bias}`, all
+conv2d-shaped `16→128 5×5 s2`, each varying exactly one quant axis), plus three position-encoded
+captures (`dirty/vendor_cap/idg_{A,B,C}`, weight = `ky*5+kx+1` / `ic+1` / `oc+1`). The per-channel
+requant buffer (`bo1[51200:]`) decodes cleanly:
+
+| field | offset | what it is | evidence |
+|---|---|---|---|
+| **A** | `0` | `int32[128]`, **contiguous** per-channel term ≈ `0x80*(sw+bias)` | `iso_sum`: `A` vs weight-sum **R²=1.0000**; `iso_scale`: slope **127.93 ≈ 0x80**; `iso_bias`: `A` linear in bias |
+| **B** | `512` | **one int32 scalar** = `0x80 - wt_zp` | `iso_scale` wt_zp 0 → **128**, `iso_sum` wt_zp 128 → **0**, `iso_bias` wt_zp 129 → **−1** |
+| **float surface** | ~`544`+ | **the dequantised weights** (`wt_sc·(q−zp)`), float32, in the HW-tiled weight order | `iso_sum` surface = the model's **±100** values; `idg_A` distinct vals top out at **25 = max(ky·5+kx+1)**; `idg_B` at **16 = max(ic+1)**; `idg_C` encodes **oc+1** |
+
+So the "mystery floats" at `0x5024` are **a second copy of the weights**, dequantised to float32 — the
+hardware reads the weights twice (int8 to the CMAC at `0x1110`, float32 to the SDP at `0x5024`). Mesa
+writes the int8 copy but leaves the float copy **zero**, which is why every asymmetric layer saturates.
+
+**Mesa's two concrete bugs in `rkt_fill_biases` (RK3576 path):**
+1. **Layout.** It writes `[8×i32 A | 8×i16 B | 8×i16 C]` per 64-byte group; the hardware wants a
+   *contiguous* `int32[128]` A then a *single* scalar B. The two layouts only coincide for `oc<8`;
+   every channel from 8 up reads A out of the wrong slot.
+2. **Empty float surface.** The `+0x100` "X2 pad" left zero is actually the dequantised-weight array
+   the SDP requires.
+
+The **A-term math** Mesa already has (`0x80*(sw+bias)`) is the right shape — confirmed `R²=1.0` on
+`iso_sum`. (The standalone per-**tensor** `conv2d.tflite` capture, `vendor-bias.bin`, is 20800 B with a
+*different* shape — an extra `int32[128]` where the per-channel buffer has the scalar B — so the
+per-tensor and per-axis encoders differ; MobileNet is per-axis, so the per-channel format above is the
+one to implement.) The float surface decodes (confirmed two clean independent ways — `idg_A` is the kernel ramp
+`1,2,…,25`; `iso_sum` is the model's `±100` in clean **25-wide (= 5×5 kernel)** blocks; both put
+**kernel position innermost**) as the **dequantised weights**. The layout is **fixed-position** (same
+offsets for the same conv shape, not a content-sized stream): `A[128]` int32, the `B` scalar + pad,
+then a tiled weight region with a **consistent ~124-float dense block** at the same offset in every
+capture (idx 256…379), a sparse `....wwww`-period-16 (= `ic`) preamble before it, and a trailing
+sparse region. (An earlier "the block grows with the values → compression" read was a measurement
+artifact — `iso_sum`'s `±100` simply fills the preamble's otherwise-sparse slots, it is the same
+fixed layout.) **Open:** which `(oc,ic,ky,kx)` maps to each slot of that tiled region — the per-axis
+order. `idg_B`/`idg_C` read anomalously (values 79.. / 133.. past the `ic+1`/`oc+1` range) so they do
+*not* give the `ic`/`oc` order cleanly (possibly stale captures); the tiling has to come from the
+NVDLA feature-tile definition or a board write-back test (Mesa controls the `0x5024` base, so a
+candidate dense kernel-inner layout can be emitted and checked for de-saturation).
+
 ## 2026-06-23 — Harness validated faithful; the bug is the geometry/config, not the data
 
 Two results this day, both first-hand (one on-board, one straight from the deployed source):
