@@ -149,6 +149,33 @@ shift=26 raw) was wrong on the board. So the *structure* is settled (bug = the b
 exact scale constants need the RK3576 SDP datapath spec (the per-channel `BS_MUL`/`OUT_CVT` fixed-point
 semantics), not further blind arithmetic. That is the clean handoff line.
 
+**The requant is TWO per-channel BS surfaces; Mesa leaves the second one zero (2026-06-23).**
+The DPU bias is read by `DPU_RDMA` from *two* surfaces: `0x5020` (`RDMA_BS_BASE_ADDR`) holds the
+`[A|B|C]` int table, and `0x5024` (the "second buffer") holds a per-channel **float32** array. Both
+are essential — board isolation, vendor weights, vendor regcmd, shift=26:
+
+- `A` alone (vendor's exact `A`, `B`/`C`/floats zeroed) → `distinct=1` (constant = the OUT_CVT
+  offset). The bias-add alone carries nothing.
+- `A`/`B`/`C` kept, the `0x5024` floats zeroed → `distinct=2` (degenerate).
+- The full vendor buffer (both surfaces) → `distinct=252` (computes).
+
+So the `0x5024` float surface is required, and **Mesa never writes it**: `rkt_fill_biases` allocates
+`groups*64 + 0x100` and points `0x5024` at `bias_addr + 0x400`, which lands in the zeroed `0x100`
+pad. That zero second-surface is a concrete part of the bug. The float array decodes to a per-channel
+table (`float[0] = -wt_sc`, then 128 varied per-channel floats — *not* the per-channel weight scales,
+not any clean function of the per-tensor quant params). It is produced by the vendor toolkit's
+per-channel quantiser, which lives in the compiled `librknnc.so` (rknn-toolkit2 2.3.2) — not in
+readable Python and not recoverable by swapping/fitting (proven exhaustively: A-alone, A+B/C-no-float,
+and every fixed-point model all fail on the board). 
+
+**Net:** the conv2d defect is fully cornered — it is the per-channel SDP requant, two BS surfaces
+(`0x5020` int `[A|B|C]` + `0x5024` float), of which Mesa writes only the first and gets the `A`-term
+wrong. The `A`-term is solved (`A ∝ in_zp·sw - bias`, R²=0.99). The remaining per-channel `B`/`C` +
+float surface are the vendor toolkit's per-channel re-quantisation and need the RK3576 SDP datapath
+semantics (how the int and float surfaces combine in the converter) — i.e. the author's per-channel
+requant TODO, now with the exact surfaces and the A-term pinned. That is the real handoff: a feature
+(per-channel requant + the second BS surface), not a value left to guess.
+
 **Honest caveat / next step.** The earlier register-level diff used a *stale* `mesa-regcmd` dump
 (captured from a pre-2026-06-16 Mesa; the deployed lib is 2026-06-19 and its geometry code differs,
 e.g. `0x1018` is now hard-coded to `0x40000404`). To pin the exact current divergence, the next

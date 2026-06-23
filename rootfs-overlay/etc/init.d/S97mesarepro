@@ -27,20 +27,31 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "npu-test: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 	dmesg -c >/dev/null 2>&1
+	# Silence the kernel per-job CNAREG/cnalive dump (we read OUT distinct in user
+	# space now, not ds0_first) — the dump floods serial and wedges the board before
+	# the OUT line prints. audit_arm=0 lets each replay finish and print cleanly.
+	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
 
 	log ""
 	# Mesa's NATURAL pipeline (only op_en/pad stripped) + Mesa weights; swap bias.
 	NAT="MESA_STRIPOPEN=1 MESA_STRIPPAD=1"
 
-	# Variant 1 (FIRST job, gets the audit): A = 0x80*(bias - in_zp*sw).
-	log "########## (1) derived bias A=0x80*(bias-in_zp*sw), mesa pipeline ##########"
-	env $NAT MESA_BIAS="$NPU_DIR/derived-bias-1.bin" \
+	# BS_MUL is bypassed in Mesa's regcmd, so ONLY the A field (BS_ALU add) should
+	# matter; B/C/0x5024-floats feed the bypassed MUL. Test A-alone (B/C + the
+	# 0x5024 float array all ZEROED) at the vendor OUT_CVT shift=26:
+	#   (1) vendor's exact A, rest zero -> if computes, A alone is the whole story
+	#   (2) my A = round(M*(in_zp*sw-bias)), rest zero -> if computes, that's the fix
+	# (M = in_sc*wt_sc/out_sc; this is the term Mesa gets wrong in rkt_coefs.c.)
+
+	# A-alone failed (both vendor A and mine -> distinct=1). So B/C (0x5020) and/or
+	# the 0x5024 float array carry the essential scale. Pin WHICH:
+	log "########## (1) vendor A/B/C kept, 0x5024 floats ZEROED, shift=26 ##########"
+	env $NAT MESA_REQUANT=1 MESA_BIAS="$NPU_DIR/iso-noFloat.bin" \
 		"$NPU_DIR/replay_mesa" "$NPU_DIR" > /tmp/rm1.log 2>&1
 	cat /tmp/rm1.log > "$C"
 
-	# Variant 2 (2nd submit): A = (bias - in_zp*sw) raw.
-	log "########## (2) derived bias A=(bias-in_zp*sw) raw, mesa pipeline ##########"
-	env $NAT MESA_BIAS="$NPU_DIR/derived-bias-2.bin" \
+	log "########## (2) vendor A kept, B/C ZEROED, floats kept, shift=26 ##########"
+	env $NAT MESA_REQUANT=1 MESA_BIAS="$NPU_DIR/iso-noBC.bin" \
 		"$NPU_DIR/replay_mesa" "$NPU_DIR" > /tmp/rm2.log 2>&1
 	cat /tmp/rm2.log > "$C"
 
