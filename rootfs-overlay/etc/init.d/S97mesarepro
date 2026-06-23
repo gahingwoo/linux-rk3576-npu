@@ -1,0 +1,58 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# RK3576 NPU — test the DERIVED per-tensor bias-correction formula (the fix).
+#
+# Bug = the SDP "A" term in rkt_coefs.c. Mesa emits A = 0x80*(sw + bias); the
+# quantization math says A should be (bias - in_zp*sw) [B = 0x80-wt_zp, C = 0x4000
+# stay]. mesa's per-tensor OUT_CVT (shift=14, M=in_sc*wt_sc/out_sc) is correct, so
+# this uses Mesa's NATURAL regcmd (no requant/cbuf/regfix patch) + Mesa's own
+# weights, swapping ONLY the bias buffer to the derived one:
+#
+#   (1) A = 0x80*(bias - in_zp*sw)   (Mesa's 0x80 convention + corrected formula)
+#   (2) A = (bias - in_zp*sw)        (raw, no 0x80)
+#   COMPUTES (distinct > 2, a real map) => the derived A is the fix for rkt_coefs.c.
+#
+# Two submits (read each output before the next; kernel BO cleanup can crash after
+# ~2-3). Only op_en/pad are stripped so the PC doesn't choke; everything else is
+# Mesa's own pipeline.
+# ---------------------------------------------------------------------------
+
+NPU_DIR=/opt/npu-test
+C=/dev/console
+log() { echo "$@" > "$C"; }
+
+start() {
+	i=0
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -c /dev/accel/accel0 ] || { log "npu-test: no accel device"; return 0; }
+	dmesg -n 8 2>/dev/null
+	dmesg -c >/dev/null 2>&1
+
+	log ""
+	# Mesa's NATURAL pipeline (only op_en/pad stripped) + Mesa weights; swap bias.
+	NAT="MESA_STRIPOPEN=1 MESA_STRIPPAD=1"
+
+	# Variant 1 (FIRST job, gets the audit): A = 0x80*(bias - in_zp*sw).
+	log "########## (1) derived bias A=0x80*(bias-in_zp*sw), mesa pipeline ##########"
+	env $NAT MESA_BIAS="$NPU_DIR/derived-bias-1.bin" \
+		"$NPU_DIR/replay_mesa" "$NPU_DIR" > /tmp/rm1.log 2>&1
+	cat /tmp/rm1.log > "$C"
+
+	# Variant 2 (2nd submit): A = (bias - in_zp*sw) raw.
+	log "########## (2) derived bias A=(bias-in_zp*sw) raw, mesa pipeline ##########"
+	env $NAT MESA_BIAS="$NPU_DIR/derived-bias-2.bin" \
+		"$NPU_DIR/replay_mesa" "$NPU_DIR" > /tmp/rm2.log 2>&1
+	cat /tmp/rm2.log > "$C"
+
+	log ""
+	log "########## END decisive residual test ##########"
+	log ""
+}
+
+case "$1" in
+	start) start ;;
+	stop) : ;;
+	restart) start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

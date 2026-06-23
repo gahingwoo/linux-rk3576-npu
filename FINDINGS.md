@@ -7,6 +7,141 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
+## 2026-06-23 — Harness validated faithful; the bug is the geometry/config, not the data
+
+Two results this day, both first-hand (one on-board, one straight from the deployed source):
+
+**1. `replay_mesa` is a FAITHFUL reproduction (board-validated).** Booted an image whose only
+NPU job was the *real* Mesa Teflon `conv2d.tflite` (so the kernel's `audit_arm` cnalive fires on
+the genuine Mesa payload, not the replay). The real Mesa path gives the *same* signature as the
+`replay_mesa` reconstruction:
+- `OUT: distinct=2 (min=7f max=80)` — degenerate, identical to the replay.
+- `cnalive: ds0_first=-1`, `CNA G0_DS0=0 G1_DS0=0` — same as the replay.
+- And crucially the **operand BOs are all real**: `in distinct=251`, `wt distinct=199`,
+  `bia distinct=127`. The inputs/weights/bias are non-degenerate; only the **output** collapses.
+
+So this is **not** a data-degeneracy bug (the coefficients reach DRAM intact) and the `replay_mesa`
+harness can be trusted. The defect is in the **command stream / geometry**, surfacing as the engine
+producing a constant.
+
+**2. The conv shape is confirmed, and Mesa's geometry encoding for it does not match the vendor.**
+`conv2d.tflite` = input `[1,80,80,16]`, weights `[128,5,5,16]`, output `[1,40,40,128]`, 5×5,
+**stride 2**. The vendor capture is the *same* op (its BO sizes match exactly: input 80·80·16 =
+102400, output 40·40·128 = 204800, weights 128·5·5·16 = 51200), and it dispatches it as **3–4
+tasks** split by output-channel.
+
+Mesa's `rkt_task.c` / `rkt_regcmd.c` compute the CNA geometry with **shape-specific hand-tuned
+constants** (`input_width==8`, `input_channels==32 && input_width==80`, `input_width==40 &&
+input_channels_real==40`, `input_surface_stride=112`, the `input_width>=112 && stride==1`
+row-window path, plus a block of `emit_raw()` magic values). This generic `[1,80,80,16]` stride-2
+conv matches **none** of those special cases, so it falls to the generic path — and the generic
+path emits geometry that diverges from the vendor. Concretely, the deployed source emits
+`CNA_DATA_SIZE0 = DATAIN_WIDTH(80)|DATAIN_HEIGHT(80) = 0x00500050`, whereas the vendor capture has
+`0x00000190` (W=0, H=400) for the same op. The whole rocket geometry encoder is tuned per-shape and
+is incomplete for shapes outside the hand-fitted set — that is the bug class.
+
+**The vendor's CNA geometry decodes to GEMM dimensions (conv-as-matmul).** Matching the
+vendor capture's CNA registers to arithmetic of the known conv shape, four fields land exactly:
+`DATA_SIZE0` height `0x190 = 400 = ic·kh·kw = 16·5·5` (the **K** / contraction dim — the
+im2col gather depth), `DATA_SIZE1` channel `0x7f = 127 = oc-1 = 128-1` (the **N** dim),
+`DATA_SIZE2` hi `0x640 = 1600 = ow·oh = 40·40` (the **M** dim), `DATA_SIZE2` lo `0x0f = 15 = ic-1`
+and `DATA_SIZE3` `0x4f = 79 = iw-1`. So the RK3576 CNA wants the conv **folded into a GEMM**
+(M=1600, N=128, K=400), not the raw spatial `[W,H,C]`. (One field, `DATA_SIZE1` channel_real
+`0x404 = 1028`, does not decode cleanly yet.) A 1×1 kernel makes the folding trivial (K=ic), which
+is why the pointwise/depthwise MobileNet layers limp by while this 5×5 conv exposes it.
+
+**A regression, and a residual.** An *earlier* Mesa (the stale dump) emitted the **folded** values
+(`DATA_SIZE0=0x190`, `DATA_SIZE2=0x0640000f`, `DATA_SIZE3=0x004f004f` — all = vendor; only
+channel_real differed, 514 vs 1028). The **current** deployed Mesa has **regressed** to raw spatial
+dims (`DATA_SIZE0=0x00500050`, `DATA_SIZE1=0x000f0010`, `DATA_SIZE3=0x640`). So restoring the folded
+geometry is a concrete, necessary fix for the current tree. It may not be *sufficient*: a
+full-config `replay_mesa` test on the old (folded) dump — op_en/pad stripped, `0x1018/0x1024`,
+the OUT_CVT requant and CBUF all patched to the vendor — still saturated (distinct=2, ds0_first=-1).
+That test left exactly one config register un-patched: **`DMA_CON2` (0x1080) `SURF_STRIDE`**
+(mesa `0x00000101` vs vendor `0x02020101`). So the residual is either that surface stride or the
+submit structure itself — the single decisive experiment is `replay_mesa` full-config **plus**
+`0x1080 → vendor`.
+
+**`DMA_CON2` patched → still saturates (2026-06-23). The regcmd is now FULLY ruled out.**
+Ran exactly that: `replay_mesa` with op_en/pad stripped and `0x1018/0x1024/0x1040/0x40ac/0x40b0/
+0x40b4/0x1080` all → vendor — i.e. the command stream byte-identical to the vendor's task0 (only the
+address registers differ, pointing at the replay's own BOs). Result: `OUT distinct=2`, `ds0_first=-1`,
+live `DATA_SIZE0=0` — **unchanged**. Meanwhile `replay_rocket` (the vendor's *payload* — same regcmd
+**and** the vendor's weights/bias BOs — through the same rocket UABI) *computes* (distinct=254). So:
+
+> **The conv2d defect is NOT in the command stream.** A vendor-byte-identical regcmd, submitted by
+> Mesa's path, still produces the constant output. The remaining difference between the computing
+> `replay_rocket` and the failing `replay_mesa` is the **payload data and submit path**: the
+> coefficient BO contents/layout (Mesa packs weights as 204800 B per-tensor; the vendor's regcmd
+> expects its own 51200 B per-channel packing at `0x1110`, and the per-channel requant A/B/C buffer
+> at `0x5020`/`0x5024`), and possibly the task tiling (Mesa dispatches one task; the vendor tiles
+> 3–4). The 300 KB scratch BO (bo02) is **not** referenced by any address register, so it is ruled
+> out. Next decisive split: `replay_mesa` + vendor regcmd + **vendor weights + vendor bias** — if it
+> computes, the bug is purely Mesa's coefficient encoding (`rkt_coefs.c`); if it still saturates, the
+> bug is the submit/tiling path (`rkt_task.c`/`rkt_ml.c`).
+
+**RESOLVED (2026-06-23): the bug is the COEFFICIENT DATA. `replay_mesa` + vendor regcmd +
+vendor weights + vendor bias → COMPUTES** (`OUT distinct=98, nonzero=202859/204800`, head
+`0a 0b 0b 05` — a real feature map). The only change from the saturating run was swapping Mesa's
+weights/bias BOs for the vendor's. Therefore:
+
+> The conv2d defect is **entirely in Mesa's coefficient (weights + bias/requant) encoding**
+> (`rkt_coefs.c`). The command stream is fine (vendor regcmd used either way), and **Mesa's single-task
+> submit path is fine** — it computes the whole conv (99% nonzero) when fed the vendor's coefficients.
+>
+> Two artifacts are now retired: (1) `ds0_first=-1` is a **timing artifact**, not a geometry-latch
+> failure — this run *computed* with `ds0_first=-1` (the single task finishes before the kernel's
+> 4000-sample poll catches `DATA_SIZE0` non-zero); trust the OUTPUT distinct, not `ds0_first`.
+> (2) the "geometry not latching / conv0 wall" framing is moot — geometry latches fine; the engine
+> was running on mis-encoded coefficients.
+
+Next: isolate **weights vs bias/requant** (one swap at a time). The mesa author's own note
+(`rkt_ml.c:348-364`) flags the per-channel requant buffer as the suspect/TODO, and the weight
+*packing order* was already shown to match the vendor — so the bias/requant A·B·C buffer
+(`0x5020`/`0x5024`, per-tensor in Mesa vs per-channel in the vendor) is the leading candidate.
+
+**ISOLATED to the BIAS/REQUANT buffer (2026-06-23).** `replay_mesa` with the full vendor
+regcmd and **Mesa's own weights** but the **vendor bias buffer** (`MESA_BIAS` = bo1[51200:72000])
+→ **COMPUTES, `OUT distinct=252`** (an even cleaner feature map than the all-vendor run). So:
+
+> Mesa's **weight encoding is correct** (packing order + quantization both fine); the entire
+> conv2d defect is the **per-channel requant / bias buffer** at the weight-BO tail (regcmd
+> `0x5020` → A·B·C, `0x5024` → the second per-channel array). Mesa writes it per-tensor; the
+> vendor writes it per-channel. Swapping *only* that buffer to the vendor's makes the conv
+> compute. **This is exactly the mesa author's own TODO** (`rkt_ml.c:348-364`). The fix lives in
+> `rkt_coefs.c` (the bias/requant emit), and nothing else needs to change.
+
+The remaining work is purely to decode the vendor's per-channel requant buffer
+(`vendor-bias.bin` = bo1[51200:72000], now a *known-good* reference because it computes) into a
+formula over the conv's quant params + per-output-channel weight sums, and emit it from
+`rkt_coefs.c`.
+
+**The "A" term: formula structure confirmed; the scale is the remaining piece (2026-06-23).**
+Decoded the vendor 0x5020 buffer as the `[8×i32 A | 8×i16 B | 8×i16 C]`-per-8-oc layout (Mesa's
+assumed layout — confirmed; a flat layout decodes to garbage). Offline-fit the vendor's per-channel
+`A` against the conv quantities: **`vendor_A = -M · (bias_q - in_zp·sw)`, k = -1.3155 ≈ -M (=-1.299),
+R² = 0.991** over all 128 channels (`M = in_sc·wt_sc/out_sc`). So the per-channel offset is
+**structurally `A ∝ (in_zp·sw - bias_q)`** — Mesa's `A = 0x80·(sw + bias)` has the wrong sign on the
+weight-sum term, omits the `in_zp` factor, and is scaled by `0x80` instead of `M`. (`B`,`C`, and the
+0x5024 float array did *not* fit the per-tensor quantities, R²<0.07 — they carry the vendor's
+**per-channel weight re-quantization**, which a per-tensor Mesa path doesn't need to reproduce.)
+
+The blocker is the **scale/shift**, not the formula: a board test that fixed only `A` (keeping
+Mesa's `OUT_CVT` shift=14) saturated *identically to baseline* (`80 80 7f 7f`) — at shift=14 the
+output clips regardless of `A`, because the vendor runs the whole SDP `2^12` hotter (shift=26 vs 14;
+its `A` is pre-multiplied by `M`, i.e. `vendor_A = M·(in_zp·sw - bias)` in output units, brought back
+down by the larger shift). So the correct Mesa emit is `A = in_zp·sw - bias_q` with the SDP scaled
+the vendor's way (shift≈26 and the matching `A`/`B`/`C` scale), **not** Mesa's current shift=14 +
+`0x80·A`. Pinning the exact shift/scale constants is the last step (needs the SDP scale semantics or
+a couple of focused board runs).
+
+**Honest caveat / next step.** The earlier register-level diff used a *stale* `mesa-regcmd` dump
+(captured from a pre-2026-06-16 Mesa; the deployed lib is 2026-06-19 and its geometry code differs,
+e.g. `0x1018` is now hard-coded to `0x40000404`). To pin the exact current divergence, the next
+board run must take a **fresh** regcmd dump from the *deployed* Mesa and diff it against the vendor
+capture (the only fixed reference), then trace each divergent CNA register back to the
+`rkt_task.c` computation. Single submit, low crash risk.
+
 ## Symptom (precise)
 
 - Full graph runs end-to-end: no IOMMU fault, no PC timeout (on the GPLL clock), every layer

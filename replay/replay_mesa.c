@@ -47,7 +47,8 @@ struct drm_version { int v_major, v_minor, v_patch;
 #define IN_SZ   (80*80*16)
 #define OUT_SZ  (40*40*128)
 #define WT_SZ   204800   /* mesa over-allocates; regcmd reads 51200 */
-#define BIAS_SZ 1280
+#define BIAS_SZ 20800    /* spans the vendor requant region bo1[51200:72000]:
+                          * 0x5020 buf @+0 (A/B/C), 0x5024 buf @+0x400 (float wt) */
 
 enum { B_RC, B_WT, B_BIAS, B_IN, B_OUT, NBO };
 static const unsigned bo_sz[NBO] = { 0, WT_SZ, BIAS_SZ, IN_SZ, OUT_SZ };
@@ -111,7 +112,10 @@ int main(int argc, char **argv)
 	const char *wtov = getenv("MESA_WT");
 	if (wtov) { printf("  WT override: %s\n", wtov); rdfile(wtov, bo[B_WT].va, WT_SZ); }
 	else { snprintf(p, sizeof(p), "%s/mesa-weights-000-000.bin", dir); rdfile(p, bo[B_WT].va, WT_SZ); }
-	snprintf(p, sizeof(p), "%s/mesa-biases-000-000.bin", dir); rdfile(p, bo[B_BIAS].va, BIAS_SZ);
+	/* bias/requant: vendor override (MESA_BIAS = bo1[51200:72000]) or mesa's own */
+	const char *biov = getenv("MESA_BIAS");
+	if (biov) { printf("  BIAS override: %s\n", biov); rdfile(biov, bo[B_BIAS].va, BIAS_SZ); }
+	else { snprintf(p, sizeof(p), "%s/mesa-biases-000-000.bin", dir); rdfile(p, bo[B_BIAS].va, BIAS_SZ); }
 	/* input ramp (matches the vendor capture: 0x80,0x81,..) */
 	for (int i = 0; i < IN_SZ; i++) ((uint8_t *)bo[B_IN].va)[i] = 0x80 + (i & 0x7f);
 
@@ -135,6 +139,11 @@ int main(int argc, char **argv)
 		 * the suspects for why mesa's geometry doesn't latch (DS0=0). */
 		case 0x1018: if (getenv("MESA_REGFIX")) nv = 0x40000404; break;
 		case 0x1024: if (getenv("MESA_REGFIX")) nv = 0x0404007f; break;
+		/* MESA_DMACON2: the ONE config reg the FULL-REGCMD test never patched.
+		 * DMA_CON2 (0x1080) SURF_STRIDE: mesa 0x00000101 vs vendor 0x02020101.
+		 * If patching this clears the saturation, the residual is the surface
+		 * stride (a real mesa fix); if not, the residual is the submit structure. */
+		case 0x1080: if (getenv("MESA_DMACON2")) { nv = 0x02020101; printf("  DMA_CON2->0x02020101\n"); } break;
 		}
 		if (nv != val) e[k] = (e[k] & 0xffff00000000ffffULL) | ((uint64_t)nv << 16);
 	}

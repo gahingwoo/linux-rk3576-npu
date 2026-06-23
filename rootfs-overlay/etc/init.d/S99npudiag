@@ -1,23 +1,25 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 NPU — conv2d coefficient-BO debug (Tomeu's track), auto-run at boot.
+# RK3576 NPU — REAL-MESA cnalive validation (single submit).
 #
-# The single-op test proved a STANDALONE conv goes degenerate on the NPU. This
-# image debugs WHY on that simple reproducer:
-#   1. NPU vs CPU value compare (the verdict)
-#   2. ROCKET_DEBUG=dump_bos -> dump what Mesa ENCODED for weights/bias/regcmd,
-#      and compare to the ORIGINAL tflite weights (is the coefficients BO sane?)
-#   3. TEFLON_DEBUG=verbose -> how Teflon parses the op (scales / zero-points)
-#   4. kernel CBUF audit -> do conv2d's weights reach the on-chip weight bank?
+# Goal: capture the kernel cnalive (ds0_first) for the REAL Mesa Teflon conv2d,
+# NOT the replay_mesa reconstruction. This is the FIRST and ONLY NPU job after
+# boot, so the kernel audit (rocket.audit_arm, default 1, self-clears after the
+# first job) fires on the genuine Mesa payload.
 #
-# (No `timeout` applet in busybox -> bg + sleep + kill.)
+#   ds0_first == -1  -> geometry never reaches the CNA in the real Mesa path too
+#                       => replay_mesa is FAITHFUL, bug = geometry delivery/submit
+#   ds0_first ==  0  -> geometry DID reach the CNA in the real path but output is
+#                       still degenerate => bug = DATA, replay_mesa is UNFAITHFUL
+#
+# Single test_conv.py run = one NPU submit (the CPU leg never touches the NPU),
+# so no multi-submit BO-cleanup crash.
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
 M="$NPU_DIR/conv2d.tflite"
 export TEFLON_LIB=/usr/lib/libteflon.so
 C=/dev/console
-P=/sys/module/rocket/parameters
 
 log() { echo "$@" > "$C"; }
 
@@ -25,45 +27,22 @@ start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "npu-test: no accel device"; return 0; }
-	dmesg -n 4 2>/dev/null
+	dmesg -n 8 2>/dev/null
+	dmesg -c >/dev/null 2>&1
 
 	log ""
-	log "########## conv2d COEFFICIENT-BO DEBUG ##########"
-
-	# 1. NPU vs CPU value compare
-	log "----- (1) NPU vs CPU -----"
+	log "########## REAL-MESA cnalive VALIDATION (single submit) ##########"
+	log "----- real Mesa Teflon conv2d (NPU vs CPU) -----"
 	python3 "$NPU_DIR/test_conv.py" "$M" > /tmp/cmp.log 2>&1 &
 	PID=$!; w=0; while [ "$w" -lt 60 ] && kill -0 "$PID" 2>/dev/null; do sleep 3; w=$((w+3)); done
 	kill -9 "$PID" 2>/dev/null
 	cat /tmp/cmp.log > "$C"
 
-	# 2+3. dump_bos + verbose + cbuf audit, all in one debug run (CWD=/tmp/dump)
-	rm -rf /tmp/dump; mkdir -p /tmp/dump; cd /tmp/dump
-	[ -w "$P/audit_arm" ] && echo 1 > "$P/audit_arm"
-	dmesg -c >/dev/null 2>&1
-	ROCKET_DEBUG=dump_bos TEFLON_DEBUG=verbose \
-		python3 "$NPU_DIR/test_conv.py" "$M" > /tmp/dbg.log 2>&1 &
-	PID=$!; w=0; while [ "$w" -lt 60 ] && kill -0 "$PID" 2>/dev/null; do sleep 3; w=$((w+3)); done
-	kill -9 "$PID" 2>/dev/null
-
-	log "----- (2) ORIGINAL weights vs MESA-encoded weights -----"
-	python3 "$NPU_DIR/analyze_dump.py" "$M" /tmp/dump > /tmp/an.log 2>&1
-	cat /tmp/an.log > "$C"
-
-	log "----- (3) Teflon verbose (op parse: scales / zero-points) -----"
-	grep -aiE 'teflon|tensor|operation|scale|zp|conv|weight|size' /tmp/dbg.log | head -24 > "$C"
-
-	log "----- (4) conv2d CBUF audit (weights reach the on-chip bank?) -----"
-	dmesg | grep -aE 'cbuf-audit|dbg perf' | head -20 > "$C"
-
-	# (5) Print the dump_bos buffers as TEXT to the serial console, in the same
-	# "cap: BO" format the vendor kernel uses, so the Mesa payload comes back over
-	# serial (no USB needed) and diffs line-for-line against the vendor capture.
-	log "----- (5) MESA BO TEXT DUMP (copy these 'mesa cap:' lines for the diff) -----"
-	python3 "$NPU_DIR/dump_mesa_bos.py" /tmp/dump > "$C" 2>&1
+	log "----- kernel cnalive for that REAL-MESA job (ds0_first is the verdict) -----"
+	dmesg | grep -aE 'cnalive|rocket dbg perf|rocket dbg done|rocket dbg open|rocket dbg exec|rocket dbg CNA:' > "$C"
 
 	log ""
-	log "########## END  (raw: /tmp/dbg.log /tmp/an.log /tmp/dump/) ##########"
+	log "########## END real-mesa validation ##########"
 	log ""
 }
 
