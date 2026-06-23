@@ -135,6 +135,20 @@ the vendor's way (shift≈26 and the matching `A`/`B`/`C` scale), **not** Mesa's
 `0x80·A`. Pinning the exact shift/scale constants is the last step (needs the SDP scale semantics or
 a couple of focused board runs).
 
+**The exact fixed-point scale is NOT cleanly derivable from arithmetic (2026-06-23).** Tested the
+corrected-sign `A = in_zp·sw - bias` (constant `B = 0x80-wt_zp`, `C = 0x4000`, `0x5024` zeroed) at
+both shifts: shift=14 saturated *identically to baseline* (`distinct=2`, `7f 7f 80 80`) — at that
+scale the `A` buffer has no effect at all, the overall output simply clips; shift=26 moved it only
+from 2→3 distinct (still `7f 7f 80 80`, not a feature map). The vendor's buffer computes at shift=26
+because of its **per-channel `B`, `C`, and the `0x5024` float array** — which carry the SDP scale,
+and which I set to constants/zeros. Those did *not* fit the per-tensor quantities (R²<0.07), and the
+fixed-point datapath (how `A`·`B`·`C`·`BS_MUL`·`OUT_CVT` combine bit-for-bit) is not recoverable
+from the known-good buffer + the quant params alone — every fixed-point model tried (shift=14 direct,
+shift=26 raw) was wrong on the board. So the *structure* is settled (bug = the bias/requant buffer;
+`A ∝ in_zp·sw - bias`, R²=0.99) and is upstreamable as-is to the author whose TODO this is, but the
+exact scale constants need the RK3576 SDP datapath spec (the per-channel `BS_MUL`/`OUT_CVT` fixed-point
+semantics), not further blind arithmetic. That is the clean handoff line.
+
 **Honest caveat / next step.** The earlier register-level diff used a *stale* `mesa-regcmd` dump
 (captured from a pre-2026-06-16 Mesa; the deployed lib is 2026-06-19 and its geometry code differs,
 e.g. `0x1018` is now hard-coded to `0x40000404`). To pin the exact current divergence, the next
