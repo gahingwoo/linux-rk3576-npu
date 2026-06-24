@@ -663,3 +663,38 @@ mainline driver + DT + as-flashed firmware can reach.
 A sister-chip bring-up (RK3568, mainline rocket) is stuck at the same class of wall, a stage
 earlier (engage), which suggests one real SoC-family issue, not ten imagined ones —
 see https://github.com/gahingwoo/linux-rk3576-npu/issues/1.
+
+## Off-board structural map of the SDP coefficient buffer (2026-06-25, no board)
+
+Done entirely on the host (aarch64) from the one live capture we already have on disk —
+`dirty/npu-test/vendor-bias.bin` (20800 B, vendor stack running `conv2d.tflite`) — plus
+conv2d's known int8 weights/bias/quant. Reusable check: `vendor-capture/ana_coef.py`.
+
+- **Buffer = `[ABC | float surface]`.** ABC = 16 groups × 64 B (8 oc/group): `A[oc]` int32 @0,
+  `B[oc]` i16 @32, `C[oc]` i16 @48. Float surface = the remaining 4944 f32; every nonzero value
+  is an integer multiple of `wt_sc`.
+- **`A` is derivable.** `A[oc] = -M·(bias[oc] - in_zp·sw[oc])`, `M = in_sc·wt_sc/out_sc`,
+  `sw[oc] = Σ(wq-wt_zp)` — corr **-0.996**. A is the per-channel requant **bias-correction** term.
+- **`C` varies per output channel (10489–16384, 57 distinct over 128 oc) — for a *per-tensor*
+  conv.** A genuine per-tensor requant would emit ONE constant multiplier. Varying `C` means the
+  **vendor toolkit silently re-quantises the per-tensor conv into a per-channel one** with
+  compiler-chosen scales. That is the *mechanism* behind "blob-only": the float surface is
+  per-channel **re**-quantised weights, and the chosen per-channel scales are toolkit-internal.
+  A genuinely **per-axis** model (MobileNet) carries explicit per-channel scales, so there the
+  same surface is derivable. (Confirms the earlier per-tensor/per-axis split from first principles.)
+- **The `.rknn` does NOT carry the assembled live surface.** Live float surface vs
+  `conv2d_rk3576.rknn`@33488: **14/4944** floats match — the earlier "match" was a 16-float
+  signature coincidence. librknnrt assembles the surface at runtime. ⇒ the surface's exact bytes
+  and its **layout cannot be obtained off-board from any .rknn**; only a live (board) capture has it.
+- **The surface layout ≠ the weight-DMA layout** (`dirty/vendor_cap/generic_slot_map.npy`):
+  among the surface's 742 nonzero slots, **0** match the weight order. It is its own sparse/padded
+  layout.
+- **Host toolkit limit:** on arm64 `rknn.load_tflite` is unsupported ("unsupported tflite on arm64
+  platform"); only the ONNX path converts. And since the .rknn lacks the live surface anyway,
+  cracking the per-axis surface layout requires a **board capture of a per-axis conv**, not more
+  host conversions.
+
+**Net:** the *derivable* half of the buffer (A = bias-correction × M) is now pinned off-board; the
+non-derivable half (per-channel `C` scaling + the float-surface layout) is confirmed to need a live
+per-axis capture. The decisive next board step is to capture the vendor's coefficient buffer for a
+**per-axis** conv (or for `conv2d-cal`), then feed it verbatim and read maxdiff — no derivation guesswork.
