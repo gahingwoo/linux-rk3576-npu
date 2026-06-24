@@ -7,6 +7,54 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
+## 2026-06-24 — the ruler was broken: it's an empty MAC, not the requant (and the floats below are now in question)
+
+**Reversal, and not a small one.** Everything below this section was measured with `distinct` (how many
+different output values come back) as the stand-in for "did it compute". That stand-in does not survive
+contact with two facts found today, so the requant/float-surface conclusions below are **suspect for
+`conv2d` and have to be re-read with that in mind.**
+
+1. **`distinct`/`head` were never a correctness test.** The output *head* is the same (`d6c4afd8`) whether
+   the weights are correct or **shuffled** — provably-wrong input produces the same fingerprint, so the
+   fingerprint never read correctness. And a CPU reference of the exact int8 op (plain `numpy`, quant params
+   read straight off the `.tflite` — note `parse_tflite.py` reads the quant fields off-by-one; the real layout
+   is `min=0/max=1/scale=2/zero_point=3`) shows the **correct** output of `conv2d.tflite` **saturates**: on the
+   harness ramp, `acc` runs to ±170000, `M=1.299` pins ~100% of it to `0x7f/0x80`, distinct≈5. The synthetic
+   model's `out_sc` is simply too small for its random weights. So on this model a correct conv and a broken
+   constant-fill **both** collapse to `distinct≤2` — the metric cannot tell them apart. Months of "make distinct
+   big like the vendor's 252" were chasing a target (`252`) that is **not** the correct answer; it is the vendor
+   requant running at a 3648× finer scale (shift 26 vs 14), which dodges the saturation. Correct, here, is grey.
+
+2. **Calibrate the model, and the grey turns out to be an empty multiply, not a hot requant.** Patched
+   `conv2d.tflite` → `conv2d-cal.tflite` (only `T3`: `out_sc 0.0235→32`, `out_zp 0→128`; weights/bias/inputs
+   byte-identical) so the *correct* output is a rich non-saturated map (`distinct~256`, ~1% saturated). On the
+   board, mesa's native output is **pinned to `out_zp` (`0x7f/0x80` = 127/128) with no `00`/`ff` tails** → the
+   accumulator is ≈0. The chip's own regcmd shows mesa computing OUT_CVT **correctly** for the calibrated model
+   (`0x40b0`=32052, `0x40b4`=25, `0x40ac`=0 ⇒ `M=in_sc·wt_sc/32` and `out_zp=128`). Since the MAC is upstream of
+   OUT_CVT and independent of `out_sc`/`out_zp` — the only things changed — the **original** model's `distinct=2`
+   was **also MAC≈0**, never requant saturation. **The requant is exonerated for `conv2d`.** The coefficients are
+   all in DRAM (readbacks real: in 251 / wt 199 / bia 127 distinct) and the engine runs — and the product is zero.
+
+3. **Coherency ruled out, bug localized to four geometry registers.** `replay_rocket` computes (MAC≠0) with the
+   vendor regcmd on the *same* kernel, so the NPU reads DRAM fine — MAC=0 is not coherency. Diffing the fresh
+   native regcmd against the vendor's, the only config divergences are **four CNA geometry registers** in mesa's
+   generic path `fill_regcmd_rk3576_normal` (`rkt_regcmd.c`), calibrated on stride-1/3×3 shapes and wrong for this
+   5×5 stride-2 conv: `0x1024` `k_word` hard-codes the kernel size to 3 (`0x0202`, wants `0x0404`); `0x1018`
+   (`0x...505`→`0x...404`), `0x1040` CBUF_CON0 (`0x14000000`→`0x10000000`), `0x1080` SURF_STRIDE
+   (`0x00000101`→`0x02020101`) — each confirmed against both the vendor capture and the hard-coded conv0 path.
+
+**FIX (applied, NOT yet board-confirmed):** corrected the four formulas in `rkt_regcmd.c`, conditional on
+`s==2`/`k≥5` so MobileNet's 1×1 and 3×3-stride-1 layers are untouched; rebuilt `libteflon.so`. The board hangs
+after one submit (it always has) and hung before the userspace verdict printed, so **whether this turns the MAC
+on is still an open question the board hasn't answered.** Watch the kernel `out task=0 … distinct=` readback: a
+real spread off `out_zp` = the geometry fix works; still `0x7f/0x80 distinct=2` = MAC still 0, next lever is the
+mesa-only in-stream op_en (`tgt 0x81 reg 0x08`) the vendor doesn't emit.
+
+> **Caveat on the sections below.** The `0x5024` float-surface decode (2026-06-23 late) was done under the
+> vendor regcmd, where the MAC *does* run, and judged by `distinct` — so it may describe a real per-axis
+> mechanism *or* an artifact of the vendor's finer output scale. For the per-tensor `conv2d` the bug is now
+> upstream of all of it (empty MAC / geometry). Kept below as the record, not as a settled conclusion.
+
 ## 2026-06-23 (late) — the SDP requant buffer format, cracked from controlled captures
 
 The whole-session bisection had localised the saturation to the **SDP bias/requant buffer**
