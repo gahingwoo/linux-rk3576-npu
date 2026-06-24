@@ -37,7 +37,10 @@ def run(use_npu, indata):
     out = it.get_output_details()[0]
     it.set_tensor(inp["index"], indata.astype(inp["dtype"]).reshape(inp["shape"]))
     it.invoke()
-    return it.get_tensor(out["index"])[0], inp, out
+    # Return the interpreter too: keeping it alive defers the BO teardown (the
+    # kernel's drm_mm_takedown wedges the board during interpreter GC). We os._exit
+    # after printing so the verdict survives the wedge.
+    return it.get_tensor(out["index"])[0], inp, out, it
 
 
 # Known, structured input (a byte ramp) so both backends get identical data.
@@ -49,8 +52,8 @@ indata = (np.arange(n) % 251).astype(np.int64)
 
 print(f"=== {os.path.basename(model)} ===", flush=True)
 print("--- teflon delegate log (look for delegated node/partition count) ---", flush=True)
-npu, inp, out = run(True, indata)
-cpu, _, _ = run(False, indata)
+npu, inp, out, _it_npu = run(True, indata)   # keep _it_npu alive (defer BO teardown)
+cpu, _, _, _it_cpu = run(False, indata)
 print("--- end teflon log ---", flush=True)
 
 
@@ -97,3 +100,11 @@ else:
     print(f"  RESULT: FAIL -- NPU diverges from CPU by up to {md} ({worst} pixels off "
           "by >2). The conv is genuinely wrong; this is the real bug, now localizable "
           "to actual pixels.")
+
+# Flush the verdict, then hard-exit to skip Python/interpreter teardown -- the
+# kernel wedges (drm_mm_takedown) during BO cleanup, which has been eating this
+# line every run. os._exit jumps straight out, past the cleanup, with the maxdiff
+# already on the wire.
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(0)
