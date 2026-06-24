@@ -10,6 +10,24 @@ byte-exact (the per-channel ALU operand `A` + the float-surface sparse tiling).
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
+## 2026-06-24 (measurement unblocked + bisect) — the float surface is the dominant error, not A/B/C
+
+Unblocked the byte-for-byte `maxdiff` (the board wedged before the userspace line — the post-job pm_runtime autosuspend
+powers the NPU off, `nputop` fails to idle, a cpu rail times out `-110`, console dies). Fix is **sysfs, no kernel
+rebuild**: force runtime PM off so the NPU stays powered through the test (`/sys/devices/**/npu*/power/control = on`).
+Both segments + the END marker now print.
+
+The number is sobering: the driver's own contiguous-A + dense-float reconstruction is `distinct=256` but **maxdiff=255,
+mean|diff|=78, exact=0.7%** — it computes and is almost entirely wrong (datapath tolerance flatters "lights up" into
+looking like "correct"). Bisected with two hybrid buffers (loaded via `ROCKET_BIAS_FILE`): **vendor A/B/C + my dense
+float → maxdiff=255, distinct=12** (near-degenerate). So even with the *exact* per-channel terms, my float surface is
+wrong → **the float surface tiling is the dominant error.** (My A/B/C is also wrong — only 14.9% byte-identical to the
+vendor's, `0x80*(sw+bias)` is far off — but secondary.) The vendor float region is **sparse**: 626 nonzero of 4944
+slots, and the values don't match any weight order I can read — so the per-tensor `conv2d` float surface likely isn't the
+dense dequant-weight array the per-channel `idg` captures decoded months ago. Cracking that sparse scatter is the
+remaining hard piece — but it's now **measurable** (drive the hybrid's maxdiff down). Harness: `S97` power-keepon +
+`test_conv.py` os._exit; hybrids in `dirty/npu-test/H-myfloat.bin`, `H-myABC.bin`.
+
 ## 2026-06-24 (BREAKTHROUGH) — the grey broke: the live driver computes a rich conv from a fixed bias buffer
 
 After confirming the bias buffer is the bug, fixed it in `rkt_coefs.c` and ran the **live** Teflon path (not replay) on
