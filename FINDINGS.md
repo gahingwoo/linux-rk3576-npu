@@ -7,7 +7,30 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
-## 2026-06-24 (cont.) — runs #2–#5: the wall is `core wt_rd=0` (CBUF→CMAC), and an evidence-based way out
+## 2026-06-24 (later) — `core wt_rd=0` was a RED HERRING; the bias buffer is the bug; the SDP spec is in the TRM
+
+Re-grounded by replaying the vendor's exact bytes through the kernel and reading the **output**, not the counter:
+
+- **`core wt_rd=0` is a red herring.** The run that COMPUTED a real feature map (`OUT: distinct=98`, 99% nonzero, head
+  `0a0b0b05`) shows `core wt_rd=0` too. So that perf counter does not measure CMAC weight reads; `wt_rd=0` is normal.
+  Runs #4–#7 (per-unit op_en, enable_mask, BO size, float-const fill) all chased this — wasted. The valid oracle is the
+  OUTPUT (distinct under the non-saturating shift, or maxdiff vs CPU), never a perf counter. (The BO-size enlargement is
+  still a real fix — the OOB read was real — keep it.)
+- **The bias buffer is the bug (clean A/B).** Same vendor weights, same regcmd, swap ONLY the bias: vendor bias →
+  `distinct=98 COMPUTED`; mesa bias → `distinct=2 DEGENERATE`. Nothing else differs. After weeks of the bug sliding
+  across the weights / dispatch / geometry / a lying counter, it is definitively the SDP coefficient buffer (`rkt_coefs.c`).
+  (Earlier I "exonerated requant" — that was the OUT_CVT 0x40ac/b0/b4, which *is* correct; I wrongly conflated it with
+  the 0x5020/0x5024 BS buffer, which is the bug.)
+- **The missing SDP spec is in the allbilly RK TRM.** `A` doesn't fit `sw`/`bias` (R²=0.002) because it isn't a bias
+  formula — it's a **BS-datapath operand**. The TRM: `brdma_data_use` (0x501c) selects which per-channel operands the
+  DPU_RDMA reads (bit0 ALU, bit1 CPEND, bit2 MUL, bit3 TRT); `bs_alu_src`/`bs_mul_src`=1 fetch the ALU/MUL operands
+  **per-channel from the 0x5020 BS surface**; `out = ((in ALU_op alu_operand) * mul_operand) >> shift`; `erdma_data_mode`
+  = per-channel vs **per-channel-by-pixel**. So vendor-bias.bin = `A[128]`+`D[128]` (two per-channel scalar operands) +
+  the float surface (the MUL operand in per-channel-**by-pixel** mode = the dequantised weights, one per (ch,tap) — which
+  is why there are 4944 floats, not 128). The format is now theory-grounded; the remaining work is mapping each operand
+  to its slot and writing the encoder in `rkt_coefs.c`, tested against the OUTPUT.
+
+## 2026-06-24 (cont.) — runs #2–#5: the wall is `core wt_rd=0` (CBUF→CMAC), and an evidence-based way out  *(superseded by the section above — `core wt_rd` is a red herring)*
 
 Built `conv2d-cal` (non-saturating) and ran a sequence, reading the kernel perf counters / `cnalive` as the oracle
 (never `distinct`). Each run corrected the previous hypothesis:
