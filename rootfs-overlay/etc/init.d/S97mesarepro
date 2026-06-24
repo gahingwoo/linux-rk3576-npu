@@ -38,17 +38,27 @@ start() {
 
 	export TEFLON_LIB=/usr/lib/libteflon.so
 	export TEFLON_DEBUG=1
+	# Broadcast op_en writes the global ENABLE_MASK (0xf008) -> teflon engages
+	# (exec_ever=0xf in every broadcast run). The earlier degeneracy was the BIAS,
+	# now fixed in rkt_coefs.c. ORACLE = test_conv.py maxdiff (NOT core wt_rd, a red
+	# herring -- the computing run showed wt_rd=0 too).
+	export ROCKET_BCAST_OPEN=1
 
+	# REWRITE FIRST: the board wedges after ~1 submit and the milestone (vendor bias
+	# -> distinct=256) is already confirmed, so run the rkt_coefs.c rewrite first to
+	# capture ITS result. The kernel `buf out ... distinct=` readback is the signal:
+	# distinct>>2 = the contiguous A+D + dequant float surface computes (the real fix).
 	log ""
-	log "########## (1) conv2d-cal.tflite  — DISCRIMINATING (rich CPU ref ~256) ##########"
+	log "########## (1) REWRITE: contiguous A[128]+D[128] + dequant-weight float surface ##########"
 	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## (2) conv2d.tflite      — original (SATURATES, distinct is a trap) ##########"
-	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d.tflite" > "$C" 2>&1
+	log "########## (2) MILESTONE re-check: live teflon + known-good vendor BS surface ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/vendor-bias.bin" \
+		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END NPU-vs-CPU correctness oracle ##########"
+	log "########## END bias-buffer rewrite test (read test_conv.py maxdiff) ##########"
 	log ""
 }
 

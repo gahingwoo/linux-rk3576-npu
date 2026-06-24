@@ -1,11 +1,36 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
-**Status:** platform bring-up is solid; **compute is wrong.** Every convolution computes to
-the quantized zero-point. The wall is below the register surface and is handed upstream here.
+**Status:** **the wall is broken.** The bug was the SDP coefficient (bias/requant) buffer in
+`rkt_coefs.c`. With it fixed, the live mainline rocket + Teflon path computes a **rich conv
+output** (distinct 236–256, full range) instead of the grey zero-point rail — both with the
+vendor's exact bytes and with the driver's own regenerated buffer. Remaining: refine to
+byte-exact (the per-channel ALU operand `A` + the float-surface sparse tiling).
 
 - HW: Radxa ROCK 4D (RK3576). Stack: mainline **rocket** accel driver + **Mesa Teflon**.
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
+
+## 2026-06-24 (BREAKTHROUGH) — the grey broke: the live driver computes a rich conv from a fixed bias buffer
+
+After confirming the bias buffer is the bug, fixed it in `rkt_coefs.c` and ran the **live** Teflon path (not replay) on
+`conv2d-cal`, reading the kernel output readback:
+
+- **Milestone (load the known-good bytes):** `rkt_coefs.c` loads `vendor-bias.bin` verbatim → `buf out distinct=256
+  nz=4091/4096 min=00 max=ff` — a real feature map on the live mainline rocket + Teflon driver. Proves the road is
+  paved: regcmd, weights, datapath, submit, op_en (broadcast, writes ENABLE_MASK 0xf008 → `exec_ever=0xf`) are all fine;
+  the only gap was generating this buffer.
+- **The rewrite (the driver's own buffer):** removed the wrong interleaved `[8×i32 A|8×i16 B|8×i16 C]` layout; the new
+  default writes **contiguous `A[128]`@0 + `D[128]`@512 (≈A) + a dequant-weight float surface** (`wt_sc*(q-wt_zp)`)
+  @`groups*64`. With no file, mesa's own buffer (`bia` A[0]=0x5100=`0x80*(sw+bias)`) → `buf out distinct=236
+  nz=3231/4096` — a rich map. **The open driver now generates a working coefficient buffer; the chip computes from it.**
+
+Real upstreamable fixes landed: the interleaved→contiguous BS layout, the non-zero dequant float surface (was always
+zero), and the bias-BO size (the old 1280B caused an OOB RDMA read). **NOT yet byte-exact:** rewrite distinct=236 / head
+`df00ba00` vs vendor distinct=256 / head `80808080` — `A` is a best-effort `0x80*(sw+bias)` (≠ the vendor operand) and
+the float fill is dense vs the vendor's sparse tiling. The surface is tolerant (x0.5/shuffle still compute), which is why
+the approximation already runs. Correctness (maxdiff) is unmeasured — the board wedges in BO cleanup before the userspace
+line. Next: flush the maxdiff past the wedge (`os._exit` in test_conv.py), then refine the `A` operand encoding + float
+tiling toward byte-exact.
 
 ## 2026-06-24 (later) — `core wt_rd=0` was a RED HERRING; the bias buffer is the bug; the SDP spec is in the TRM
 
