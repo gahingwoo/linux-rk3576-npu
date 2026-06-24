@@ -36,6 +36,21 @@ start() {
 	# wedge the board before the userspace RESULT line prints.
 	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
 
+	# Keep the NPU powered through the test. The post-job autosuspend (pm_runtime_put
+	# _autosuspend) races the userspace maxdiff print: when it wins, the genpd powers
+	# the NPU off, 'nputop' fails to idle, cpu voltage times out (-110) and the board
+	# wedges before the verdict prints. Force runtime PM off (device stays active ->
+	# domains stay on) so the print always wins. (1) unblock = read the real maxdiff.
+	find /sys/devices -path '*npu*/power/control' 2>/dev/null | while read f; do
+		echo on > "$f" 2>/dev/null
+	done
+	find /sys/devices -path '*27700000.npu*/power/control' 2>/dev/null | while read f; do
+		echo on > "$f" 2>/dev/null
+	done
+	find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null | while read f; do
+		echo 120000 > "$f" 2>/dev/null
+	done
+
 	export TEFLON_LIB=/usr/lib/libteflon.so
 	export TEFLON_DEBUG=1
 	# Broadcast op_en writes the global ENABLE_MASK (0xf008) -> teflon engages
