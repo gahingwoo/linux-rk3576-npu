@@ -7,6 +7,39 @@ the quantized zero-point. The wall is below the register surface and is handed u
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
 - CPU ref: Top-1 653 / conf 0.887. NPU: Top-1 0, output all zero-point.
 
+## 2026-06-24 (cont.) — runs #2–#5: the wall is `core wt_rd=0` (CBUF→CMAC), and an evidence-based way out
+
+Built `conv2d-cal` (non-saturating) and ran a sequence, reading the kernel perf counters / `cnalive` as the oracle
+(never `distinct`). Each run corrected the previous hypothesis:
+
+- **4-register geometry fix** (generic path `0x1018/0x1024/0x1040/0x1080` → vendor) took effect but did **not** turn
+  the MAC on — still `core wt_rd=0`. So the geometry *values* were never the wall.
+- **op_en, three ways:** broadcast (units engage, `wt_rd=0`); full strip (geometry sits, `exec_ever=0`, units never
+  engage); per-unit `0x_008`=`0x1d` (units engage, `wt_rd=0`). The engage *mechanism* does not determine the weight read.
+- **Reframe (kernel patch 0014):** the in-stream broadcast op_en (regcmd `tgt 0x81`/`reg 0x08`) is **not** a PC op_en —
+  `tgt 0x81` → base `0xf000`, so it writes `0xf008` = the global RKNPU **ENABLE_MASK** (`0x1d`). So "it restarts the PC"
+  (mesa's own `rkt_ml.c` comment, and my reasoning) was wrong; the `ds0_first` 0/-1 swings were a sampler **timing
+  confound** (the task finishing before the 1-sample poll), not real latch/no-latch.
+- **`enable_mask=0x1d`** (kernel CPU-writes `0xf008` before OP_EN, like the vendor) → **hard hang** (the ENABLE_MASK
+  auto-start engages but deadlocks — no completion, no readback).
+- **Persistent wall across every run:** `core wt_rd=0` — the CMAC reads **zero** weights from CBUF while the CNA loads
+  it (`top wt_rd=3200`). This is the conv0 CBUF→CMAC channel-bank wall, now reached from `conv2d`.
+
+Offline weight-BO compare: mesa's emitted weight BO differs from `vendor-weights.bin` in **97%** of bytes (every `oc`
+differs). Inconclusive on its own — a value difference does not explain a *structural* `wt_rd=0`, and `vendor-weights.bin`
+may be an imperfect extraction.
+
+**The way out (evidence-based, not more param-spraying).** The load-bearing fact: `replay_rocket` (vendor regcmd +
+vendor weights + vendor bias) **computes** on this exact kernel (`wt_rd>0`, real feature map); live mesa — whose regcmd
+now matches the vendor's — does not. So the cause is isolable by swapping **one component at a time** on the same
+harness while reading **`core wt_rd`** (the structural oracle). The earlier bisection used `distinct` (the invalid
+metric), so re-running it with `core wt_rd` is **not** redundant work:
+- **Thread A (harness bisection):** `replay_mesa`, regcmd held at vendor-patched, swap weights/bias mesa↔vendor, read
+  `core wt_rd` → pins the `wt_rd=0` cause to regcmd vs weights vs bias vs submit.
+- **Thread B (offline, no flash):** use the position-encoded captures (`idg_A`: weight = `ky*5+kx+1`) to read mesa's
+  actual weight tiling against the vendor's CBUF bank order — decides whether the 97% diff is a real tiling/bank
+  mismatch (→ the CMAC reads an empty bank) or extraction noise. `enable_mask` must be left off (it hangs).
+
 ## 2026-06-24 — the ruler was broken: it's an empty MAC, not the requant (and the floats below are now in question)
 
 **Reversal, and not a small one.** Everything below this section was measured with `distinct` (how many
