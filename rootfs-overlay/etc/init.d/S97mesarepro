@@ -59,21 +59,26 @@ start() {
 	# herring -- the computing run showed wt_rd=0 too).
 	export ROCKET_BCAST_OPEN=1
 
-	# REWRITE FIRST: the board wedges after ~1 submit and the milestone (vendor bias
-	# -> distinct=256) is already confirmed, so run the rkt_coefs.c rewrite first to
-	# capture ITS result. The kernel `buf out ... distinct=` readback is the signal:
-	# distinct>>2 = the contiguous A+D + dequant float surface computes (the real fix).
+	# BISECT the error (maxdiff now readable). Segment 1 is the clean one (the 2nd
+	# submit degenerates from board state). H-myfloat = vendor A/B/C + MY dense float:
+	# small maxdiff => my float reconstruction is OK and A/B/C is the error. H-myABC =
+	# MY A/B/C + vendor float: small => A/B/C OK, float is the error.
+	# STRUCTURE vs VALUES (float surface). H-shuf = vendor float STRUCTURE (mask) with
+	# the nonzero VALUES shuffled. If maxdiff stays small -> only the sparse structure
+	# matters, values are tolerant -> derive the mask, fill anything. If large -> the
+	# exact values matter (toolkit-blob). H-structconst = structure + one constant.
 	log ""
-	log "########## (1) REWRITE: contiguous A[128]+D[128] + dequant-weight float surface ##########"
-	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-
-	log ""
-	log "########## (2) MILESTONE re-check: live teflon + known-good vendor BS surface ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/vendor-bias.bin" \
+	log "########## (1) H-shuf: vendor structure, SHUFFLED float values (structure vs values) ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/H-shuf.bin" \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END bias-buffer rewrite test (read test_conv.py maxdiff) ##########"
+	log "########## (2) H-structconst: vendor structure, CONSTANT values (2nd submit, may degenerate) ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/H-structconst.bin" \
+		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+
+	log ""
+	log "########## END structure-vs-values test (read segment 1 maxdiff) ##########"
 	log ""
 }
 

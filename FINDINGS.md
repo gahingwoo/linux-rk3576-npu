@@ -3,8 +3,13 @@
 **Status:** **the wall is broken.** The bug was the SDP coefficient (bias/requant) buffer in
 `rkt_coefs.c`. With it fixed, the live mainline rocket + Teflon path computes a **rich conv
 output** (distinct 236–256, full range) instead of the grey zero-point rail — both with the
-vendor's exact bytes and with the driver's own regenerated buffer. Remaining: refine to
-byte-exact (the per-channel ALU operand `A` + the float-surface sparse tiling).
+vendor's exact bytes and with the driver's own regenerated buffer. Remaining: byte-exact.
+The dominant error is the **float surface**, and for this **per-tensor** `conv2d` it needs the toolkit's exact
+per-channel re-quantised values (proven: shuffling them keeps the sparse structure but still gives maxdiff=255) — a
+sparse, compiler-chosen table that is **not derivable from the tflite** (blob-only). But `conv2d` is a synthetic
+per-tensor test; the actual target, **MobileNet, is per-axis**, and the per-channel float surface decodes cleanly to the
+dequantised weights (the `idg` captures, months ago). **Next direction: move the encoder + the measured maxdiff loop onto
+a per-channel conv, where the float surface is the weights — not the welded-shut per-tensor `conv2d`.**
 
 - HW: Radxa ROCK 4D (RK3576). Stack: mainline **rocket** accel driver + **Mesa Teflon**.
 - Reference: vendor `rknpu` + RKNN runtime runs the same MobileNetV1 correctly on the same board.
