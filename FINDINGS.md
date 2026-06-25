@@ -698,3 +698,35 @@ conv2d's known int8 weights/bias/quant. Reusable check: `vendor-capture/ana_coef
 non-derivable half (per-channel `C` scaling + the float-surface layout) is confirmed to need a live
 per-axis capture. The decisive next board step is to capture the vendor's coefficient buffer for a
 **per-axis** conv (or for `conv2d-cal`), then feed it verbatim and read maxdiff — no derivation guesswork.
+
+## Clean per-axis board captures (2026-06-25): float surface ≠ weights, but the requant (ABC) IS derivable
+
+Captured the vendor's live coefficient buffer for three **position-encoded** per-axis convs (so the
+weights spell out their own coordinates) + per-tensor `conv2d` for contrast, through the vendor rknn
+stack (`vendor-capture/{gen_perax,run-coefcap}.py`, full BO dump, coef offset read from the regcmd's
+`0x5020`/`0x5024` IOVAs — not guessed). Models: `pw_ic` (1×1, weight[oc,ic]=ic+1), `pw_oc`
+(weight=oc+1), `dw_k` (3×3 depthwise, weight=ky*3+kx+1). Decoder: `vendor-capture/ana_perax.py`.
+
+**The float surface (0x5024) is NOT the dequantised weights — not even for per-axis.** Decisive: `pw_oc`
+weights are `oc+1`, so a weight copy would show the 128 constants `1..128`; the float surface has **8
+distinct values** total (`{-2.25, 0.0078, 0.016, 0.024, 2, 22, 219}`). `dw_k` (weights `1..9`) gives
+**384** continuous values, nothing like `1..9`. This **refutes the premise of the per-axis pivot**
+(the earlier "the per-channel float surface decodes cleanly to the dequantised weights" — that idg read
+was muddled). The float surface is a toolkit-internal structure for per-axis too; its role/derivability
+is still open (values look like `in_sc`-multiples / requant terms, but it is not 128 per-channel scales).
+
+**But the ABC requant block (0x5020) is fully derivable for per-axis** — read with the exact offset:
+- `A[oc] = M·(in_zp·sw[oc] − bias[oc])` (the bias-correction; constant in these bias=0 / uniform-sw
+  models, matching the per-tensor corr −0.996).
+- `B[oc] = in_zp − wt_zp = 128` (constant).
+- `C[oc]` = the **per-channel requant multiplier, ∝ `in_sc·wt_sc[oc]/out_sc`**: proven by `pw_oc`,
+  where `C = 128·(oc+1)` tracks the per-channel weight scale *exactly* (the channel with twice the
+  scale gets twice the multiplier), vs `pw_ic` where every channel shares a scale → `C = 16384`
+  constant. Derivable straight from the model's per-channel scales.
+
+This also **explains the old per-tensor "C is a blob"**: for a per-tensor conv the toolkit *invents*
+per-channel scales (not in the model) → not derivable; a per-axis model *carries* them → `C` derivable.
+So the per-axis pivot was right about the **requant** layer (ABC encodable in `rkt_coefs.c`), and wrong
+about the **float surface** (not the weights). NEXT: encode the derivable ABC, board-test whether
+ABC-alone computes for a per-axis conv (maxdiff) — i.e. whether the float surface is even load-bearing
+there — before spending more on the surface.
