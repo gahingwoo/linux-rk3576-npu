@@ -75,7 +75,6 @@ def main(root):
         print(f"  sample slot {s0}: " + "  ".join(f"*{MULT[t]}->lin{data[t][s0]}" for t in tags))
         for name, f in [("C*inv(m)", lambda m: pow(m, -1, 251)), ("C*m", lambda m: m)]:
             # solve C,K from two models, check the other two
-            import numpy as np
             ms = [MULT[t] for t in tags]; ls = [data[t][s0] for t in tags]
             A0 = np.array([[f(ms[0]), 1], [f(ms[1]), 1]])
             try:
