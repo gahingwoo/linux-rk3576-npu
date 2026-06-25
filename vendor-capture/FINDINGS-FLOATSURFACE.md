@@ -85,3 +85,30 @@ per-region OIHW phase shifts with the weights). Pure mesa derivation is blocked 
 Next (chosen): flash more ramps (*43,*61) to see how the per-window phase varies with the
 multiplier and try to fit the phase law. (lin_a==lin_b self-test separated the hypotheses cleanly
 at 100% vs 1%, so the 0% here is real, not a decoder artifact; the offset is piecewise-constant.)
+
+## UPDATE 2026-06-25 late — 4-multiplier test SETTLES it: VALUE-DEPENDENT placement
+Flashed posprobe_a/b/c/d = *37/*53/*43/*61 ramps (d degenerate: toolkit gave it a 2x
+per-tensor scale, halving the resolution, so its OIHW ramp wasn't preserved — dropped).
+On the 3 clean models (same shape, same scale 0.01562, same uniform no-zero distribution),
+comparing the OIHW position decoded at each genuine ramp slot:
+- at the SAME fs slot 9: a holds OIHW 79, b holds 83, c holds 119 — different content.
+- OIHW position 79 sits at fs slot 9 in a, fs slot 447 in b, fs slot 220 in c — different
+  physical slots entirely.
+- the window STRUCTURE differs per model: a = one 247-run @fs9; b = 124-run @fs8 + 123-run
+  @fs133; c = 25-run @fs8 + 222-run @fs34. Lengths, break points, fs offsets all differ.
+- no simple law fits the per-window start across multipliers (ruled out constant, C*inv(m),
+  C*m, linear-in-m offline).
+VERDICT: the float-surface weight PLACEMENT is value-dependent — the layout (which OIHW range,
+at which fs offset, in what run lengths) depends on the specific weight values. The LOCAL
+structure (OIHW-consecutive runs) is real and derivable, but the placement of those runs is the
+toolkit compiler's value-driven heuristic. For a from-scratch mesa encoder that must reproduce
+the vendor bytes, this is effectively a blob. (Earlier "structured tiling, likely derivable"
+reframe: half right — local order derivable, run placement is not.)
+
+## The open, untested, HOPEFUL question
+The vendor's value-dependent placement may be an OPTIMIZATION (compression / ordering for speed),
+not a CORRECTNESS requirement. The hardware may accept any valid layout — e.g. a canonical plain
+OIHW float surface, which IS fully derivable. This is testable WITHOUT vendor capture: write a
+canonical-OIHW float-surface encoder in rkt_coefs.c and judge with the test_conv.py maxdiff oracle
+(mainline kernel path). If a canonical layout computes correctly -> the vendor's value-dependence
+was never needed -> placement is derivable after all and the wall is broken. Next direction.
