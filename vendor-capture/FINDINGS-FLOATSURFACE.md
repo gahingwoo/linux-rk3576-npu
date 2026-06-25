@@ -67,3 +67,21 @@ existing captures cannot be.
 - float-surface skeleton (in_sc, structural blocks, bias array): derivable
 - float-surface weight-valued region: values derivable (dequant weights, OIHW-local
   order); **window placement = the one open question**, posprobe is staged to decide it
+
+## UPDATE 2026-06-25 night — posprobe captured: NUANCED (not blob, not clean-derivable)
+Flashed posprobe_a (*37 ramp) + posprobe_b (first gaussian, then corrected to *53 ramp).
+Decode of the coef float surface:
+- weight slots are LARGELY co-located between a and b, and BOTH lay out clean OIHW-consecutive
+  ramps (a steps +37, b steps +53 per slot, exactly the ramp multipliers) -> the slots and the
+  local OIHW-consecutive ORDER are position-fixed = derivable at that level.
+- BUT at a fixed slot the OIHW *content* differs by a piecewise-constant offset: fs@9 window
+  a holds OIHW lin0=79, b holds 83 (+4); other regions differ by +12 and +123. So which OIHW
+  range maps to which window carries a **model(weight)-dependent phase**.
+- The phase is NOT zero-skip compression (a has 1 zero before lin79, b has 0 before lin83 —
+  off by 1, not 4). Origin unknown.
+Verdict: a THIRD case — neither opaque value-dependent blob (it is highly structured: 93% of
+contiguous weight transitions are OIHW +1 or exact-repeat) nor purely shape-derivable (the
+per-region OIHW phase shifts with the weights). Pure mesa derivation is blocked on this phase law.
+Next (chosen): flash more ramps (*43,*61) to see how the per-window phase varies with the
+multiplier and try to fit the phase law. (lin_a==lin_b self-test separated the hypotheses cleanly
+at 100% vs 1%, so the 0% here is real, not a decoder artifact; the offset is piecewise-constant.)
