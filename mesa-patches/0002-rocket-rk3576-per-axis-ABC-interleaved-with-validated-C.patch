@@ -1,0 +1,93 @@
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 4f6ccc5..1e9ef09 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -349,7 +349,22 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       unsigned wt_zp = poperation->conv.weight_tensor->zero_point;
+       int32_t in_zp = poperation->input_tensors[0]->zero_point;
+       unsigned groups = DIV_ROUND_UP(output_channels, 8);
+-      unsigned bufsize = groups * 64 + 0x100;   /* structure + zeroed X2 pad */
++      /*
++       * The DPU_RDMA reads a per-channel BS *float* surface from 0x5024 (=
++       * bias + groups*64) for ALL output channels. The vendor's buffer for this
++       * conv is 20800B; ours was groups*64+0x100 = 1280B, so the RDMA read ran
++       * ~19.5KB past the BO end -> IOMMU fault / RDMA stall -> the CMAC read zero
++       * weights (core wt_rd=0) = the wall. Size the BO to cover the read: the int
++       * A/B/C table (groups*64) plus a float region bounded by the full weight
++       * count (the float surface can hold no more floats than there are weights).
++       * The float content stays zeroed here -- filling it with the dequant-weight
++       * surface is a separate TODO; this only stops the out-of-bounds stall.
++       */
++      unsigned wt_elems = poperation->conv.weight_tensor->dims[0] *
++                          poperation->conv.weight_tensor->dims[1] *
++                          poperation->conv.weight_tensor->dims[2] *
++                          poperation->conv.weight_tensor->dims[3];
++      unsigned bufsize = groups * 64 + wt_elems * sizeof(float) + 0x100;
+       uint8_t *b8;
+ 
+       /*
+@@ -368,17 +383,53 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       b8 = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
+       memset(b8, 0, bufsize);
+ 
+-      for (unsigned oc = 0; oc < output_channels; oc++) {
+-         int32_t sw = calculate_weight_sum(poperation, oc, weights);
+-         int32_t A = a_scale * (sw + biases_in[oc]);
+-         int16_t B = (int16_t)(0x80 - (int32_t)wt_zp);
+-         int16_t C = (int16_t)(0x4000 - (in_zp - 0x80) * sw);
+-         uint8_t *gb = b8 + (oc / 8) * 64;
+-         unsigned i = oc % 8;
+-
+-         *(int32_t *)(gb + 0 + i * 4) = A;
+-         *(int16_t *)(gb + 32 + i * 2) = B;
+-         *(int16_t *)(gb + 48 + i * 2) = C;
++      const char *bf = getenv("ROCKET_BIAS_FILE");
++      if (bf) {
++         /* MILESTONE: load the known-good vendor BS surface verbatim, to confirm
++          * the live Teflon path computes a correct conv given the right bytes. */
++         FILE *f = fopen(bf, "rb");
++         if (f) {
++            size_t n = fread(b8, 1, bufsize, f);
++            fclose(f);
++            fprintf(stderr, "rocket: loaded %zu bias bytes from %s\n", n, bf);
++         } else {
++            fprintf(stderr, "rocket: ROCKET_BIAS_FILE %s: open failed\n", bf);
++         }
++      } else {
++         /*
++          * Interleaved [8x int32 A | 8x int16 B | 8x int16 C] per 8-oc group --
++          * the layout the RK3576 SDP wants, matched byte-for-byte to the vendor's
++          * captured buffer for position-encoded per-axis convs. A and B were
++          * already right:
++          *    A[oc] = 0x80 * (sum_kernel(wq - wt_zp) + bias[oc])  (a_scale*(sw+bias))
++          *    B     = 0x80 - wt_zp
++          * The missing piece is C, the per-channel requant multiplier, validated
++          * byte-exact on the board (pw_oc/pw_ic, 256/256):
++          *    C[oc] = round(2^14 * wt_sc[oc] / max_oc(wt_sc))
++          * It is *relative* (the max-scale channel = 0x4000); the absolute scale
++          * rides the per-layer OUT_CVT shift. For a per-tensor conv every scale is
++          * equal -> C = 0x4000 for all channels. The float surface (@groups*64)
++          * stays zeroed -- the board test is whether ABC alone now computes, i.e.
++          * whether that surface is even load-bearing once C is correct.
++          */
++         const float *wscales = poperation->conv.weight_tensor->scales;
++         float max_sc = wscales ? wscales[0] : 1.0f;
++         if (wscales)
++            for (unsigned oc = 1; oc < output_channels; oc++)
++               if (wscales[oc] > max_sc)
++                  max_sc = wscales[oc];
++
++         for (unsigned oc = 0; oc < output_channels; oc++) {
++            int32_t sw = calculate_weight_sum(poperation, oc, weights);
++            unsigned g = oc / 8, i = oc % 8;
++            int32_t *A = (int32_t *)(b8 + g * 64 + i * 4);
++            int16_t *B = (int16_t *)(b8 + g * 64 + 32 + i * 2);
++            int16_t *C = (int16_t *)(b8 + g * 64 + 48 + i * 2);
++            float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
++            *A = a_scale * (sw + biases_in[oc]);
++            *B = (int16_t)(0x80 - (int)wt_zp);
++            *C = (int16_t)(16384.0f * rel + 0.5f);
++         }
+       }
+ 
+       if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {

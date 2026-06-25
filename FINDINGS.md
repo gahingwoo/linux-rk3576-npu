@@ -730,3 +730,27 @@ So the per-axis pivot was right about the **requant** layer (ABC encodable in `r
 about the **float surface** (not the weights). NEXT: encode the derivable ABC, board-test whether
 ABC-alone computes for a per-axis conv (maxdiff) — i.e. whether the float surface is even load-bearing
 there — before spending more on the surface.
+
+## Per-axis ABC encoder VALIDATED byte-exact against board ground truth (2026-06-25 pm)
+
+From the clean position-encoded captures, read the per-channel multiplier with the exact regcmd offset
+and validated the full ABC against the captured bytes (`pw_oc`, `pw_ic`):
+
+- **A[oc] = 0x80·(Σ_kernel wq[oc] + bias[oc])** — byte-exact. pw_oc: Σwq=16·255=4080 → A=0x80·4080=522240 ✓;
+  pw_ic: Σwq=2167 → A=0x80·2167=277376 ✓. This is **mesa's current formula** (rkt_coefs.c:423) — A was right.
+- **B[oc] = 0x80 − wt_zp** — constant, mesa already correct.
+- **C[oc] = round(2^14 · wt_sc[oc] / max_oc(wt_sc))** — the per-channel requant multiplier. Validated
+  **256/256 exact** across pw_oc+pw_ic (`wt_sc[oc]=max|w[oc]|/127`). C is *relative* (normalised to the
+  max channel = 2^14); the absolute scale rides the per-layer OUT_CVT shift mesa already computes.
+
+So the per-axis requant is fully specified and proven. **mesa's two bugs:** (1) it emits a *contiguous*
+A/D/float layout, but the vendor (and the HW) want the **interleaved `[8×i32 A | 8×i16 B | 8×i16 C]`** per
+8-oc group; (2) it never writes **C** at all. Fix = interleaved layout + the validated C.
+
+**Blocker for C:** it needs per-channel `wt_sc[oc]`, but the teflon `pipe_ml` API exposes only ONE
+per-tensor `weight_tensor->scale` (rkt_coefs.c:410), and per-axis int8 weights are each normalised to
+±127 so the relative scale **cannot be recovered from the weights** — the per-channel scales must be
+plumbed from the tflite (per-axis quant params) through the teflon delegate into `pipe_tensor`. That
+plumbing + the interleaved-[A|B|C]-with-C emit is the implementation. The **float surface** (0x5024)
+role is still open (it is NOT the weights); next board test = does interleaved ABC-with-correct-C
+compute with a zeroed float surface, i.e. is the surface even load-bearing for per-axis.
