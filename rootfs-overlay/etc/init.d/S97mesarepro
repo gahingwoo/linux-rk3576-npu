@@ -67,18 +67,26 @@ start() {
 	# the nonzero VALUES shuffled. If maxdiff stays small -> only the sparse structure
 	# matters, values are tolerant -> derive the mask, fill anything. If large -> the
 	# exact values matter (toolkit-blob). H-structconst = structure + one constant.
+	# PIVOT TEST: is the vendor's value-dependent weight placement load-bearing, or
+	# just an optimization a derivable encoder can ignore?
+	#  (1) H-shufW = vendor buffer, ONLY the weight-scatter slots shuffled among
+	#      themselves (skeleton/ABC/structural byte-identical). maxdiff small => the
+	#      value-to-slot assignment does NOT matter -> derive the mask, fill any order
+	#      -> the surface is DERIVABLE. maxdiff large => placement is load-bearing.
+	#  (2) plain-OIHW = weight slots refilled in plain OIHW order (a specific derivable
+	#      layout). Runs 2nd (board may wedge after 1-2 submits, so the decisive one is 1st).
 	log ""
-	log "########## (1) H-shuf: vendor structure, SHUFFLED float values (structure vs values) ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/H-shuf.bin" \
+	log "########## (1) H-shufW: vendor buffer, ONLY weight slots shuffled (does placement matter?) ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/H-shufW.bin" \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## (2) H-structconst: vendor structure, CONSTANT values (2nd submit, may degenerate) ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/H-structconst.bin" \
+	log "########## (2) plain-OIHW: weight slots in plain OIHW order (2nd submit, may degenerate) ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/plain-oihw-bias.bin" \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END structure-vs-values test (read segment 1 maxdiff) ##########"
+	log "########## END pivot test (read segment 1 maxdiff: small=derivable, large=blob) ##########"
 	log ""
 }
 
