@@ -825,3 +825,35 @@ fill ONLY the skeleton (bias+in_sc+scale), leave the weight arrays zeroed, end-t
 it computes, the weight scatter is NOT load-bearing and per-axis is fully derivable; if it degenerates,
 the weight scatter is the (data-dependent) wall. Lesson re-logged: do NOT trust `core wt_rd`; only the
 output on a non-saturating, carrier-matched model is the oracle.
+
+## 2026-06-25 (night, close-out) — the per-axis carrier itself doesn't compute richly; the day's wins stand, the validation is blocked on a fresh question
+
+Spent the evening tuning the float surface on `perax_pw` (the TF per-axis tflite) and it degenerated
+every time — zeroed, dense dequant-weights, derivable-skeleton, AND a *valid same-shape* buffer
+(`pw_oc`'s captured coef): output distinct 1–4 in every case. Contrast: `conv2d-cal` + a *wrong-out_sc*
+vendor buffer stays **distinct=256** (rich). So either `perax_pw` is a broken carrier (int8 activations
+/ 1x1 / 8x8 path) OR it was simply never handed a *correct* buffer (its own vendor coef, which the
+tflite↔rknn arm64 mismatch blocks me from capturing). **Unresolved — and it confounded every per-axis
+end-to-end test tonight.** One thing ruled out cheaply: the OUT_CVT offset (`rkt_regcmd.c:345`,
+`out_offset = output_zero_point - 0x80`) *does* handle int8 (zp=0 → −128), so int8 output is not an
+obvious break.
+
+**Solid, banked results of the day (these don't come undone):**
+1. per-axis **ABC encoder byte-exact validated** (pw_oc/pw_ic 1024/1024); support gate opened so teflon
+   delegates per-axis.
+2. **The wall is the buffer, not the regcmd** — vendor buffer on live mesa → distinct=256 (judged by the
+   *valid* oracle, output on a non-saturating model, after relapsing to the `wt_rd` red herring and being
+   caught).
+3. **Float surface = derivable skeleton + data-dependent weight scatter**, precisely localised: bias
+   array = −bias[oc] (@2676 contiguous), in_sc block (@1216), per-channel scale — derivable; the
+   weight-VALUE arrays (@386/@4724/@3600) are value-sorted/sparse — the genuine blob, and only that part.
+4. The `bufsize` floor fix (small convs under-allocated the float region → OOB).
+5. Host toolchain: TF builds+verifies per-axis int8 tflites; capture-decode + byte-validate scripts.
+
+**Two fresh-mind restart paths (both high-risk/precision — do NOT do tired):**
+(a) Diagnose why `perax_pw` won't compute richly — is it a broken int8/pointwise carrier, or never given a
+correct buffer? (Cleanest probe: get `perax_pw`'s own vendor coef — needs the ONNX→rknn route around the
+arm64 tflite-load block + the TF/rknn protobuf conflict, i.e. a separate venv.)
+(b) Validate the float-surface skeleton on `conv2d-cal` (the carrier that DOES compute) — needs the
+per-TENSOR skeleton decode, with the caveat that per-tensor per-channel scale may be toolkit-invented
+(the blob) and not derivable. Both are precision work; tonight was 13 flashes.
