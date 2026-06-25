@@ -12,8 +12,13 @@ slots are wt_sc*(wq-wt_zp) ~ wt_sc*((lin*37)%251-125). Two facts make placement 
   - consecutive OIHW lin -> the integer steps by +37 (mod 251). So a run of float-surface
     slots whose integers step +37 mod 251 IS a contiguous OIHW window, and its start lin
     decodes by inverting (lin*37)%251.
-  - posprobe_b (different weights, same shape): if its weight-slot mask == a's, placement
-    is POSITION-FIXED (derivable). If it differs, value-dependent (blob).
+  - posprobe_b = a DIFFERENT no-zero ramp w[lin]=((lin*53)%251-125)/64 (same uniform
+    no-zero distribution, different value-per-position). DECISIVE TEST: decode each weight
+    slot to OIHW lin in a (via *37 inverse) and b (via *53 inverse); if the SAME slot gives
+    the SAME lin in both, the slot->position map is independent of the weight values =
+    POSITION-FIXED = DERIVABLE. If they disagree = value-dependent = blob.
+    (The first posprobe_b was gaussian -> its near-zeros confounded a mask compare; the
+     no-zero *53 ramp removes that confound and tests positions directly.)
 """
 import sys, struct, re
 import numpy as np
@@ -89,28 +94,44 @@ def decode_windows(fs, unit):
     return merged, idx
 
 
+def lin_at_slots(fs, unit, mult):
+    """{slot -> decoded OIHW lin mod 251} for the weight slots, inverting (lin*mult)%251."""
+    inv = pow(mult, -1, 251)
+    idx, ri = weight_slots(fs, unit)
+    return {int(s): int((((ri[s] + 125) % 251) * inv) % 251) for s in idx}, idx
+
+
 def main(da, db):
     fa = fs_of(open(f"{da}/bo01.bin", "rb").read(), open(f"{da}/meta.txt").read())
     ua, fra = detect_unit(fa)
-    print(f"posprobe_a: {len(fa)} f32, {np.sum(fa!=0)} nz, wt_sc~{ua:.5f} ({fra*100:.0f}% int)")
+    print(f"posprobe_a (*37 ramp): {len(fa)} f32, {np.sum(fa!=0)} nz, wt_sc~{ua:.5f} ({fra*100:.0f}% int)")
     wins, idx_a = decode_windows(fa, ua)
-    print(f"  weight slots: {len(idx_a)}   contiguous OIHW windows (+37 mod251): {len(wins)}")
-    cover = set()
-    for fso, L, lin0 in sorted(wins):
+    print(f"  weight slots: {len(idx_a)}   OIHW-contiguous windows (+37 mod251): {len(wins)}")
+    for fso, L, lin0 in sorted(wins)[:8]:
         print(f"   fs@{fso:5d} len={L:4d}  OIHW lin0(mod251)={int(lin0):3d}")
-        cover |= set(range(L))
-    print(f"  VERDICT-A: {'WINDOWS DECODE -> placement is OIHW-contiguous = DERIVABLE' if len(wins)>=3 else 'no coherent windows'}")
+
+    # DECISIVE TEST: does the SAME slot decode to the SAME OIHW lin in a (*37) and b (*53)?
+    # position-fixed placement -> slot s holds the same OIHW position regardless of values
+    # -> lin_a(s) == lin_b(s).  value-dependent -> they disagree.
     try:
         fb = fs_of(open(f"{db}/bo01.bin", "rb").read(), open(f"{db}/meta.txt").read())
-        ub, _ = detect_unit(fb)
-        idx_b, _ = weight_slots(fb, ub)
-        sa, sb = set(idx_a.tolist()), set(idx_b.tolist())
-        jac = len(sa & sb)/max(1, len(sa | sb))
-        print(f"\nposprobe_b weight slots: {len(idx_b)}")
-        print(f"weight-slot mask Jaccard a-vs-b: {jac:.3f}  "
-              f"-> {'POSITION-FIXED (derivable)' if jac > 0.85 else 'VALUE-DEPENDENT (blob)' if jac < 0.6 else 'PARTIAL — inspect'}")
+        ub, frb = detect_unit(fb)
+        print(f"\nposprobe_b (*53 ramp): wt_sc~{ub:.5f} ({frb*100:.0f}% int)")
+        la, _ = lin_at_slots(fa, ua, 37)
+        lb, _ = lin_at_slots(fb, ub, 53)
+        shared = sorted(set(la) & set(lb))
+        agree = sum(1 for s in shared if la[s] == lb[s])
+        # allow +-1 (a single mis-rounded slot perturbs the decoded lin by ~inv*1)
+        agree1 = sum(1 for s in shared if abs((la[s]-lb[s]+125) % 251 - 125) <= 1)
+        print(f"co-located weight slots: {len(shared)}  (a has {len(la)}, b has {len(lb)})")
+        print(f"slots where lin_a == lin_b      : {agree}/{len(shared)} = {agree/max(1,len(shared))*100:.1f}%")
+        print(f"slots where |lin_a - lin_b| <= 1: {agree1}/{len(shared)} = {agree1/max(1,len(shared))*100:.1f}%")
+        f = agree1/max(1, len(shared))
+        print("\nVERDICT:", "POSITION-FIXED -> placement independent of weight values = DERIVABLE"
+              if f > 0.9 else "VALUE-DEPENDENT -> slot depends on the weights = BLOB"
+              if f < 0.5 else "PARTIAL / mixed -- inspect the disagreeing slots")
     except FileNotFoundError:
-        print("\n(posprobe_b not present; A-verdict stands)")
+        print("\n(posprobe_b not present; A windows stand as the only evidence)")
 
 
 if __name__ == "__main__":

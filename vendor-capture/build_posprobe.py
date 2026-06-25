@@ -31,9 +31,12 @@ def build(tag, weight_oihw, bias):
 lin = np.arange(OC*IC*KH*KW)
 val_a = (((lin*37) % 251) - 125).astype(np.float32) / 64.0   # ~[-1.95,1.95], per-tensor
 w_a = val_a.reshape(OC, IC, KH, KW)
-# probe_b: DIFFERENT weights (random seed), same shape
-rng = np.random.RandomState(7)
-w_b = (rng.randn(OC, IC, KH, KW).astype(np.float32) * 0.5)
+# probe_b: a SECOND no-zero ramp, multiplier 53 (same uniform no-zero distribution as a,
+# different value-per-position). Decisive test = decode each weight slot to OIHW lin in a
+# (*37) and b (*53); same slot -> same lin = position-fixed = derivable. (gaussian b was a
+# bad control: near-zeros confound a mask compare; the *53 ramp tests positions directly.)
+val_b = (((lin*53) % 251) - 125).astype(np.float32) / 64.0
+w_b = val_b.reshape(OC, IC, KH, KW)
 bias = np.zeros(OC, np.float32)
 build("posprobe_a", w_a, bias)
 build("posprobe_b", w_b, bias)
