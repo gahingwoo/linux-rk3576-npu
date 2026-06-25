@@ -21,5 +21,7 @@ cap_one() {
 }
 cap_one posprobe_a posprobe_a.rknn
 cap_one posprobe_b posprobe_b.rknn
+cap_one posprobe_c posprobe_c.rknn
+cap_one posprobe_d posprobe_d.rknn
 echo "===== DONE: pull /opt/npu-cap/out/ from SD part 2 ====="
 sync
