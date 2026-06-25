@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 4f6ccc5..1e9ef09 100644
+index 4f6ccc5..3d21b3e 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -349,7 +349,22 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
@@ -26,7 +26,7 @@ index 4f6ccc5..1e9ef09 100644
        uint8_t *b8;
  
        /*
-@@ -368,17 +383,53 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -368,17 +383,77 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
        b8 = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
        memset(b8, 0, bufsize);
  
@@ -88,6 +88,50 @@ index 4f6ccc5..1e9ef09 100644
 +            *B = (int16_t)(0x80 - (int)wt_zp);
 +            *C = (int16_t)(16384.0f * rel + 0.5f);
 +         }
++
++         /*
++          * (b) board test: the zeroed float surface stalls the SDP (core
++          * wt_rd=0) -- it is load-bearing. Fill it with a DERIVABLE candidate
++          * (the dense dequant weights) to ask whether a correct ABC + any valid
++          * derivable surface computes, or whether the vendor's exact (blob)
++          * tiling is required. ROCKET_FS_ZERO=1 reverts to the zeroed surface.
++          */
++         if (!getenv("ROCKET_FS_ZERO")) {
++            float wt_sc = poperation->conv.weight_tensor->scale;
++            unsigned iw = poperation->conv.weight_tensor->dims[1];
++            unsigned ih = poperation->conv.weight_tensor->dims[2];
++            unsigned icn = poperation->input_tensors[0]->dims[3];
++            uint8_t (*wq)[iw][ih][icn] = weights;
++            float *fs = (float *)(b8 + groups * 64);
++            unsigned fcap = (bufsize - groups * 64) / sizeof(float);
++            unsigned fi = 0;
++            for (unsigned oc = 0; oc < output_channels; oc++)
++               for (unsigned x = 0; x < iw; x++)
++                  for (unsigned y = 0; y < ih; y++)
++                     for (unsigned c = 0; c < icn; c++)
++                        if (fi < fcap)
++                           fs[fi++] = wt_sc * ((int)wq[oc][x][y][c] - (int)wt_zp);
++         }
        }
  
        if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index af3f902..73f0679 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -446,10 +446,12 @@ rkt_ml_operation_supported(struct pipe_context *pcontext,
+       struct pipe_tensor *bias_tensor = operation->conv.bias_tensor;
+       struct pipe_tensor *output_tensor = operation->output_tensors[0];
+ 
+-      // Dilation and per-axis quantization not yet implemented
++      // Dilation not yet implemented. Per-axis WEIGHTS/BIAS are now handled
++      // (rkt_coefs.c emits the per-channel C[oc] from weight_tensor->scales[],
++      // validated byte-exact on the board); activations stay per-tensor.
++      (void) weight_tensor;
++      (void) bias_tensor;
+       if (tensor_quantization_supported(input_tensor) &&
+-          tensor_quantization_supported(weight_tensor) &&
+-          tensor_quantization_supported(bias_tensor) &&
+           tensor_quantization_supported(output_tensor) &&
+           operation->conv.dilation_width_factor == 1 &&
+           operation->conv.dilation_height_factor == 1)

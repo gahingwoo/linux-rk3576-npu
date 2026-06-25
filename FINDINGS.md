@@ -754,3 +754,39 @@ plumbed from the tflite (per-axis quant params) through the teflon delegate into
 plumbing + the interleaved-[A|B|C]-with-C emit is the implementation. The **float surface** (0x5024)
 role is still open (it is NOT the weights); next board test = does interleaved ABC-with-correct-C
 compute with a zeroed float surface, i.e. is the surface even load-bearing for per-axis.
+
+## 2026-06-25 (evening) — per-axis delegates + runs on HW (gate fixed), but the live MAC still doesn't turn over
+
+Pushed the validated per-axis ABC encoder all the way onto the hardware, clearing gates in sequence:
+- **The float surface is per-channel DERIVABLE fields, not an opaque blob** (round-2 position-encoded
+  captures, `g_bias`/`g_const`/`g_pt`, 5-way cross-model isolation): a **bias field = −bias[oc]** in
+  float (`g_bias` shows −300,−400,… = −(oc+1)·100), a per-channel **scale** field, and global constant
+  blocks (a 1344-long `in_sc`=0.0078 block, two 64-blocks). The bias formula is decoded; the **tiling is
+  intricate/fragmented** (channel-offset, ~3 runs of ~128) and the weight-value placement looks
+  data-dependent — the genuinely hard remaining piece. **`g_pt` (per-tensor) is structurally different**
+  (ABC region 512B = A-only, no interleaved B/C; float surface = 861 distinct continuous values = the
+  toolkit blob), so the per-axis decode does NOT transfer to a per-tensor MobileNet.
+- **MobileNetV1 is PER-TENSOR uint8** (every conv: n_scales=1), not per-axis — correcting a premise that
+  ran through this whole journal. So a per-axis encoder needs a per-axis model (re-quantise MobileNet, or
+  ship per-axis layers).
+- **Built a real per-axis int8 tflite with TensorFlow** (`vendor-capture/build_perax_tflite.py`,
+  installed TF on the host) — 1×1 pointwise 16→128, weight nscales=128, non-saturating output
+  (distinct=206), verified on the host.
+- **The rocket driver explicitly REJECTED per-axis** at the support gate (`rkt_ml.c:427`
+  `tensor_quantization_supported` returned false when `scales != NULL`), so teflon never delegated it —
+  the first board run was a silent CPU fallback (maxdiff=0 but no submit). **Relaxed the gate** to allow
+  per-axis weights/bias (the encoder handles them); now teflon **delegates + submits a real NPU job**
+  (`rocket dbg submit`, weights BO loaded, `buf wt distinct=247`).
+- **And the board's verdict: the conv still does not compute.** NPU output `distinct=1` (constant),
+  `maxdiff=127`, `core wt_rd=0`, `ds0=h=0,w=0`. **Identical wall to per-tensor `conv2d-cal`.** So the
+  live-mesa MAC failing to turn over is **independent of the coefficient buffer and of per-tensor/
+  per-axis** — the validated ABC is necessary but not sufficient. Only the **vendor's exact full buffer
+  (replay milestone) computes**; mesa's own ABC + a non-exact float surface (zeroed or dense) does not.
+
+**Net:** tonight cleared the per-axis path end-to-end (encoder validated, gate opened, delegation +
+submit working) and the hardware then localised the real live blocker one layer deeper: the conv's MAC
+produces a constant — the **CBUF→CMAC / geometry (`ds0=h0,w0`) wall** the vendor regcmd clears and mesa's
+doesn't, OR the requirement for the **exact** (blob-tiled) float surface. The coefficient-buffer work
+(byte-exact ABC, half-decoded float fields) is correct but sits downstream of this. NEXT: chase why the
+live mesa regcmd leaves `ds0=h0,w0` (geometry not latching) vs the vendor's, OR finish the float-surface
+tiling — the two candidate live blockers. Patches: `mesa-patches/0002` (encoder) + the gate relax.
