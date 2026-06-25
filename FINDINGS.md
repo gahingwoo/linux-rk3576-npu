@@ -790,3 +790,38 @@ doesn't, OR the requirement for the **exact** (blob-tiled) float surface. The co
 (byte-exact ABC, half-decoded float fields) is correct but sits downstream of this. NEXT: chase why the
 live mesa regcmd leaves `ds0=h0,w0` (geometry not latching) vs the vendor's, OR finish the float-surface
 tiling — the two candidate live blockers. Patches: `mesa-patches/0002` (encoder) + the gate relax.
+
+## 2026-06-25 (late evening) — the wall is the buffer (not the regcmd); the float surface = derivable skeleton + a data-dependent weight scatter
+
+Two decisive isolations, both judged by the VALID oracle (output maxdiff/distinct on a non-saturating
+model — NOT `core wt_rd`, which is a red herring that bit again):
+
+- **regcmd vs buffer.** Fed the EXACT vendor coef buffer (`vendor-bias.bin`) to LIVE mesa (mesa's own
+  regcmd) on the non-saturating `conv2d-cal`: NPU output **distinct=256, a rich feature map**. So the
+  MAC turns over on the live path with the right buffer ⇒ **mesa's regcmd is FINE; the coefficient
+  buffer is the wall.** (maxdiff was large only because vendor-bias is conv2d's ABC fed to cal — the
+  ABC out_sc mismatch; the point is the MAC *computed*.) This re-explains every prior "degenerate live
+  conv": it was the buffer (float surface), not geometry.
+- **float surface = weights?** Per-axis end-to-end test (perax_pw, the TF-built per-axis tflite, now
+  delegating): validated ABC + a **dequant-weight** float surface → **distinct=1, degenerate**. So the
+  float surface is **NOT** the dequantised weights — clean negative from the valid oracle (kills the
+  "second copy of the weights" hypothesis the whole journal carried).
+
+**The float surface dissected (from the 5 position-encoded captures) — it is NOT a fragmented blob:**
+contiguous per-channel arrays. ~90% of the nonzero structure is fixed across models (differences are
+value-dependent zeros, not placement). The arrays:
+- `@2676` len 124: **BIAS array = −bias[oc]**, contiguous, slot = base+oc (g_bias shows −(oc+1)·100).
+  **Derivable.**
+- `@1216` len 1456: the `in_sc` (=0.0078) constant block. **Derivable.**
+- a per-channel **scale** field. **Derivable.**
+- `@386`/`@4724`/`@3600`: **weight-VALUE arrays placed data-dependently** — g_const's weight 64 lands at
+  `@386`, pw_ic's top weights 14/15/16 land at `@4724`: each model drops its weight values into
+  value-sorted/sparse bins. **This is the genuine non-derivable blob — and it is ONLY the weight
+  placement, not the whole surface.**
+
+So the wall is precisely localised: the float surface is a **derivable skeleton** (bias = −bias[oc],
+in_sc, scale) **+ a data-dependent weight scatter**. NEXT decisive test (answers per-axis derivability):
+fill ONLY the skeleton (bias+in_sc+scale), leave the weight arrays zeroed, end-to-end on perax_pw — if
+it computes, the weight scatter is NOT load-bearing and per-axis is fully derivable; if it degenerates,
+the weight scatter is the (data-dependent) wall. Lesson re-logged: do NOT trust `core wt_rd`; only the
+output on a non-saturating, carrier-matched model is the oracle.
