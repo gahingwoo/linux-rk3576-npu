@@ -1,0 +1,69 @@
+# The SDP coefficient float surface is NOT an opaque blob (2026-06-25)
+
+Working the per-tensor conv2d (16->128, 5x5) coefficient buffer by trial-and-error
+on the captures + the maxdiff oracle. The headline reversal: the float surface that
+test (b) proved is **load-bearing** is **not** a data-dependent opaque blob — it is a
+mostly-derivable per-channel skeleton plus a weight-valued region with visible
+OIHW-ordered structure. The earlier "per-tensor = blob, not derivable" call was wrong.
+
+## What test (b) showed
+`conv2d-cal` (out_sc 1/32, out_zp 128, non-saturating) fed the full vendor coef buffer
+-> output `distinct=256` (rich, correct geometry). Zero the non-skeleton float-surface
+slots (keep ABC + the in_sc/structural skeleton) -> output `distinct=2`, pinned to
+out_zp = degenerate. So for per-tensor the weight-valued region is load-bearing; the
+skeleton alone is not enough.
+
+## What the float surface actually contains (conv2d's own coef, `vendor-bias.bin`)
+4944 f32, 2707 nonzero, but only **246 distinct values** (not the ~2477 a true
+data-dependent blob would carry):
+- `0.0078` (= in_sc) x1472, contiguous block @1216 -> the in_sc skeleton (derivable)
+- `-2.25` / `1.998` x32 each, stride-13 structural blocks (fixed constants, derivable)
+- a region where **~60-65% of the distinct values are wt_sc x integer** (wt_sc=3.9125),
+  the integers being individual dequantised weight values `wq - wt_zp`
+- at least 4 windows decode as conv2d's weights in **OIHW (oc,ic,ky,kx) order**:
+  - fs@4   len124 -> OIHW idx 30990 (oc77,ic7,ky3,kx0)  -- 124-long contiguous match
+  - fs@4736 len156 -> OIHW idx 16766
+  - fs@4696 len 39 -> OIHW idx 16726
+  - fs@4912 len 28 -> OIHW idx 16330
+  A 124-long contiguous signed-integer match is not coincidence: the surface holds
+  real dequant weights, in OIHW-local order, tiled into windows.
+
+So the value content is derivable; the open question is the **window placement**
+(which OIHW windows land at which float-surface offsets).
+
+## Why the placement did not crack offline
+The position-encoded captures we already have (idg_A/B/C = w encodes ky*5+kx / ic / oc;
+pw_oc/pw_ic) do **not** cleanly decode the coef float surface:
+- their coef-surface values are per-channel **scaled** (bias-like terms run to ~10960,
+  far beyond the 1..25 / 1..16 / 1..128 encoding), so the position code is buried under
+  the per-channel bias/scale
+- the co-located all-nonzero slots are dominated by the stride-13 skeleton block, which
+  decodes to a single constant coordinate (garbage for a placement map)
+- the existing captures are all **different conv shapes** (coef lengths 4944 vs 5192 vs
+  5224), so their nonzero-slot masks cannot be compared to conv2d's to test
+  position-fixed vs value-dependent placement
+
+This is a genuinely entangled multi-field buffer; reading one ambiguous capture in more
+ways only reframes, it does not decide. The decisive test needs a *matched* probe.
+
+## The staged decisive experiment: posprobe_a / posprobe_b
+`build_posprobe.py` builds two rknns of conv2d's **exact** shape (per-tensor, 16->128,
+5x5):
+- `posprobe_a` weights = position RAMP `((lin*37)%251 - 125)/64` (lin = OIHW index)
+- `posprobe_b` weights = different random set
+Capture both, then:
+1. compare their nonzero-slot **masks**. Jaccard -> 1.0 (same slots, different values)
+   = placement is position-fixed = derivable. < 1 = value-dependent = blob.
+2. if position-fixed: the `*37 mod 251` ramp makes consecutive OIHW weights distinct, so
+   each window's values decode its start lin and length -> the full placement map -> the
+   `rkt_coefs.c` float-surface encoder can be written to reproduce known bytes.
+
+Matched shape + own-built (no toolkit-version confound) makes this the clean decider the
+existing captures cannot be.
+
+## Status of the derivability ledger
+- regcmd / geometry: fine (vendor buffer -> distinct=256)
+- ABC requant header: derivable, byte-validated (pw_oc/pw_ic)
+- float-surface skeleton (in_sc, structural blocks, bias array): derivable
+- float-surface weight-valued region: values derivable (dequant weights, OIHW-local
+  order); **window placement = the one open question**, posprobe is staged to decide it
