@@ -51,11 +51,14 @@ n = int(np.prod(ishape))
 # TEST_INAMP>0 confines the input to in_zp +/- amp so the conv accumulator stays
 # small (|acc| << 2^31/cvt_scale). If the NPU is byte-correct on a SMALL-acc input
 # but wrong on the full ramp, the requant is overflowing the fixed-point multiply.
-amp = int(os.environ.get("TEST_INAMP", "0"))
-if amp > 0:
-    indata = (128 + (np.arange(n) % (2 * amp + 1)) - amp).astype(np.int64)
+amp_env = os.environ.get("TEST_INAMP")
+if amp_env is None:
+    indata = (np.arange(n) % 251).astype(np.int64)          # default ramp
+elif int(amp_env) == 0:
+    indata = np.full(n, 128, dtype=np.int64)                # all in_zp -> acc = bias ONLY
 else:
-    indata = (np.arange(n) % 251).astype(np.int64)
+    amp = int(amp_env)
+    indata = (128 + (np.arange(n) % (2 * amp + 1)) - amp).astype(np.int64)
 
 print(f"=== {os.path.basename(model)} ===", flush=True)
 print("--- teflon delegate log (look for delegated node/partition count) ---", flush=True)
@@ -105,6 +108,10 @@ if npu.ndim == 3:
     dch = flat.mean(0)            # mean|diff| per output channel
     dpix = flat.mean(1)          # mean|diff| per spatial position
     sat = (npu.reshape(-1, Cc) >= 254).mean(0) * 100  # % saturated per channel
+    # raw per-channel NPU value at pixel(0,0): for a CONSTANT input this is the whole
+    # output (spatially uniform), so it maps acc=bias -> NPU value directly per channel.
+    print(f"  NPU[px0] per-ch: {npu.reshape(-1, Cc)[0].astype(int).tolist()}")
+    print(f"  CPU[px0] per-ch: {cpu.reshape(-1, Cc)[0].astype(int).tolist()}")
     print(f"  PER-CHANNEL mean|diff| ({Cc}ch): std={dch.std():.0f} "
           f"min={dch.min():.0f} max={dch.max():.0f} -> {dch.round().astype(int).tolist()}")
     print(f"  PER-CHANNEL %sat(>=254): {sat.round().astype(int).tolist()}")

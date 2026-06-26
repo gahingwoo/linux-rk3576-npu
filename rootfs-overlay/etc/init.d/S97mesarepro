@@ -126,13 +126,18 @@ start() {
 	# stays small (no int32 overflow). If the NPU matches CPU at small amp but diverges
 	# as amp grows -> the requant fixed-point multiply is overflowing. Also gives the
 	# first CLEAN w-0x80 vs w-wt_zp comparison (no overflow masking). maxdiff is the oracle.
+	# OVERFLOW REFUTED: ~52% saturation is INVARIANT to input amplitude (even tiny acc
+	# at amp=1 saturates). That = a SIGN bug: ~50% of pixels have acc<0 and the requant
+	# breaks on them. ISOLATE with a CONSTANT input (all in_zp) -> acc = bias ONLY. 46%
+	# of biases are negative; offline requant(bias)=[120..142] NO sat. If the NPU
+	# saturates the negative-bias channels -> the bias+requant sign handling is the bug.
+	# NPU[px0]/CPU[px0] per-channel arrays let me align saturation with bias sign offline.
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
 	case "$i" in
-		0) V="INAMP=1 + V3 + w-0x80 (tiny acc, no overflow)"; E="TEST_INAMP=1 $V3" ;;
-		1) V="INAMP=1 + V3 + WT_ZP (tiny acc, w-wt_zp)";       E="TEST_INAMP=1 ROCKET_WT_ZP=1 $V3" ;;
-		2) V="INAMP=4 + V3 + w-0x80 (small acc)";              E="TEST_INAMP=4 $V3" ;;
-		3) V="INAMP=16 + V3 + w-0x80 (medium acc)";            E="TEST_INAMP=16 $V3" ;;
-		*) log "########## INAMP SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="INAMP=0 CONSTANT input (acc=bias) + V3 -- bias+requant isolation"; E="TEST_INAMP=0 $V3" ;;
+		1) V="INAMP=0 CONSTANT + V3 + offset=-128 (sign probe)";               E="TEST_INAMP=0 $V3 ROCKET_OUT_OFFSET=-128" ;;
+		2) V="default ramp + V3 (reference full bug)";                          E="$V3" ;;
+		*) log "########## CONST-ISO SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
