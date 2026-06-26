@@ -112,3 +112,17 @@ OIHW float surface, which IS fully derivable. This is testable WITHOUT vendor ca
 canonical-OIHW float-surface encoder in rkt_coefs.c and judge with the test_conv.py maxdiff oracle
 (mainline kernel path). If a canonical layout computes correctly -> the vendor's value-dependence
 was never needed -> placement is derivable after all and the wall is broken. Next direction.
+
+## UPDATE 2026-06-26 — pivot REFUTED: placement is load-bearing, not just optimization
+Ran two candidates off vendor-bias.bin (which computes, distinct=256), touching ONLY the
+weight-scatter slots (skeleton/ABC byte-identical), judged by test_conv.py maxdiff:
+- H-shufW (weight slots shuffled among themselves, same multiset) -> NPU distinct=1 / all-128
+  zero-rail / maxdiff=128 (clean first submit). Right values, wrong order -> degenerate.
+- plain-OIHW (weight slots refilled in plain OIHW order) -> also maxdiff=128.
+So the value-to-slot placement is LOAD-BEARING: deriving the mask and filling any/plain order
+does NOT compute. Combined with the posprobe result (placement is value-dependent, no law),
+the float surface is a genuine blob for a from-scratch derivable encoder. The hopeful pivot
+(vendor layout = optimization the hw tolerates) is refuted.
+Residual cheap untested candidate: value-SORTED fill (posprobe showed local order is OIHW not
+value-sorted, so low odds). Realistic paths now: extract/replay per-conv (allbilly's suggestion,
+not upstreamable) or a deep RE of the placement algorithm.
