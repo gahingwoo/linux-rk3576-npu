@@ -75,24 +75,27 @@ start() {
 	#      -> the surface is DERIVABLE. maxdiff large => placement is load-bearing.
 	#  (2) plain-OIHW = weight slots refilled in plain OIHW order (a specific derivable
 	#      layout). Runs 2nd (board may wedge after 1-2 submits, so the decisive one is 1st).
-	# RK3588-SDP experiment: drop the value-dependent float surface entirely and use
-	# Tomeu's RK3588 int8 path (per-channel int32 bias only, BRDMA_DATA_USE=1, no 0x5024
-	# second buffer) -- exactly what makes int8 MobileNet byte-correct on RK3588. If
-	# RK3576 computes with it, the float surface was NEVER needed = derivable/upstreamable.
-	#   maxdiff small  -> RK3576 needs no float surface (the blob was a wrong turn)
-	#   maxdiff medium (drift, not zero-rail) -> only the wt_zp ABC term missing (derivable)
-	#   distinct=1 zero-rail -> RK3576 genuinely differs / other wall
+	# DIAGNOSE zero-rail = wrong COEFFICIENTS vs not ENGAGED. Control variable = the
+	# regcmd: A and B use the SAME RK3576 regcmd (same op_en/engage), differing ONLY in
+	# the coefficient BYTES. So whatever engage state A has, B has.
+	#   A (engage control): vendor bytes -> distinct=256 PROVES engage works (a rich
+	#     output requires the conv to actually run). Read exec_ever (1=CNA 2=CORE 4=DPU
+	#     8=RDMA; 0xf=all engaged) in the cnalive dump.
+	#   B (coef test): mesa-generated ABC, same regcmd. If A engaged (256) and B=distinct1
+	#     zero-rail -> SAME engage, so the zero-rail is the COEFFICIENTS, not engage.
+	# readback_delay_ms makes the post-job register/output reads reliable (not timing-confounded).
+	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
 	log ""
-	log "########## (1) RK3588-SDP: Tomeu per-channel bias, NO float surface (does RK3576 need it?) ##########"
-	env ROCKET_RK3588_SDP=1 \
+	log "########## (A) ENGAGE CONTROL: vendor bytes, orig regcmd -> expect distinct=256 + exec_ever ##########"
+	env ROCKET_BIAS_FILE="$NPU_DIR/vendor-bias.bin" \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## (2) baseline: current RK3576 path (vendor-style ABC + float surface) ##########"
+	log "########## (B) COEF TEST: mesa ABC, SAME regcmd/engage -> distinct=1 => coef wrong, not engage ##########"
 	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END RK3588-SDP test (read segment 1 maxdiff) ##########"
+	log "########## END engage-vs-coef diagnostic (compare A vs B exec_ever + distinct) ##########"
 	log ""
 }
 
