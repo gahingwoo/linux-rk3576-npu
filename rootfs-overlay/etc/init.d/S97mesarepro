@@ -120,18 +120,18 @@ start() {
 	# reproduces the tflite CPU reference BYTE-FOR-BYTE (first8 [119,136,164,113,...]).
 	# Pair with V3 (A=plain bias_in; in_zp=0x80 so the sw/correction term is 0) and the
 	# computed offset. Boot 1 = the proven byte-exact config.
-	# WT_ZP made per-pixel std jump 3->41: CONFOUNDED by the pad-lane change (5->0),
-	# which proves the pad input lanes are LIVE. Isolate: WT_ZP now changes ONLY the
-	# real weights (w-wt_zp); ROCKET_WT_ZP_PAD separately zeros the pad lanes. Pair with
-	# the known-good centering offset=-128 (the spread is now correct, so it should land).
+	# ROOT CAUSE: every run pins NPU min=out_zp(128) but CPU min=0 -> a spurious RELU
+	# (BS_RELU_BYPASS bit6 of BS_CFG 0x4040, never set by RK3576 emitter) clamps the
+	# negative half of this NO-activation conv. Sweep BS_CFG to bypass the RELU while
+	# keeping ALU(bias)/MUL(scale) active. KEY DIAGNOSTIC: does NPU min drop BELOW 128?
+	# 0x40=RELU_BYPASS only; 0x20040=ALU_ALGO(2)+RELU_BYPASS (in case algo 0 breaks bias).
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
-	WZ="ROCKET_WT_ZP=1"
 	case "$i" in
-		0) V="WT_ZP(real only) + V3 + offset=-128 (clean candidate)"; E="$WZ $V3 ROCKET_OUT_OFFSET=-128" ;;
-		1) V="WT_ZP(real only) + V3 + computed offset";              E="$WZ $V3" ;;
-		2) V="WT_ZP + WT_ZP_PAD(both) + V3 + offset=-128";           E="$WZ ROCKET_WT_ZP_PAD=1 $V3 ROCKET_OUT_OFFSET=-128" ;;
-		3) V="control: V3 only (reference maxdiff~219)";             E="$V3" ;;
-		*) log "########## WT_ZP-iso SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="BS_CFG=0x40 (relu bypass) + V3 + w-0x80"; E="ROCKET_BS_CFG=0x40 $V3" ;;
+		1) V="BS_CFG=0x20040 (algo2+relu bypass) + V3 + w-0x80"; E="ROCKET_BS_CFG=0x20040 $V3" ;;
+		2) V="BS_CFG=0x40 + V3 + WT_ZP (w-wt_zp showdown)"; E="ROCKET_BS_CFG=0x40 ROCKET_WT_ZP=1 $V3" ;;
+		3) V="control: V3 only, no BS_CFG (reference min=128)"; E="$V3" ;;
+		*) log "########## BS_CFG/RELU SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
