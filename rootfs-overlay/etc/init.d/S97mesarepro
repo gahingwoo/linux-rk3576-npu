@@ -132,13 +132,18 @@ start() {
 	# a built-in >>14 -> ~2^14 over-scale -> rail. ROCKET_C_VALUE forces C. DECISIVE:
 	#   C=1 -> output CORRECT/de-saturated  => the >>14 is missing, C over-scaled (FIX);
 	#   C=1 -> output COLLAPSES to out_zp    => HW does shift, C=0x4000 was right (bug elsewhere).
+	# C-OVERSCALE CONFIRMED: C monotonically controls saturation (16384->50%, 1->0%).
+	# C=1 UNDER-scales ~9x (ramp spans only [128,142]); correct C is ~8-10 (sub-linear).
+	# Fine sweep to nail where the positive half reaches ~255 with minimal saturation.
+	# KEY: NPU max -> ~255 and sat small = right scale. (negative half stays floored =
+	# the separate relu-like bug; MobileNet has ReLU6 so that may be correct there.)
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
 	case "$i" in
-		0) V="C=1 + V3 + ramp (decisive: correct vs collapse)";  E="ROCKET_C_VALUE=1 $V3" ;;
-		1) V="C=1 + V3 + CONSTANT input (isolate A+C path)";      E="ROCKET_C_VALUE=1 TEST_INAMP=0 $V3" ;;
-		2) V="C=64 + V3 + ramp (intermediate over-scale point)";  E="ROCKET_C_VALUE=64 $V3" ;;
-		3) V="default C=16384 + V3 + ramp (reference, saturates)"; E="$V3" ;;
-		*) log "########## C-VALUE SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="C=4 + V3 + ramp";   E="ROCKET_C_VALUE=4 $V3" ;;
+		1) V="C=8 + V3 + ramp";   E="ROCKET_C_VALUE=8 $V3" ;;
+		2) V="C=12 + V3 + ramp";  E="ROCKET_C_VALUE=12 $V3" ;;
+		3) V="C=16 + V3 + ramp";  E="ROCKET_C_VALUE=16 $V3" ;;
+		*) log "########## C-FINE SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
