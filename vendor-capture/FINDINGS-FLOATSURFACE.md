@@ -126,3 +126,33 @@ the float surface is a genuine blob for a from-scratch derivable encoder. The ho
 Residual cheap untested candidate: value-SORTED fill (posprobe showed local order is OIHW not
 value-sorted, so low odds). Realistic paths now: extract/replay per-conv (allbilly's suggestion,
 not upstreamable) or a deep RE of the placement algorithm.
+
+## UPDATE 2026-06-26 — the all-zero was the REQUANT NUMBERS, not the float surface; engage works
+Stepped back from "is the placement derivable" to "why is the output all-zero", isolated cleanly:
+- **Same-regcmd control** (vendor bytes vs mesa bytes, identical stream): vendor->distinct=256,
+  mesa->zero-rail, with exec_ever=0xf + dt_wr=12800 in BOTH. So engage/MAC/geometry/writeback ALL
+  WORK; the zero-rail is purely the coefficient BYTES (not engage, not the blob placement).
+- **requant-crush vs empty-MAC** (ROCKET_OUT_SHIFT_ABS forcing the OUT_CVT shift): at shift=2 the
+  output LIT UP (saturated 0/255) -> the MAC is NON-ZERO, a live conv crushed by the rescale shift.
+  NOT an empty MAC. (computed_shift=25, cvt_scale=0x7d34; verified cvt/2^25 = conv_scale = correct.)
+- **per-channel breakdown** (test_conv.py): error is PER-CHANNEL (ch-std 38 vs px-std 4), and
+  saturation tracks **sign(sw+bias) 100%/0% perfectly** -> the bug is the per-channel A term.
+
+### The 3 requant bugs (all derivable; NOT the float surface)
+1. **A = 0x80*(sw+bias): the 0x80 (a_scale) is wrong.** V2/V3 (ROCKET_BIAS_NOSCALE, drop 0x80) ->
+   per-channel std 44->12, mean|diff| 81->63, distinct 8->48. (sw is NOT it; truncate=0 since
+   conv2d-cal wt_sc fui=0x407a6729 isn't in the magic list, so V3 == real Tomeu form bias_in.)
+2. **Residual +0x80 ADDITIVE offset** (output clips at min=out_zp, negative half lost).
+   ROCKET_OUT_OFFSET=-128 -> min 0, mean 127 (== CPU 128.6, centred). Confirmed additive.
+3. **Spread too wide** (saturates both rails). Scale is verified correct, so NOT shift -> the
+   weight-zero-point per-pixel correction: CMAC uses (w-0x80) but wt_zp=133, leaving an
+   uncorrected 5*Sum(in-0x80) per output pixel; B=0x80-wt_zp=-5 should subtract it.
+
+### HOPEFUL hypothesis (unconfirmed -- next, offline): the float surface IS the wt_zp correction
+A per-pixel wt_zp correction is exactly the shape of the float surface. If the vendor float surface
+== -5*Sum(in-0x80) per output pixel (or a simple multiple), then the "underivable blob" is the
+weight-zero-point correction -- DERIVABLE from wt_zp -- which also explains why test(b) (zeroing the
+float surface) degenerated (= dropping the wt_zp correction = 2x spread). Verify OFFLINE: compute
+-5*Sum(in-0x80) and compare to vendor-bias.bin's float surface BEFORE risking the (w-wt_zp) weight-
+packing change. Tooling: ROCKET_BIAS_NOSW / ROCKET_BIAS_NOSCALE / ROCKET_OUT_OFFSET / OUT_SHIFT_ABS
+knobs; per-boot counter sweep harness (fresh submit each, avoids 2nd-submit degradation).
