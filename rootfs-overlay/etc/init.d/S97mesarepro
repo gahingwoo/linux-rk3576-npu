@@ -75,18 +75,24 @@ start() {
 	#      -> the surface is DERIVABLE. maxdiff large => placement is load-bearing.
 	#  (2) plain-OIHW = weight slots refilled in plain OIHW order (a specific derivable
 	#      layout). Runs 2nd (board may wedge after 1-2 submits, so the decisive one is 1st).
+	# RK3588-SDP experiment: drop the value-dependent float surface entirely and use
+	# Tomeu's RK3588 int8 path (per-channel int32 bias only, BRDMA_DATA_USE=1, no 0x5024
+	# second buffer) -- exactly what makes int8 MobileNet byte-correct on RK3588. If
+	# RK3576 computes with it, the float surface was NEVER needed = derivable/upstreamable.
+	#   maxdiff small  -> RK3576 needs no float surface (the blob was a wrong turn)
+	#   maxdiff medium (drift, not zero-rail) -> only the wt_zp ABC term missing (derivable)
+	#   distinct=1 zero-rail -> RK3576 genuinely differs / other wall
 	log ""
-	log "########## (1) H-shufW: vendor buffer, ONLY weight slots shuffled (does placement matter?) ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/H-shufW.bin" \
+	log "########## (1) RK3588-SDP: Tomeu per-channel bias, NO float surface (does RK3576 need it?) ##########"
+	env ROCKET_RK3588_SDP=1 \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## (2) plain-OIHW: weight slots in plain OIHW order (2nd submit, may degenerate) ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/plain-oihw-bias.bin" \
-		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "########## (2) baseline: current RK3576 path (vendor-style ABC + float surface) ##########"
+	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END pivot test (read segment 1 maxdiff: small=derivable, large=blob) ##########"
+	log "########## END RK3588-SDP test (read segment 1 maxdiff) ##########"
 	log ""
 }
 
