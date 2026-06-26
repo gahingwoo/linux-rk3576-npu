@@ -91,15 +91,31 @@ start() {
 	# distinct is low both when crushed AND when saturated). Watch maxdiff bottom out.
 	#   FLASH ONCE, then REBOOT (no reflash) to step through the sweep. Delete
 	#   /opt/npu-test/sweep_idx to restart.
-	# Per-channel vs per-pixel breakdown at the richest shift (16). test_conv.py now
-	# prints PER-CHANNEL mean|diff| / %sat + a VERDICT (per-channel A/bias/C = derivable,
-	# vs per-pixel = float surface). Single fresh submit.
+	# BIAS-FORMULA variant scan, one variant per BOOT (fresh first submit). The per-channel
+	# A=0x80*(sw+bias) term is the bug (A>0 channels saturate, tracking sign(sw+bias)).
+	# For in_zp=0x80 the sw correction should be 0, so `sw` may be spurious. ORACLE = maxdiff.
+	#   1 V1: ROCKET_BIAS_NOSW   -> A=0x80*bias_in          (drop sw -- TEST FIRST, most likely)
+	#   2 V2: ROCKET_BIAS_NOSCALE-> A=1*(sw+bias_in)        (drop 0x80)
+	#   3 V3: both               -> A=bias_in (Tomeu RK3588 in_zp=0x80 form)
+	#   4 baseline (no env)      -> A=0x80*(sw+bias_in)
+	# FLASH ONCE, then REBOOT to step. rm /opt/npu-test/sweep_idx to restart.
+	IDX=/opt/npu-test/sweep_idx
+	i=$(cat "$IDX" 2>/dev/null || echo 0)
+	echo $((i + 1)) > "$IDX"; sync
 	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
-	log ""
-	log "########## per-channel vs per-pixel breakdown @ shift=16 ##########"
-	env ROCKET_OUT_SHIFT_ABS=16 \
-		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	log "########## END breakdown (read PER-CHANNEL std vs PER-PIXEL std + VERDICT) ##########"
+	case "$i" in
+		0) V="V1 drop-sw";    E="ROCKET_BIAS_NOSW=1" ;;
+		1) V="V2 drop-0x80";  E="ROCKET_BIAS_NOSCALE=1" ;;
+		2) V="V3 Tomeu";      E="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1" ;;
+		3) V="baseline";      E="" ;;
+		*) log "########## VARIANT SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+	esac
+	if [ -n "$V" ]; then
+		log ""
+		log "########## bias variant boot $((i + 1)): $V [$E] -- judge by MAXDIFF ##########"
+		env $E python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+		log "########## END $V -- REBOOT for next variant ##########"
+	fi
 	log ""
 }
 
