@@ -99,6 +99,20 @@ satpct = 100.0 * ((npu == 0) | (npu >= 255)).mean()
 print(f"  ERROR vs CPU: maxdiff={md}  mean|diff|={mad:.2f}  exact={exact:.1f}%  "
       f"within2={within2:.1f}%  pixels>2={worst}/{d.size}  NPU_sat(0|255)={satpct:.1f}%")
 
+# RELU-reference: the HW appears to apply a RELU on the accumulator before requant
+# (negative conv -> out_zp). For a NO-activation model that floors the negative half;
+# for a model WITH ReLU (MobileNet) it is CORRECT. Compare NPU to max(CPU, out_zp):
+# if this maxdiff is small while the plain maxdiff is large, the ONLY remaining error
+# is the (MobileNet-correct) relu, i.e. the conv+scale is byte-correct.
+try:
+    out_zp_v = int(out["quantization"][1])
+except Exception:
+    out_zp_v = 128
+relu_ref = np.maximum(cpu.astype(int), out_zp_v)
+dr = np.abs(npu.astype(int) - relu_ref)
+print(f"  vs RELU-ref max(CPU,{out_zp_v}): maxdiff={int(dr.max())} mean|diff|={dr.mean():.2f} "
+      f"exact={100.0*(dr==0).mean():.1f}% within2={100.0*(dr<=2).mean():.1f}%")
+
 # PER-CHANNEL vs PER-PIXEL error breakdown: decide whether the requant error is a
 # per-output-channel coefficient (A/bias/C -- derivable, fixable) or a per-pixel one
 # (the float surface blob). Channel-variance >> spatial-variance => per-channel.
