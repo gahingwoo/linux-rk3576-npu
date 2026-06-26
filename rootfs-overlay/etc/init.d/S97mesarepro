@@ -91,21 +91,15 @@ start() {
 	# distinct is low both when crushed AND when saturated). Watch maxdiff bottom out.
 	#   FLASH ONCE, then REBOOT (no reflash) to step through the sweep. Delete
 	#   /opt/npu-test/sweep_idx to restart.
-	SWEEP="4 6 8 10 12 14 16 18 20"
-	IDX=/opt/npu-test/sweep_idx
-	i=$(cat "$IDX" 2>/dev/null || echo 0)
-	echo $((i + 1)) > "$IDX"; sync          # advance FIRST so a wedge still steps the sweep
-	sh=$(echo $SWEEP | cut -d' ' -f$((i + 1)))
+	# Per-channel vs per-pixel breakdown at the richest shift (16). test_conv.py now
+	# prints PER-CHANNEL mean|diff| / %sat + a VERDICT (per-channel A/bias/C = derivable,
+	# vs per-pixel = float surface). Single fresh submit.
 	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
-	if [ -z "$sh" ]; then
-		log "########## SWEEP DONE (rm $IDX to restart) ##########"
-	else
-		log ""
-		log "########## shift FINE-SWEEP: boot $((i + 1)), ROCKET_OUT_SHIFT_ABS=$sh (judge by MAXDIFF) ##########"
-		env ROCKET_OUT_SHIFT_ABS="$sh" \
-			python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-		log "########## END boot $((i + 1)) shift=$sh -- REBOOT for the next value ##########"
-	fi
+	log ""
+	log "########## per-channel vs per-pixel breakdown @ shift=16 ##########"
+	env ROCKET_OUT_SHIFT_ABS=16 \
+		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "########## END breakdown (read PER-CHANNEL std vs PER-PIXEL std + VERDICT) ##########"
 	log ""
 }
 

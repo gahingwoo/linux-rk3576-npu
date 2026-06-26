@@ -88,6 +88,24 @@ worst = int((d > 2).sum())
 print(f"  ERROR vs CPU: maxdiff={md}  mean|diff|={mad:.2f}  exact={exact:.1f}%  "
       f"within2={within2:.1f}%  pixels>2={worst}/{d.size}")
 
+# PER-CHANNEL vs PER-PIXEL error breakdown: decide whether the requant error is a
+# per-output-channel coefficient (A/bias/C -- derivable, fixable) or a per-pixel one
+# (the float surface blob). Channel-variance >> spatial-variance => per-channel.
+if npu.ndim == 3:
+    Cc = npu.shape[2]
+    flat = d.reshape(-1, Cc)
+    dch = flat.mean(0)            # mean|diff| per output channel
+    dpix = flat.mean(1)          # mean|diff| per spatial position
+    sat = (npu.reshape(-1, Cc) >= 254).mean(0) * 100  # % saturated per channel
+    print(f"  PER-CHANNEL mean|diff| ({Cc}ch): std={dch.std():.0f} "
+          f"min={dch.min():.0f} max={dch.max():.0f} -> {dch.round().astype(int).tolist()}")
+    print(f"  PER-CHANNEL %sat(>=254): {sat.round().astype(int).tolist()}")
+    print(f"  PER-PIXEL   mean|diff| ({dpix.size}px): std={dpix.std():.0f} "
+          f"min={dpix.min():.0f} max={dpix.max():.0f}")
+    print(f"  channels ~right(<5): {np.where(dch < 5)[0].tolist()}")
+    print(f"  channels wrong(>30): {np.where(dch > 30)[0].tolist()}")
+    print(f"  VERDICT: {'PER-CHANNEL (A/bias/C coef -- DERIVABLE)' if dch.std() > 1.5*dpix.std() else 'PER-PIXEL (float surface)'}")
+
 # Verdict on the ORACLE (maxdiff), with the delegation caveat made explicit.
 if md == 0:
     print("  RESULT: maxdiff=0 -> NPU == CPU reference. CORRECT *iff* teflon "
