@@ -84,27 +84,28 @@ start() {
 	#   B (coef test): mesa-generated ABC, same regcmd. If A engaged (256) and B=distinct1
 	#     zero-rail -> SAME engage, so the zero-rail is the COEFFICIENTS, not engage.
 	# readback_delay_ms makes the post-job register/output reads reliable (not timing-confounded).
-	# requant-vs-MAC diagnostic. mesa ABC (engage confirmed working). Force the OUT_CVT
-	# shift to a small ABSOLUTE value (max amplify) and watch the output:
-	#   output LIGHTS UP (distinct>1 / saturates 0/ff) -> the MAC result is NON-ZERO,
-	#     just crushed by the requant shift -> BRANCH 1 (requant numbers wrong; fixable,
-	#     maybe bypasses the float surface entirely).
-	#   stays distinct=1 out_zp across the sweep -> genuine EMPTY MAC -> BRANCH 2 (weight
-	#     read into the MAC is the wall; rejoins the wt_rd / weight-buffer thread).
-	# (mesa prints "OUT_CVT computed_shift=.. -> emitting shift=N" so we see the baseline.)
+	# OUT_CVT shift FINE-SWEEP, one value per BOOT (fresh first submit -> avoids the
+	# 2nd-submit/drm_mm_takedown degradation). A persistent counter on the rw rootfs
+	# picks the next shift each boot. Branch-1 (requant crush) is confirmed; this finds
+	# the shift where the output is RICH and CORRECT. ORACLE = maxdiff (NOT distinct:
+	# distinct is low both when crushed AND when saturated). Watch maxdiff bottom out.
+	#   FLASH ONCE, then REBOOT (no reflash) to step through the sweep. Delete
+	#   /opt/npu-test/sweep_idx to restart.
+	SWEEP="4 6 8 10 12 14 16 18 20"
+	IDX=/opt/npu-test/sweep_idx
+	i=$(cat "$IDX" 2>/dev/null || echo 0)
+	echo $((i + 1)) > "$IDX"; sync          # advance FIRST so a wedge still steps the sweep
+	sh=$(echo $SWEEP | cut -d' ' -f$((i + 1)))
 	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
-	log ""
-	log "########## (1) shift=2 (MAX AMPLIFY): lights up=>requant crush(br1); flat=>empty MAC(br2) ##########"
-	env ROCKET_OUT_SHIFT_ABS=2 \
-		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-
-	log ""
-	log "########## (2) shift=8 (medium amplify, 2nd submit) ##########"
-	env ROCKET_OUT_SHIFT_ABS=8 \
-		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-
-	log ""
-	log "########## END requant-vs-MAC sweep (read segment 1 distinct + the computed_shift print) ##########"
+	if [ -z "$sh" ]; then
+		log "########## SWEEP DONE (rm $IDX to restart) ##########"
+	else
+		log ""
+		log "########## shift FINE-SWEEP: boot $((i + 1)), ROCKET_OUT_SHIFT_ABS=$sh (judge by MAXDIFF) ##########"
+		env ROCKET_OUT_SHIFT_ABS="$sh" \
+			python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+		log "########## END boot $((i + 1)) shift=$sh -- REBOOT for the next value ##########"
+	fi
 	log ""
 }
 
