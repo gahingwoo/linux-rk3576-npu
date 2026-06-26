@@ -120,18 +120,19 @@ start() {
 	# reproduces the tflite CPU reference BYTE-FOR-BYTE (first8 [119,136,164,113,...]).
 	# Pair with V3 (A=plain bias_in; in_zp=0x80 so the sw/correction term is 0) and the
 	# computed offset. Boot 1 = the proven byte-exact config.
-	# ROOT CAUSE: every run pins NPU min=out_zp(128) but CPU min=0 -> a spurious RELU
-	# (BS_RELU_BYPASS bit6 of BS_CFG 0x4040, never set by RK3576 emitter) clamps the
-	# negative half of this NO-activation conv. Sweep BS_CFG to bypass the RELU while
-	# keeping ALU(bias)/MUL(scale) active. KEY DIAGNOSTIC: does NPU min drop BELOW 128?
-	# 0x40=RELU_BYPASS only; 0x20040=ALU_ALGO(2)+RELU_BYPASS (in case algo 0 breaks bias).
+	# BS_CFG/BS_OW_OP writes were INERT (those regs likely don't exist on RK3576). The
+	# board mishandles the LARGE signed accumulator (|acc|~2e5; acc*cvt_scale~6.7e9
+	# OVERFLOWS int32). DECISIVE TEST: confine the input to in_zp +/- TEST_INAMP so |acc|
+	# stays small (no int32 overflow). If the NPU matches CPU at small amp but diverges
+	# as amp grows -> the requant fixed-point multiply is overflowing. Also gives the
+	# first CLEAN w-0x80 vs w-wt_zp comparison (no overflow masking). maxdiff is the oracle.
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
 	case "$i" in
-		0) V="BS_CFG=0x40 (relu bypass) + V3 + w-0x80"; E="ROCKET_BS_CFG=0x40 $V3" ;;
-		1) V="BS_CFG=0x20040 (algo2+relu bypass) + V3 + w-0x80"; E="ROCKET_BS_CFG=0x20040 $V3" ;;
-		2) V="BS_CFG=0x40 + V3 + WT_ZP (w-wt_zp showdown)"; E="ROCKET_BS_CFG=0x40 ROCKET_WT_ZP=1 $V3" ;;
-		3) V="control: V3 only, no BS_CFG (reference min=128)"; E="$V3" ;;
-		*) log "########## BS_CFG/RELU SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="INAMP=1 + V3 + w-0x80 (tiny acc, no overflow)"; E="TEST_INAMP=1 $V3" ;;
+		1) V="INAMP=1 + V3 + WT_ZP (tiny acc, w-wt_zp)";       E="TEST_INAMP=1 ROCKET_WT_ZP=1 $V3" ;;
+		2) V="INAMP=4 + V3 + w-0x80 (small acc)";              E="TEST_INAMP=4 $V3" ;;
+		3) V="INAMP=16 + V3 + w-0x80 (medium acc)";            E="TEST_INAMP=16 $V3" ;;
+		*) log "########## INAMP SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""

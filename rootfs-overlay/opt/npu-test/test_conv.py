@@ -48,7 +48,14 @@ det = tflite.Interpreter(model_path=model)
 det.allocate_tensors()
 ishape = det.get_input_details()[0]["shape"]
 n = int(np.prod(ishape))
-indata = (np.arange(n) % 251).astype(np.int64)
+# TEST_INAMP>0 confines the input to in_zp +/- amp so the conv accumulator stays
+# small (|acc| << 2^31/cvt_scale). If the NPU is byte-correct on a SMALL-acc input
+# but wrong on the full ramp, the requant is overflowing the fixed-point multiply.
+amp = int(os.environ.get("TEST_INAMP", "0"))
+if amp > 0:
+    indata = (128 + (np.arange(n) % (2 * amp + 1)) - amp).astype(np.int64)
+else:
+    indata = (np.arange(n) % 251).astype(np.int64)
 
 print(f"=== {os.path.basename(model)} ===", flush=True)
 print("--- teflon delegate log (look for delegated node/partition count) ---", flush=True)
