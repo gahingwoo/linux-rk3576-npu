@@ -84,18 +84,27 @@ start() {
 	#   B (coef test): mesa-generated ABC, same regcmd. If A engaged (256) and B=distinct1
 	#     zero-rail -> SAME engage, so the zero-rail is the COEFFICIENTS, not engage.
 	# readback_delay_ms makes the post-job register/output reads reliable (not timing-confounded).
+	# requant-vs-MAC diagnostic. mesa ABC (engage confirmed working). Force the OUT_CVT
+	# shift to a small ABSOLUTE value (max amplify) and watch the output:
+	#   output LIGHTS UP (distinct>1 / saturates 0/ff) -> the MAC result is NON-ZERO,
+	#     just crushed by the requant shift -> BRANCH 1 (requant numbers wrong; fixable,
+	#     maybe bypasses the float surface entirely).
+	#   stays distinct=1 out_zp across the sweep -> genuine EMPTY MAC -> BRANCH 2 (weight
+	#     read into the MAC is the wall; rejoins the wt_rd / weight-buffer thread).
+	# (mesa prints "OUT_CVT computed_shift=.. -> emitting shift=N" so we see the baseline.)
 	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
 	log ""
-	log "########## (A) ENGAGE CONTROL: vendor bytes, orig regcmd -> expect distinct=256 + exec_ever ##########"
-	env ROCKET_BIAS_FILE="$NPU_DIR/vendor-bias.bin" \
+	log "########## (1) shift=2 (MAX AMPLIFY): lights up=>requant crush(br1); flat=>empty MAC(br2) ##########"
+	env ROCKET_OUT_SHIFT_ABS=2 \
 		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## (B) COEF TEST: mesa ABC, SAME regcmd/engage -> distinct=1 => coef wrong, not engage ##########"
-	python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "########## (2) shift=8 (medium amplify, 2nd submit) ##########"
+	env ROCKET_OUT_SHIFT_ABS=8 \
+		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "########## END engage-vs-coef diagnostic (compare A vs B exec_ever + distinct) ##########"
+	log "########## END requant-vs-MAC sweep (read segment 1 distinct + the computed_shift print) ##########"
 	log ""
 }
 
