@@ -85,8 +85,9 @@ mad = float(d.mean())
 within2 = 100.0 * (d <= 2).mean()
 exact = 100.0 * (d == 0).mean()
 worst = int((d > 2).sum())
+satpct = 100.0 * ((npu == 0) | (npu >= 255)).mean()
 print(f"  ERROR vs CPU: maxdiff={md}  mean|diff|={mad:.2f}  exact={exact:.1f}%  "
-      f"within2={within2:.1f}%  pixels>2={worst}/{d.size}")
+      f"within2={within2:.1f}%  pixels>2={worst}/{d.size}  NPU_sat(0|255)={satpct:.1f}%")
 
 # PER-CHANNEL vs PER-PIXEL error breakdown: decide whether the requant error is a
 # per-output-channel coefficient (A/bias/C -- derivable, fixable) or a per-pixel one
