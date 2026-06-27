@@ -112,6 +112,20 @@ relu_ref = np.maximum(cpu.astype(int), out_zp_v)
 dr = np.abs(npu.astype(int) - relu_ref)
 print(f"  vs RELU-ref max(CPU,{out_zp_v}): maxdiff={int(dr.max())} mean|diff|={dr.mean():.2f} "
       f"exact={100.0*(dr==0).mean():.1f}% within2={100.0*(dr<=2).mean():.1f}%")
+# Characterize the residual: are the wrong pixels (vs relu-ref) the HIGH-output ones?
+# (would point to a narrow BS/cvt datapath overflowing on large accumulators) or the
+# relu boundary, or specific channels?
+bad = dr > 2
+if bad.any():
+    bc = cpu.astype(int)[bad]
+    nd = np.minimum(npu.astype(int), 255)[bad]
+    print(f"  RELU-ref bad px (n={int(bad.sum())}): CPU[min={bc.min()} max={bc.max()} mean={bc.mean():.0f}] "
+          f"frac CPU>190={100.0*(bc>190).mean():.0f}% frac CPU<128={100.0*(bc<128).mean():.0f}%  "
+          f"NPU there[mean={nd.mean():.0f}]")
+    if npu.ndim == 3:
+        badch = bad.reshape(-1, npu.shape[2]).mean(0) * 100
+        hot = np.where(badch > 20)[0]
+        print(f"  bad concentrated in channels (>20% bad): n={len(hot)} {hot.tolist()[:20]}")
 
 # PER-CHANNEL vs PER-PIXEL error breakdown: decide whether the requant error is a
 # per-output-channel coefficient (A/bias/C -- derivable, fixable) or a per-pixel one

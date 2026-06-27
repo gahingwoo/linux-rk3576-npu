@@ -143,13 +143,17 @@ start() {
 	# DECISIVE: if vs RELU-ref maxdiff drops from 127 to single digits + exact->~99% at
 	# CVT_DOWN=2/3, the overflow is fixed and the conv is byte-correct modulo the (MobileNet-
 	# correct) relu. Risk: cvt_scale<2^14 may break a normalized-format HW -> output garbles.
+	# CVT_DOWN had NO effect -> the OUT_CVT multiply is WIDE (not the overflow). Characterize
+	# the 6% residual: are the bad pixels high-output (narrow BS datapath?) or specific
+	# channels (per-channel A bug)? Vary C to see if the bad-pixel set is C-dependent (BS
+	# stage) -- but C also rescales, so judge by the bad-pixel CPU distribution print.
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
 	case "$i" in
-		0) V="CVT_DOWN=2 + V3 (default C=16)";  E="ROCKET_CVT_DOWN=2 $V3" ;;
-		1) V="CVT_DOWN=3 + V3";                 E="ROCKET_CVT_DOWN=3 $V3" ;;
-		2) V="CVT_DOWN=4 + V3";                 E="ROCKET_CVT_DOWN=4 $V3" ;;
-		3) V="CVT_DOWN=0 + V3 (reference, 7% overflow)"; E="ROCKET_CVT_DOWN=0 $V3" ;;
-		*) log "########## CVT-DOWN SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="C=16 default + V3 (characterize 6%)";  E="$V3" ;;
+		1) V="C=16 + V3 + CONSTANT input (per-channel A path)"; E="TEST_INAMP=0 $V3" ;;
+		2) V="C=8 + V3 (half-scale: does bad-set shift?)"; E="ROCKET_C_VALUE=8 $V3" ;;
+		3) V="C=16 + V3 + INAMP=40 (mid input)"; E="TEST_INAMP=40 $V3" ;;
+		*) log "########## RESIDUAL SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
