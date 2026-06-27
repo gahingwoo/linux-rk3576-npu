@@ -147,13 +147,15 @@ start() {
 	# the 6% residual: are the bad pixels high-output (narrow BS datapath?) or specific
 	# channels (per-channel A bug)? Vary C to see if the bad-pixel set is C-dependent (BS
 	# stage) -- but C also rescales, so judge by the bad-pixel CPU distribution print.
+	# 6% residual is edge/padding (scattered, not channel-concentrated, present even for
+	# constant input). CONFIRM: exclude a 2-px border ring -> interior should be ~100%
+	# exact (vs relu-ref) if the conv is perfect inside and only the HW-vs-tflite padding
+	# differs at the borders. Run ramp + constant to see the interior cleanly.
 	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
 	case "$i" in
-		0) V="C=16 default + V3 (characterize 6%)";  E="$V3" ;;
-		1) V="C=16 + V3 + CONSTANT input (per-channel A path)"; E="TEST_INAMP=0 $V3" ;;
-		2) V="C=8 + V3 (half-scale: does bad-set shift?)"; E="ROCKET_C_VALUE=8 $V3" ;;
-		3) V="C=16 + V3 + INAMP=40 (mid input)"; E="TEST_INAMP=40 $V3" ;;
-		*) log "########## RESIDUAL SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="C=16 + V3 + ramp (interior vs border)";     E="$V3" ;;
+		1) V="C=16 + V3 + CONSTANT (interior vs border)"; E="TEST_INAMP=0 $V3" ;;
+		*) log "########## INTERIOR SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""

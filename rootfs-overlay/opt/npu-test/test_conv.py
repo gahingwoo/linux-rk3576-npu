@@ -126,6 +126,15 @@ if bad.any():
         badch = bad.reshape(-1, npu.shape[2]).mean(0) * 100
         hot = np.where(badch > 20)[0]
         print(f"  bad concentrated in channels (>20% bad): n={len(hot)} {hot.tolist()[:20]}")
+        # INTERIOR vs BORDER: exclude a 2-px spatial ring (padding-touching pixels). If
+        # the interior is ~100% exact, the residual is purely HW-vs-tflite edge padding.
+        H, W = npu.shape[0], npu.shape[1]
+        if H > 6 and W > 6:
+            din = dr[2:H-2, 2:W-2, :]
+            nbord = int(bad.sum()) - int((din > 2).sum())
+            print(f"  INTERIOR [2:{H-2},2:{W-2}]: exact={100.0*(din==0).mean():.1f}% "
+                  f"within2={100.0*(din<=2).mean():.1f}% maxdiff={int(din.max())} "
+                  f"| border bad={nbord}/{int(bad.sum())}")
 
 # PER-CHANNEL vs PER-PIXEL error breakdown: decide whether the requant error is a
 # per-output-channel coefficient (A/bias/C -- derivable, fixable) or a per-pixel one
