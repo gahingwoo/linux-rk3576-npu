@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..88dc47b 100644
+index 82258e7..3f667a7 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -3,7 +3,10 @@
@@ -301,7 +301,7 @@ index 82258e7..88dc47b 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +385,199 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +385,201 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -354,7 +354,7 @@ index 82258e7..88dc47b 100644
 +       * scaled regardless of A), confirming the factor belongs on both terms.
 +       * ROCKET_BIAS_NOSCALE=1 drops it for comparison.
 +       */
-+      int a_scale = getenv("ROCKET_BIAS_NOSCALE") ? 1 : 0x80;
++      int a_scale = getenv("ROCKET_BIAS_SCALE80") ? 0x80 : 1; /* default 1: the HW does not scale A by 0x80 */
 +
 +      *truncate_bits = 0;
 +      rsc = pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, bufsize);
@@ -405,14 +405,16 @@ index 82258e7..88dc47b 100644
 +            int16_t *C = (int16_t *)(b8 + g * 64 + 48 + i * 2);
 +            float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
 +            /*
-+             * bias-formula variant scan (per-channel A term is the bug: A>0
-+             * channels saturate, perfectly tracking sign(sw+bias)). For in_zp=0x80
-+             * the input-zp weight-sum correction is 0, so Tomeu's RK3588 bias is just
-+             * bias_in -- the `sw` here may be spurious. ROCKET_BIAS_NOSW drops it
-+             * (V1); ROCKET_BIAS_NOSCALE drops the 0x80 a_scale (V2); both = Tomeu (V3).
++             * A (BS ALU add operand) = bias_in - (in_zp-0x80)*sw. The HW MAC computes
++             * Sum(in-0x80)(w-wt_zp) (the B term corrects wt_zp); the true conv numerator
++             * is Sum(in-in_zp)(w-wt_zp) = MAC - (in_zp-0x80)*sw, a per-channel constant
++             * that folds into the bias. For in_zp=0x80 this is just bias_in. The old
++             * A = 0x80*(sw+bias) was wrong on both counts (the 0x80 railed A; +sw had the
++             * wrong sign/coefficient). ROCKET_BIAS_NOSW drops the in_zp correction.
 +             */
-+            int32_t bterm =
-+               getenv("ROCKET_BIAS_NOSW") ? biases_in[oc] : (sw + biases_in[oc]);
++            int32_t inzp_corr = ((int32_t)in_zp - 0x80) * sw;
++            int32_t bterm = getenv("ROCKET_BIAS_NOSW") ? biases_in[oc]
++                                                       : (biases_in[oc] - inzp_corr);
 +            *A = a_scale * bterm;
 +            *B = (int16_t)(0x80 - (int)wt_zp);
 +            /*

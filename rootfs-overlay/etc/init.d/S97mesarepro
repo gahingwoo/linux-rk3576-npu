@@ -151,17 +151,21 @@ start() {
 	# (0x1084) hardcoded to 0xffffff80 (-128, correct only for in_zp=0). Now defaults to
 	# input_zero_point-0x80 (=0 for conv2d-cal). Boot1 = the FIX (border should clear ->
 	# full exact ~99-100% vs relu-ref). Boot2 = old value (broken border control).
-	V3="ROCKET_BIAS_NOSW=1 ROCKET_BIAS_NOSCALE=1"
+	# All three conv fixes are now mesa DEFAULTS (C=16*rel Q4, pad=in_zp-0x80, A=bias-(in_zp-0x80)*sw).
+	# Boot1 = conv2d-cal with NO knobs: regression that the default config is byte-correct (100% vs
+	# RELU-ref). Boot2 = MobileNet v1 (per-tensor, every layer ReLU6 -> the HW accumulator-relu is
+	# correct): the real goal; may hit the whole-graph dispatch wall (a separate issue). Boot3 =
+	# control with the old A. The per-boot counter survives a wedge, so a MobileNet hang is safe.
 	case "$i" in
-		0) V="pad=in_zp-0x80 (FIX) + V3 + ramp";          E="$V3" ;;
-		1) V="pad=0xffffff80 (old) + V3 + ramp (control)"; E="ROCKET_PAD_CON=0xffffff80 $V3" ;;
-		2) V="pad=in_zp-0x80 (FIX) + V3 + CONSTANT";       E="TEST_INAMP=0 $V3" ;;
-		*) log "########## PAD-FIX SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="conv2d-cal DEFAULT (regression: expect 100% vs relu-ref)"; E=""; M="conv2d-cal.tflite" ;;
+		1) V="MobileNet v1 DEFAULT (the goal; may hit dispatch wall)";    E=""; M="mobilenet_v1_1.0_224_quant.tflite" ;;
+		2) V="conv2d-cal + SCALE80 (control: old A=0x80*(sw+bias))";      E="ROCKET_BIAS_SCALE80=1"; M="conv2d-cal.tflite" ;;
+		*) log "########## DEFAULT/MOBILENET SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
-		log "########## bias variant boot $((i + 1)): $V [$E] -- judge by MAXDIFF ##########"
-		env $E python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+		log "########## boot $((i + 1)): $V [$E] -- judge by MAXDIFF ##########"
+		env $E python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/$M" > "$C" 2>&1
 		log "########## END $V -- REBOOT for next variant ##########"
 	fi
 	log ""
