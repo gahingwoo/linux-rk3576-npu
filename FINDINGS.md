@@ -1,5 +1,27 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-06-27 (SOLVED) — conv2d is byte-correct; the dominant bug was the C scale fixed-point, not the float surface
+
+`conv2d-cal` (per-tensor, `in_zp=128` — the model called "welded-shut / blob-only" below) now matches the tflite CPU
+reference: **100% byte-exact vs the relu reference over the whole output** (constant input maxdiff=0, ramp maxdiff=1 =
+int8 rounding). The "float surface is the dominant, non-derivable error" conclusion below was wrong — the float surface
+was never the problem. Three derivable fixes, all found by trial-and-error env-knob sweeps judged by the maxdiff oracle:
+
+1. **ABC-buffer C scale fixed-point.** Emit `C = round(16*rel)` (Q4), not `round(16384*rel)` (Q14). The BS stage applies
+   C as a raw multiplier then shifts right by 4, so 1.0 = 16; the `0x4000` over-scaled by 2^10 and railed every output
+   to 0/255 — the long-standing "all grey / saturated" wall. C sweep: C=16384 → 50% saturated, C=1 → 0%, C=16 sharply
+   optimal (exact jumps to 94%).
+2. **CNA pad value (`0x1084`) = `input_zero_point - 0x80`,** not the hardcoded `0xffffff80`. `0xffffff80` (pad with 0)
+   is correct only for `in_zp=0` (image input). For `in_zp=128` the padded taps added a wrong term → the whole output
+   **border ring** was wrong (the last ~6%; the interior was already 100% exact). A control run with the old value
+   reproduced the broken border.
+3. **Bias operand `A = bias_in`** for `in_zp=0x80` (drop the `0x80` a_scale and the `sw` term).
+
+`wt_zp` is corrected by the `B` term already in the ABC buffer (the HW multiplies it by the per-output input-sum) — not
+by packing it into the weights. The HW also applies a **RELU on the accumulator** (negative → out_zp): correct for
+MobileNet's ReLU6, only visible here because `conv2d` has no activation. Patch:
+`mesa-patches/rk3576-conv2d-int8-WORKING-2026-06-27.patch`. Next: MobileNet (per-tensor, every layer ReLU6).
+
 **Status:** **the wall is broken.** The bug was the SDP coefficient (bias/requant) buffer in
 `rkt_coefs.c`. With it fixed, the live mainline rocket + Teflon path computes a **rich conv
 output** (distinct 236–256, full range) instead of the grey zero-point rail — both with the
