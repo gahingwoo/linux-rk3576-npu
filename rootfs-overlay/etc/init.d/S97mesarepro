@@ -164,13 +164,19 @@ start() {
 	# (wait all N tasks) + perjob_ppinit=0 (don't reset PP per job) + wg_open=1 (PC_OP_EN pulse).
 	# The per-unit OP_EN (default, no STRIP) engages units without restarting the PC -> PC can
 	# iterate. KEY: MobileNet NPU distinct 1 -> many = whole-graph dispatch works.
+	# WG dispatch WORKS (one job task_count=29, PC iterates to task=28). But exec_ever=0x0 --
+	# the per-unit OP_EN (value 0x1) doesn't engage the units, so the PC strides 28 empty tasks.
+	# Fix: ROCKET_UNIT_OPEN=0x1d (the full enable mask the broadcast uses) written to each unit's
+	# own 0x_008 -> engage WITHOUT touching the PC's 0x08 (so the PC still iterates).
+	# KEY: exec_ever 0x0 -> 0xf (units engage) + NPU distinct 1 -> many (real output).
 	MN="mobilenet_v1_1.0_224_quant.tflite"
+	WG="ROCKET_WHOLE_GRAPH=1 ROCKET_UNIT_OPEN=0x1d"
 	case "$i" in
-		0) V="WHOLE_GRAPH vendor recipe (wg_open=1 multitask=1 ppinit=0)"; E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="$MN" ;;
-		1) V="WG recipe + geom_both=1 (replicate geometry to both PP groups)"; E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0 geom_both=1"; M="$MN" ;;
-		2) V="WG minimal (multitask_poll=1 only)";                  E="ROCKET_WHOLE_GRAPH=1"; P="multitask_poll=1"; M="$MN" ;;
-		3) V="conv2d-cal + WHOLE_GRAPH (single-op regression)";     E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="conv2d-cal.tflite" ;;
-		*) log "########## WHOLE-GRAPH SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="WG + UNIT_OPEN=0x1d + recipe (wg_open=1 mt=1 ppinit=0)"; E="$WG"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="$MN" ;;
+		1) V="WG + UNIT_OPEN=0x1d + wg_open=0 (no kernel pulse)";      E="$WG"; P="wg_open=0 multitask_poll=1 perjob_ppinit=0"; M="$MN" ;;
+		2) V="WG + UNIT_OPEN=0x1d + geom_both=1 + recipe";            E="$WG"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0 geom_both=1"; M="$MN" ;;
+		3) V="conv2d-cal + WG + UNIT_OPEN=0x1d (regression)";         E="$WG"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="conv2d-cal.tflite" ;;
+		*) log "########## WG-ENGAGE SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	for kv in $P; do echo "${kv#*=}" > "/sys/module/rocket/parameters/${kv%=*}" 2>/dev/null; done
 	if [ -n "$V" ]; then
