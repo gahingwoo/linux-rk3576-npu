@@ -157,18 +157,24 @@ start() {
 	# 2-conv graph dispatches correctly (NPU~CPU) the path scales; if it hits the same zero geometry
 	# the multi-task path is fundamentally broken. test_conv now prints [NPU/CPU invoke ms] -- real
 	# NPU job time vs the CPU reference (a silent fallback would clock ~the same as CPU).
-	# DISPATCH FIX: S_POINTER ping-pong. mesa wrote 0x0e (PP on) -> per-task geometry lands
-	# in a group the executer never reads -> MobileNet all-zero (h=0/w=0). ROCKET_SPTR=0x00
-	# pins group 0 every task (vendor behaviour). KEY: does NPU output go from distinct=1
-	# (all zero) to a real spread, and ds0 w-field land? Boot4 = single-op regression.
+	# KERNEL PP-PARITY sweep. mesa-side S_POINTER is overridden by the kernel, so sweep the
+	# kernel's own PP knobs (0644 module params) -- now observable since the conv is fixed.
+	#   perjob_ppinit=0 : don't re-run pp_state_init per job (match vendor; prime suspect --
+	#                     the per-job reset clobbers the geometry parity right before submit).
+	#   multitask_poll=1: wait for all N tasks (PC_TASK_STATUS), not the first PC_DONE (premature
+	#                     completion -> read before the layers drain).
+	#   sptr_override=0  : force S_POINTER=0x00 (PP off, producer==executer group) incl. regcmd.
+	# KEY: MobileNet NPU distinct 1 -> many (real output) = the dispatch parity is fixed.
 	MN="mobilenet_v1_1.0_224_quant.tflite"
 	case "$i" in
-		0) V="MobileNet + SPTR=0x00 (no ping-pong, group0 fixed) -- THE FIX"; E="ROCKET_SPTR=0x00"; M="$MN" ;;
-		1) V="MobileNet + SPTR=0x30 (PP_CLEAR resets pointers)";             E="ROCKET_SPTR=0x30"; M="$MN" ;;
-		2) V="MobileNet DEFAULT SPTR=0x0e (reference, all-zero)";            E="";                 M="$MN" ;;
-		3) V="conv2d-cal + SPTR=0x00 (single-op regression)";               E="ROCKET_SPTR=0x00"; M="conv2d-cal.tflite" ;;
-		*) log "########## SPTR SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="perjob_ppinit=0 (vendor-match, prime suspect)";        P="perjob_ppinit=0" ;;
+		1) V="perjob_ppinit=0 + multitask_poll=1";                   P="perjob_ppinit=0 multitask_poll=1" ;;
+		2) V="sptr_override=0 (PP off, single group)";               P="sptr_override=0" ;;
+		3) V="ALL: ppinit=0 + multitask=1 + sptr=0";                 P="perjob_ppinit=0 multitask_poll=1 sptr_override=0" ;;
+		*) log "########## PP-PARITY SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
+	E=""; M="$MN"
+	for kv in $P; do echo "${kv#*=}" > "/sys/module/rocket/parameters/${kv%=*}" 2>/dev/null; done
 	if [ -n "$V" ]; then
 		log ""
 		log "########## boot $((i + 1)): $V [$E] -- judge by MAXDIFF ##########"
