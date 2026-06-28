@@ -157,23 +157,21 @@ start() {
 	# 2-conv graph dispatches correctly (NPU~CPU) the path scales; if it hits the same zero geometry
 	# the multi-task path is fundamentally broken. test_conv now prints [NPU/CPU invoke ms] -- real
 	# NPU job time vs the CPU reference (a silent fallback would clock ~the same as CPU).
-	# KERNEL PP-PARITY sweep. mesa-side S_POINTER is overridden by the kernel, so sweep the
-	# kernel's own PP knobs (0644 module params) -- now observable since the conv is fixed.
-	#   perjob_ppinit=0 : don't re-run pp_state_init per job (match vendor; prime suspect --
-	#                     the per-job reset clobbers the geometry parity right before submit).
-	#   multitask_poll=1: wait for all N tasks (PC_TASK_STATUS), not the first PC_DONE (premature
-	#                     completion -> read before the layers drain).
-	#   sptr_override=0  : force S_POINTER=0x00 (PP off, producer==executer group) incl. regcmd.
-	# KEY: MobileNet NPU distinct 1 -> many (real output) = the dispatch parity is fixed.
+	# WHOLE-GRAPH dispatch test. The per-op default fragments to task_count=2 chunks (one
+	# with DATA_ADDR=0) and the chain breaks. ROCKET_WHOLE_GRAPH=1 (mesa) packs ALL tasks into
+	# ONE job (task_count=total) -- this path exists but was gated off; now testable since the
+	# conv is byte-correct. Vendor-exact recipe (comment in rkt_ml.c): + kernel multitask_poll=1
+	# (wait all N tasks) + perjob_ppinit=0 (don't reset PP per job) + wg_open=1 (PC_OP_EN pulse).
+	# The per-unit OP_EN (default, no STRIP) engages units without restarting the PC -> PC can
+	# iterate. KEY: MobileNet NPU distinct 1 -> many = whole-graph dispatch works.
 	MN="mobilenet_v1_1.0_224_quant.tflite"
 	case "$i" in
-		0) V="perjob_ppinit=0 (vendor-match, prime suspect)";        P="perjob_ppinit=0" ;;
-		1) V="perjob_ppinit=0 + multitask_poll=1";                   P="perjob_ppinit=0 multitask_poll=1" ;;
-		2) V="sptr_override=0 (PP off, single group)";               P="sptr_override=0" ;;
-		3) V="ALL: ppinit=0 + multitask=1 + sptr=0";                 P="perjob_ppinit=0 multitask_poll=1 sptr_override=0" ;;
-		*) log "########## PP-PARITY SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="WHOLE_GRAPH vendor recipe (wg_open=1 multitask=1 ppinit=0)"; E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="$MN" ;;
+		1) V="WG recipe + geom_both=1 (replicate geometry to both PP groups)"; E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0 geom_both=1"; M="$MN" ;;
+		2) V="WG minimal (multitask_poll=1 only)";                  E="ROCKET_WHOLE_GRAPH=1"; P="multitask_poll=1"; M="$MN" ;;
+		3) V="conv2d-cal + WHOLE_GRAPH (single-op regression)";     E="ROCKET_WHOLE_GRAPH=1"; P="wg_open=1 multitask_poll=1 perjob_ppinit=0"; M="conv2d-cal.tflite" ;;
+		*) log "########## WHOLE-GRAPH SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
-	E=""; M="$MN"
 	for kv in $P; do echo "${kv#*=}" > "/sys/module/rocket/parameters/${kv%=*}" 2>/dev/null; done
 	if [ -n "$V" ]; then
 		log ""
