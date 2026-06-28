@@ -29,6 +29,8 @@ debug = os.environ.get("TEFLON_DEBUG", "1")   # 1 => print delegated-node count
 model = sys.argv[1]
 
 
+import time
+
 def run(use_npu, indata):
     deleg = [tflite.load_delegate(teflon, options={"TEFLON_DEBUG": debug})] if use_npu else []
     it = tflite.Interpreter(model_path=model, experimental_delegates=deleg)
@@ -36,7 +38,12 @@ def run(use_npu, indata):
     inp = it.get_input_details()[0]
     out = it.get_output_details()[0]
     it.set_tensor(inp["index"], indata.astype(inp["dtype"]).reshape(inp["shape"]))
+    # Time the invoke. Real NPU execution should be clearly different from the CPU
+    # tflite reference; a silent CPU fallback would clock ~the same as the CPU run.
+    t0 = time.perf_counter()
     it.invoke()
+    dt = (time.perf_counter() - t0) * 1e3
+    print(f"  [{'NPU' if use_npu else 'CPU'} invoke: {dt:.1f} ms]", flush=True)
     # Return the interpreter too: keeping it alive defers the BO teardown (the
     # kernel's drm_mm_takedown wedges the board during interpreter GC). We os._exit
     # after printing so the verdict survives the wedge.

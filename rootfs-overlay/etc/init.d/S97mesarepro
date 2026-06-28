@@ -151,16 +151,17 @@ start() {
 	# (0x1084) hardcoded to 0xffffff80 (-128, correct only for in_zp=0). Now defaults to
 	# input_zero_point-0x80 (=0 for conv2d-cal). Boot1 = the FIX (border should clear ->
 	# full exact ~99-100% vs relu-ref). Boot2 = old value (broken border control).
-	# All three conv fixes are now mesa DEFAULTS (C=16*rel Q4, pad=in_zp-0x80, A=bias-(in_zp-0x80)*sw).
-	# Boot1 = conv2d-cal with NO knobs: regression that the default config is byte-correct (100% vs
-	# RELU-ref). Boot2 = MobileNet v1 (per-tensor, every layer ReLU6 -> the HW accumulator-relu is
-	# correct): the real goal; may hit the whole-graph dispatch wall (a separate issue). Boot3 =
-	# control with the old A. The per-boot counter survives a wedge, so a MobileNet hang is safe.
+	# NEXT PHASE: whole-graph dispatch. conv (single op) is byte-correct; MobileNet runs all 28
+	# jobs but the per-task GEOMETRY reads h=0,w=0 (the S_POINTER ping-pong group the unit reads).
+	# Isolate with add.tflite = 3 ops [CONV2D, CONV2D, ADD] = the MINIMAL multi-task case. If the
+	# 2-conv graph dispatches correctly (NPU~CPU) the path scales; if it hits the same zero geometry
+	# the multi-task path is fundamentally broken. test_conv now prints [NPU/CPU invoke ms] -- real
+	# NPU job time vs the CPU reference (a silent fallback would clock ~the same as CPU).
 	case "$i" in
-		0) V="conv2d-cal DEFAULT (regression: expect 100% vs relu-ref)"; E=""; M="conv2d-cal.tflite" ;;
-		1) V="MobileNet v1 DEFAULT (the goal; may hit dispatch wall)";    E=""; M="mobilenet_v1_1.0_224_quant.tflite" ;;
-		2) V="conv2d-cal + SCALE80 (control: old A=0x80*(sw+bias))";      E="ROCKET_BIAS_SCALE80=1"; M="conv2d-cal.tflite" ;;
-		*) log "########## DEFAULT/MOBILENET SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
+		0) V="conv2d-cal DEFAULT (single-op baseline + timing)";      E=""; M="conv2d-cal.tflite" ;;
+		1) V="add.tflite (MINIMAL multi-task: conv,conv,add)";        E=""; M="add.tflite" ;;
+		2) V="MobileNet v1 (full 28-op + timing)";                    E=""; M="mobilenet_v1_1.0_224_quant.tflite" ;;
+		*) log "########## DISPATCH-CHAR SCAN DONE (rm $IDX to restart) ##########"; V="" ;;
 	esac
 	if [ -n "$V" ]; then
 		log ""
