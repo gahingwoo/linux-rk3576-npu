@@ -22,6 +22,21 @@ by packing it into the weights. The HW also applies a **RELU on the accumulator*
 MobileNet's ReLU6, only visible here because `conv2d` has no activation. Patch:
 `mesa-patches/rk3576-conv2d-int8-WORKING-2026-06-27.patch`. Next: MobileNet (per-tensor, every layer ReLU6).
 
+## 2026-06-27 (next wall) — MobileNet runs all 28 layers on the NPU for real, but the dispatch ping-pong zeros it
+
+With conv2d byte-correct, ran the full MobileNet: NPU output all-zero (0/1001 nonzero). First verified it's
+**REAL NPU, not a CPU fallback**: 28 hardware jobs (regcmd[1..28], ~30ms each, ~0.84s total, all four units
+engaged), NPU invoke 830ms vs CPU 70ms. So the conv stack genuinely runs the whole network and returns zero.
+Cause = the **S_POINTER ping-pong producer/consumer parity**: each unit reads geometry (h,w) from one of two
+banks and a state machine flips the bank per task; the producer writes the dimensions into one bank, the
+executer reads the other (empty), so every layer runs on h=0 → zero. The **mesa-side S_POINTER value is
+irrelevant** (ROCKET_SPTR=0x00/0x30/0x0e all identical all-zero) because the KERNEL re-arms S_POINTER in
+pp_state_init/hw_submit, overriding the regcmd → the fix is KERNEL-side, needs a kernel rebuild. Progress vs
+months ago: the PC now iterates all 28 tasks (was ~1, stalled). Red herrings ruled out: cnalive `ds0 w=0` and
+`cube=` are bogus parses (conv2d-cal works with them too); the DPU output geometry (DST) is correct. Next:
+kernel PP-parity (rocket_core.c pp_state_init / rocket_job.c hw_submit). add.tflite (has an ADD op) crashes the
+board, so it is not a usable minimal multi-task test — need a pure 2-conv model.
+
 **Status:** **the wall is broken.** The bug was the SDP coefficient (bias/requant) buffer in
 `rkt_coefs.c`. With it fixed, the live mainline rocket + Teflon path computes a **rich conv
 output** (distinct 236–256, full range) instead of the grey zero-point rail — both with the

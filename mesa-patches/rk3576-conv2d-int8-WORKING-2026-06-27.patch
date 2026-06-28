@@ -1113,7 +1113,7 @@ index 04dea3d..60d309a 100644
  
  bool
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..e664030 100644
+index be992fd..3189bef 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -3,10 +3,42 @@
@@ -1159,7 +1159,7 @@ index be992fd..e664030 100644
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +60,558 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +60,568 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -1201,11 +1201,16 @@ index be992fd..e664030 100644
 +#define R_RDMA(reg, val) emit_raw(regs, 0x2001, (reg), (val))
 +
 +   /* S_POINTER arming for all four units (POINTER=0, PP enabled). */
-+   R_CNA(0x1004, 0x0000000e);
-+   R_CORE(0x3004, 0x0000000e);
++   /* S_POINTER per task. 0x0e = ping-pong ON (producer/executer auto-alternate group
++    * each task) -> on the multi-task graph they desync and the geometry lands in a group
++    * the executer never reads -> tasks after the first run on h=0/w=0 (zero output). The
++    * vendor pins group 0 every task. ROCKET_SPTR overrides (0x00 = no PP, group 0 fixed). */
++   uint32_t sptr = rkt_env_u32("ROCKET_SPTR", 0x0000000e);
++   R_CNA(0x1004, sptr);
++   R_CORE(0x3004, sptr);
 +   R_CNA(0x1038, 0x00000007);
-+   R_DPU(0x4004, 0x0000000e);
-+   R_RDMA(0x5004, 0x0000000e);
++   R_DPU(0x4004, sptr);
++   R_RDMA(0x5004, sptr);
 +
 +   /* CNA config block. */
 +   R_CNA(0x100c, 0x2000a006);
@@ -1475,11 +1480,16 @@ index be992fd..e664030 100644
 +    * group: the units engaged but the DPU wrote nothing (garbage cube, DST read
 +    * back as the width field) and every layer after the first produced zeros.
 +    */
-+   R_CNA(0x1004, 0x0000000e);
-+   R_CORE(0x3004, 0x0000000e);
++   /* S_POINTER per task. 0x0e = ping-pong ON (producer/executer auto-alternate group
++    * each task) -> on the multi-task graph they desync and the geometry lands in a group
++    * the executer never reads -> tasks after the first run on h=0/w=0 (zero output). The
++    * vendor pins group 0 every task. ROCKET_SPTR overrides (0x00 = no PP, group 0 fixed). */
++   uint32_t sptr = rkt_env_u32("ROCKET_SPTR", 0x0000000e);
++   R_CNA(0x1004, sptr);
++   R_CORE(0x3004, sptr);
 +   R_CNA(0x1038, 0x00000007);
-+   R_DPU(0x4004, 0x0000000e);
-+   R_RDMA(0x5004, 0x0000000e);
++   R_DPU(0x4004, sptr);
++   R_RDMA(0x5004, sptr);
 +
 +   /* CNA (verified geometry/channel formulas; CVT = bypass; quant via DPU). */
 +   R_CNA(0x100c, dw ? 0x1 : 0x0);
@@ -1718,7 +1728,7 @@ index be992fd..e664030 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +625,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,6 +635,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -1735,7 +1745,7 @@ index be992fd..e664030 100644
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
     if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +642,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -48,6 +652,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1771,7 +1781,7 @@ index be992fd..e664030 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +685,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -62,6 +695,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CONV_CON1, con1);
  
@@ -1782,7 +1792,7 @@ index be992fd..e664030 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +697,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +707,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -1790,7 +1800,7 @@ index be992fd..e664030 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +724,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +734,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1827,7 +1837,7 @@ index be992fd..e664030 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +847,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,7 +857,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -1854,7 +1864,7 @@ index be992fd..e664030 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +879,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +889,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -1880,7 +1890,7 @@ index be992fd..e664030 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +936,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +946,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -1890,7 +1900,7 @@ index be992fd..e664030 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1215,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1225,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -1921,7 +1931,7 @@ index be992fd..e664030 100644
  }
  
  void
-@@ -536,7 +1240,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1250,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
