@@ -1,5 +1,41 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-06-29 — per-op path: standard convs byte-exact, but the DEPTHWISE op writes no output (below register observability)
+
+Whole-graph (WG) single-job dispatch is an open problem (the unit engage/complete handshake — units
+either compute but the in-stream OP_EN restarts the PC, or the PC iterates but the units don't engage;
+exhausted the knobs). So pivoted to **per-op** (one DRM job per layer) to reach a *correct* end-to-end
+first. All results below are from board tests judged by the output buffer (the only reliable oracle).
+
+**per-op chaining is sound.** mesa shares each intermediate tensor's BO by index; the kernel serialises
+the N per-op jobs via dma_resv implicit fences (job N+1 waits for job N). On a clean board conv0
+(standard firstconv) computes — `out distinct=242`, a real feature map — and conv2d-cal is byte-exact.
+(The old "conv0 ~10% race" was a confound: a boot script auto-ran a WG MobileNet that wedged the engine
+before every test; disabling it made conv0 reliable.)
+
+**MobileNet dies at the first depthwise (layer 1).** Per-layer dump: `conv0 out distinct=242` (real) →
+`dw1 in distinct=238` (= conv0's real output, so the chain propagates) → `dw1 out distinct=1, all 0x00`.
+
+**The depthwise op produces no output — and it is not mesa's doing.** Three board tests:
+1. *command stream*: mesa's depthwise CNA+CORE config is **byte-identical to the vendor's** for the same
+   conv (49 registers: `100c=1` dw-mode, `1018` CONV_CON, `101c=0x240` weight bytes, `3018` CORE, …).
+2. *weights* (`ROCKET_DW_WTEST`): fill the whole depthwise weight buffer with `0x7f` → `dw1 out` still
+   `0x00`.
+3. *bias-add* (`ROCKET_DW_ATEST`): force the requant add operand `A=0x2000` (output = `requant(MAC+A)`,
+   so A reaches the output regardless of the MAC) → `dw1 out` **still** `0x00`.
+
+Input, weights, AND a forced bias-add all change nothing → the depthwise op never executes its
+compute+write; the output stays `0x00`. Standard convs write correctly on the same DPU/kernel, with all
+operands staged identically. So it is **depthwise-mode-specific, below register-probe observability, and
+not the command stream / weights / layout / requant.**
+
+**Net.** Byte-correct end-to-end MobileNet on RK3576 rocket is blocked by a depthwise-mode execution
+wall (same class as the WG engage wall) — not reachable from mesa, whose every input is verified
+identical to the vendor. Remaining paths: a hardware execution trace, or the on-chip weight residency
+the vendor uses (the 1 MB NPU SRAM + `cache_sgt`, which RK3576 is the only config to wire up and rocket
+lacks). Tools added: `ROCKET_DW_WTEST` / `ROCKET_DW_ATEST` / `ROCKET_DUP_TASK` (mesa),
+`rocket.wg_force_tasknum` (kernel), `S98mndump` (auto per-layer buffer dump at boot).
+
 ## 2026-06-27 (SOLVED) — conv2d is byte-correct; the dominant bug was the C scale fixed-point, not the float surface
 
 `conv2d-cal` (per-tensor, `in_zp=128` — the model called "welded-shut / blob-only" below) now matches the tflite CPU

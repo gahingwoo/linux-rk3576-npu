@@ -1,0 +1,76 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Automatic per-op MobileNet depthwise-debug dump.
+#
+# Runs per-op MobileNet as the FIRST NPU job after boot, so the kernel's
+# buf-dump counter (buf_dump_jobs, resets per fresh inference, dumps bdj<=8)
+# is fresh and dumps the in/wt/out/bia of the first 8 LAYERS:
+#   task0=conv0, task1=dw1(first depthwise), task2=pw1, task3=dw2, ...
+# The break is dw1 (real input from conv0, zero output) -- this prints whether
+# dw1's WEIGHTS and ABC (bia) are staged (real) vs zero, which decides:
+#   wt/bia real + out zero -> depthwise CMAC datapath (deep)
+#   wt or bia zero         -> mesa weight/ABC staging (fixable)
+#
+# audit_arm=0 silences the CNAREG/cnalive/CBUF flood (line 1572) but KEEPS the
+# buf in/wt/out/bia dump (line 1586, independent). PM guard keeps the NPU
+# powered so the post-job autosuspend can't wedge the board (nputop idle ->
+# cpu voltage -110). Runs before S99npudiag so MobileNet is the first NPU job.
+# ---------------------------------------------------------------------------
+
+NPU_DIR=/opt/npu-test
+C=/dev/console
+MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+log() { echo "$@" > "$C"; }
+
+start() {
+	i=0
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -c /dev/accel/accel0 ] || { log "mndump: no accel device"; return 0; }
+	dmesg -n 8 2>/dev/null
+
+	# Silence the per-job CNAREG/cnalive/CBUF flood (keeps the bdj<=8 buf dump).
+	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
+
+	# PM guard: keep the NPU powered so post-job autosuspend doesn't wedge the
+	# board (npu0/1 OFF -> 'nputop' fails to idle -> cpu _set_opp_voltage -110).
+	for f in $(find /sys/devices -path '*npu*/power/control' 2>/dev/null); do
+		echo on > "$f" 2>/dev/null
+	done
+	for f in $(find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null); do
+		echo 120000 > "$f" 2>/dev/null
+	done
+
+	export TEFLON_LIB=/usr/lib/libteflon.so
+	unset ROCKET_WHOLE_GRAPH
+
+	# Run A (FIRST, fresh buf-dump counter): DW_ATEST = depthwise A (ABC bias add)
+	# forced to 0x40000000. output = requant(MAC + A). dw1 out NONZERO -> DPU/requant
+	# path alive + A flows -> the zero is the MAC (CMAC operands not read). dw1 out
+	# still 0x00 -> the dw DPU/output write path itself is dead.
+	export ROCKET_DW_ATEST=1
+	dmesg -c >/dev/null 2>&1
+	log ""
+	log "########## MNDUMP-A: MobileNet, DEPTHWISE A = 0x40000000 (ROCKET_DW_ATEST) ##########"
+	python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+	log "########## MNDUMP-A buffers (task1=dw1: watch its OUT -- nonzero=path alive) ##########"
+	dmesg | grep "rocket dbg buf" | grep -v "@0x" | grep -v "cover16K" | grep -v "fine256" > "$C" 2>&1
+
+	# Run B (after a gap so the buf-dump counter resets): NORMAL real dw weights = baseline.
+	unset ROCKET_DW_ATEST
+	sleep 8
+	dmesg -c >/dev/null 2>&1
+	log "########## MNDUMP-B: MobileNet, NORMAL real depthwise weights (baseline) ##########"
+	python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+	log "########## MNDUMP-B buffers ##########"
+	dmesg | grep "rocket dbg buf" | grep -v "@0x" | grep -v "cover16K" | grep -v "fine256" > "$C" 2>&1
+	log "########## MNDUMP END (compare dw1 task=1 OUT: A=0x7f-weights vs B=real-weights) ##########"
+	log ""
+}
+
+case "$1" in
+	start) start ;;
+	stop) : ;;
+	restart) start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0
