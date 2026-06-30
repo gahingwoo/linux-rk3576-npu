@@ -1,29 +1,36 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Single-task depthwise DPU-vs-MAC probe (2026-06-30). NO_DW_TILE makes dw1 a
-# SINGLE task (no multi-task confound) and it STILL outputs exact 0x00 while
-# single-task standard convs compute -> the wall is depthwise-MODE, not
-# task_count. Now split WHY the single-task dw writes nothing:
-#   ROCKET_DW_ATEST forces A (the requant ALU add) to 0x2000; output =
-#   requant(MAC + A). dw1 out NONZERO -> the dw DPU/requant/write path is alive
-#   and A flows -> the zero is the MAC/CBUF weight read (-> on-chip nbuf
-#   residency the vendor uses, rocket lacks). dw1 out still 0x00 -> the dw
-#   DPU/output path itself is dead.
-# Both runs use ROCKET_NO_DW_TILE so dw1 is single-task (clean).
+# MULTI-TASK wall: ORDER-controlled decisive test (2026-06-30). The prior
+# "force=2 -> degenerate" evidence never controlled inference order, and a
+# single-task conv shows first=correct / second=zero (the known second-inference
+# degradation) with NO multi-task involved. So REVERSE the order: run
+# wg_force_tasknum=2 (forces PC_TASK_CON task_number=2 on the per-op path) as the
+# FIRST NPU inference after boot, then force=0 second.
+#   A force=2 FIRST  -> byte-exact (maxdiff=1) = task_number=2 does NOT break a
+#                       clean first inference -> the multi-task "wall" (b) was the
+#                       second-inference confound; real blocker = dirty-state/reset.
+#                    -> zero (maxdiff=127) = task_number=2 genuinely breaks even the
+#                       first inference -> (b) is real.
+#   B force=0 SECOND -> if zero, confirms the order effect (2nd degrades regardless).
+# CRITICAL: A must be the FIRST NPU job (no prior inference to leave dirty state).
+# Confirm the submit is VALID: "rocket dbg wgsubmit ... TASK_CON=0x00070002
+# DATA_ADDR=<nonzero>" (a 0 DATA_ADDR = empty submit = invalid, ignore).
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
 C=/dev/console
-MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+CONV="$NPU_DIR/conv2d-cal.tflite"
 log() { echo "$@" > "$C"; }
 
-run() {  # $1 = label, $2 = mesa env
+run() {  # $1 = label, $2 = wg_force_tasknum value
+	echo "$2" > /sys/module/rocket/parameters/wg_force_tasknum 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
 	log "########## $1 ##########"
-	env TEFLON_LIB=/usr/lib/libteflon.so $2 python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-	log "---- per-layer buffers (task0=conv0 task0/buf3=dw1 ...) ----"
-	dmesg | grep -E "rocket dbg buf\[" | grep -vE "@0x|cover16K|fine256" > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/test_conv.py" "$CONV" > "$C" 2>&1
+	log "---- wgsubmit(TASK_CON/DATA_ADDR) / buf out / done / perf + maxdiff ----"
+	dmesg | grep -E "rocket dbg (wgsubmit|done|perf)" > "$C" 2>&1
+	dmesg | grep -E "rocket dbg buf\[1\] out" | grep -vE "@0x|cover|fine" > "$C" 2>&1
 	log "########## END $1 ##########"
 	sleep 7
 }
@@ -31,21 +38,19 @@ run() {  # $1 = label, $2 = mesa env
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "dwprobe: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "mtask: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
+	echo 0 > /sys/module/rocket/parameters/weight_sram 2>/dev/null
+	echo -1 > /sys/module/rocket/parameters/wg_task_pp 2>/dev/null
+	echo 1 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
 	for f in $(find /sys/devices -path '*npu*/power/control' 2>/dev/null); do echo on > "$f" 2>/dev/null; done
 	for f in $(find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null); do echo 120000 > "$f" 2>/dev/null; done
-	echo 1 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
-	echo 0 > /sys/module/rocket/parameters/wg_force_tasknum 2>/dev/null
 
-	log "===== SINGLE-TASK DEPTHWISE: DPU-vs-MAC (NO_DW_TILE; ATEST forces A to the output) ====="
-	# Run A FIRST (fresh buf-dump counter) = the ATEST.
-	run "A  NO_DW_TILE + DW_ATEST  (force A=0x2000 -- dw1 out nonzero? => DPU alive, MAC is the fault)" \
-	    "ROCKET_NO_DW_TILE=1 ROCKET_DW_ATEST=1"
-	run "B  NO_DW_TILE only  (real A -- single-task dw baseline, expect zero)" \
-	    "ROCKET_NO_DW_TILE=1"
-	log "===== DONE: compare dw1 (buf[3] task=0) OUT: A (forced-A) vs B (real-A) ====="
+	log "===== MULTI-TASK ORDER TEST: conv2d-cal, force=2 FIRST vs force=0 SECOND ====="
+	run "A  wg_force_tasknum=2 FIRST inference (TASK_CON=0x70002; byte-exact? = wall is confound)" 2
+	run "B  wg_force_tasknum=0 SECOND inference (baseline; if zero = order effect confirmed)" 0
+	log "===== DONE: Run A maxdiff is the verdict -- 1=wall refuted (confound), 127=wall real ====="
 	log ""
 }
 

@@ -1,5 +1,54 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-06-30 (later) — on-chip weight SRAM ruled out; full register diff = vendor superset; multi-task wall confirmed by controlling inference order
+
+Continued from the two-walls result below. Three things settled by board tests, judged by the output buffer
+and the DMA byte counters (`core dt_wr`).
+
+**1. On-chip weight SRAM (the vendor's "nbuf") is NOT the depthwise lever.** Made the kernel stage each
+depthwise layer's weights into the 1 MB on-chip NPU SRAM (the exact region the vendor uses) and repoint the
+CNA weight-source register at it. This needed reserving the on-chip IOVA window from the BO allocator first
+(the high-IOVA BOs collided with it: `iommu_map ... ret=-98`). After the reserve it works — the log shows all
+13 depthwise layers staged (`staged weights 0x...->SRAM`), `conv0` still computes — yet the depthwise output
+stays exact `0x00`, the weight staged 10 ms before the op ran. So the weight *source location* (DRAM vs
+on-chip) changes nothing.
+
+**2. The full register diff is a vendor superset — no missing register.** Compared every register the open
+driver writes for the depthwise (CNA + CORE + **DPU + DPU_RDMA**, not just the conv-engine block) against the
+vendor's. The open driver writes a strict **superset** (138 vendor entries, 142 ours; the 4 extra are the
+per-unit enable writes). Every value difference is explained by tiling geometry, the sample model's different
+quantiser, or those enables. The one unexplained config word (`CNA 0x1080`) was forced to the vendor's value
+— the depthwise still output zero. The depthwise command stream is exhausted.
+
+**3. The multi-task wall is real — confirmed by controlling for inference order.** A long-standing confound:
+a *second* inference after boot degrades to zero on its own (inherited dirty state), so any A/B where the
+"broken" case ran second is suspect. Reversed it — ran `conv2d-cal` with the PC task-number forced to 2 as
+the **first** inference after boot, valid submit:
+
+```
+wgsubmit: TASK_CON=0x00010002 DATA_ADDR=0xffef6000 DATA_AMOUNT=0x49   (task_number=2, valid)
+cnalive:  exec_ever=0x0   (not one unit engaged; a working single task = 0xf)
+perf:     core dt_wr=0    (the DPU never wrote; force=0 single task = dt_wr=12800, byte-exact)
+buf out:  distinct=1      (zero)
+```
+
+Only the `TASK_CON` task_number differs from the byte-exact single-task run, and `task_number>=2` takes the
+output to zero with the units never engaging — even on a clean first inference. So the multi-task wall is not
+the second-inference confound; it is real. (`dt_wr` also separates the two: the multi-task wall is `dt_wr=0`,
+the units never fire; the second-inference degradation is `dt_wr>0` but the output is wrong.)
+
+**Mechanism (from the vendor's own driver source).** The vendor engages the units with no enable-mask
+register write at all (that register is out-of-map on the vendor — reading it oopses) and **no in-stream
+enable in the command stream**: just one `PC_OP_EN=0x1` pulse plus each task's in-stream `S_POINTER` writes,
+which the PC applies per task. The init sequence matches ours byte-for-byte. The open driver's units, by
+contrast, only engage from an **in-stream broadcast enable** (a write to `PC_OPERATION_ENABLE` inside the
+command stream) — and that write *restarts* the PC, so with `task_number>=2` the units never latch. Drop the
+in-stream enable to match the vendor and the units don't engage at all. So the gap is not the enable-mask
+register, not the init, not the submit sequence (all identical) — it is the silicon-level question of why our
+units need an in-stream `PC_OP_EN` to engage while the vendor's engage from the `S_POINTER` arming + the
+pulse. Software knobs are exhausted; the next data needed is a vendor capture of the per-task engage during a
+real multi-task run.
+
 ## 2026-06-30 — two separate below-the-register walls: the depthwise op, and multi-task dispatch
 
 Chased whether the depthwise zero is actually the multi-task dispatch wall — the depthwise is row-tiled

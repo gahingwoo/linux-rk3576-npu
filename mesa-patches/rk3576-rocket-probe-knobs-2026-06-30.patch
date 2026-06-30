@@ -1,0 +1,168 @@
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 3f667a7..abeb57f 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -169,6 +169,18 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+          }
+       }
+ 
++      /*
++       * ROCKET_DW_WTEST: overwrite the ENTIRE depthwise weight buffer (weight +
++       * pad lanes) with 0x7f. The dw regcmd is byte-identical to the vendor and
++       * the real weights are staged (nonzero, distinct~76) yet the CMAC outputs
++       * EXACT zero -> it reads zero from CBUF. If 0x7f everywhere still yields a
++       * zero output, the CMAC reads NOTHING from this buffer (CBUF-staging/dw-mode
++       * gate); if the output goes nonzero, the CMAC DOES read it, so the real-
++       * weight zero is the LAYOUT (real weights land in lanes the CMAC ignores).
++       */
++      if (getenv("ROCKET_DW_WTEST"))
++         memset(weights_out, 0x7f, weights_size);
++
+       if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+          static int task = 0;
+          rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
+@@ -496,6 +508,21 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+             int32_t bterm = getenv("ROCKET_BIAS_NOSW") ? biases_in[oc]
+                                                        : (biases_in[oc] - inzp_corr);
+             *A = a_scale * bterm;
++            /*
++             * ROCKET_DW_ATEST: for depthwise ONLY, force A (the BS ALU add operand,
++             * added to the MAC before requant) to a huge constant. output = requant(MAC
++             * + A). If dw1 output goes NONZERO -> the DPU/requant/output path is alive and
++             * A flows through -> the dw zero is the MAC (CMAC operands not read from CBUF).
++             * If output stays 0x00 even with huge A -> the dw DPU/output path itself is dead.
++             */
++            if (getenv("ROCKET_DW_ATEST") && rkt_is_depthwise(poperation)) {
++               /* MODERATE A: big enough that requant(0+A) clearly saturates the
++                * output (~255) but small enough to NOT overflow (A*cvt_scale). For
++                * dw1 (cvt_scale~0x4ace shift 0x10): A=0x2000 -> ~255. (0x40000000
++                * was too large -> ambiguous wrap.) ROCKET_DW_ATEST=<hex> overrides. */
++               uint32_t av = (uint32_t)strtoul(getenv("ROCKET_DW_ATEST"), NULL, 0);
++               *A = (av > 1) ? (int32_t)av : 0x2000;
++            }
+             *B = (int16_t)(0x80 - (int)wt_zp);
+             /*
+              * C is a Q14 per-channel scale ratio (=0x4000 for the max-scale channel).
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index 73f0679..f9f8dfe 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -123,6 +123,18 @@ rkt_pack_graph_regcmd(struct rkt_ml_subgraph *subgraph)
+    if (total_tasks == 0)
+       return;
+ 
++   /*
++    * ROCKET_DUP_TASK=N: replicate the WHOLE packed task region N times, so a
++    * single PROVEN op (conv2d-cal, byte-exact per-op) becomes N REAL identical
++    * tasks in ONE whole-graph job. Tests "does the PC run >1 REAL valid task"
++    * in the proven uint8/zp=128 regime -- WITHOUT the force=2 phantom garbage-
++    * task confound and WITHOUT a new (int8-activation) model. Default 1 = off.
++    */
++   unsigned dup = getenv("ROCKET_DUP_TASK")
++                     ? (unsigned)strtoul(getenv("ROCKET_DUP_TASK"), NULL, 0) : 1;
++   if (dup < 1)
++      dup = 1;
++
+    /* Uniform stride (u64) = (pc_data_amount + 1) * scale, matching the kernel's
+     * PC_DATA_AMOUNT = (amount + EXTRA(4) + scale(2) - 1)/scale - 1 from the max. */
+    unsigned stride_amount = ((max_amount + 4 + 2 - 1) / 2) * 2;
+@@ -130,14 +142,14 @@ rkt_pack_graph_regcmd(struct rkt_ml_subgraph *subgraph)
+ 
+    subgraph->graph_regcmd =
+       pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT,
+-                         stride_bytes * total_tasks);
+-   subgraph->graph_task_count = total_tasks;
++                         stride_bytes * total_tasks * dup);
++   subgraph->graph_task_count = total_tasks * dup;
+    subgraph->graph_stride_amount = stride_amount;
+ 
+    struct pipe_transfer *wtransfer = NULL;
+    uint8_t *dst = pipe_buffer_map(pcontext, subgraph->graph_regcmd,
+                                   PIPE_MAP_WRITE, &wtransfer);
+-   memset(dst, 0, stride_bytes * total_tasks);
++   memset(dst, 0, stride_bytes * total_tasks * dup);
+ 
+    uint64_t graph_addr = rkt_resource(subgraph->graph_regcmd)->phys_addr;
+    unsigned g = 0;
+@@ -224,6 +236,13 @@ rkt_pack_graph_regcmd(struct rkt_ml_subgraph *subgraph)
+       pipe_buffer_unmap(pcontext, rtransfer);
+    }
+ 
++   /* ROCKET_DUP_TASK: replicate the packed total_tasks-block region dup-1 more
++    * times so the job has total_tasks*dup REAL contiguous tasks at the uniform
++    * stride (the PC strides through them; no phantom/garbage slot). */
++   for (unsigned d = 1; d < dup; d++)
++      memcpy(dst + (size_t)d * total_tasks * stride_bytes, dst,
++             (size_t)total_tasks * stride_bytes);
++
+    pipe_buffer_unmap(pcontext, wtransfer);
+ }
+ 
+@@ -797,6 +816,24 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+          }
+       }
+ 
++      /*
++       * ROCKET_DUP_TASK: the packer replicated the region to graph_task_count
++       * blocks, but only task_count real split_tasks were iterated above. Fill
++       * the duplicate entries by striding from task[0] at the uniform pitch
++       * (the packer wrote a real copy of the regcmd at each), so the PC sees
++       * graph_task_count REAL contiguous tasks.
++       */
++      if (task_count > 0) {
++         unsigned stride_b = subgraph->graph_stride_amount * sizeof(uint64_t);
++         uint64_t base = tasks[0].regcmd;
++         uint32_t cnt0 = tasks[0].regcmd_count;
++         while (task_count < subgraph->graph_task_count) {
++            tasks[task_count].regcmd = base + (uint64_t)task_count * stride_b;
++            tasks[task_count].regcmd_count = cnt0;
++            task_count++;
++         }
++      }
++
+       struct drm_rocket_job job = {0};
+       job.task_struct_size = sizeof(struct drm_rocket_task);
+       job.in_bo_handles = (uint64_t)(uintptr_t)in_bo_handles;
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 3189bef..c176af4 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -424,9 +424,16 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x107c, ic - 1);
+    /* stride-2: depthwise (conv0) uses 0x00000101; a normal conv needs the
+     * 0x0202 SURF_STRIDE high field (vendor capture of this k=5 s=2 conv). */
++   /* The non-capped (ROCKET_NO_DW_TILE) single-task dw value 0x01010101 is a
++    * mesa invention the vendor NEVER emits -- its tiled dw alternates
++    * 0x01000101 (tile0) / 0x01010100 (tile>0).  ROCKET_DW_SURF0 forces the
++    * single-task dw to the vendor tile-0 value 0x01000101 to test whether the
++    * byte-2 flag gates the depthwise compute (clean: single-task, no multi-
++    * task PC confound). */
+    R_CNA(0x1080, s == 2 ? (dw ? 0x101 : 0x02020101)
+                         : (dw ? (capped ? (wnum > 0 ? 0x01010100 : 0x01000101)
+-                                        : 0x01010101)
++                                        : (getenv("ROCKET_DW_SURF0")
++                                               ? 0x01000101 : 0x01010101))
+                               : 0));
+    /*
+     * CNA pad value = input_zero_point - 0x80 (the value the CMAC sees for padded taps,
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 15e634e..f09bf7c 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -236,7 +236,15 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+        * 0x30000000 flags). Window N's CNA CBUF input offset (0x1040 low) is the
+        * cumulative staged input rows of the earlier windows, carried in the task.
+        */
+-      unsigned max_iwin = 91;
++      /* ROCKET_NO_DW_TILE: emit the 112-wide stride-1 layer as ONE full-height
++       * task instead of row-window tiles. A row-tiled layer becomes a task_count>1
++       * job (reuse_weights_cbuf packs the tiles into one job), which hits the
++       * multi-task PC wall (task 0 engages + latches geometry but writes zero when
++       * TASK_CON task_number>1). Depthwise weights are tiny (576B) so the full input
++       * may fit the CBUF in one task (no ping-pong split) -> single task -> the
++       * proven-working path. computes -> tiling was the sidesteppable cause;
++       * garbles -> the input overflows the CBUF and multi-task is genuinely required. */
++      unsigned max_iwin = getenv("ROCKET_NO_DW_TILE") ? 99999 : 91;
+       unsigned overlap = (operation->weights_height - 1) / 2;
+       unsigned line_in = calc_line_stride(operation->input_width);
+       unsigned line_out = calc_line_stride(operation->output_width);
