@@ -1,5 +1,34 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-06-30 — two separate below-the-register walls: the depthwise op, and multi-task dispatch
+
+Chased whether the depthwise zero is actually the multi-task dispatch wall — the depthwise is row-tiled
+into a `task_count=2` job (standard convs are `task_count=1` and compute). Two clean board tests, judged
+by the output buffer:
+
+- **Multi-task PC probe** (conv2d-cal duplicated into 2 *real* identical tasks): a single task is
+  byte-exact; 2 real tasks are degenerate for **every** OP_EN variant (per-unit `0x1d` / `0x1`, fully
+  stripped). The clean run: the units engage (all four `bit16` set), the geometry latches (real `DS1`,
+  not the ping-pong default), the PC completes task 0 — then raises `PC_DONE`, never advances to task 1,
+  output zero. Every observable signal equals the working single-task run **except `TASK_CON`
+  task_number (1 vs 2)**. So `task_number>1` breaks the compute through something no register exposes.
+
+- **`ROCKET_NO_DW_TILE`** (emit the 112-wide layer as one full-height task instead of row-window tiles →
+  `task_count=1`): the depthwise is now a single task and **still** outputs exact `0x00` — not garbage,
+  so not a CBUF overflow — while the standard convs on the same run compute. So the depthwise zero is
+  **NOT** the multi-task wall; it fails as a single task too. It is depthwise-*mode* specific.
+
+- **Clean single-task depthwise** (`NO_DW_TILE`): inert to all three operands — weights (filled with a
+  constant), input (a real feature map from conv0), and a forced bias-add jammed straight into the
+  requant output stage. None move the output off zero. The op writes nothing.
+
+So there are **two separate walls below the registers**: the depthwise-mode op (writes nothing, the
+depthwise layers) and the multi-task PC (`task_number>1` breaks the compute, the whole-graph + tiled
+layers). Both have command streams byte-identical to the vendor's; software probing is exhausted on the
+depthwise. The one structural thing the vendor does that the open driver doesn't is **park the weights
+in the 1 MB on-chip NPU SRAM** — RK3576 is the only chip in the family wired for it. That's the next dig,
+and it's in the kernel.
+
 ## 2026-06-29 — per-op path: standard convs byte-exact, but the DEPTHWISE op writes no output (below register observability)
 
 Whole-graph (WG) single-job dispatch is an open problem (the unit engage/complete handshake — units

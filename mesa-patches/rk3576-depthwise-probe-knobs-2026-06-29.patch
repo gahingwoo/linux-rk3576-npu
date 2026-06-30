@@ -123,3 +123,24 @@ index 73f0679..f9f8dfe 100644
        struct drm_rocket_job job = {0};
        job.task_struct_size = sizeof(struct drm_rocket_task);
        job.in_bo_handles = (uint64_t)(uintptr_t)in_bo_handles;
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 15e634e..f09bf7c 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -236,7 +236,15 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+        * 0x30000000 flags). Window N's CNA CBUF input offset (0x1040 low) is the
+        * cumulative staged input rows of the earlier windows, carried in the task.
+        */
+-      unsigned max_iwin = 91;
++      /* ROCKET_NO_DW_TILE: emit the 112-wide stride-1 layer as ONE full-height
++       * task instead of row-window tiles. A row-tiled layer becomes a task_count>1
++       * job (reuse_weights_cbuf packs the tiles into one job), which hits the
++       * multi-task PC wall (task 0 engages + latches geometry but writes zero when
++       * TASK_CON task_number>1). Depthwise weights are tiny (576B) so the full input
++       * may fit the CBUF in one task (no ping-pong split) -> single task -> the
++       * proven-working path. computes -> tiling was the sidesteppable cause;
++       * garbles -> the input overflows the CBUF and multi-task is genuinely required. */
++      unsigned max_iwin = getenv("ROCKET_NO_DW_TILE") ? 99999 : 91;
+       unsigned overlap = (operation->weights_height - 1) / 2;
+       unsigned line_in = calc_line_stride(operation->input_width);
+       unsigned line_out = calc_line_stride(operation->output_width);
