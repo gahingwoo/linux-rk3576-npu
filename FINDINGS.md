@@ -43,6 +43,23 @@ comparison, and a live vendor capture are all exhausted. The one structural diff
 boots neither, and a secure-world NPU init is exactly the layer a vendor capture can't isolate. That's the
 next dig, and it's a big one.
 
+**Update — firmware ruled out, and the real way forward.** I did the dig: built an image with a mainline
+RK3576 OP-TEE port (BL31 + BL32, TZDRAM reserved in the DTB) and booted the same rocket kernel on top of it.
+OP-TEE really ran — its own secure-world banner prints on the console, the DDR firewall is live — and the
+multi-task job failed *byte-for-byte identically*: not one unit engaged, nothing written. So it isn't the
+presence of the secure firmware either. The multi-task engage difference is below what software can observe
+on either side; without a hardware trace it isn't reachable, and it's the one thing between here and a
+running MobileNet.
+
+But "can't crack the multi-task engage" is not "can't run MobileNet." The wall only bites *multi-task* jobs
+— a job carrying more than one task. Single-task convolutions engage and compute reliably; that's proven.
+The wide layers only need multiple tasks because one row-tile at a time is all the on-chip buffer holds — so
+the fix is to stop packing the tiles into one multi-task job and instead emit **each row-tile as its own
+single-task job**: its own input rows staged from DRAM, its own weights, its own slice of the output,
+chained by the kernel like the per-op path already chains layers. It costs re-staging weights per tile (no
+reuse) but every job is then a task-count of one, which the hardware runs. That's the concrete next build —
+in Mesa, not the kernel — and it routes around the one wall left standing instead of trying to break it.
+
 ## 2026-06-30 (later) — on-chip weight SRAM ruled out; full register diff = vendor superset; multi-task wall confirmed by controlling inference order
 
 Continued from the two-walls result below. Three things settled by board tests, judged by the output buffer
