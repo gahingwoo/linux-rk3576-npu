@@ -1,0 +1,416 @@
+diff --git a/drivers/rknpu/rknpu_job.c b/drivers/rknpu/rknpu_job.c
+index 0c081fa5d..30bf5d7d5 100644
+--- a/drivers/rknpu/rknpu_job.c
++++ b/drivers/rknpu/rknpu_job.c
+@@ -8,6 +8,9 @@
+ #include <linux/delay.h>
+ #include <linux/sync_file.h>
+ #include <linux/io.h>
++#include <linux/vmalloc.h>
++#include <linux/proc_fs.h>
++#include <asm/unaligned.h>
+ 
+ #include "rknpu_ioctl.h"
+ #include "rknpu_drv.h"
+@@ -24,6 +27,28 @@
+ #define REG_READ(offset) _REG_READ(rknpu_core_base, offset)
+ #define REG_WRITE(value, offset) _REG_WRITE(rknpu_core_base, value, offset)
+ 
++/*
++ * ARM-DBG: snapshot the FULL PC control block (0x00-0x4c), ENABLE_MASK (0xf008),
++ * and every unit's S_POINTER (0x_004, bit16=executer-running) + OPERATION_ENABLE
++ * (0x_008) at three moments around the S_POINTER arming write -- to answer:
++ *  #1 what PC mode/control reg the arming lands into (unnamed 0x0c/18/1c/38/3c/40/44);
++ *  #2 whether the units' OP_EN / bit16 auto-set at arming with NO enable sent;
++ *  #3 whether anything moves the PC sequencer.
++ */
++#define ARMDUMP(tag) do { \
++	pr_info("rknpu armdbg %s PC 00=%08x 04=%08x 08=%08x 0c=%08x 10=%08x 14=%08x 18=%08x 1c=%08x 20=%08x 24=%08x 28=%08x 2c=%08x 30=%08x 34=%08x 38=%08x 3c=%08x 40=%08x 44=%08x 48=%08x 4c=%08x f008=%08x\n", \
++		tag, REG_READ(0x00), REG_READ(0x04), REG_READ(0x08), REG_READ(0x0c), \
++		REG_READ(0x10), REG_READ(0x14), REG_READ(0x18), REG_READ(0x1c), \
++		REG_READ(0x20), REG_READ(0x24), REG_READ(0x28), REG_READ(0x2c), \
++		REG_READ(0x30), REG_READ(0x34), REG_READ(0x38), REG_READ(0x3c), \
++		REG_READ(0x40), REG_READ(0x44), REG_READ(0x48), REG_READ(0x4c), \
++		0u /* 0xf008 read removed: out-of-map on some boots -> oops */); \
++	pr_info("rknpu armdbg %s UNIT cna_sp=%08x cna_oe=%08x core_sp=%08x core_oe=%08x dpu_sp=%08x dpu_oe=%08x rdma_sp=%08x rdma_oe=%08x\n", \
++		tag, REG_READ(0x1004), REG_READ(0x1008), REG_READ(0x3004), \
++		REG_READ(0x3008), REG_READ(0x4004), REG_READ(0x4008), \
++		REG_READ(0x5004), REG_READ(0x5008)); \
++} while (0)
++
+ static int rknpu_wait_core_index(int core_mask)
+ {
+ 	int index = 0;
+@@ -269,6 +294,157 @@ static inline int rknpu_job_wait(struct rknpu_job *job)
+ 	return 0;
+ }
+ 
++/*
++ * CAPTURE: dump the CONTENTS of a BO referenced by the regcmd (weights / input /
++ * bias / output) so the vendor payload can be diffed byte-for-byte against the
++ * mesa ROCKET_DEBUG=dump_bos buffers. The regcmd stores each DMA address as the
++ * full IOVA in one entry's val field; translate it through the job's IOMMU
++ * domain and read the bytes. DRAM-backed BOs go via phys_to_virt; the on-chip
++ * NBUF/CBUF SRAM window is not in the linear map, so it is ioremap'd. Prints
++ * stats (distinct byte values / nonzero count over the window) + a hex head.
++ */
++static void rknpu_cap_dump_bo(struct iommu_domain *dom, const char *name,
++			      u32 iova, u32 len, u32 hexlen)
++{
++	phys_addr_t phys;
++	const u8 *p = NULL;
++	void __iomem *io = NULL;
++	u32 i, distinct = 0, nonzero = 0;
++	u8 seen[256] = { 0 };
++
++	if (!dom || !iova) {
++		pr_info("rknpu cap: BO %-7s iova=0x%08x <no domain/addr>\n",
++			name, iova);
++		return;
++	}
++
++	phys = iommu_iova_to_phys(dom, iova);
++	if (!phys) {
++		pr_info("rknpu cap: BO %-7s iova=0x%08x <iommu unmapped>\n",
++			name, iova);
++		return;
++	}
++
++	if (pfn_valid(__phys_to_pfn(phys)))
++		p = (const u8 *)phys_to_virt(phys);
++	else
++		io = ioremap(phys, len);
++
++	if (!p && !io) {
++		pr_info("rknpu cap: BO %-7s iova=0x%08x phys=0x%llx <map failed>\n",
++			name, iova, (u64)phys);
++		return;
++	}
++
++	for (i = 0; i < len; i++) {
++		u8 b = io ? readb(io + i) : p[i];
++
++		if (b)
++			nonzero++;
++		if (!seen[b]) {
++			seen[b] = 1;
++			distinct++;
++		}
++	}
++
++	pr_info("rknpu cap: BO %-7s iova=0x%08x phys=0x%llx len=%u distinct=%u nonzero=%u\n",
++		name, iova, (u64)phys, len, distinct, nonzero);
++
++	for (i = 0; i < len && i < hexlen; i += 16) {
++		u8 row[16] = { 0 };
++		u32 j;
++
++		for (j = 0; j < 16 && i + j < len; j++)
++			row[j] = io ? readb(io + i + j) : p[i + j];
++
++		pr_info("rknpu cap: BO %-7s +%04x: %16ph\n", name, i, row);
++	}
++
++	if (io)
++		iounmap(io);
++}
++
++/*
++ * CAPTURE-FULL: store the COMPLETE payload (regcmd + input + weights + bias) the
++ * vendor submits for the simplest conv into /proc/rknpu_cap, for byte-exact
++ * replay through both the rknn and rocket UABIs (flipper #55, Tomeu's method).
++ * Framed TLV: [magic "RKC1"] then per section [tag u32][iova u32][len u32][bytes].
++ *
++ * Reads each BO PAGE BY PAGE: the regcmd's address is one IOVA, but a BO spans
++ * many pages that the IOMMU maps to scattered physical pages, so each page's
++ * iova must be translated separately (a flat phys read past page 0 would grab
++ * physically-adjacent memory, not the BO's next page).
++ */
++#define RKNPU_CAP_MAGIC   0x31434b52      /* "RKC1" */
++#define RKNPU_CAP_TAG_RGC 0x44434752      /* "RGCD" regcmd  */
++#define RKNPU_CAP_TAG_IN  0x54504e49      /* "INPT" input   */
++#define RKNPU_CAP_TAG_WT  0x54484757      /* "WGHT" weights */
++#define RKNPU_CAP_TAG_BS  0x53414942      /* "BIAS" bias    */
++#define RKNPU_CAP_MAX     (2u << 20)      /* 2 MiB */
++
++static u8 *rknpu_cap_buf;
++static size_t rknpu_cap_len;
++static struct proc_dir_entry *rknpu_cap_proc;
++
++static void rknpu_cap_store(struct iommu_domain *dom, u32 tag, u32 iova, u32 len)
++{
++	u8 *dst;
++	u32 off;
++
++	if (!rknpu_cap_buf || !dom || !iova || !len)
++		return;
++	if (rknpu_cap_len + 12 + len > RKNPU_CAP_MAX)
++		return;
++
++	dst = rknpu_cap_buf + rknpu_cap_len;
++	put_unaligned_le32(tag, dst + 0);
++	put_unaligned_le32(iova, dst + 4);
++	put_unaligned_le32(len, dst + 8);
++	dst += 12;
++
++	for (off = 0; off < len; off += PAGE_SIZE) {
++		u32 chunk = min_t(u32, PAGE_SIZE, len - off);
++		phys_addr_t phys = iommu_iova_to_phys(dom, iova + off);
++		const u8 *p = NULL;
++		void __iomem *io = NULL;
++		u32 i;
++
++		if (!phys) {
++			memset(dst + off, 0, chunk);
++			continue;
++		}
++		if (pfn_valid(__phys_to_pfn(phys)))
++			p = (const u8 *)phys_to_virt(phys);
++		else
++			io = ioremap(phys, chunk);
++
++		if (p)
++			memcpy(dst + off, p, chunk);
++		else if (io)
++			for (i = 0; i < chunk; i++)
++				dst[off + i] = readb(io + i);
++		else
++			memset(dst + off, 0, chunk);
++
++		if (io)
++			iounmap(io);
++	}
++
++	rknpu_cap_len += 12 + len;
++}
++
++static ssize_t rknpu_cap_proc_read(struct file *f, char __user *ubuf,
++				   size_t count, loff_t *ppos)
++{
++	return simple_read_from_buffer(ubuf, count, ppos, rknpu_cap_buf,
++				       rknpu_cap_len);
++}
++
++static const struct proc_ops rknpu_cap_proc_ops = {
++	.proc_read = rknpu_cap_proc_read,
++	.proc_lseek = default_llseek,
++};
++
+ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 					      int core_index)
+ {
+@@ -296,12 +472,17 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 	int submit_index = atomic_read(&job->submit_count[core_index]);
+ 	int max_submit_number = rknpu_dev->config->max_submit_number;
+ 	unsigned long flags;
++	static int armdbg_done;
++	int armdbg = !armdbg_done;
+ 
+ 	if (!task_obj) {
+ 		job->ret = -EINVAL;
+ 		return job->ret;
+ 	}
+ 
++	if (armdbg)
++		ARMDUMP("pre-arm");
++
+ 	if (rknpu_dev->config->num_irqs > 1) {
+ 		for (i = 0; i < rknpu_dev->config->num_irqs; i++) {
+ 			if (i == core_index) {
+@@ -309,6 +490,8 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 				REG_WRITE((0xe + 0x10000000 * i), 0x3004);
+ 			}
+ 		}
++		if (armdbg)
++			ARMDUMP("post-arm");
+ 
+ 		switch (job->use_core_num) {
+ 		case 1:
+@@ -373,7 +556,90 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 				pc_task_number_bits, task_pp_en);
+ 		}
+ 
+-		if (!cap_done) {
++		/*
++		 * Dump the BO CONTENTS for the FIRST conv submit (any
++		 * task_number, so the standalone single-conv test is caught,
++		 * not only the whole-graph chain). Scan the first task's regcmd
++		 * for the five DMA-address regs and dump each buffer's bytes,
++		 * to diff against mesa's ROCKET_DEBUG=dump_bos. Captured at
++		 * submit: weights/input/bias hold the real operands; output is
++		 * pre-compute (the result is the job's product, not yet here).
++		 */
++		{
++			static int cap_bo_done;
++
++			if (!cap_bo_done) {
++				struct iommu_domain *dom =
++					rknpu_dev->iommu_domains[job->iommu_domain_id];
++				phys_addr_t rphys = dom ?
++					iommu_iova_to_phys(dom, first_task->regcmd_addr) : 0;
++
++				cap_bo_done = 1;
++
++				if (rphys && pfn_valid(__phys_to_pfn(rphys))) {
++					const u64 *rv = (const u64 *)phys_to_virt(rphys);
++					u32 i, n = first_task->regcfg_amount;
++					u32 a_feat = 0, a_wt = 0, a_out = 0, a_bias = 0;
++
++					for (i = 0; i < n && i < 600; i++) {
++						u64 e = rv[i];
++						u16 reg = (u16)(e & 0xffff);
++						u32 val = (u32)((e >> 16) & 0xffffffff);
++
++						switch (reg) {
++						case 0x1088: a_feat = val; break;
++						case 0x1110: a_wt = val; break;
++						case 0x4018: a_out = val; break;
++						case 0x5020: a_bias = val; break;
++						}
++					}
++
++					pr_info("rknpu cap: ==== BO DUMP (task_start=%d task_number=%d) ====\n",
++						task_start, task_number);
++					rknpu_cap_dump_bo(dom, "weights", a_wt, 16384, 2048);
++					rknpu_cap_dump_bo(dom, "input", a_feat, 4096, 512);
++					rknpu_cap_dump_bo(dom, "bias", a_bias, 1024, 512);
++					rknpu_cap_dump_bo(dom, "output", a_out, 4096, 512);
++
++					/*
++					 * Store the FULL payload for replay into
++					 * /proc/rknpu_cap (conv2d-sized caps; the
++					 * host trims per the regcmd dims). Output
++					 * is the job's product (not ready here) and
++					 * is recomputed on the host from in+wt+bias.
++					 */
++					if (!rknpu_cap_buf)
++						rknpu_cap_buf = vmalloc(RKNPU_CAP_MAX);
++					if (rknpu_cap_buf) {
++						rknpu_cap_len = 0;
++						put_unaligned_le32(RKNPU_CAP_MAGIC,
++								   rknpu_cap_buf);
++						rknpu_cap_len = 4;
++						rknpu_cap_store(dom, RKNPU_CAP_TAG_RGC,
++								(u32)first_task->regcmd_addr,
++								n * 8);
++						rknpu_cap_store(dom, RKNPU_CAP_TAG_IN,
++								a_feat, 204800);
++						rknpu_cap_store(dom, RKNPU_CAP_TAG_WT,
++								a_wt, 204800);
++						rknpu_cap_store(dom, RKNPU_CAP_TAG_BS,
++								a_bias, 4096);
++						if (!rknpu_cap_proc)
++							rknpu_cap_proc = proc_create(
++								"rknpu_cap", 0444, NULL,
++								&rknpu_cap_proc_ops);
++						pr_info("rknpu cap: /proc/rknpu_cap ready, %zu bytes (regfg=%u in=%08x wt=%08x bs=%08x out=%08x)\n",
++							rknpu_cap_len, n, a_feat, a_wt,
++							a_bias, a_out);
++					}
++				} else {
++					pr_info("rknpu cap: BO DUMP regcmd iova=0x%llx not mappable\n",
++						(u64)first_task->regcmd_addr);
++				}
++			}
++		}
++
++		if (!cap_done && task_number >= 4) {
+ 			struct iommu_domain *dom =
+ 				rknpu_dev->iommu_domains[job->iommu_domain_id];
+ 			int t;
+@@ -381,9 +647,12 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 			cap_done = 1;
+ 
+ 			/*
+-			 * Dump EVERY task's regcmd in this (first) submit, each tagged
+-			 * with its task index, so the full graph (conv0, dw1, pw1, ...)
+-			 * can be diffed layer-by-layer against mesa -- not just task 0.
++			 * Dump EVERY task's regcmd in the first WHOLE-GRAPH submit
++			 * (task_number>=4, i.e. the multi-layer chain, not the
++			 * standalone conv0 task_number=1 submit), each tagged with its
++			 * task index, so the intermediate layers' feature/output
++			 * addresses (CBUF vs DRAM) and format regs can be read off and
++			 * the dispatch model ported to rocket.
+ 			 */
+ 			for (t = task_start; t <= task_end; t++) {
+ 				struct rknpu_task *tk = &task_base[t];
+@@ -441,7 +710,13 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 	job->int_mask[core_index] = last_task->int_mask;
+ 
+ 	REG_WRITE(0x1, RKNPU_OFFSET_PC_OP_EN);
++	if (armdbg)
++		ARMDUMP("post-op1");
+ 	REG_WRITE(0x0, RKNPU_OFFSET_PC_OP_EN);
++	if (armdbg) {
++		ARMDUMP("post-op0");
++		armdbg_done = 1;
++	}
+ 
+ 	/*
+ 	 * EXEC-STATE CAPTURE (first few submits): dump the per-unit run state the same
+@@ -459,19 +734,64 @@ static inline int rknpu_job_subcore_commit_pc(struct rknpu_job *job,
+ 			int s;
+ 			u32 ever = 0, sp;
+ 			u32 d0g0, fag0, d0g1, fag1;
++			u32 raw_or = 0, raw;
++			/*
++			 * PER-TASK ENGAGE SNAPSHOT: as the PC hardware iterates the tasks
++			 * (PC_TASK_STATUS counts completed tasks), snapshot every unit's
++			 * S_POINTER (0x_004, bit16=engage, low nibble=ping-pong group) and
++			 * S_STATUS (0x_000) at EACH task boundary. This is the one thing the
++			 * open (rocket) driver can't see: how the vendor re-engages/re-aligns
++			 * the units per iterated task with NO in-stream OP_EN. Cap the prints.
++			 */
++			u32 last_ts = 0xffffffffu;
++			int nts = 0;
++
++			/*
++			 * Clear the STALE PC_DONE (bit28/29) left set by the previous job
++			 * (commit_pc only clears 0x300, not PC_DONE) so the sample loop
++			 * tracks THIS job's execution instead of breaking on the first read.
++			 * The real PC_DONE re-sets when this job finishes (caught below + by
++			 * the vendor's own wait, which runs after commit_pc returns).
++			 */
++			REG_WRITE(0x30000000u, RKNPU_OFFSET_INT_CLEAR);
+ 
+ 			for (s = 0; s < 8000; s++) {
++				u32 ts = REG_READ(rknpu_dev->config->pc_task_status_offset) &
++					 rknpu_dev->config->pc_task_number_mask;
++
++				if (ts != last_ts && nts < 16) {
++					pr_info("rknpu est[%d] TASK ts=%u: cna sp=%08x st=%08x | core sp=%08x st=%08x | dpu sp=%08x st=%08x | rdma sp=%08x st=%08x\n",
++						est_n, ts,
++						REG_READ(0x1004), REG_READ(0x1000),
++						REG_READ(0x3004), REG_READ(0x3000),
++						REG_READ(0x4004), REG_READ(0x4000),
++						REG_READ(0x5004), REG_READ(0x5000));
++					last_ts = ts;
++					nts++;
++				}
+ 				if (REG_READ(0x1004) & 0x10000)
+ 					ever |= 1;
+ 				if (REG_READ(0x3004) & 0x10000)
+ 					ever |= 2;
+ 				if (REG_READ(0x4004) & 0x10000)
+ 					ever |= 4;
+-				if (REG_READ(RKNPU_OFFSET_INT_RAW_STATUS) & 0x30000000)
++				raw = REG_READ(RKNPU_OFFSET_INT_RAW_STATUS);
++				raw_or |= raw;
++				if (raw & 0x30000000)
+ 					break;
+ 				udelay(1);
+ 			}
+ 
++			/* OR of all INT_RAW (0x2c) during the conv: which CNA sub-stage
++			 * events fired -- bit0/1 FEATURE, bit2/3 WEIGHT, bit4/5 CSC,
++			 * 6/7 CORE, 8/9 DPU, 12/13 DMA RD/WR error. */
++			pr_info("rknpu est[%d] rawor=0x%x [FEAT0=%d FEAT1=%d WT0=%d WT1=%d CSC0=%d CSC1=%d CORE0=%d CORE1=%d DPU0=%d DPU1=%d RDERR=%d WRERR=%d]\n",
++				est_n, raw_or, !!(raw_or & 0x1), !!(raw_or & 0x2),
++				!!(raw_or & 0x4), !!(raw_or & 0x8), !!(raw_or & 0x10),
++				!!(raw_or & 0x20), !!(raw_or & 0x40), !!(raw_or & 0x80),
++				!!(raw_or & 0x100), !!(raw_or & 0x200),
++				!!(raw_or & 0x1000), !!(raw_or & 0x2000));
++
+ 			pr_info("rknpu est[%d]: ever_bit16=0x%x samples=%d PC_RAW=0x%x | CNA_STAT=0x%x SPTR=0x%x | CORE_STAT=0x%x SPTR=0x%x | DPU_STAT=0x%x SPTR=0x%x OP_EN=0x%x\n",
+ 				est_n, ever, s,
+ 				REG_READ(RKNPU_OFFSET_INT_RAW_STATUS),

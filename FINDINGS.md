@@ -1,5 +1,48 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-02 — the two walls collapse to one: multi-task engage. The depthwise is not a separate wall; the gap is below observability, and the only untested difference left is firmware
+
+Added a per-unit engage-state dump to the kernel (each unit's `S_POINTER` [bit16 = executer engaged, low
+nibble = ping-pong group] and `S_STATUS`, at rest and right after the go-pulse) and compared a working run
+to a failing one, both as the first inference after a clean boot so nothing is confounded by the
+second-inference degradation.
+
+**The multi-task wall is an engage failure.** A byte-exact conv forced to `task_number=2` (only that field
+changed):
+
+```
+working (task_number=1): all 4 units sp=0x0001000f  (bit16 SET = engaged),  STAT=0x0c, core dt_wr=12800
+failing (task_number=2): all 4 units sp=0x0000000f  (bit16 CLEAR = not engaged), STAT=0x05, dt_wr=0
+```
+
+So `task_number>=2` makes the sequencer advance its task counter and report "done" while the compute units
+never engage — not one of them sets bit16, the output writer never writes a byte.
+
+**The depthwise looked like a second wall, then wasn't.** As a (vendor-never) single full-height task the
+depthwise *does* engage (bit16 set on all four) but splits the ping-pong: the CNA producer advances to
+group 1 (`0x0f`) while the consumers stay group 0 (`0x0e`), so the consumers read the empty group and the
+output is zero, while a standard conv keeps all four aligned and computes. That's a concrete, register-level
+cause — but it was only ever seen under `NO_DW_TILE`, a shape the vendor never emits (it always row-tiles a
+112-wide depthwise). So I checked how the vendor's *tiled* depthwise handles the parity, two ways: its
+command stream arms every unit to group 0 (`0x0e`) on **every** task (no alternation), and — instrumenting
+the vendor's own driver and running it on the board — its multi-task depthwise settles with all four units
+aligned at group 0 and computes (`core dt_wr=25088`). It never uses the producer-ahead pattern. So the
+split is a `NO_DW_TILE` artifact: the vendor avoids it by tiling into small tasks and re-arming group 0 each
+task. **The depthwise is not a separate silicon wall — it's just the first layer forced to be multi-task.**
+
+**Where it ends, honestly.** Everything now reduces to one thing: the units engage per iterated task on the
+vendor and don't on the open driver — with a per-job setup I've matched to the vendor byte-for-byte (the CPU
+arming, the command-stream `S_POINTER` writes, the init sequence, the go-pulse), and single convolutions
+prove the datapath is addressed correctly. The vendor engages its units from the `S_POINTER` arming plus one
+pulse with no in-stream enable; the open driver's units only wake from an in-stream enable that restarts the
+sequencer, so it can't iterate. Trying to catch *how* the vendor re-engages between tasks, on the board, the
+vendor finishes a two-task depthwise in microseconds — faster than a CPU register poll can sample — so the
+per-task re-engage is below what software can observe on either side. Software knobs, static command-stream
+comparison, and a live vendor capture are all exhausted. The one structural difference left untested is
+**firmware**: the vendor stack boots Rockchip TF-A + OP-TEE (NPU clock/power via secure SMC calls), mainline
+boots neither, and a secure-world NPU init is exactly the layer a vendor capture can't isolate. That's the
+next dig, and it's a big one.
+
 ## 2026-06-30 (later) — on-chip weight SRAM ruled out; full register diff = vendor superset; multi-task wall confirmed by controlling inference order
 
 Continued from the two-walls result below. Three things settled by board tests, judged by the output buffer

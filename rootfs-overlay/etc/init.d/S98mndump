@@ -1,56 +1,52 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# MULTI-TASK wall: ORDER-controlled decisive test (2026-06-30). The prior
-# "force=2 -> degenerate" evidence never controlled inference order, and a
-# single-task conv shows first=correct / second=zero (the known second-inference
-# degradation) with NO multi-task involved. So REVERSE the order: run
-# wg_force_tasknum=2 (forces PC_TASK_CON task_number=2 on the per-op path) as the
-# FIRST NPU inference after boot, then force=0 second.
-#   A force=2 FIRST  -> byte-exact (maxdiff=1) = task_number=2 does NOT break a
-#                       clean first inference -> the multi-task "wall" (b) was the
-#                       second-inference confound; real blocker = dirty-state/reset.
-#                    -> zero (maxdiff=127) = task_number=2 genuinely breaks even the
-#                       first inference -> (b) is real.
-#   B force=0 SECOND -> if zero, confirms the order effect (2nd degrades regardless).
-# CRITICAL: A must be the FIRST NPU job (no prior inference to leave dirty state).
-# Confirm the submit is VALID: "rocket dbg wgsubmit ... TASK_CON=0x00070002
-# DATA_ADDR=<nonzero>" (a 0 DATA_ADDR = empty submit = invalid, ignore).
+# DEPTHWISE ping-pong ALIGN fix attempt (2026-07-02). The single-task dw
+# ENGAGES (bit16 set) but the CNA producer pointer advances to group 1 (0x0f)
+# while CORE/DPU/RDMA consumers stay group 0 (0x0e) -> consumers read the empty
+# group -> zero. conv0 keeps all four aligned (0x0f) and computes.
+# rocket.sptr_override=0x06 = EXECUTER_PP_EN + POINTER_PP_EN but NO POINTER_PP_MODE
+# -> the ping-pong auto-advance is off, so CNA won't advance past the consumers;
+# it CPU-arms + patches the regcmd CNA(0x1004)/CORE(0x3004) to 0x06. (0x00 was
+# tried before = ALSO clears EXECUTER_PP_EN -> no engage; 0x06 keeps engage.)
+# NO_DW_TILE MobileNet, FIRST inference.
+#   conv0 (job0) still computes AND dw1 (job1) post-op0 aligned (all sp same
+#     group) + buf out nonzero -> ping-pong align is the dw fix.
+#   conv0 breaks -> PP_MODE is needed for standard convs; must make it dw-only.
+#   dw1 CORE now aligned to CNA but DPU/RDMA still 0x0e/misaligned -> extend the
+#     override to patch 0x4004/0x5004 too.
 # ---------------------------------------------------------------------------
 
 NPU_DIR=/opt/npu-test
 C=/dev/console
-CONV="$NPU_DIR/conv2d-cal.tflite"
+MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
 log() { echo "$@" > "$C"; }
-
-run() {  # $1 = label, $2 = wg_force_tasknum value
-	echo "$2" > /sys/module/rocket/parameters/wg_force_tasknum 2>/dev/null
-	dmesg -c >/dev/null 2>&1
-	log ""
-	log "########## $1 ##########"
-	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/test_conv.py" "$CONV" > "$C" 2>&1
-	log "---- wgsubmit(TASK_CON/DATA_ADDR) / buf out / done / perf + maxdiff ----"
-	dmesg | grep -E "rocket dbg (wgsubmit|done|perf)" > "$C" 2>&1
-	dmesg | grep -E "rocket dbg buf\[1\] out" | grep -vE "@0x|cover|fine" > "$C" 2>&1
-	log "########## END $1 ##########"
-	sleep 7
-}
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "mtask: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "dwalign: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/weight_sram 2>/dev/null
+	echo 0 > /sys/module/rocket/parameters/wg_force_tasknum 2>/dev/null
 	echo -1 > /sys/module/rocket/parameters/wg_task_pp 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
+	echo 6 > /sys/module/rocket/parameters/sptr_override 2>/dev/null   # 0x06 = PP_MODE off, engage on
 	for f in $(find /sys/devices -path '*npu*/power/control' 2>/dev/null); do echo on > "$f" 2>/dev/null; done
 	for f in $(find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null); do echo 120000 > "$f" 2>/dev/null; done
 
-	log "===== MULTI-TASK ORDER TEST: conv2d-cal, force=2 FIRST vs force=0 SECOND ====="
-	run "A  wg_force_tasknum=2 FIRST inference (TASK_CON=0x70002; byte-exact? = wall is confound)" 2
-	run "B  wg_force_tasknum=0 SECOND inference (baseline; if zero = order effect confirmed)" 0
-	log "===== DONE: Run A maxdiff is the verdict -- 1=wall refuted (confound), 127=wall real ====="
+	dmesg -c >/dev/null 2>&1
+	log ""
+	log "########## NO_DW_TILE MobileNet + sptr_override=0x06 (PP_MODE off) -- dw aligns? ##########"
+	log "sptr_override readback: $(cat /sys/module/rocket/parameters/sptr_override)"
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_NO_DW_TILE=1 python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+	log "---- post-op0 (1st=conv0, 2nd=dw1): are all 4 sp aligned now? ----"
+	dmesg | grep -E "rocket armdbg post-op0 UNIT" | head -3 > "$C" 2>&1
+	log "---- buf out (buf[1]=conv0 computes?, buf[3]=dw1 computes?) ----"
+	dmesg | grep -E "rocket dbg buf\[[13]\] out task=0 " | grep -vE "@0x|cover|fine" | head -4 > "$C" 2>&1
+	log "---- cnalive (exec_ever / ds) ----"
+	dmesg | grep -iE "cnalive" | head -2 > "$C" 2>&1
+	log "########## END ##########"
 	log ""
 }
 
