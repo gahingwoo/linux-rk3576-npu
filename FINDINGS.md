@@ -1,5 +1,36 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-02 (Path B) — routed around the multi-task wall, fixed two real bugs, and the depthwise turned out to be a wall of its own after all
+
+The plan was to never hand the hardware a multi-task job: the wide layers only tile because the on-chip
+buffer holds one row-window at a time, so emit **each row-tile as its own single-task job** (Mesa,
+`ROCKET_TILE_JOBS`) and let the kernel chain them. Single-task jobs engage reliably, so this should sidestep
+the multi-task engage wall. Chasing it down found two real bugs and then the truth about the depthwise.
+
+**Bug 1 — a double-free (heap corruption).** With every tile a separate job, the per-op input/output BO-handle
+arrays got freed once per tile-job in cleanup — an N-free for an N-tile layer. That corrupted the heap and
+hung the run (a userspace timeout, no output). It was a latent bug in the existing "spread" path, only ever
+triggered once tiled layers started using it. Fixed (each job owns its handle copies). After the fix, **conv0
+computes under Path B** (a real feature map, `core dt_wr=25088`) — so a submit of ~30 single-task jobs is
+fine; the hang was purely the double-free.
+
+**Bug 2 — a ping-pong split.** The single-task depthwise tile came up with its producer on buffer group 0 and
+its consumers on group 1, so the consumers read the empty half and wrote zero. The cause is a pointer-ping-pong
+enable bit that auto-advances the consumer pointer; arming the tile with that bit off (`S_POINTER=0x04`,
+executer-enable only) lined all four units up on group 0 — confirmed in the registers: `cna/core/dpu/rdma
+sp = 0x00010004`, all engaged, all aligned.
+
+**And the depthwise still drew zero.** Fully aligned, all four units engaged, reading its input — and the DPU
+wrote nothing (`dt_wr` never moved past conv0's 25088; the tile output stayed `0x00`). So the ping-pong split
+was a red herring: fixing it changed nothing. With both confounds removed — the multi-task engage *and* the
+ping-pong — what's left is exactly the wall from before: **the depthwise-mode op does not fire its output
+write as a single task, regardless of alignment, engagement, or operands.** The vendor's depthwise computes
+*only* as a multi-task job (per-task re-arm); ours won't engage multi-task. So the depthwise is blocked both
+ways — single-task, the DPU write never fires; multi-task, the units never engage — and both live below the
+registers. Path B routes around the engage wall for ordinary convolutions and fixed two genuine bugs, but it
+does not carry the depthwise. The one lever left is a hardware trace of what the vendor's DPU does per task in
+the multi-task path that a single task doesn't.
+
 ## 2026-07-02 — the two walls collapse to one: multi-task engage. The depthwise is not a separate wall; the gap is below observability, and the only untested difference left is firmware
 
 Added a per-unit engage-state dump to the kernel (each unit's `S_POINTER` [bit16 = executer engaged, low
