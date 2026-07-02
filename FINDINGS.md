@@ -1,5 +1,27 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-02 (live config) — the depthwise is fully, correctly configured and engaged, and still computes nothing. Not a config bug.
+
+Chasing the intuition that this is software, not silicon, I dumped the depthwise tile's *live* registers
+(what the hardware actually holds mid-run, not the command stream I send) and lined them up against a
+convolution that does compute. Everything is right:
+
+- **Output writer (DPU): configured** — real destination address, correct output geometry for the tile
+  (`0x4018=0xfea69000`, `0x4024=0x59`=89 rows). It is set up to write.
+- **Input engine (CNA): configured for depthwise** — the depthwise-mode bit is on (`0x100c=1`), the
+  convolution control and the weight byte count (`0x101c=0x240`=576, correct for this depthwise) are right.
+- **MAC array (CORE): configured** — output-channel count and the rest match.
+- Weights were DMA'd in, the units are engaged (the executer bit is set), and the input is being read.
+
+And the depthwise still writes nothing — an *exact* zero, not a wrong non-zero. A wrong non-zero would mean
+the MAC ran with the wrong setup; an exact zero means the MAC array did no work at all. So there is no
+visible configuration bug: every register the driver can read is correct and live. Two things this rules
+out for good: it isn't a config mistake, and it isn't the engage wall either — the depthwise tile *does*
+engage; engaging and computing are separate, and for the depthwise the second doesn't follow the first. The
+op is set up perfectly, wakes up, reads its input, and produces nothing. The vendor's depthwise computes
+only as a multi-task job; a single-task depthwise, however perfectly configured, does no MACs. That
+single-task-vs-multi-task line is the whole remaining mystery.
+
 ## 2026-07-02 (Path B) — routed around the multi-task wall, fixed two real bugs, and the depthwise turned out to be a wall of its own after all
 
 The plan was to never hand the hardware a multi-task job: the wide layers only tile because the on-chip
