@@ -1,5 +1,36 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-03 (later) — the multi-task ENGAGE wall is DOWN: dispatch a job as N sequential single-task kicks, not one task_number=N PC submit
+
+This supersedes the addendum below that concluded "both remaining walls sit below the register surface;
+the next real step is the NVDLA RTL." The engage wall did **not** need the RTL. It needed to stop asking
+the RK3576 PC to iterate the tasks itself.
+
+The RK3576 PC never engages the compute units for `task_number ≥ 2` (one OP_EN, PC walks the task array).
+A single task engages reliably (proven in replay: an isolated conv and an isolated depthwise both compute).
+So dispatch a multi-task job as **N sequential single-task kicks**: each kick `task_number = 1`, one OP_EN,
+advancing one task per DPU-done interrupt, all inside **one job** with no soft/CBUF reset and no iommu detach
+between kicks. Two lines in `rocket_job.c`: `next_task_idx++` (which re-arms the re-kick branch that was
+already in the DPU-done handler) and `PC_TASK_CON` task_number = 1. This is the mainline RK3588 model.
+
+Board result, MobileNet whole-graph submitted as one 29-task job:
+- Every kick engages — `exec_ever=0xf` (CNA+CORE+DPU+RDMA all set S_POINTER bit16), `rawor` error bits all 0,
+  `TASK_CON=0x00010001` (task_number=1), `DATA_ADDR` advancing through all 29 tasks. The re-kick fires.
+- conv0 (task 0) reads its external input (`top dt_rd=9408`, `wt_rd=96`), computes (`core dt_wr=25088`), and
+  writes a **real** output to DRAM: `buf[1] out task=0 iova=0xfeb2d000 distinct=235 nz=4092/4096`.
+
+The engage wall we had concluded was below the register surface is crossed in the kernel by reframing dispatch.
+
+What remains, now cleanly isolated and standing ALONE: the **conv0→layer1 data handoff**. task1 onward read
+nothing from DRAM (`top dt_rd=0`) and output all-zero (`distinct=1`), cascading to an empty final result
+(NPU Top-1 index 0 / conf 0 vs CPU 412). This is the same on-chip-buffer-persistence wall from the entry
+below — the chained layer's input never reaches it — but it is no longer entangled with engage, and it is
+**above** observability: conv0's output is already sitting in DRAM (`0xfeb2d000`, real), and mesa has already
+linked the chain (task N out iova == task N+1 in iova). The next lever is to make each intermediate task read
+its input from the previous task's DRAM output BO — the SPREAD-per-op path that already computes single layers
+correctly (dw112 `distinct=213`), now inside one engaging job. That is a mesa WG-packer / per-task input-address
+fix, not a register mystery. (Kernel: branch `rk3576-sequential-kick`, commits 86457835b + 718707939.)
+
 ## 2026-07-03 — the depthwise is not a silicon wall: the "computes nothing" was a stale on-chip-buffer reuse, and it reproduces with the vendor's own bytes
 
 This overturns the two 2026-07-02 entries below ("the depthwise is a wall of its own"). The way to
