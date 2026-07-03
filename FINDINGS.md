@@ -1,5 +1,48 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-03 — the depthwise is not a silicon wall: the "computes nothing" was a stale on-chip-buffer reuse, and it reproduces with the vendor's own bytes
+
+This overturns the two 2026-07-02 entries below ("the depthwise is a wall of its own"). The way to
+settle "is this our software or the silicon" was to stop generating command streams and instead replay
+the *exact bytes the vendor's stack submits*: capture one operation's payload at runtime (the command
+stream + input/weights/bias, byte-for-byte) and feed those same bytes through the mainline rocket driver.
+
+- A standalone depthwise (the vendor's captured dw112, tiled into 6 pieces), replayed as 6 single-task
+  jobs, **computes** — it engages, reads its input from DRAM (`dt_rd=20384`), and writes a rich output.
+  So the depthwise is **not** a silicon wall; "a single-task depthwise does no MACs" was wrong.
+- The multi-task version of the *same* bytes (one job, task_number≥2) still walls (never engages). So the
+  multi-task engage wall is real and lives in the kernel's PC drive — same bytes, only the submit grouping
+  differs.
+
+Then the real puzzle. In Mesa's Path B (each row-tile its own single-task job) conv0 computes but the
+depthwise after it reads nothing (`dt_rd=0`) and outputs zero. To isolate it cleanly I captured the
+vendor's 4-layer chain (conv0→dw1→pw1→dw2) and replayed the whole thing spread. The result is decisive:
+
+- conv0, which reads the **external input**, DMAs it (`dt_rd=9408`) and computes.
+- every **chained** layer, which reads a previous layer's **intermediate** output, reads nothing
+  (`dt_rd=0`) and produces nothing — the on-chip buffer ends up holding only conv0's output.
+
+This reproduces with the vendor's own bytes, so it is not a Mesa bug. And the chained depthwise's command
+stream is byte-identical to the standalone depthwise's (same buffer-reuse bit, off) yet one DMAs and the
+other doesn't. So whether a layer fetches from DRAM or reuses the on-chip buffer is **not in the command
+stream** — it's the on-chip buffer's entry-valid state. The vendor runs the whole graph as one submit, so
+each layer's input genuinely still *is* in the on-chip buffer from the previous layer, and reading it there
+(no DMA) is correct. Path B ends each layer as its own job, the buffer isn't persisted, the next layer
+reuses a stale/empty buffer and gets zero. **That is the whole conv0→depthwise wall.**
+
+Confirming it: a per-job on-chip-buffer reset (`rocket.cbuf_reset=2`) forces the chained layers to re-DMA
+— they go from `dt_rd=0` to `dt_rd=20384` and start writing. But that reset also disturbs the buffer's
+address-translation bank and the driver doesn't re-establish it per job, so every layer's output saturates
+(all `0x7f`/`0x80`); a stronger reset kills everything. Mechanism confirmed, blunt hardware reset can't fix
+it cleanly.
+
+The takeaway is architectural: this NPU is built for whole-graph execution, layers chained through the
+on-chip buffer. Path B (independent jobs, DRAM round-trips) fights that design — the chained-layer command
+streams want to read the on-chip buffer, and forcing a re-fetch needs a buffer invalidate the hardware only
+exposes via a reset that breaks address translation. So the way forward is the vendor's own: run the whole
+graph as one submit and crack the multi-task engage wall — now with the byte-exact replay as a tool to see
+exactly where the engage breaks.
+
 ## 2026-07-02 (live config) — the depthwise is fully, correctly configured and engaged, and still computes nothing. Not a config bug.
 
 Chasing the intuition that this is software, not silicon, I dumped the depthwise tile's *live* registers

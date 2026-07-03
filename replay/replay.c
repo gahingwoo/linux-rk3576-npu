@@ -237,6 +237,11 @@ int main(int argc, char **argv)
 		if (o[i]) nz++;
 		if (!seen[o[i]]) { seen[o[i]] = 1; distinct++; }
 	}
+	/* Persist the vendor(rknn)-computed output as the ground truth: this is the
+	 * one true reference for the SAME payload's rocket replay. Pull both files
+	 * and byte-compare -- non-degenerate is NOT correct; only cmp is. */
+	FILE *of = fopen("/tmp/rknn_out.bin", "wb");
+	if (of) { fwrite(o, 1, bo[out_bo].vsize, of); fclose(of); }
 	printf("OUT bo%d: distinct=%d nonzero=%d/%llu head=%02x %02x %02x %02x -> %s\n",
 	       out_bo, distinct, nz, (unsigned long long)bo[out_bo].vsize,
 	       o[0], o[1], o[2], o[3],

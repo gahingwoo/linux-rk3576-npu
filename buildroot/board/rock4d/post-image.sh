@@ -5,7 +5,7 @@ BINARIES="${BINARIES_DIR:-${1:?missing binaries dir}}"
 ROCKCHIP_BIN="${ROCKCHIP_BINARIES:-/home/parallels/Desktop/rock4d_package/binaries}"
 OUT="${BINARIES}/sdcard.img"
 
-UBOOT_IMG="${ROCKCHIP_BIN}/rock4d-sd-uboot.img"
+UBOOT_IMG="${UBOOT_IMG:-${ROCKCHIP_BIN}/rock4d-sd-uboot.img}"
 # Partition layout (MiB):
 #   0 –  16 : rock4d-sd-uboot.img  (idbloader + U-Boot)
 #  16 – 144 : FAT32 /boot  (128 MiB)

@@ -184,9 +184,9 @@ int main(int argc, char **argv)
 
 	/* Per task: locate its regcmd in the weights BO, remap the addresses it
 	 * references to rocket's IOVAs, and record the rocket task descriptor. */
-	struct drm_rocket_task tasks[8] = { 0 };
+	struct drm_rocket_task tasks[32] = { 0 };
 	int out_bo = -1, miss = 0;
-	for (uint32_t t = 0; t < sub_tnum && t < 8; t++) {
+	for (uint32_t t = 0; t < sub_tnum && t < 32; t++) {
 		uint8_t *te = ta + t * TASK_STRUCT_SIZE;
 		uint32_t regfg; uint64_t rc_v;
 		memcpy(&regfg, te + TASK_REGFG_OFF, 4);
@@ -222,20 +222,27 @@ int main(int argc, char **argv)
 	for (int i = 0; i < nbo; i++)
 		if (bo[i].created) fini_bo(fd, i);
 
-	/* in = weights + input (read); out = scratch + output (written) */
-	uint32_t in_h[2] = { bo[1].handle, bo[3].handle };
+	/* in = every data BO EXCEPT the write targets (read/mapped); out = the write
+	 * targets (bo2 intermediate pool + final output) with write-fences. A BO must
+	 * not appear in both lists (that stalled the jobs -> none completed). Mapping
+	 * all read BOs covers a chain's intermediates without the in==out deadlock. */
+	uint32_t in_h[32]; uint32_t in_n = 0;
+	for (int i = 0; i < nbo; i++)
+		if (i != task_bo && i != 2 && i != out_bo && bo[i].created)
+			in_h[in_n++] = bo[i].handle;
 	uint32_t out_h[2] = { bo[2].handle, bo[out_bo].handle };
+	uint32_t out_n = (out_bo == 2) ? 1 : 2;
 
-	struct drm_rocket_job jobs[8] = { 0 };
+	struct drm_rocket_job jobs[32] = { 0 };
 	uint32_t njob;
 	if (onejob) {
 		jobs[0].tasks = (uint64_t)(uintptr_t)tasks;
 		jobs[0].task_count = sub_tnum;
 		jobs[0].task_struct_size = sizeof(struct drm_rocket_task);
 		jobs[0].in_bo_handles = (uint64_t)(uintptr_t)in_h;
-		jobs[0].in_bo_handle_count = 2;
+		jobs[0].in_bo_handle_count = in_n;
 		jobs[0].out_bo_handles = (uint64_t)(uintptr_t)out_h;
-		jobs[0].out_bo_handle_count = 2;
+		jobs[0].out_bo_handle_count = out_n;
 		njob = 1;
 	} else {
 		for (uint32_t t = 0; t < sub_tnum; t++) {
@@ -243,9 +250,9 @@ int main(int argc, char **argv)
 			jobs[t].task_count = 1;
 			jobs[t].task_struct_size = sizeof(struct drm_rocket_task);
 			jobs[t].in_bo_handles = (uint64_t)(uintptr_t)in_h;
-			jobs[t].in_bo_handle_count = 2;
+			jobs[t].in_bo_handle_count = in_n;
 			jobs[t].out_bo_handles = (uint64_t)(uintptr_t)out_h;
-			jobs[t].out_bo_handle_count = 2;
+			jobs[t].out_bo_handle_count = out_n;
 		}
 		njob = sub_tnum;
 	}
@@ -283,5 +290,44 @@ int main(int argc, char **argv)
 	       out_bo, distinct, nz, (unsigned long long)bo[out_bo].vsize,
 	       o[0], o[1], o[2], o[3], tries,
 	       distinct > 2 ? "COMPUTED (non-degenerate)" : "DEGENERATE");
+
+	/* CHAIN diagnostic: dump EVERY created BO's stats, so a multi-layer replay
+	 * (conv0->dw1->pw1->dw2) shows each layer's output BO -- pinpointing WHERE the
+	 * chain dies (esp. dw1, the layer after conv0). The intermediate BOs are the
+	 * layer boundaries; a non-degenerate dw1-output BO = conv0->dw1 computed. */
+	for (int i = 0; i < nbo; i++) {
+		if (!bo[i].created || !bo[i].va) continue;
+		prep_bo(fd, i);
+		int bseen[256] = {0}, bd = 0, bnz = 0;
+		uint8_t *bv = bo[i].va;
+		for (uint64_t k = 0; k < bo[i].vsize; k++) {
+			if (bv[k]) bnz++;
+			if (!bseen[bv[k]]) { bseen[bv[k]] = 1; bd++; }
+		}
+		printf("  BO%d size=%-8llu distinct=%-3d nonzero=%-8d head=%02x %02x %02x %02x\n",
+		       i, (unsigned long long)bo[i].vsize, bd, bnz,
+		       bv[0], bv[1], bv[2], bv[3]);
+	}
+
+	/* The real verdict: byte-compare against the rknn(vendor)-computed ground
+	 * truth for the SAME payload (REPLAY_REF=/path/to/rknn_out.bin). "COMPUTED"
+	 * above only means non-zero -- a wrong tile offset also prints that. Only
+	 * this cmp proves the rocket path (SPREAD or ONEJOB) is byte-exact. */
+	const char *ref = getenv("REPLAY_REF");
+	if (ref) {
+		FILE *rf = fopen(ref, "rb");
+		if (!rf) { printf("VERDICT: no ref (%s)\n", ref); return 0; }
+		uint64_t i, diffs = 0, first = ~0ULL;
+		int rb;
+		for (i = 0; i < bo[out_bo].vsize && (rb = fgetc(rf)) != EOF; i++)
+			if ((uint8_t)rb != o[i]) { if (first == ~0ULL) first = i; diffs++; }
+		fclose(rf);
+		printf("VERDICT vs %s: %s (diffs=%llu/%llu)\n",
+		       ref, diffs ? "MISMATCH" : "BYTE-EXACT",
+		       (unsigned long long)diffs, (unsigned long long)bo[out_bo].vsize);
+		if (diffs)
+			printf("  first diff @%llu: rocket=%02x\n",
+			       (unsigned long long)first, o[first]);
+	}
 	return 0;
 }
