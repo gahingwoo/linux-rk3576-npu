@@ -1,37 +1,41 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# FORK A diagnostic (2026-07-03): does the per-job CBUF-A reset corrupt ANY
-# compute, or only the chain? Run a SINGLE conv (conv2d-cal, byte-exact vs CPU
-# without any reset) through mesa with rocket.cbuf_reset=2 and read the maxdiff
-# oracle (test_conv.py: NPU vs CPU byte-for-byte). No chain, no ONEJOB, no
-# enable_mask -> cannot hang.
-#   maxdiff small (~1) -> the reset is fine for a lone single-task compute; the
-#     chain saturation is chain-context-specific (reset timing vs the chained DMA).
-#   maxdiff large / output 0x7f -> the CBUF-A reset corrupts ANY compute (CORE
-#     left inconsistent) -> the fix must make the reset non-corrupting (CORE
-#     re-init after reset), a kernel change.
+# FORK C (2026-07-03): the chained layer's dt_rd=0 is CBUF entry-occupancy (the
+# previous layer left its bank staged). CBUF_CON0 FC_DATA_BANK (bits 8-10) is the
+# data-bank offset, currently 0 (vendor-matched). ROCKET_FC_BANK=N gives the
+# chained (dw/pw) layers a DIFFERENT bank so their input window isn't "already
+# there" -> the CNA should DMA fresh from 0x1088 (already points at the previous
+# layer's DRAM output). conv0 (firstconv path) is untouched. Mesa-side, no reset,
+# cannot hang.
+#   dw1 (buf[3]) perf top dt_rd > 0  -> the bank offset forced a fresh DMA (the
+#     hypothesis); if the output is also non-degenerate -> Path B is unblocked.
+#   dt_rd still 0 -> FC_DATA_BANK is not the reuse lever; the trigger is deeper.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
+MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+log() { echo "$@" > "$C"; }
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { echo "forka: no accel device" > "$C"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "forkc: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
-	echo -1 > /sys/module/rocket/parameters/enable_mask 2>/dev/null   # OFF (it wedges)
+	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
+	echo 0 > /sys/module/rocket/parameters/cbuf_reset 2>/dev/null
+	echo -1 > /sys/module/rocket/parameters/enable_mask 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
-	echo 2 > /sys/module/rocket/parameters/cbuf_reset 2>/dev/null     # the variable under test
 	for f in $(find /sys/devices -path '*npu*/power/control' 2>/dev/null); do echo on > "$f" 2>/dev/null; done
+	for f in $(find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null); do echo 120000 > "$f" 2>/dev/null; done
 
 	dmesg -c >/dev/null 2>&1
-	echo "" > "$C"
-	echo "===== FORK A diag: single conv2d-cal + cbuf_reset=2 -- does the reset corrupt a lone compute? =====" > "$C"
-	env TEFLON_LIB=/usr/lib/libteflon.so TEFLON_DEBUG=1 \
-		python3 "$NPU_DIR/test_conv.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	echo "---- output bytes (0x7f/0x80 = saturated; rich = correct) + perf ----" > "$C"
-	dmesg | grep -aE "rocket dbg buf\[[1-4]\] out task=0 |rocket dbg perf:|cbuf_reset:" | grep -avE "cover|fine|@0x" | head -6 > "$C" 2>&1
-	echo "===== DONE: maxdiff small = reset OK for single-task; maxdiff large = reset corrupts any compute =====" > "$C"
+	log ""
+	log "===== FORK C: MobileNet Path B + ROCKET_FC_BANK=1 -- does the dw DMA (dt_rd>0)? ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_TILE_JOBS=1 ROCKET_TILE_CBUF=1 ROCKET_TILE_SPTR=0xe ROCKET_FC_BANK=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+	log "---- per-layer buf out (buf[1]=conv0, buf[3]=dw1) + perf (top dt_rd = the answer) ----"
+	dmesg | grep -E "rocket dbg buf\[[1-8]\] out task=0 |rocket dbg perf:" | grep -vE "@0x|cover|fine" | head -8 > "$C" 2>&1
+	log "===== DONE: dw1 top dt_rd>0 = FC_BANK forced a fresh DMA; still 0 = deeper trigger ====="
 	sync
 }
 
