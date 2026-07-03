@@ -1,5 +1,31 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-03 (latest) — Fork A first move: the chain is no longer dead. Skip the per-kick pp_state_init and the on-chip buffer stays warm across layers — every chained layer now engages, DMAs, and computes non-zero (still saturating, but the wall became a slope).
+
+The chain needs the on-chip buffer warm across layers, which the sequential kicks were cooling. The suspect
+was pp_state_init: the kernel re-runs it (S_POINTER group reset + POINTER_PP_CLEAR + the degenerate DS1 default
+into both groups) at the head of EVERY kick, and the vendor never does this per task. POINTER_PP_CLEAR resets
+the ping-pong so a chained task reads a cleared group instead of the buffer the previous task wrote. And each
+task's own regcmd already arms its S_POINTER (mesa writes 0x1004 per task), so the first kick's pp_state_init
+is all that's needed for the cold-start engage.
+
+So: run pp_state_init only on the FIRST task of a job, skip it on the within-job re-kicks (rocket.wg_warm_chain).
+Board result, MobileNet whole-graph:
+- Engage is intact (exec_ever=0xf on every kick), conv0 still computes (distinct=239).
+- And for the FIRST time the chained layers are NOT flat zero. Where every layer after conv0 used to be
+  distinct=1 / all 0x00 (dead, no DMA, no MACs), they now engage and move: task 1 is uniform 0x80 (not 0x00),
+  task 3 is distinct=3 with real values (0x0d/0x7f/0x80), task 4 distinct=4; one chained layer shows
+  top dt_rd=50176 / wt_rd=72 (it DMA'd its input and weights) and core dt_wr jumped from 25088 to 100464
+  (4x the MACs). Data is flowing across layers now.
+
+It is not correct yet: the chained outputs saturate to the output zero-point (0x80/0x7f ≈ 0 after dequant), so
+they collapse to nothing over a few layers and the final result is still degenerate (Top-1 index 0). But this
+is the decisive shift the whole month was missing — keeping the on-chip buffer warm across the sequential kicks
+turned the conv0->chain wall from "dead, no compute" into "computes, wrong scale". The remaining problem is the
+saturation (a requant/scale issue on the chained layers, or only some layers reading the warm buffer), which is
+an ordinary calibration bug class, not a below-the-registers wall. (Kernel: branch rk3576-warmchain, commit
+d54b57d94, off rk3576-sequential-kick; rocket.wg_warm_chain=1.)
+
 ## 2026-07-03 (latest) — forcing a per-job NPU power-cycle to clear CBUF: it fires, but the power domain hangs on the way back up. Fork B (clear the on-chip buffer in software) is now fully exhausted.
 
 The chain needs a cold on-chip buffer per layer. cbuf_reset=1 can't invalidate it and cbuf_reset=2 corrupts

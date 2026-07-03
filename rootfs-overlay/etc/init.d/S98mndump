@@ -1,15 +1,16 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# PATH 1+2 on the RIGHT target (2026-07-03): the natural per-op multi-task dw
-# ALREADY engages (ever_bit16=0xf) -- its wall is CBUF-stale, not engage. The
-# REAL multi-task ENGAGE wall (exec_ever=0x0) is the WHOLE-GRAPH path (one job,
-# task_count=~29, PC iterates but units never engage). Test the NVDLA reverse
-# op_enable order THERE: ROCKET_WHOLE_GRAPH=1 + ROCKET_REV_OPEN=1. Whole-graph
-# also chains layers via CBUF, so if the units engage the whole net computes.
-#   exec_ever 0x0 -> 0xf (+ Top-1 near CPU's 653) -> reverse op_enable cracks the
-#     whole-graph engage wall -> MobileNet end-to-end.
-#   exec_ever still 0x0 -> order isn't the WG-engage lever either.
-# multitask_poll=0 (first PC_DONE) so a stalled WG PC cannot hang the board.
+# FORK A warm-chain test (2026-07-03). wg_warm_chain=1: within one whole-graph
+# job, the FIRST kick (conv0) runs pp_state_init to engage, and the re-kicks
+# (task 1..N) SKIP it -- so the ping-pong pointers stay where the previous task
+# left them and the on-chip CBUF stays warm across layers instead of being
+# cleared (POINTER_PP_CLEAR) between kicks. Each task's regcmd arms its own
+# S_POINTER, so the first kick's pp_state_init is enough for engage.
+#   chained-layer output distinct>1 (reads the warm CBUF the prev layer wrote) +
+#     Top-1 near CPU 412 = keeping CBUF warm across kicks carries the chain. WIN.
+#   chained still distinct=1 = the inter-kick teardown that cools CBUF is NOT
+#     (only) pp_state_init -> next lever = the OP_EN 1->0 cycle / the ~30us gap.
+# perjob_ppinit=1 (first kick still arms). force_powercycle not on this branch.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -19,24 +20,22 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "wg: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "warmchain: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/cbuf_reset 2>/dev/null
 	echo -1 > /sys/module/rocket/parameters/enable_mask 2>/dev/null
 	echo 0 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/wg_open 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/perjob_ppinit 2>/dev/null
-	for f in $(find /sys/devices -path '*npu*/power/control' 2>/dev/null); do echo on > "$f" 2>/dev/null; done
-	for f in $(find /sys/devices -path '*npu*/power/autosuspend_delay_ms' 2>/dev/null); do echo 120000 > "$f" 2>/dev/null; done
+	echo 1 > /sys/module/rocket/parameters/wg_warm_chain 2>/dev/null
 
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== WG + REV_OPEN + perjob_ppinit=1 (ARM S_POINTER, removes the unarmed confound) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_REV_OPEN=1 \
+	log "===== FORK A: wg_warm_chain=1 (first kick arms, re-kicks keep CBUF warm) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-	log "---- WG engage: exec_ever + wgsubmit(task_count/DATA_ADDR) + buf out + perf ----"
-	dmesg | grep -aE "rocket dbg exec: ever_bit16|rocket dbg wgsubmit|rocket dbg buf\[[1-4]\] out task=0 |rocket dbg perf:" | grep -avE "@0x|cover|fine" | head -12 > "$C" 2>&1
-	log "===== DONE: exec_ever=0xf + Top-1~653 = WG engage cracked -> MobileNet end-to-end ====="
+	log "---- exec_ever + per-task output distinct + perf (chained compute?) ----"
+	dmesg | grep -aE "rocket dbg exec: ever_bit16|rocket dbg buf\[[1-6]\] out task=|rocket dbg perf:" | grep -avE "@0x|cover|fine" | head -30 > "$C" 2>&1
+	log "===== DONE: chained distinct>1 = warm-CBUF-across-kicks carries the chain ====="
 	sync
 }
 
