@@ -55,6 +55,16 @@ the on-chip buffer's entry-occupancy *state*, left by the previous layer, with n
 That is where this stops being crackable by knob-sweeping: the fix needs the CBUF entry-management
 semantics (the NVDLA CDMA/CBUF spec this NPU derives from), not another guess.
 
+The other wall — whole-graph, where the layers *do* chain through the on-chip buffer — has its own
+below-observability stop: the multi-task program counter iterates the tasks but the compute executers
+never start (the engage bit never sets). The NVDLA programming guide gives one concrete rule — op_enable
+must be issued in reverse (downstream-first) order — but reversing it changed nothing; and once the
+per-job pointer init is on, the geometry *does* latch into the executer's group and the pointer *is*
+armed, yet the executer still won't start. So both remaining walls (the buffer-reuse trigger, and the
+executer start) sit below the register surface the online NVDLA docs describe; the next real step is the
+NVDLA RTL, not another register guess. Everything up to here — the depthwise being real, the stale-buffer
+mechanism, the exact walls — is characterised and reproducible.
+
 ## 2026-07-02 (live config) — the depthwise is fully, correctly configured and engaged, and still computes nothing. Not a config bug.
 
 Chasing the intuition that this is software, not silicon, I dumped the depthwise tile's *live* registers
