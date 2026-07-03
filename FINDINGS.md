@@ -1,5 +1,37 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-03 (latest) — forcing a per-job NPU power-cycle to clear CBUF: it fires, but the power domain hangs on the way back up. Fork B (clear the on-chip buffer in software) is now fully exhausted.
+
+The chain needs a cold on-chip buffer per layer. cbuf_reset=1 can't invalidate it and cbuf_reset=2 corrupts
+translation, so the remaining idea was the cleanest reset of all: a full NPU power-cycle between layers, which
+clears the CBUF SRAM (the next layer starts cold like conv0) AND re-inits the MMU through the resume path's
+rk_iommu_enable (force_reset passes on a freshly powered MMU, no -EFAULT). Run each layer as its own job and
+force a synchronous runtime-suspend at each completion (added a `force_powercycle` module param, default off).
+
+It took three tries to make the power-cycle actually happen, and the lessons are worth keeping:
+- `pm_runtime_put_sync` did nothing: with autosuspend enabled it only runs the idle path and re-arms the 50 ms
+  timer, which mark_last_busy keeps pushing out under back-to-back jobs — the NPU powered off once in 185 jobs.
+- Even ordering the put before the fence signal and bypassing the suspend's is_idle check wasn't enough — the
+  scheduler credits the next job and its pm_runtime_get races the put. The fix is `pm_runtime_put_sync_suspend`
+  (bypasses autosuspend), done BEFORE signalling the fence so, with credit_limit=1, no next-job get can race it.
+- With that, the power-cycle finally fires: at the first job's completion the log shows put_sync_suspend ->
+  "rpm: suspend" -> the genpd printing `npu0 -> OFF`, `npu1 -> OFF`, `npu0 -> ON`.
+
+And then the board hangs, dead, right there. It wedges at `npu0 -> ON` — *before* the device runtime_resume
+callback runs (its first dev_info never prints), so the hang is in the genpd power-ON of the NPU domain, below
+the rocket driver. The tell is `npu1 -> OFF`: powering down core 0 cascades the *parent* NPU power domain off
+(taking core 1 with it), and bringing it back up immediately wedges on the power-ack. The vendor never powers
+the NPU down mid-inference — it holds the whole graph on one powered session — so this rapid off/on path is
+unexercised silicon, and it doesn't come back. force_powercycle=1 hangs the board every boot; default 0 is
+untouched and safe.
+
+So the "cold buffer per layer" hypothesis is still unproven (we hang before the next layer computes), but every
+software lever to reach it is now spent: cbuf_reset=1 (no-op), cbuf_reset=2 (breaks translation), power-cycle
+(hangs the power domain). Fork B is closed. The way forward is Fork A — one continuous PC submit so the on-chip
+buffer stays warm across layers the way the vendor's does — which means cracking the multi-task PC engage the
+sequential kicks routed around. (Kernel: branch rk3576-powercycle, commits 22751c4a9 + 5619e39bd + 6aeba36a6,
+kept for reference; DANGER: force_powercycle=1 hangs the board.)
+
 ## 2026-07-03 (latest) — the chain break is NOT a Mesa bug: our chained-layer regcmd is byte-identical to the vendor's, and the vendor chains layers through DRAM. The wall is CBUF continuity, which the sequential kicks break.
 
 After the sequential-kick engage win (below), the whole graph still breaks conv0->layer1. To settle whether
