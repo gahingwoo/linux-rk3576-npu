@@ -43,6 +43,15 @@ exposes via a reset that breaks address translation. So the way forward is the v
 graph as one submit and crack the multi-task engage wall — now with the byte-exact replay as a tool to see
 exactly where the engage breaks.
 
+Two direct fixes tried and ruled out. Forcing the chained layer to re-fetch with a per-job on-chip-buffer
+reset corrupts *any* compute, not just the chain — a lone conv goes from byte-exact to maxdiff 255 —
+because the reset disturbs the buffer's address translation and re-establishing it dies (`-14`). And
+writing the vendor's ENABLE_MASK from the CPU to force the multi-task engage just hangs the board (that
+register is already written by the command stream, so a raw CPU write to it is redundant and wedges the
+bus). So neither the reset nor the enable-mask is the lever. The one idea left, untried: the chained
+layer's input address already points at the previous layer's DRAM output, so giving it a fresh on-chip
+buffer bank — instead of the previous layer's — should make it DMA that address on its own, no reset.
+
 ## 2026-07-02 (live config) — the depthwise is fully, correctly configured and engaged, and still computes nothing. Not a config bug.
 
 Chasing the intuition that this is software, not silicon, I dumped the depthwise tile's *live* registers
