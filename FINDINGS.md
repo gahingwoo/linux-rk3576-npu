@@ -1,5 +1,47 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-03 (latest) — the chain break is NOT a Mesa bug: our chained-layer regcmd is byte-identical to the vendor's, and the vendor chains layers through DRAM. The wall is CBUF continuity, which the sequential kicks break.
+
+After the sequential-kick engage win (below), the whole graph still breaks conv0->layer1. To settle whether
+that is our command stream or the dispatch, I parsed the vendor's own captured 24-task chain (bo00..bo04 +
+meta) offline and diffed it against what we emit and against the live CNA registers on the board.
+
+Two things fell out, both decisive:
+
+- The vendor chains layers through **DRAM**, not a magic on-chip path. Every intermediate activation lives in
+  one 2 MB buffer (bo2); each layer's CNA input address (reg 0x1088) points at a real offset in bo2, and the
+  layer-boundary tasks are *fresh* reads (no CBUF-reuse bit: 0x1038=0x7, 0x103c low half 0), while only the
+  within-layer tiles reuse CBUF (0x1038=0x80000007). CBUF is far smaller than 2 MB, so activations genuinely
+  round-trip DRAM between layers.
+- Our chained-layer regcmd is **byte-identical** to the vendor's. Replaying the vendor's exact task-1 bytes,
+  the live CNA registers read back equal to the capture (0x100c=1, 0x103c=0x00380000, 0x1040=0x14000000,
+  0x1044=0x00700038, 0x1090=0x1c0, 0x1094=0x3100, 0x1098=0x27d0), with 0x1088 correctly remapped to a
+  filled, IOMMU-mapped buffer. And Mesa's whole-graph submit already puts every intermediate tensor in the
+  BO set (as an output; the producer's output tensor and the consumer's input tensor are the same aliased
+  BO), so the input is mapped and filled. So it is not the command stream, not the addresses, not the mapping.
+
+What's left is the only thing that differs: **execution context.** conv0 is task 0 of the job — a cold start —
+and it DMAs its input (`dt_rd=9408`). Every task that is *not* first in the job skips its input DMA
+(`dt_rd=0`) and reads an empty on-chip buffer, producing zero. The CNA treats a non-first task's input as
+"already staged in CBUF by the previous task." In the vendor's **continuous** single PC submit the CBUF
+really is warm from the previous task, so skipping the DMA and reading CBUF is correct; the 2 MB DRAM buffer
+is the spill for what CBUF can't hold. Our **sequential kicks** put a full teardown between tasks
+(pp_state_init's POINTER_PP_CLEAR, the OP_EN 1->0 cycle, ~30 µs of gap), so the CBUF is "warm-looking but
+empty" and the skipped DMA reads nothing.
+
+So the chain needs CBUF continuity, and sequential kicks (which we needed for *engage*) are in tension with
+it. Confirming the tension from the other side: forcing the re-DMA with a per-job on-chip-buffer reset does
+work but is coupled to address translation — cbuf_reset=1 (control/H only, IOMMU-safe) is harmless but does
+NOT invalidate the "staged" state (chained layers still `dt_rd=0`, conv0 still computes, no saturation);
+cbuf_reset=2 (touches the CBUF AXI/MMU bank) does force the re-DMA but corrupts translation and saturates.
+The CBUF-valid invalidate and the MMU bank are the same reset domain.
+
+Net: the way forward is the vendor's — one continuous PC submit so the CBUF stays warm across layers — which
+means cracking the multi-task PC engage (the wall the sequential kicks routed *around*), now knowing that
+single-task arming engages and that continuity is what the chain actually needs. Forcing per-task DRAM reads
+in the kicked regime is the other fork, but every software CBUF-invalidate lever there is exhausted or breaks
+translation.
+
 ## 2026-07-03 (later) — the multi-task ENGAGE wall is DOWN: dispatch a job as N sequential single-task kicks, not one task_number=N PC submit
 
 This supersedes the addendum below that concluded "both remaining walls sit below the register surface;
