@@ -1,22 +1,19 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 CBUF audit_all (2026-07-04). geom_both refuted config-latch: dw1's real
-# config forced into both PP-groups still MACs zero. The only stage between the
-# CNA DMA and the CMAC is the CBUF, so the break is CNA->CBUF (dw1's operands
-# never land in the CBUF bank the CMAC reads) or CBUF->CSC->CMAC (in CBUF, CSC
-# never consumes). rocket.audit_all dumps a per-task CBUF snapshot (16x64KB
-# windows, PRE + POST-with-changed-windows) plus each layer's CBUF_CON regcmd
-# decode -- for EVERY kick, so dw1 (out=0xfea69000) is captured, not just conv0.
-#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1 = dw1 reads
-#   its input (dt_rd=20384).
-#   WATCH per task "out=0x........":
-#     - conv0 out=0xfeb2d000: POST changed[...] non-empty (data staged, computes).
-#     - dw1   out=0xfea69000: POST changed[...] ==>
-#         * non-empty  => dw1's data DID reach CBUF -> break is CBUF->CMAC (CSC
-#           never consumed) -> NBUF ruled out, pivot CSC/CMAC arm.
-#         * empty [none] => dw1's data NEVER staged -> break is CNA->CBUF ->
-#           CNA->CBUF write is the cold-start-gated step (NBUF/bank re-arm).
-#     - CBUF_CON regcmd DBANK/DENTRIES conv0 vs dw1: does bank alloc differ.
+# RK3576 geom_all A/B (2026-07-04). CBUF audit pinned the break at CBUF->CMAC
+# (dw1's data reaches CBUF, CMAC still zero). geom_both proved the arm is NOT a
+# CNA/CORE config reg (dw1 stayed 0, conv0 degraded 239->111 = CPU writes reach
+# the executer). geom_all is the exhaustive twin: CPU-write EVERY regcmd config
+# target incl. the DPU(0x4xxx)/RDMA(0x5xxx) blocks geom_both skipped, deciding
+# whether the arm is ANY regcmd config register or none at all.
+#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1. The all-tasks
+#   readback prints one "out task=N" line per layer.
+#   RUN A  geom_all=0 (baseline): conv0 (out task=0) distinct>200, dw1 (task=1)=1.
+#   RUN B  geom_all=1 (THE TEST): watch dw1 (out task=1, iova 0xfea69000).
+#            - dw1 distinct>1 => arm WAS a DPU/RDMA regcmd reg the PC never latched.
+#            - dw1 distinct=1 => arm is NOT any regcmd reg => cold-start internal
+#              state; the regcmd-register line is closed.
+#            - conv0 drops => geom_all perturbs conv0 too (like geom_both did).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -27,7 +24,7 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "cbuf-audit: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "geom_all: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
 	# ---- regime: seq-kick + warm-chain (dw1 reads its input here) ----
@@ -41,18 +38,25 @@ start() {
 	echo 0 > $P/wg_continuous 2>/dev/null
 	echo 0 > $P/chain_task_number 2>/dev/null
 	echo 0 > $P/geom_both 2>/dev/null
-
-	# ---- CBUF audit for EVERY kick (per-task snapshots incl. dw1) ----
+	echo 0 > $P/audit_all 2>/dev/null
 	echo 0 > $P/audit_arm 2>/dev/null
-	echo 1 > $P/audit_all 2>/dev/null
 
+	# ---- RUN A: geom_all=0 (baseline) ----
+	echo 0 > $P/geom_all 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== CBUF-AUDIT: seq-kick, audit_all=1 (per-task CBUF PRE/POST) ====="
+	log "===== GEOM_ALL RUN A: geom_all=0 (baseline seq-kick) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	log "===== CBUF-AUDIT DONE: match out=0xfea69000 (dw1) POST changed[...] -> CNA->CBUF vs CBUF->CMAC ====="
+	# ---- RUN B: geom_all=1 (THE TEST) ----
+	echo 1 > $P/geom_all 2>/dev/null
+	log ""
+	log "===== GEOM_ALL RUN B: geom_all=1 (CPU-write EVERY regcmd config reg incl DPU/RDMA) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	log "===== GEOM_ALL DONE: dw1 'out task=1' distinct>1 in B = arm was a DPU/RDMA regcmd reg; still 1 = not any regcmd reg ====="
 	sync
 }
 

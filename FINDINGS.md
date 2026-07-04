@@ -1,5 +1,28 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (geom_all CLOSES the regcmd-register line — the chained-layer CMAC arm is NOT any regcmd register. dw1 stays distinct=1 with the ENTIRE regcmd config (88 CNA + 8 CORE + 67 DPU + 20 RDMA) CPU-forced, and conv0 CRASHES to distinct=1 (uniform 0xfe). Not CBUF data, not any register -> it is a cold-start internal hardware context.)
+
+Board A/B, seq-kick + warm-chain, rocket.geom_all=1 (kernel branch rk3576-geom-all 7cc4032e1: CPU-write
+EVERY regcmd config target -- CNA/CORE into both PP groups + DPU/RDMA once via the driver's dpu_iomem/
+dpu_rdma_iomem, skipping the 0x81/0xf008 broadcast and per-block S_POINTER/OP_EN). geom_all fired,
+logging "wrote 88 CNA + 8 CORE (both groups) + 67 DPU + 20 RDMA regs (skipped 0 broadcast)" per task:
+- **RUN A geom_all=0:** conv0 (task=0) distinct=240, dw1 (task=1) distinct=1. Baseline.
+- **RUN B geom_all=1:** conv0 distinct=**1** (min=fe max=fe = uniform 0xfe -- geom_all's out-of-sequence
+  DPU/RDMA writes wrecked conv0's compute), dw1 (task=1) distinct=**1** (unchanged).
+- **Verdict:** CPU-forcing the ENTIRE regcmd config (CNA/CORE/DPU/RDMA, every block) does NOT make the
+  chained layer compute, and it corrupts conv0 -- so the CPU writes reach the executer, yet no register
+  value is the miss. **The chained-layer CMAC arm is NOT any regcmd register. The regcmd-register line is
+  CLOSED.**
+- **Where this leaves the three exclusions:** (1) not CBUF data (dw1's data reaches the CBUF); (2) not any
+  regcmd register (CNA/CORE/DPU/RDMA all CPU-forced, dw1 still 0); (3) => the differentiator between conv0
+  (cold-start) and dw1 (chained) is a **cold-start internal hardware CONTEXT** established only for the
+  first task after NPU (re)init, not reproducible by any register write.
+- **NEXT:** the remaining routes are structural, not register-level. (a) per-layer true cold-start (full
+  NPU re-init/reset between layers) -- a minefield (rekick_reset=2 crashed, soft_reset irrelevant,
+  force_powercycle hangs); (b) read the RK3588 open-rocket chained path (Tomeu's RK3588 runs int8
+  MobileNet byte-correct, so its task 2+ DO compute) and find the one RK3576 delta -- the "adapt not RE"
+  route, likely the most tractable.
+
 ## 2026-07-04 (CBUF audit_all pins the break at CBUF->CMAC, NOT CNA->CBUF. dw1's real data DOES reach the CBUF (6 windows changed PRE->POST, nz 714->1023) yet the CMAC outputs zero -> NBUF is RULED OUT, the break is downstream of CBUF staging. CBUF_CON live=0x44 identical for conv0 and dw1; the CNA rawor CSC bit is 0 for BOTH so it does not pin CSC.)
 
 Board, seq-kick + warm-chain, rocket.audit_all=1 (per-task 16x64KB CBUF windows PRE/POST + changed-window
