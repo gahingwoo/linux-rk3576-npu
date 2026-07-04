@@ -1,5 +1,43 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork B — THE UNIFICATION: only the cold-start task does MACs. Every subsequent task, whether a sequential re-kick or a multi-task PC iteration, engages and loads its operands but does NO MACs. dw/pw/weight-fetch are red herrings.)
+
+Picked B (make the sequential model correct) and mapped the per-task output of the working sequential-kick run
+(RUN 1, MobileNet whole-graph, 29 tasks). The output `distinct` (a proxy for "did it compute") is decisive:
+
+| task | layer | 0x100c mode | exec_ever | wt_rd (top) | out distinct |
+|------|-------|-------------|-----------|-------------|--------------|
+| 0 | conv0 (COLD start) | 0x2000a006 firstconv | 0xf | 96 | **239 (computes)** |
+| 1 | dw1 | 0x1 dw-mode | 0xf | 36 | 1 (degenerate) |
+| 2 | pw1 | 0x0 standard | 0x0 | 0 | 2 |
+| 3 | dw2 | 0x1 dw-mode | 0xf | 128 | 3 |
+| 4 | pw2 | 0x0 standard | 0x0 | 0 | 4 |
+| 5 | dw3 | 0x1 dw-mode | 0xf | 72 | 2 |
+| 6.. | rest | | | 0 | 1 (chain goes quiet) |
+
+**Only task 0 (the cold-start conv0) actually does MACs (distinct=239). Every task after it — depthwise AND
+pointwise alike — produces a degenerate output (distinct 1–4), no matter that the dw's engage (exec_ever=0xf)
+and fetch weights (wt_rd=36/128/72).** So the whole "pointwise doesn't fetch weights / standard-mode doesn't
+engage" line is a **red herring**: the dw fetches weights and engages and STILL produces nothing; the pw's
+exec_ever=0 and wt_rd=0 don't matter because even a fully-engaged weight-fetching dw computes nothing. **The
+real split is cold-start vs everything-after, not dw vs pw.**
+
+This UNIFIES the two walls into one:
+- **Sequential model**: only the first kick (cold-start conv0) does MACs; every re-kick after it is degenerate.
+- **Continuous model**: task 0 is the cold start yet its CACC never commits (dt_wr=0) — the multi-task commit
+  gate sits ON TOP, so not even the cold start computes there.
+- **Same root** (= the git-HEAD "single-task-vs-multi-task line is the whole remaining mystery"): the CMAC only
+  fires on the FIRST task of a fresh HW context. Some state the cold start runs on is consumed/spoiled and not
+  restored for later tasks. Our sequential kicks tear down between tasks (OP_EN 1→0 + S_POINTER re-arm +
+  INT_CLEAR + perf-counter clear, even with warm-chain skipping pp_state_init); the vendor's continuous PC
+  submit has NO teardown between tasks, so every layer runs in one warm context and computes. warm-chain earlier
+  got the later layers to engage + DMA but NOT to do MACs — this is exactly why.
+
+So B has no cheap pw-config win; B and A converge on one question: **how to make a non-cold-start task do MACs.**
+NEXT (this session): find precisely which per-kick teardown step kills the MACs — bisect the between-kick
+sequence (OP_EN 1→0 vs leave high; S_POINTER re-arm vs leave; INT_CLEAR; perf clear) to see which one, when
+removed, lets task 1 compute (distinct>10). That isolates the state the cold start consumes.
+
 ## 2026-07-04 (Fork A experiment 2: op_en-value fork CLOSED; the multi-task submit is byte-identical to the vendor's, so the wall is not in the registers — the RK3576-specific piece rocket lacks is cache_sgt/NBUF-backed operands.)
 
 Read the vendor rknpu driver end-to-end to find what a task_number=N submit does that we don't:
