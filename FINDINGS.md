@@ -1,5 +1,25 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Lead A [cache_sgt/NBUF] is a DEAD END — verified: the vendor chains layers through a 2 MB DRAM intermediate, not NBUF. So the sole mechanism that makes chained layers compute is the continuous PC submit, which walls for us. Next: the one untried Fork A lever — IRQ-driven completion + per-task int_mask instead of PC_DONE polling.)
+
+Before building the (large) cache_sgt machinery, checked whether the vendor actually puts intermediates on-chip.
+The vendor MobileNet capture (dirty/rknpu_replay/meta.txt): `bo idx=2 dma=0xffde1000 size=2158592` — the
+intermediate activation buffer is **2.06 MB, DRAM-backed** (a normal 0xffde1000 IOVA), which cannot fit in the
+1 MB NBUF; no BO in the capture is NBUF/cache-backed. So **the vendor chains layers through DRAM exactly as we
+do; cache_sgt/NBUF is orthogonal to the chained-layer-MAC wall.** Lead A is dead. The vendor's chained layers
+compute purely because of the **continuous PC submit** (one job, task_number=24, the PC managing the CBUF
+pipeline task-to-task) — the operand location (DRAM) is identical to ours. And the continuous submit is exactly
+what walls for us (Fork A: task_number≥2 → task 0's CACC never commits, PC wedges). So **"chained layers don't
+MAC" and "continuous submit walls" are one wall: the PC-managed CBUF pipeline of the continuous submit.**
+
+The one Fork A lever never tried: the vendor completes by **interrupt** — it enables the per-task int_mask
+(0x300 = the DPU-done bits) in INTERRUPT_MASK and waits on int_status; our driver polls PC_DONE (bits 28/29,
+which are read-only in INTERRUPT_MASK on RK3576) with an hrtimer and never services a per-task IRQ. If the PC's
+task-to-task advance is gated on the per-task DPU-done interrupt being raised/serviced, then polling PC_DONE
+without servicing that interrupt would stall the PC after task 0 — which is exactly the wedge we see. NEXT:
+implement the vendor's IRQ-driven completion (per-task int_mask, service the NPU IRQ, advance on int_status) and
+re-test the continuous submit.
+
 ## 2026-07-04 (Fork B — the resume soft-reset is NOT the MAC-enabler [REFUTED], the reset-per-layer fix CRASHES, and a self-check debunks the "bytes-vs-context" pivot: the "vendor dw computes" evidence was an EXTERNAL-INPUT dw, not a chained layer. No chained/later layer has ever computed on this open stack, in any dispatch mode.)
 
 Two board runs + one offline self-check, all pointing the same way:
