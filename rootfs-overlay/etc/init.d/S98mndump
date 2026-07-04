@@ -1,18 +1,21 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 conv0_twice (2026-07-04). geom_all closed the regcmd-register line; the
-# RK3588-vs-RK3576 diff shows the per-task register sequence is byte-identical,
-# so the chained-layer wall is a cold-start internal CONTEXT (position), not a
-# register. conv0_twice nails position directly: after the whole seq-kick job
-# completes, re-run task 0 (conv0) ONE more time with NO reset/re-init, then
-# finalise. Same regcmd + same external input; only difference = it is no longer
-# the first-task-after-NPU-init.
+# RK3576 open_high A/B (2026-07-04). Position is the gate (conv0_twice: 2nd conv0
+# core dt_wr=63 vs 25088). RK3588-vs-RK3576 diff: the ONLY per-kick deviation is
+# our seq-kick pulsing PC OP_EN 1->0 AT SUBMIT (OP_EN=0 during execution), vs
+# upstream leaving OP_EN HIGH through execution and clearing at completion.
+# open_high tests that: leave OP_EN high, complete on DPU-done (bits 8/9), and a
+# 300ms poll cap is the unconditional safety net (no hang -> reset -> iommu death).
 #   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1.
-#   WATCH the LAST "out task=0 iova=0xfeb2d000" line (right after the log line
-#   "rocket conv0_twice: re-running task 0"):
-#     - 2nd conv0 distinct=1 (1st was ~240) => PURE POSITION: the arm is consumed
-#       by the first-after-init task, independent of layer/data. Decisive.
-#     - 2nd conv0 still ~240 => position is NOT the gate; something else re-arms.
+#   ORACLE = per-task "rocket dbg perf: ... core[dt_wr=..]" (NOT distinct -- stale).
+#   RUN A  open_high=0 (baseline): conv0 core dt_wr~25088, dw1 (task1) dt_wr~63.
+#   RUN B  open_high=1 (THE TEST): watch dw1+later tasks' core dt_wr.
+#            - dt_wr >> 63 (thousands) for task>=1 => OP_EN-high was the per-task
+#              arm. Then check infer.py Top-1.
+#            - dt_wr still ~0/63 => last software-structural diff ruled out; arm is
+#              below sw level (NVDLA CSC/CMAC RTL / RK3576 quirk).
+#            - "seq-kick poll TIMEOUT" lines => report OP_EN/PC_DONE at cap (did the
+#              DPU-done completion take over?).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -23,7 +26,7 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "conv0_twice: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "open_high: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
 	# ---- regime: seq-kick + warm-chain ----
@@ -38,17 +41,26 @@ start() {
 	echo 0 > $P/chain_task_number 2>/dev/null
 	echo 0 > $P/geom_both 2>/dev/null
 	echo 0 > $P/geom_all 2>/dev/null
+	echo 0 > $P/conv0_twice 2>/dev/null
 	echo 0 > $P/audit_all 2>/dev/null
 	echo 0 > $P/audit_arm 2>/dev/null
 
-	echo 1 > $P/conv0_twice 2>/dev/null
+	# ---- RUN A: open_high=0 (baseline) ----
+	echo 0 > $P/open_high 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== CONV0_TWICE: seq-kick, re-run task 0 after job completes ====="
+	log "===== OPEN_HIGH RUN A: open_high=0 (baseline submit-pulse) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	log "===== CONV0_TWICE DONE: last 'out task=0 0xfeb2d000' (after 're-running task 0') distinct=1 = PURE POSITION ====="
+	# ---- RUN B: open_high=1 (THE TEST) ----
+	echo 1 > $P/open_high 2>/dev/null
+	log ""
+	log "===== OPEN_HIGH RUN B: open_high=1 (OP_EN high, DPU-done completion) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	log "===== OPEN_HIGH DONE: compare per-task core[dt_wr] A vs B; dw1 dt_wr>>63 in B = OP_EN-high armed it ====="
 	sync
 }
 

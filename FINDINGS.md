@@ -1,5 +1,31 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (open_high (OP_EN-high, upstream RK3588 model) REFUTED — dw1's output BO is distinct=1 in BOTH open_high=0 and =1, no completion timeout. The last per-kick structural difference from RK3588 did not arm the chained layer. CAVEAT/loose-end: the per-completion core dt_wr counters show large early values (25088->45248->50176->90944->100352) that don't square with "only conv0 computes"; core dt_rd is clearly cumulative, so dt_wr is likely a cumulative/dirty-counter artifact, but this isn't 100% nailed. open_high shifted the collapse point by one completion (A idle at #6, B does one more real read+write).)
+
+Board A/B, seq-kick + warm-chain, rocket.open_high (kernel branch rk3576-openhigh 5f404abb8: drop the
+submit OP_EN=0 pulse, leave OP_EN high through execution, complete on DPU-done bits 8/9; unconditional
+300 ms poll cap). RUN A open_high=0 vs RUN B open_high=1:
+- **dw1 (task=1) output BO 0xfea69000 = distinct=1 in BOTH A and B** (all 0x00 or all 0x80 zero-point).
+  The all-tasks readback -- the direct read of dw1's declared output -- is empty either way. **open_high
+  did not unlock the chained layer.** No "seq-kick poll TIMEOUT" fired (completion worked; the DPU-done
+  path/poll completed within the cap), so the poll-cap safety net held without engaging.
+- **Verdict: the OP_EN-high (upstream) model is refuted as the per-task arm.** Together with the
+  byte-identical per-kick register sequence and the already-matching completion handshake, the RK3588 ->
+  RK3576 software-structural per-kick line is essentially exhausted.
+- **CAVEAT (unresolved):** per-completion core dt_wr = 25088, 25088, 45248, 50176, 90944, then 63... (A)
+  / ...100352 then 63 (B). Large values for the first ~5-6 completions. core dt_rd is unmistakably
+  cumulative (91,178,265,372,... resets at inference boundaries), so core dt_wr is most likely also a
+  cumulative/uncleared counter, not a per-kick output size -- in which case the readback (dw1 empty) is
+  the truth. But if dt_wr were per-kick it would mean the early layers write substantial data somewhere
+  other than their readback'd output BO, which would overturn "only conv0 computes". Not double-handling
+  (consecutive done-lines are ~12 ms apart, 132 completions ~= 4-5 inferences x 29 tasks). A vs B diverge
+  only at completion 6 (A top_rd=64/dt_wr=63, B top_rd=4704/dt_wr=100352) -- open_high pushed the real-work
+  run one completion further before collapsing, but no output BO became non-empty.
+- **NEXT: nail the dt_wr caveat before declaring the software line closed -- zero each task's output BO
+  before its kick and widen the readback beyond the first page, to see whether any early layer writes real
+  data anywhere. If all still empty -> cleanly pivot below software (NVDLA CSC/CMAC RTL / RK3576 quirk); if
+  an early layer writes real data elsewhere -> that reopens the whole model.**
+
 ## 2026-07-04 (conv0_twice CONFIRMS pure position — even conv0's OWN regcmd + external input does NOT MAC when re-run as a non-cold-start kick. The 2nd conv0 (30th kick) has core dt_wr=63 (vs 25088 real) and top dt_rd=0; its output BO's distinct=245 was STALE 1st-run data, not a recompute. distinct is not the oracle, dt_wr is. Only the first task after NPU-init MACs, independent of layer/data/input-source.)
 
 Board (seq-kick + warm-chain, rocket.conv0_twice=1, kernel branch rk3576-arm-hunt 66245517d+18f01a896:
