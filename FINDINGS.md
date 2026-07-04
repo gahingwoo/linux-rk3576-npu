@@ -1,5 +1,26 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (conv0_twice CONFIRMS pure position — even conv0's OWN regcmd + external input does NOT MAC when re-run as a non-cold-start kick. The 2nd conv0 (30th kick) has core dt_wr=63 (vs 25088 real) and top dt_rd=0; its output BO's distinct=245 was STALE 1st-run data, not a recompute. distinct is not the oracle, dt_wr is. Only the first task after NPU-init MACs, independent of layer/data/input-source.)
+
+Board (seq-kick + warm-chain, rocket.conv0_twice=1, kernel branch rk3576-arm-hunt 66245517d+18f01a896:
+re-run task 0 after the job completes, no reset, then finalise). Per inference the log shows
+"rocket conv0_twice: re-running task 0" then the replay's completion:
+- **1st conv0 (cold-start):** core dt_wr=**25088**, top dt_rd=9408 wt_rd=96 -> real MAC.
+- **2nd conv0 (replay, ~30th kick):** core dt_wr=**63**, top dt_rd=**0** -> did NOT DMA its input and wrote
+  essentially nothing. Its output BO still read distinct=245 with byte-identical first bytes
+  (b7 7f ea e5 ...) to the 1st run = STALE, never overwritten. **The 2nd conv0 did NOT compute.**
+- **VERDICT: PURE POSITION, confirmed and now directly measured.** conv0's exact regcmd + the same external
+  input, run as a non-first-after-init kick, produces no MAC. So the gate is NOT layer type, NOT data, NOT
+  input source -- it is task position: only the first task the PC executes after NPU (re)init arms the CMAC.
+- **Metric-discipline note (again):** the 2nd conv0's distinct=245 first read as "it computes" (which would
+  have REFUTED position); the perf counter (core dt_wr=63 vs 25088, top dt_rd=0) corrected it to "stale,
+  empty". distinct/first-bytes are not a correctness oracle for a re-used BO; core dt_wr is.
+- **Ties to the Part 1 #1 hypothesis:** the 2nd conv0 has top dt_rd=0 (even more inert than dw1's 20384) --
+  a non-first kick's whole CNA->CBUF->CMAC path fails to arm, consistent with "only the first kick's OP_EN
+  (left-high vs our submit-pulse) actually arms the pipeline".
+- **NEXT: add a poll cap to the seq-kick completion (so OP_EN-high can't hang -> reset -> iommu death),
+  then test Part 1 #1 (leave OP_EN high through execution, upstream-style) -- the top adaptable difference.**
+
 ## 2026-07-04 (RK3588-vs-RK3576 task-2+ diff (read-only, upstream pristine rocket at e7d700e14). The per-task register sequence is byte-IDENTICAL to upstream, and our completion handshake already matches/exceeds it. The ONLY per-kick deviation is the seq-kick macro's extra OP_EN=0 pulse AT SUBMIT (upstream leaves OP_EN high during execution). Ranked below. Built the safe conv0_twice position-confirmation knob; did NOT build the OP_EN-high variant (risks an uncapped poll->hang->reset->iommu-death).)
 
 Diffed the pristine upstream RK3588 rocket (linux-next import e7d700e14, 635 lines) against our RK3576
