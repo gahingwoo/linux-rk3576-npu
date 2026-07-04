@@ -1,5 +1,37 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 — where it stands: the whole chain runs except one piece, the pointwise weight pre-staging. Cheap paths (C: bank capacity, B: on-chip preload) are closed; the continuous PC submit (Fork A) is the next campaign.
+
+A consolidation, because this is a natural stopping point. Over this run the RK3576 NPU went from a month-long dead
+wall to a single, precisely-located gap:
+- Multi-task ENGAGE: solved. Dispatch the graph as N sequential single-task kicks (task_number=1 each), not one
+  task_number=N PC submit. Every unit engages on every kick.
+- The chain FEATURE path: solved. Skip the per-kick pp_state_init (POINTER_PP_CLEAR cooled the on-chip buffer);
+  the chained layers now DMA their input and run real MACs.
+- The chain WEIGHT path: solved for the DEPTHWISE layers (small weights fetch per kick), NOT for the POINTWISE
+  layers — their weight DMA never fires (wt_rd=0), so a pointwise layer computes weightless (bias → relu → the
+  output zero-point) and the graph's output collapses.
+
+The pointwise weight is the one remaining piece, and it is architectural. The pointwise config is byte-identical
+to the vendor's, so it is not the command stream. The two cheap board levers are now clean negatives:
+- **C (CBUF weight-bank capacity)**: giving the pointwise a bigger CBUF WEIGHT_BANK count — 1 and 8 both — does
+  not move wt_rd off 0. The vendor uses WEIGHT_BANK=0 (default) and it works, so it is not a regcmd capacity knob.
+- **B (on-chip weight pre-load)**: the only preload mechanism we have (weight_sram → the NBUF on-chip window) was
+  already a fix-attempt whose audit showed the weights don't reach the CBUF that way; plus the 1 MB on-chip SRAM
+  can't hold MobileNet's ~4 MB of weights, and a safe memcpy is one page. So B can at best concept-test a small
+  early pointwise layer, against evidence it won't deliver.
+
+So the mechanism is settled: the vendor runs the graph as one **continuous** PC submit, and while a layer
+computes the PC **pre-stages the next layer's weights into the on-chip buffer**. The depthwise's small weights
+we can fetch per-kick; the large pointwise weights genuinely need that pipeline pre-staging, which sequential
+kicks don't have. Closing the chain therefore needs **Fork A**: make the continuous multi-task PC submit engage
+AND iterate all tasks — which is the wall the sequential kicks routed around ("1/29 then stuck": the units
+engage but there is no completion handshake to advance the PC to the next task, and a stall cascades into a
+dangerous shared-IOMMU reset / -14). That is register/microcode-level, below the online NVDLA docs, so Fork A is
+its own campaign: read the NVDLA RTL (github.com/nvdla/hw) for the PC/executer task-iteration completion logic,
+or fall back to extract/replay. Everything up to that one seam works. (Kernel: rk3576-warmchain d54b57d94;
+mesa ROCKET_WT_BANK / ROCKET_OUT_SHIFT_ABS diagnostics left in tree.)
+
 ## 2026-07-03 (latest, corrected) — Fork A first move: the chain is no longer dead. Skip the per-kick pp_state_init and the chained layers finally engage and DMA their input — but the weight path is still stale, so the CMAC accumulator is empty. The wall became a slope; the FEATURE side is fixed, the WEIGHT side is next.
 
 The chain needs the on-chip buffer warm across layers, which the sequential kicks were cooling. The suspect
