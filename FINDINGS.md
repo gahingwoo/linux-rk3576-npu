@@ -1,5 +1,33 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (★★ DIAGNOSTIC GAP CLOSED — the "empty MAC" verdict was a MEASUREMENT ARTIFACT. The all-tasks readback shows conv0 does a REAL MAC (distinct=242/244, full 0x00–0xff) in EVERY dispatch mode, including the task_number=N chain. conv0 is EXONERATED. The sole remaining wall: every layer AFTER conv0 reads its input but its CMAC never fires — only the cold-start/external-input layer computes.)
+
+Board test of the all-tasks readback (kernel branch rk3576-readback-alltasks, fe66cfa59: the post-completion
+readback now loops over ALL `j->task_count` tasks and labels each `out` line with the real task index, instead
+of only dumping `next_task_idx-1` = the last, never-run task). Same 3-run harness (RUN1 baseline seq-kick /
+RUN2 nextptr+task_number=1 / RUN3 nextptr+task_number=N).
+
+- **conv0's MAC is REAL, everywhere.** task=0 output-BO distinct histogram across all runs: `239 ×1, 242 ×6,
+  244 ×12` (min=00 max=ff = a full feature map). The only `distinct=1` task=0 lines (×6) are a *different*
+  single-task tail job's task 0, not conv0. **conv0 computes a real map even in the task_number=N chain (RUN3:
+  `task=0 0xfeb2d000 distinct=242`).** The earlier "conv0 commits (dt_wr=25088) but the MAC is empty
+  (distinct=1)" was read off the WRONG BO (task 28, the never-run last task). **conv0 / requant / conv0 weight
+  layout are all EXONERATED — that path is correct and done.**
+- **No layer after conv0 ever does a real MAC.** In the task_number=N chain (RUN3) every task=1..28 is
+  `distinct=1 min=00 max=00` (dw1 at 0xfea69000 reads its input — dt_rd=20384 — but writes all-zero). In RUN2
+  (task_number=1) likewise nothing past conv0. The ONLY non-cold `distinct>1` lines are in RUN1 (seq-kick) and
+  are FALSE signals: `task=2 distinct=2` = values {00,80} = DPU wrote the requant zero-point, MAC contributed
+  nothing; `task=3 distinct=3` = bytes `7f 80 7f 7f 0d 80 7f 80` **byte-identical across 8 inferences** =
+  stale/constant, not a fresh MAC. Nothing past conv0 produces a real feature map in any mode.
+- **★ The wall, now confirmed on the RIGHT BO:** only the cold-start / external-input layer (conv0) does a real
+  MAC; every chained layer reads its input yet its CMAC never fires. This is exactly the "only the COLD-START
+  task does MACs" wall from the topic file — previously inferred, now DIRECTLY measured.
+- **Direction change.** Stop investigating conv0/requant/weight-layout (correct + done). The entire remaining
+  problem is the chained (non-cold) layer's CMAC. Prime suspect stands: dw1 reads conv0's real `0xfeb2d000`
+  (known distinct=242) but outputs zero — either "only the first task the PC executes arms the CMAC", or an
+  NPU-write→NPU-read visibility gap. In seq-kick, conv0/dw1 are separate jobs, so dw1's `in ` probe reads
+  `0xfeb2d000` directly — NEXT: check whether dw1's `in ` shows the real 242 or 0/stale.
+
 ## 2026-07-04 (task_number=1 REFUTED — the RK3576 PC follows the trailer only at task_number=N, not =1 (opposite of RK3588). AND a diagnostic gap surfaced: the continuous-mode readback dumps the LAST task (28), never conv0, so the "empty MAC" premise is UNCONFIRMED — conv0's actual output in a chained submit has never been seen.)
 
 Board test of `rocket.chain_task_number=1` (override PC_TASK_CON task_number field to 1 while the trailer stays;
