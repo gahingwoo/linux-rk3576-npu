@@ -16,10 +16,16 @@ The pointwise weight is the one remaining piece, and it is architectural. The po
 to the vendor's, so it is not the command stream. The two cheap board levers are now clean negatives:
 - **C (CBUF weight-bank capacity)**: giving the pointwise a bigger CBUF WEIGHT_BANK count — 1 and 8 both — does
   not move wt_rd off 0. The vendor uses WEIGHT_BANK=0 (default) and it works, so it is not a regcmd capacity knob.
-- **B (on-chip weight pre-load)**: the only preload mechanism we have (weight_sram → the NBUF on-chip window) was
-  already a fix-attempt whose audit showed the weights don't reach the CBUF that way; plus the 1 MB on-chip SRAM
-  can't hold MobileNet's ~4 MB of weights, and a safe memcpy is one page. So B can at best concept-test a small
-  early pointwise layer, against evidence it won't deliver.
+- **B (on-chip weight pre-load)**: concept-tested and CLOSED. Added a `pw_weight_sram` knob that stages each
+  pointwise task's weights into the on-chip NBUF (map 0x3fe80000 → IOVA 0xfff00000) and repoints 0x1110 there.
+  The board diagnostic showed the staging never fired: `iommu_map(0xfff00000)` fails (`pw_mapped=0`) — not the
+  32-bit-aperture overflow (shrinking the map to 256 K didn't help), so it is a conflict: our Mesa BOs occupy
+  that range in the whole-graph domain (they run up near 0xffff0000). Worse, the repeated failed map corrupts
+  the domain and the chain regresses to all-0x00. And the NBUF is a fixed HW window — a prior test showed an
+  arbitrary IOVA for the weight source doesn't move the CMAC (only the exact 0xfff00000 window does), which is
+  exactly the range our BOs sit in. So the on-chip preload can't deliver: the one window that works is occupied,
+  an arbitrary one doesn't, and forcing the map damages the IOMMU. Combined with the prior audit (weights via
+  NBUF don't reach the CBUF), B is closed.
 
 So the mechanism is settled: the vendor runs the graph as one **continuous** PC submit, and while a layer
 computes the PC **pre-stages the next layer's weights into the on-chip buffer**. The depthwise's small weights
