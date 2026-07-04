@@ -1,5 +1,43 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (STAGE 2 — vendor rknpu init audit. RK3576 has two SoC-unique inits: (1) rk3576_state_init = CNA ping-pong dual-group prime (rocket DOES replicate as pp_state_init); (2) rk3576_cache_sgt_init + NBUF on-chip SRAM operand cache (rocket/mesa NEVER replicate). The diagnosed mechanism: the CMAC executer reads config from the CNA PP-groups; regcmd/PC writes don't reliably latch, only CPU writes do; geom_both ruled out config-geometry, leaving CNA->CBUF->CMAC data staging as the cold-start-only step. NEXT cheap shot: geom_both=1 in the new dw1-reads-input regime, never tested there.)
+
+Audited `rk3576-vendor-kernel/drivers/rknpu` init + commit path against rocket.
+
+**Vendor commit_pc (rknpu_job.c:448-720) is ONE submit; the PC hardware iterates task_number tasks.**
+Per submit it writes: 0x10 PC_DATA_ADDR=first_task->regcmd_addr; 0x14 PC_DATA_AMOUNT; 0x20 INT_MASK;
+0x30 PC_TASK_CON=((0x6|task_pp_en)<<bits)|task_number; **0x34 PC_DMA_BASE_ADDR=args->task_base_addr**
+(rocket writes 0x34 = 0 — but conv0 computes with 0x34=0, so not the arming); 0x08 OP_EN 1 then 0. No
+per-task software re-arm — the units are re-programmed from each task's regcmd as the PC strides.
+
+**RK3576-unique inits (state_init/cache_sgt_init are non-NULL ONLY for rk3576; NULL for 356x/3588/etc):**
+1. `rk3576_state_init` (drv.c:111): `0x10=1; 0x1004=0; 0x1024=0x80000000; 0x1004=1; 0x1024=0x80000000;
+   0x1004=0x1e` = prime BOTH CNA ping-pong groups with the default DS1=0x80000000, leave POINTER=0x1e
+   (PP_MODE|EXECUTER_PP_EN|PP_EN|PP_CLEAR). **rocket replicates this byte-for-byte in
+   rocket_core_pp_state_init** — but rocket RE-RUNS it at the head of every job; the vendor runs it ONCE
+   at probe / after reset.
+2. `rk3576_cache_sgt_init` (drv.c:123) + NBUF: builds cache_sgt describing NBUF SRAM blocks
+   (0x3fe80000, 1MB, 448/64/448/64 KB). rknpu_gem.c maps a BO flagged RKNPU_MEM_TRY_ALLOC_NBUF /
+   RKNPU_CACHE_NBUF so its first nbuf_size bytes land in on-chip SRAM instead of DRAM (map_with_cache_sgt
+   @422). **rocket/mesa never allocate a cache BO → the whole graph runs from DRAM.** Biggest structural
+   gap, but conv0 (DRAM input) computing shows DRAM is not a hard requirement; NBUF-dependence of chained
+   layers is unproven.
+
+**Mechanism (from rocket's own accumulated comments, now joined to today's dw1-reads fact):** the CMAC
+executer reads its CNA/CORE geometry from the active ping-pong group. regcmd writes driven by the PC do
+NOT reliably latch to the group (both groups read back the pp_state_init default DS1=0x80000000); only
+CPU writes latch. `geom_both` (CPU-replicate the regcmd's CNA/CORE config into both groups) was tried and
+"ruled out the register geometry" — so the config VALUES are not the miss; the diagnosed racy part is the
+**CNA->CBUF->CMAC data staging** (a warm/non-first task's CBUF holds stale/empty data). cbuf_reset knobs
+= DEAD. This matches the cold-start wall: staging only works for the first task after a fresh
+pp_state_init/CBUF; later tasks read their input (dt_rd=20384, new today) but the CBUF->CMAC step is empty.
+
+**NEXT (cheap, no kernel rebuild — geom_both is already compiled in):** set rocket.geom_both=1 in the
+CURRENT seq-kick/warm-chain regime and read dw1 (task=1) output. geom_both was only ever tested back when
+dw1 didn't even read its input (config was moot then); with dw1 now reading real input, forcing its config
+into the PP group is a fresh test. dw1 distinct>1 => config-latch was the miss; dw1 still 1 => confirmed
+CBUF data-staging, pivot to CBUF/NBUF structural.
+
 ## 2026-07-04 (COHERENCY RULED OUT from existing logs — dw1's input probe reads conv0's REAL 244; no flash needed. The intermediate is NOT clobbered with zeros; dw1 reads real data and still MACs to zero. Wall = cold-start CMAC-arm, data-independent.)
 
 The NPU-intermediate cache-coherency/clobber hypothesis (dirty CPU zero-lines on the producer-output ==
