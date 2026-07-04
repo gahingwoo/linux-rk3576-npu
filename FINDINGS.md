@@ -1,5 +1,23 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (geom_both REFUTED as the dw1 miss — config-latch is NOT it. dw1 still distinct=1 with its config CPU-forced into both PP-groups, and conv0 even DEGRADED 239->111 (proving the CPU writes DO reach the executer). The wall is confirmed to be CNA->CBUF->CMAC data staging, not register geometry.)
+
+Board A/B, seq-kick + warm-chain (the regime where dw1 reads dt_rd=20384), all-tasks readback. geom_both
+fired (logged "wrote 96 CNA/CORE regs into both groups" per task):
+- **RUN A geom_both=0:** task=0 (conv0) distinct=239, task=1 (dw1) distinct=1. Baseline wall.
+- **RUN B geom_both=1:** task=0 distinct=**111** (still a real map, min00 maxff, but fewer values —
+  geom_both's double-write perturbed conv0), task=1 (dw1) distinct=**1** (unchanged).
+- **Verdict:** forcing dw1's real CNA/CORE config into BOTH ping-pong groups did NOT make dw1 compute,
+  and it measurably CHANGED conv0's output (239->111) — so the CPU writes genuinely reach the executer
+  (the config-latch premise holds), yet dw1 still MACs zero with its config present. **Config geometry is
+  definitively NOT the dw1 miss.** dw1 reads its input (dt_rd=20384) and its weights (wt_rd=36); the only
+  stage between the CNA DMA and the CMAC is the CBUF. So the break is CNA->CBUF (data DMA'd but not landed
+  in the CBUF bank the CMAC reads) or CBUF->CSC->CMAC (data in CBUF but the CSC never reads it) — and only
+  the cold-start task clears it. cbuf_reset knobs already DEAD.
+- **NEXT (i):** diagnostic — dump conv0 vs dw1 CNA CBUF-config registers (cbuf entry/bank alloc) + any
+  CSC/CMAC status, to pin the break at CNA->CBUF vs CBUF->CMAC before touching the big NBUF structural
+  route (ii).
+
 ## 2026-07-04 (STAGE 2 — vendor rknpu init audit. RK3576 has two SoC-unique inits: (1) rk3576_state_init = CNA ping-pong dual-group prime (rocket DOES replicate as pp_state_init); (2) rk3576_cache_sgt_init + NBUF on-chip SRAM operand cache (rocket/mesa NEVER replicate). The diagnosed mechanism: the CMAC executer reads config from the CNA PP-groups; regcmd/PC writes don't reliably latch, only CPU writes do; geom_both ruled out config-geometry, leaving CNA->CBUF->CMAC data staging as the cold-start-only step. NEXT cheap shot: geom_both=1 in the new dw1-reads-input regime, never tested there.)
 
 Audited `rk3576-vendor-kernel/drivers/rknpu` init + commit path against rocket.

@@ -1,21 +1,24 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 next-pointer + task_number=1 (2026-07-04). The next-pointer build proved
-# the RK3576 PC follows the trailer (conv0->dw1 loaded), but with PC_TASK_CON
-# task_number=task_count the MAC is EMPTY (distinct=1) and the chain stalls after one
-# hop. The SAME conv0 does a real MAC as a task_number=1 kick (distinct=239): the
-# empty MAC is gated by the task_number FIELD. Upstream RK3588 sets task_number=1 AND
-# relies on the trailer to advance. rocket.chain_task_number=1 overrides ONLY that
-# field (trailer still advances; completion still waits for the whole chain via
-# job->task_count). Combine: task_number=1 = real MAC per task; trailer = chaining.
-#   RUN 1  baseline seq-kick (no next-pointer): conv0 (feb2d000) distinct=239, rest 1.
-#   RUN 2  NEXT-POINTER + task_number=1 = THE TEST (chain_task_number=1). Watch:
-#            - TASK_STATUS climbs past 0 + total core dt_wr large + MANY output BOs
-#              distinct>1 (esp conv0 distinct>200) = the chain COMPUTES每一层 ->穿墙.
-#            - conv0 distinct>1 but chain short = real MAC returned but advance limited.
-#            - all distinct=1 = task_number=1 alone doesn't restore the MAC here.
-#   RUN 3  NEXT-POINTER + task_number=N (chain_task_number=0) = the prior one-hop /
-#            empty-MAC result, same boot, for direct contrast.
+# RK3576 geom_both A/B (2026-07-04). Stage-2 init audit landed on the ping-pong
+# latch: the CMAC executer reads its CNA/CORE geometry from the active PP-group,
+# but regcmd(PC) writes don't reliably latch there (both groups read the
+# pp_state_init default DS1=0x80000000) -- only CPU writes latch. geom_both
+# CPU-replicates each task's regcmd CNA/CORE config into BOTH groups before OP_EN.
+# It was tried long ago (when it "ruled out geometry"), but ONLY back when dw1
+# didn't even read its input -- config was moot. Now (all-tasks readback) dw1
+# READS conv0's real output (in task=1 distinct=244) yet MACs to zero. So force
+# dw1's config into the PP-group and see if it now computes.
+#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1 = the mode
+#   where dw1 reads dt_rd=20384. The all-tasks readback prints one "out task=N"
+#   line per layer.
+#   RUN A  geom_both=0 (baseline): expect out task=0 (conv0) distinct>200,
+#            out task=1 (dw1) distinct=1 -- the known wall.
+#   RUN B  geom_both=1 (THE TEST): watch out task=1 (dw1).
+#            - task=1 distinct>1  => config wasn't latching; geom_both opened it.
+#            - task=1 distinct=1  => not config; it's CNA->CBUF->CMAC data
+#              staging -> pivot to NBUF/CBUF structural.
+#            - task=0 distinct drops to 1 => geom_both BROKE conv0 (informative).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -26,43 +29,36 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "chain-tn1: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "geom_both: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
+	# ---- common regime: seq-kick + warm-chain (dw1 reads its input here) ----
 	echo 0 > $P/cbuf_reset 2>/dev/null
 	echo -1 > $P/enable_mask 2>/dev/null
 	echo 1 > $P/perjob_ppinit 2>/dev/null
 	echo 0 > $P/bisect 2>/dev/null
 	echo 0 > $P/rekick_reset 2>/dev/null
 	echo 1 > $P/wg_warm_chain 2>/dev/null
-
-	# ---- RUN 1: baseline sequential-kick, no next-pointer ----
 	echo 0 > $P/multitask_poll 2>/dev/null
 	echo 0 > $P/wg_continuous 2>/dev/null
 	echo 0 > $P/chain_task_number 2>/dev/null
+
+	# ---- RUN A: geom_both=0 (baseline) ----
+	echo 0 > $P/geom_both 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== CHAIN-TN1 RUN 1: baseline seq-kick (no next-pointer) ====="
+	log "===== GEOM_BOTH RUN A: geom_both=0 (baseline seq-kick) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 2: next-pointer + task_number=1 (committing mode) = THE TEST ----
-	echo 1 > $P/multitask_poll 2>/dev/null
-	echo 1 > $P/wg_continuous 2>/dev/null
-	echo 1 > $P/chain_task_number 2>/dev/null
+	# ---- RUN B: geom_both=1 (THE TEST) ----
+	echo 1 > $P/geom_both 2>/dev/null
 	log ""
-	log "===== CHAIN-TN1 RUN 2: next-pointer + task_number=1 (chain_task_number=1) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_NEXTPTR=1 \
+	log "===== GEOM_BOTH RUN B: geom_both=1 (CPU-replicate config into both PP groups) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 3: next-pointer + task_number=N (prior one-hop/empty-MAC), contrast ----
-	echo 0 > $P/chain_task_number 2>/dev/null
-	log ""
-	log "===== CHAIN-TN1 RUN 3: next-pointer + task_number=N (chain_task_number=0) contrast ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_NEXTPTR=1 \
-		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-
-	log "===== CHAIN-TN1 DONE: RUN2 TASK_STATUS>0 + core dt_wr large + outputs distinct>1 = chain computes ====="
+	log "===== GEOM_BOTH DONE: compare 'out task=1' distinct A(=0) vs B(=1); >1 in B = config-latch was the miss ====="
 	sync
 }
 
