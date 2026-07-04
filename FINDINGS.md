@@ -1,5 +1,32 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork B byte-diff — the mesa dw regcmd is byte-identical to the vendor's; the bytes are NOT why it produces zero. It is EXECUTION CONTEXT. Next: bisect the per-kick teardown.)
+
+To settle bytes-vs-context: byte-diffed the live mesa dw1 regcmd (board dump_regcmd, 139 entries) against the
+vendor's captured dw regcmd (vendor_dw_regcmd.txt run 0), register by register, all four targets:
+
+| target | identical | differs |
+|--------|-----------|---------|
+| CNA (0201) | 42/44 | 0x1088 (feature addr), 0x1110 (weight addr) — absolute IOVA vs vendor offset, both functional |
+| CORE (0801) | 5/5 | — |
+| DPU (1001) | 64/68 | 0x4018 (output addr — addressing); 0x40ac/0x40b0/0x40b4 (requant offset/mul/shift) |
+| RDMA (2001) | 19/21 | 0x5020, 0x5024 (bias addr — addressing) |
+
+The ONLY non-address value differences are the DPU requant triplet 0x40ac/0x40b0/0x40b4. Effective scale:
+mesa 0x4ace>>0x10 ≈ 0.29 vs vendor 0x60e9>>0x18 ≈ 0.0015 — a ~200× gap, so the vendor capture's dw is a
+DIFFERENT layer/model (same shape, different quant scales), not a mesa bug. (An earlier pass wrongly reported
+mesa "omits the DPU_RDMA" — that was a log-extraction truncation: the dw dump runs lines 1166–1440 and the RDMA
+tail 0x500c–0x507c sits at 1420–1440; mesa DOES emit the full DPU_RDMA incl. bias 0x5020/0x5024.)
+
+So: **the mesa dw regcmd is byte-identical to the vendor's (modulo addresses and a different-layer requant).
+The regcmd bytes are NOT why mesa's dw produces zero** — and yet mesa's dw1 *reads its input* (dt_rd=20384),
+has a correct regcmd, and still outputs distinct=1. **The MAC-suppression is EXECUTION CONTEXT, not the command
+stream.** This validates the original instinct: the cold-start task 0 runs on fresh HW state and does MACs; task
+1 runs on the state task 0 left — correct regcmd, input read — and the CMAC never fires. NEXT: bisect the
+per-kick teardown (OP_EN 1→0 vs leave high; skip the S_POINTER re-arm; skip INT_CLEAR; skip the perf-counter
+clear) to find which step, removed, lets task 1 compute (distinct>10) — that isolates the state the cold start
+consumes and later tasks lack.
+
 ## 2026-07-04 (Fork B — THE UNIFICATION: only the cold-start task does MACs. Every subsequent task, whether a sequential re-kick or a multi-task PC iteration, engages and loads its operands but does NO MACs. dw/pw/weight-fetch are red herrings.)
 
 Picked B (make the sequential model correct) and mapped the per-task output of the working sequential-kick run
