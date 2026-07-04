@@ -1,5 +1,23 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Reframe: the next-pointer angle is not the RK3576 mechanism [vendor uses pure task_number iteration, which WORKS for the vendor], so the wall is not the bytes or the mechanism — it is OUR rocket driver's task_number=N execution environment. Even the vendor's exact bytes replayed through our driver wall in ONEJOB mode. Next: a thorough audit of the driver's whole submit→completion path.)
+
+Checked the RK3588 self-chain next-pointer path (rkt_ml.c:282, guarded soc!=RK3576) as the last "adapt working
+code" lever. The vendor RK3576 dw regcmd (vendor_dw_regcmd.txt) ends in real unit registers (RDMA 0x507c) with
+NO PC/next-pointer entries — so RK3576 uses pure **task_number iteration** (the PC auto-strides the packed
+regcmd array), not RK3588's embedded next-pointers. And **the vendor's iteration WORKS** (its whole graph
+computes). So the mechanism isn't broken and next-pointers aren't the RK3576 path.
+
+That reframes the wall precisely: **the vendor's task_number=N iteration works; ours walls — with byte-identical
+regcmd AND byte-identical submit registers. And the vendor's own captured bytes, replayed through our rocket
+driver, ALSO wall in ONEJOB (task_number=N) mode while SPREAD (N jobs) computes conv0.** So the wall is not in
+mesa and not in the command stream — it is in **our rocket driver's task_number=N execution environment** (the
+clocks/PVTPLL, genpd power, rk_iommu, soft-reset, PC write ordering — everything the driver sets up around the
+byte-identical submit). Precedent: the VoidChecksum RK3576 rocket series needed extra kernel fixes (SError /
+IOMMU / CBUF-zero, forks 0002/0005/0009/0010) just to run on real HW, so the multi-task wall is plausibly
+another driver-environment hole, not microcode. NEXT: audit the driver's whole submit→completion path against
+the vendor rknpu_job_subcore_commit_pc, looking for MORE than one gap (clock/power/reset/iommu/PC-ordering).
+
 ## 2026-07-04 (The IRQ-completion lever is DEAD on inspection — the wall is now pinned to one screw: in task_number≥2 mode the PC asserts PC_DONE instantly [samples=1] without ever driving the DPU [dt_wr=0], while task_number=1 drives it [dt_wr=25088]. Pure internal PC-sequencer behavior; no driver lever reaches it.)
 
 Inspected the IRQ-completion lever (the one Fork A path never tried) before building it — and it is already
