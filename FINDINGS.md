@@ -1,5 +1,36 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork A opened) — the vendor's rknpu driver gives the exact continuous-submit recipe; the "1/29 stuck" crux is now precise: a task completes as task_number=1 but not as task 0 of a task_number=N submit.
+
+Read the vendor rknpu kernel driver (rk3576-vendor-kernel/drivers/rknpu) instead of guessing at NVDLA RTL —
+the PC iteration is Rockchip's, not NVDLA's, so the vendor driver is the real reference. `rknpu_job_subcore_
+commit_pc` writes, in order: PC_DATA_ADDR = first_task->regcmd_addr; PC_DATA_AMOUNT = (first amount + EXTRA +
+scale-1)/scale-1; **INT_MASK = last_task->int_mask; INT_CLEAR = first_task->int_mask**; PC_TASK_CONTROL =
+((0x6 | task_pp_en) << 16) | task_number; PC_DMA_BASE_ADDR = task_base_addr (0 in the capture); then a single
+PC_OP_EN 1→0 pulse. Completion is by **interrupt** (wait_event on job->int_status, only the last task's int_mask
+enabled), not our raw-PC_DONE poll.
+
+Three facts fall out:
+- **The RK3576 config matches ours exactly** (pc_task_number_bits=16, pc_task_status_offset=0x48,
+  pc_data_amount_scale=2, max_submit_number=(1<<16)-1=65535). 65535 ≫ 29 tasks, so the vendor runs the whole
+  graph in ONE submit — not small chunks. Config is not the difference.
+- **The vendor's per-task regcmd has NO in-stream broadcast OP_EN.** Its targets are only 0x201/0x801/0x1001/
+  0x2001 (CNA/CORE/DPU/RDMA) — never the 0x81 broadcast. So Mesa's per-task 0x81 op_en (value 0x1d) is a Mesa
+  invention, and stripping it (ROCKET_STRIP_OPEN) is what matches the vendor. The units are meant to engage from
+  the per-task S_POINTER arming (0x1004=0xe, which each task's regcmd carries) plus the one PC_OP_EN pulse — no
+  per-task op_en at all.
+- So with the vendor-matching stream (no in-stream op_en, one pulse, task_number=N), the units DO engage but
+  task 0 never completes its DPU write (output distinct=1, PC_TASK_STATUS stuck at 0) — the PC waits for a
+  completion that never comes and never advances. **Yet the identical task 0 completes fine as a task_number=1
+  kick** (distinct=239). So the crux is exact and small: something about task_number≥2 mode gates task 0's
+  compute completion (the DPU write / the done handshake the PC advances on). That is register/microcode-level.
+
+Fork A campaign from here: find why a task completes as task_number=1 but stalls as task 0 of task_number=N —
+by capturing the live unit/PC status of task 0 in each mode side by side, and matching the vendor commit_pc bit
+for bit (per-task INT_MASK via a new UABI field, interrupt-driven completion, task_pp_en). The vendor driver is
+the map; the seam is the multi-task completion handshake. (Kernel diagnostics for it: the arm/exec dumps
+already in rocket_job.c; the vendor recipe above.)
+
 ## 2026-07-04 — where it stands: the whole chain runs except one piece, the pointwise weight pre-staging. Cheap paths (C: bank capacity, B: on-chip preload) are closed; the continuous PC submit (Fork A) is the next campaign.
 
 A consolidation, because this is a natural stopping point. Over this run the RK3576 NPU went from a month-long dead
