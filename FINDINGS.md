@@ -1,5 +1,42 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork A experiment 2: op_en-value fork CLOSED; the multi-task submit is byte-identical to the vendor's, so the wall is not in the registers — the RK3576-specific piece rocket lacks is cache_sgt/NBUF-backed operands.)
+
+Read the vendor rknpu driver end-to-end to find what a task_number=N submit does that we don't:
+- **Vendor `rknpu_job_subcore_commit_pc` (rknpu_job.c:685-715): NO ENABLE_MASK (0xf008) write, NO in-stream
+  op_en at all.** Just PC_DATA_ADDR, PC_DATA_AMOUNT, INT_MASK=last_task->int_mask, INT_CLEAR=first_task->
+  int_mask, PC_TASK_CONTROL=((0x6|pp)<<16)|task_number, PC_DMA_BASE_ADDR, then one PC_OP_EN 1→0 pulse. Units
+  engage from the per-submit S_POINTER arm (0x1004=0xe, 0x3004=0xe; rknpu_job.c:489-490) + the pulse.
+- **The vendor capture (dirty/vendor.txt:1843) is byte-identical to ours**: `int_mask=0x300 first_int_mask=0x300
+  task_con=0x70002 task_base_addr=0x0 pc_data_amount=71`. So our fixed INT_MASK=0x300 already matches (per-task
+  int_mask ruled out), and the vendor's own multi-task submit is task_number=2 with the exact registers we write.
+  **The multi-task wall is NOT in the submit register values.**
+- **`rk3576_state_init` == our `rocket_core_pp_state_init` exactly** (BASE=0x1, S_POINTER 0→1→0x1e, DATA_SIZE1=
+  0x80000000 into both groups). Ruled out.
+- **`pc_dma_ctrl=1` (RK3576) just wraps the PC_DATA_ADDR write in irq_lock** — the register write is identical.
+  No functional difference. Ruled out.
+- **The ONE RK3576-specific mechanism rocket entirely lacks = `cache_sgt` (rknpu_gem.c:422
+  rknpu_iommu_map_with_cache_sgt).** A BO allocated "with_cache" gets its OWN iova mapped to the on-chip NBUF
+  SRAM physical (`nbuf_start=0x3fe80000`, 1 MB, in 448+64 KB blocks per core from `rk3576_cache_sgt_init`).
+  This is the vendor's on-chip-buffer path — a per-BO alloc flag with a proper block layout, NOT the arbitrary
+  driver remap Fork B tried (and it's why Fork B's iommu_map(0xfff00000) conflicted). mesa never allocates
+  cache BOs, so our whole graph runs from DRAM.
+
+op_en-value fork, board (wg_continuous=1, 3 runs): RUN 2 `ROCKET_UNIT_OPEN=0x1d` (per-unit op_en to CNA 0x1008/
+CORE 0x3008/DPU 0x4008/RDMA 0x5008 with the FULL enable the broadcast uses, no PC 0x08 touch) and RUN 3
+`=0x1` are **IDENTICAL**: conv0 top dt_rd=9408 wt_rd=96 (loads), core **dt_wr=0** (no commit), TASK_STATUS stuck
+1/29. **So completion in task_number≥2 is NOT gated by the op_en value — the op_en engages the CNA DMA either
+way, and the CACC never commits regardless.** Fork CLOSED: no op_en value/presence/target lever moves the
+multi-task completion (broadcast wedges the PC, per-unit 0x1 and 0x1d both stall at 1/29, STRIP gives no DMA).
+The completion gate is task_number≥2-intrinsic and carried by no register the stream writes.
+
+**Two leads remain.** (A) **cache_sgt/NBUF on-chip operands** — the biggest untested RK3576-specific difference;
+the multi-task PC pipeline may require on-chip (not DRAM) operands, which would also explain the original CBUF-
+continuity / pw-weight-staging problem. Big: needs a cache-BO UABI + mesa allocating cache BOs + kernel
+cache_sgt map. (B) **Abandon continuous submit as a wall** and pre-stage pw weights within the WORKING
+sequential-kick model by a different route (the sequential model already carries engage + feature + dw weights;
+only large pw weights need the pipeline). Decide direction before more board cycles.
+
 ## 2026-07-04 (Fork A experiment 1: engage × dispatch matrix) — the crux refined one layer: in task_number=N mode conv0 LOADS its operands byte-identically to the working single-task, but the CACC never commits (dt_wr=0) and the PC wedges. Engage and continuous-iteration are mutually exclusive in our mechanism.
 
 Added `rocket.wg_continuous` (rocket_job.c): dispatch the whole job as ONE task_number=task_count PC submit

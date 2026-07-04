@@ -1,22 +1,21 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# FORK A engage x dispatch matrix (2026-07-04 v2). The prior A/B set STRIP_OPEN=1
-# on both runs -> both dead: STRIP_OPEN removes the in-stream 0x81 op_en (writes
-# ENABLE_MASK 0xf008=0x1d) that is what actually engages OUR units, so exec_ever=0.
-# The known-good sequential/warm-chain run (66c1303) used ROCKET_WHOLE_GRAPH=1 with
-# NO STRIP_OPEN. So sweep the real matrix, one boot, 3 inferences:
-#   RUN 1  seq  + in-stream op_en  -> KNOWN GOOD: exec_ever=0xf, conv0 distinct=239
-#                                     (sanity: build is fine, engage intact).
-#   RUN 2  cont + in-stream op_en  -> THE CRUX. task_number=29, units SHOULD engage
-#                                     (exec_ever=0xf). Watch the "multitask %u/29"
-#                                     climb + task-0 cnalive/perf:
-#                                       TASK_STATUS 0->29 = PC iterates (JACKPOT).
-#                                       stuck 0 w/ exec_ever=0xf = units engage,
-#                                         task 0 never completes its DPU write
-#                                         (the register/microcode wall) OR the
-#                                         in-stream 0x1d restarts the PC each task.
-#   RUN 3  cont + STRIP_OPEN        -> contrast (last boot's data): exec_ever=0,
-#                                     TASK_STATUS stuck 1. Same-boot so no drift.
+# FORK A UNIT_OPEN sweep (2026-07-04 v3). Research nailed the untested lever:
+# mesa's default (non-STRIP) whole-graph path already replaces the broadcast
+# op_en (which wedges the PC via reg 0x08) with FOUR per-unit OP_EN writes
+# (CNA 0x1008 / CORE 0x3008 / DPU 0x4008 / RDMA 0x5008) that DON'T touch the PC.
+# Prior data: per-unit value 0x1 engages the CNA (conv0 dt_rd=9408) but the task
+# never COMPLETES (core dt_wr=0, TASK_STATUS stuck 1/29). The broadcast that DOES
+# complete writes 0x1d (the RKNPU enable_mask). So the hypothesis (mesa comment's
+# own): per-unit value 0x1d gives the units the FULL enable the broadcast gives,
+# WITHOUT touching the PC's 0x08 -> units complete AND the PC iterates. Pure env
+# test (deployed libteflon has ROCKET_UNIT_OPEN); wg_continuous=1 = one PC submit.
+#   RUN 1  seq baseline (sanity: exec_ever=0xf, conv0 distinct=239).
+#   RUN 2  continuous + UNIT_OPEN=0x1d = THE HYPOTHESIS. Watch "multitask %u/29":
+#            climbs 1->29 = units complete, PC iterates (JACKPOT); stuck 1 = 0x1d
+#            doesn't drive completion either -> completion is task_number-gated,
+#            not an op_en-value thing.
+#   RUN 3  continuous + UNIT_OPEN=0x1 = control (reproduce the 1/29 stall).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -35,30 +34,30 @@ start() {
 	echo 1 > $P/perjob_ppinit 2>/dev/null
 	echo 1 > $P/wg_warm_chain 2>/dev/null
 
-	# ---- RUN 1: sequential kick + in-stream op_en (KNOWN-GOOD baseline) ----
+	# ---- RUN 1: sequential baseline (sanity) ----
 	echo 0 > $P/multitask_poll 2>/dev/null
 	echo 0 > $P/wg_continuous 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== FORK A RUN 1: seq + in-stream op_en (baseline exec_ever=0xf) ====="
+	log "===== FORK A RUN 1: seq baseline (exec_ever=0xf, distinct=239) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 2: continuous submit task_number=N + in-stream op_en (THE CRUX) ----
+	# ---- RUN 2: continuous + per-unit OP_EN = 0x1d (THE HYPOTHESIS) ----
 	echo 1 > $P/multitask_poll 2>/dev/null
 	echo 1 > $P/wg_continuous 2>/dev/null
 	log ""
-	log "===== FORK A RUN 2: continuous + in-stream op_en (crux: engage vs complete) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
+	log "===== FORK A RUN 2: continuous + ROCKET_UNIT_OPEN=0x1d (full per-unit enable) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_UNIT_OPEN=0x1d \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 3: continuous submit + STRIP_OPEN (contrast, same boot) ----
+	# ---- RUN 3: continuous + per-unit OP_EN = 0x1 (control, 1/29 stall) ----
 	log ""
-	log "===== FORK A RUN 3: continuous + STRIP_OPEN (contrast, no-engage) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_STRIP_OPEN=1 \
+	log "===== FORK A RUN 3: continuous + ROCKET_UNIT_OPEN=0x1 (control) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_UNIT_OPEN=0x1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	log "===== FORK A DONE: RUN1 engages+computes; RUN2 = does task_number=N engage AND advance? ====="
+	log "===== FORK A DONE: RUN2 (0x1d) TASK_STATUS climb past 1 = units complete + PC iterates ====="
 	sync
 }
 
