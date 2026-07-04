@@ -1,21 +1,18 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 open_high A/B (2026-07-04). Position is the gate (conv0_twice: 2nd conv0
-# core dt_wr=63 vs 25088). RK3588-vs-RK3576 diff: the ONLY per-kick deviation is
-# our seq-kick pulsing PC OP_EN 1->0 AT SUBMIT (OP_EN=0 during execution), vs
-# upstream leaving OP_EN HIGH through execution and clearing at completion.
-# open_high tests that: leave OP_EN high, complete on DPU-done (bits 8/9), and a
-# 300ms poll cap is the unconditional safety net (no hang -> reset -> iommu death).
-#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1.
-#   ORACLE = per-task "rocket dbg perf: ... core[dt_wr=..]" (NOT distinct -- stale).
-#   RUN A  open_high=0 (baseline): conv0 core dt_wr~25088, dw1 (task1) dt_wr~63.
-#   RUN B  open_high=1 (THE TEST): watch dw1+later tasks' core dt_wr.
-#            - dt_wr >> 63 (thousands) for task>=1 => OP_EN-high was the per-task
-#              arm. Then check infer.py Top-1.
-#            - dt_wr still ~0/63 => last software-structural diff ruled out; arm is
-#              below sw level (NVDLA CSC/CMAC RTL / RK3576 quirk).
-#            - "seq-kick poll TIMEOUT" lines => report OP_EN/PC_DONE at cap (did the
-#              DPU-done completion take over?).
+# RK3576 zero_out_bos ground truth (2026-07-04). open_high refuted; one loose end
+# left: per-completion core dt_wr grew (25088,45248,50176,90944...) which fits
+# neither "only conv0 computes" nor a clean counter. distinct can read STALE data
+# on a reused BO (conv0_twice trap), so this zeros every output BO before the run
+# and scans the WHOLE BO after, classifying each task EMPTY / ZEROPOINT / REAL.
+#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1, zero_out_bos=1.
+#   WATCH "rocket groundtruth task=N ... class=":
+#     - conv0 (task=0) REAL + every later task EMPTY/ZEROPOINT => chained layers
+#       write nothing real; dt_wr growth is a dirty counter; software line CLOSED
+#       (pivot below software: NVDLA CSC/CMAC RTL / RK3576 quirk).
+#     - ANY later task REAL (distinct>2, spread) => CMAC fired, output mis-routed
+#       => REVERSAL, chase the address not the arm.
+#   Also "rocket dtwr task=N ... delta=" shows whether dt_wr tracks real outputs.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -26,7 +23,7 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "open_high: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "zero_out_bos: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
 	# ---- regime: seq-kick + warm-chain ----
@@ -42,25 +39,20 @@ start() {
 	echo 0 > $P/geom_both 2>/dev/null
 	echo 0 > $P/geom_all 2>/dev/null
 	echo 0 > $P/conv0_twice 2>/dev/null
+	echo 0 > $P/open_high 2>/dev/null
 	echo 0 > $P/audit_all 2>/dev/null
 	echo 0 > $P/audit_arm 2>/dev/null
 
-	# ---- RUN A: open_high=0 (baseline) ----
-	echo 0 > $P/open_high 2>/dev/null
+	# ---- zero output BOs before the run + whole-BO classify after ----
+	echo 1 > $P/zero_out_bos 2>/dev/null
+
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== OPEN_HIGH RUN A: open_high=0 (baseline submit-pulse) ====="
+	log "===== ZERO_OUT_BOS: seq-kick, zero every output BO pre-run, whole-BO classify ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN B: open_high=1 (THE TEST) ----
-	echo 1 > $P/open_high 2>/dev/null
-	log ""
-	log "===== OPEN_HIGH RUN B: open_high=1 (OP_EN high, DPU-done completion) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
-		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-
-	log "===== OPEN_HIGH DONE: compare per-task core[dt_wr] A vs B; dw1 dt_wr>>63 in B = OP_EN-high armed it ====="
+	log "===== ZERO_OUT_BOS DONE: conv0 REAL + all later EMPTY/ZEROPOINT = wall; any later REAL = reversal ====="
 	sync
 }
 

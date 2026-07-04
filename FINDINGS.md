@@ -1,5 +1,34 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (LOOSE END CLOSED — zero_out_bos (stale-proof) confirms chained layers write NOTHING real and dt_wr is a cumulative counter. conv0 writes a genuine feature map (distinct=232) to its own pre-zeroed BO; dw1/task2/task3 are distinct<=2 (EMPTY/ZEROPOINT) in every dump with zeroing on. The software-structural line is cleanly closed: the wall is below the registers, only the cold-start task MACs.)
+
+Board, seq-kick + warm-chain, rocket.zero_out_bos=1 (kernel branch rk3576-bo-groundtruth a3c67f7c1: memset
+every output BO to 0 + flush before the job kicks; per-completion readback + a finalize whole-BO classify;
+per-completion core dt_wr delta). The zeroing removes the conv0_twice stale-data trap: any post-run
+non-zero is a definitive write this run.
+- **dt_wr is CUMULATIVE.** Per-completion core dt_wr deltas: conv0=25088, dw1=+20160, task2=+4928, ...
+  (25088, 45248, 50176, ...). Running totals, not per-kick output sizes -- the "large early dt_wr" that
+  nagged the open_high result is a cumulative-counter artifact, now settled.
+- **Chained layers write NOTHING real (stale-proof).** With the BOs pre-zeroed, the per-completion readback
+  reads: dw1 (0xfea69000) distinct=1 every dump (some min=80 = zero-point); task2 distinct<=2; task3
+  distinct<=3 (min0d max80, still zero-point-ish). No chained output is a real feature map, and none holds
+  mis-routed real data. Outcome (1)/(2), NOT the reversal (3).
+- **conv0's real output is GENUINE, not stale.** conv0 (0xfeb2d000) reads distinct=232 (min00 max ff) in a
+  BO that was zeroed immediately before the run -> conv0 truly wrote it this run. (conv0 also reads
+  distinct=1 in the warm inferences, definitively empty -- consistent with cold-start-only.)
+- **Self-correction on the diagnostic:** my finalize whole-BO groundtruth block read conv0 EMPTY and I
+  first misread that as "conv0 doesn't land." It was an artifact: each inference runs a main job + a tiny
+  tail job, and zero_out_bos runs PER JOB, so the tail job re-zeroed bo0 AFTER the main job's conv0 wrote
+  it, and the finalize scan (running in the tail job) saw bo0 zeroed. The per-completion readback -- which
+  catches conv0's 232 mid-run -- is the truth. The zeroing worked; only the per-job placement of the
+  finalize scan was wrong (harmless, diagnostic-only).
+- **Landing:** every stale-data confound is now removed and the conclusion holds byte-for-byte: only the
+  first task after NPU-init writes a real feature map; every chained layer's output is definitively empty.
+  Combined with the byte-identical per-kick register sequence, the matched completion handshake, the
+  refuted OP_EN-high timing, and geom_all (no regcmd register is the arm), the RK3588->RK3576
+  software-structural line is exhausted. The switch that arms the CMAC for the cold-start task and only it
+  is below the last writable register -- NVDLA CSC/CMAC sequencer state / an RK3576 quirk, not a driver fix.
+
 ## 2026-07-04 (open_high (OP_EN-high, upstream RK3588 model) REFUTED — dw1's output BO is distinct=1 in BOTH open_high=0 and =1, no completion timeout. The last per-kick structural difference from RK3588 did not arm the chained layer. CAVEAT/loose-end: the per-completion core dt_wr counters show large early values (25088->45248->50176->90944->100352) that don't square with "only conv0 computes"; core dt_rd is clearly cumulative, so dt_wr is likely a cumulative/dirty-counter artifact, but this isn't 100% nailed. open_high shifted the collapse point by one completion (A idle at #6, B does one more real read+write).)
 
 Board A/B, seq-kick + warm-chain, rocket.open_high (kernel branch rk3576-openhigh 5f404abb8: drop the
