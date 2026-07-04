@@ -37,6 +37,19 @@ NPU-write-then-NPU-read producer/consumer coherency gap would give a warm-lookin
 real data, or zeros? Real data → it genuinely is "later layers don't MAC" (HW state); zeros → a coherency bug,
 tractable.
 
+**Coherency REFUTED (from the existing log, no board cycle).** The driver's own input readback already answers
+it: `buf[3] in task=1 iova=0xfeb2d000 first=b8 7f 33 e5 80 7f 3d 7f ... distinct=237` — dw1's input BO holds
+conv0's REAL output (distinct 237/241/240, matching conv0's output), correctly aliased (dw1-in iova == conv0-out
+iova == feb2d000). The driver reads real data from feb2d000 between the kicks; dw1's CNA reads the same physical
+via the same IOMMU — so dw1 reads its real input and still does no MAC. Not stale, not zero. So the wall is now
+as tight as software can make it: a layer reading EXTERNAL (CPU-provided) input computes; a layer reading an
+INTERMEDIATE (NPU-produced, real, correctly-addressed, byte-identical regcmd) input does not, in every dispatch
+mode. Ruled out: regcmd bytes, teardown, resume soft-reset, input data, coherency, dispatch mode. The one thing
+left that differs between conv0 and dw1 is the on-chip CBUF/CMAC STATE conv0 leaves behind (independent of dw1's
+DRAM input), which no software lever re-initialises without cooling the CBUF (warm-chain) or crashing (reset).
+→ lead (A): the vendor's on-chip-buffer mechanism (cache_sgt/NBUF) + the PC-managed CBUF pipeline of the
+continuous submit.
+
 ## 2026-07-04 (Fork B teardown bisect — the per-kick teardown is EXONERATED. Skipping ALL of it does not restore a re-kick's MACs. The MAC-enabler is the fresh-job context, not any between-kick software step.)
 
 Added `rocket.bisect` (bitmask) to disable each per-kick teardown step and measured the true dw1 output
