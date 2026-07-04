@@ -1,5 +1,42 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (WRITEL AUDIT — complete static enumeration of EVERY NPU register write, both drivers, across a FULL inference: NO writel the vendor makes that rocket does not. task_base_addr=0 even for task_number=2 REFUTES the descriptor-DMA idea. The difference is grammar (one submit / PC iterates N vs seq-kick N kicks), not a missing register. Live writel-trace built into both stacks for the decisive runtime diff. See WRITEL-AUDIT.md.)
+
+Part 1 (read-only) enumerated every NPU-register writel in the vendor rknpu driver (rk3576-vendor-kernel/
+drivers/rknpu/, RK3576 config) across ALL functions, and every write in rocket's default path, then diffed
+against BOTH captured vendor logs. **Decisive facts:**
+- **task_base_addr=0 even for task_number=2.** dirty/vendor.txt holds a real MULTI-task vendor capture:
+  `SUBMIT task_number=2 ... task_con=0x70002 task_base_addr=0x0 pc_dma_ctrl=1`. The vendor iterates 2 tasks
+  from ONE submit with PC_DMA_BASE_ADDR(0x34)=0. This **kills the descriptor-DMA dispatch theory** outright
+  (the prior "descriptor experiment was wrong" note rested on a single-task capture; now the multi-task one
+  confirms it directly). rocket writes 0x34=0 too -> not a gap. Do NOT re-explore PC_DMA_BASE_ADDR.
+- **The per-submit register sequence is identical** (reconfirmed vs 1-task vendor-live-cap.txt AND 2-task
+  dirty/vendor.txt). Vendor RK3576 NPU writes, complete set: state_init (probe/reset: 0x10=1, 0x1004 toggle
+  0/1/0x1e, 0x1024=0x80000000 x2); per submit (subcore_commit+commit_pc): 0x10=1(slave), 0x1004=0xe,
+  0x3004=0xe (num_irqs=2>1), 0x10=regcmd, 0x14=amount, 0x20=0x300, 0x24=0x300, 0x30=((0x6|pp)<<16)|N,
+  0x34=task_base_addr(=0), 0x8=1, 0x8=0; per IRQ: 0x24=0x1ffff; perf clear 0x2210/0x2410. NO other NPU
+  write anywhere -- the action ioctl exposes no register write, bw_priority disabled on RK3576
+  (bw_priority_addr=0), NO register-BAR mmap, power/clk via frameworks, NBUF via IOMMU map not writel.
+- **VERDICT: no register offset the vendor writes and rocket never does.** The only multiset differences are
+  rocket writing MORE (per-job pp_state_init; 0x24 also clearing PC_DONE). The vendor's sole advantage is
+  STRUCTURAL: one submit + task_number=N, PC hardware iterates all N tasks from one OP_EN (ping-pong group
+  advances in HW; next task's regcmd found from the regcmd stream since base=0). Not a kernel writel.
+- **Ranked candidates:** #1 [mesa, NOT kernel] regcmd not laid out for PC auto-advance -- vendor whole graph
+  is one task_number=N submit, PC strides via regcmd stream + the +4 EXTRA amount stride; mesa emits the
+  next-pointer/contiguous layout only for soc!=RK3576. This is wg_continuous's wedge. #2 [kernel, cheap,
+  maybe untested cleanly] seq-kick's ping-pong POINTER never advances -- rocket hardcodes pp_pointer=0 every
+  kick (pp_task_idx++ computed but unused); try POINTER=pp_task_idx&1 (weak counter-indication: geom_both
+  forced config into both groups, not the executer's per-task active-group select). #3 perjob_ppinit (rocket
+  writes MORE not less; low prior).
+- **Part 2 (built, NOT flashed):** rknpu.wtrace / rocket.wtrace log `... wt <seq> <abs_off> <val> <caller>`
+  for every NPU write (same absolute offsets both stacks; reset-on-arm; capped 20000). Differ:
+  vendor-capture/diff_writel_trace.py aligns by offset seq, drops the vendor capture-build instrumentation,
+  prints vendor-only/rocket-only + per-register counts + verdict (self-tested). Branch rk3576-writel-trace,
+  LOCAL: vendor 763eae8c8, rocket b60af5ebf; both compile clean aarch64 (rknpu_drv/job.o, rocket_core/job.o).
+  Report+differ pushed to linux-rk3576-npu main 9e6e794. Next: flash, capture both, run differ -- if it
+  prints nothing (static read predicts so) the search leaves the register file for the one-vs-many-submit
+  grammar (mesa regcmd chaining), or test cheap candidate #2.
+
 ## 2026-07-04 (LOOSE END CLOSED — zero_out_bos (stale-proof) confirms chained layers write NOTHING real and dt_wr is a cumulative counter. conv0 writes a genuine feature map (distinct=232) to its own pre-zeroed BO; dw1/task2/task3 are distinct<=2 (EMPTY/ZEROPOINT) in every dump with zeroing on. The software-structural line is cleanly closed: the wall is below the registers, only the cold-start task MACs.)
 
 Board, seq-kick + warm-chain, rocket.zero_out_bos=1 (kernel branch rk3576-bo-groundtruth a3c67f7c1: memset
