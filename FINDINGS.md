@@ -1,5 +1,34 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (The IRQ-completion lever is DEAD on inspection — the wall is now pinned to one screw: in task_number≥2 mode the PC asserts PC_DONE instantly [samples=1] without ever driving the DPU [dt_wr=0], while task_number=1 drives it [dt_wr=25088]. Pure internal PC-sequencer behavior; no driver lever reaches it.)
+
+Inspected the IRQ-completion lever (the one Fork A path never tried) before building it — and it is already
+effectively present and does not touch the gate:
+- **The IRQ path is already wired.** `rocket_job_irq_handler` (rocket_job.c:2222) already fires on
+  INTERRUPT_RAW_STATUS bits 0-13 (which include 0x300 = the DPU-done bits), clears them, and wakes the thread →
+  the same completion handler the poll uses. So "switch to IRQ completion" changes nothing structural.
+- **int_mask already == the vendor's 0x300** (confirmed from the capture). No difference.
+- **The PC advances tasks internally.** The vendor enables only the LAST task's int_mask and waits for that one
+  IRQ; it does not service per-task interrupts. So the task-to-task advance is the PC's own hardware, not
+  driver-serviced — poll-vs-IRQ cannot change it.
+- **The "in-execution polling perturbs the DPU" confound is also dead.** In continuous mode the cnalive sample
+  loop showed `samples=1` — it broke after ONE read because PC_DONE was already set. So there was no heavy
+  in-execution polling to perturb anything.
+
+That last point exposes the wall's true shape: **in task_number≥2 mode the PC asserts PC_DONE immediately
+(samples=1) and task 0's DPU never writes (dt_wr=0); in task_number=1 mode the PC drives the DPU to completion
+(dt_wr=25088).** The only register that differs between the two is the task_number field of PC_TASK_CONTROL
+(1 vs N) — everything else (int_mask, op_en, S_POINTER arm, state_init, the whole regcmd) is byte-identical to
+the vendor. So the gate is the **PC task-sequencer's internal behavior for task_number≥2**, below the register
+surface, unreachable from the driver.
+
+**Software levers exhausted.** Ruled out, each with board or offline evidence: dispatch model (sequential kicks
+vs continuous vs SPREAD), per-kick teardown (bisect 0xf), resume soft-reset, reset-per-layer (crashes), regcmd
+bytes (byte-identical to the vendor), input data + coherency (dw1 reads conv0's real output), pw/dw/weight-fetch
+(red herrings), op_en value, ENABLE_MASK-at-submit, cache_sgt/NBUF (vendor chains via DRAM), IRQ completion.
+The wall is RK3576-specific PC microcode; RK3588's open stack works because it self-chains via embedded
+next-pointers (rkt_ml.c:282, guarded soc!=RK3576) — the untried RK3576 analogue.
+
 ## 2026-07-04 (Lead A [cache_sgt/NBUF] is a DEAD END — verified: the vendor chains layers through a 2 MB DRAM intermediate, not NBUF. So the sole mechanism that makes chained layers compute is the continuous PC submit, which walls for us. Next: the one untried Fork A lever — IRQ-driven completion + per-task int_mask instead of PC_DONE polling.)
 
 Before building the (large) cache_sgt machinery, checked whether the vendor actually puts intermediates on-chip.
