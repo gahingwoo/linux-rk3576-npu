@@ -1,41 +1,64 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# FORK A warm-chain test (2026-07-03). wg_warm_chain=1: within one whole-graph
-# job, the FIRST kick (conv0) runs pp_state_init to engage, and the re-kicks
-# (task 1..N) SKIP it -- so the ping-pong pointers stay where the previous task
-# left them and the on-chip CBUF stays warm across layers instead of being
-# cleared (POINTER_PP_CLEAR) between kicks. Each task's regcmd arms its own
-# S_POINTER, so the first kick's pp_state_init is enough for engage.
-#   chained-layer output distinct>1 (reads the warm CBUF the prev layer wrote) +
-#     Top-1 near CPU 412 = keeping CBUF warm across kicks carries the chain. WIN.
-#   chained still distinct=1 = the inter-kick teardown that cools CBUF is NOT
-#     (only) pp_state_init -> next lever = the OP_EN 1->0 cycle / the ~30us gap.
-# perjob_ppinit=1 (first kick still arms). force_powercycle not on this branch.
+# FORK A engage x dispatch matrix (2026-07-04 v2). The prior A/B set STRIP_OPEN=1
+# on both runs -> both dead: STRIP_OPEN removes the in-stream 0x81 op_en (writes
+# ENABLE_MASK 0xf008=0x1d) that is what actually engages OUR units, so exec_ever=0.
+# The known-good sequential/warm-chain run (66c1303) used ROCKET_WHOLE_GRAPH=1 with
+# NO STRIP_OPEN. So sweep the real matrix, one boot, 3 inferences:
+#   RUN 1  seq  + in-stream op_en  -> KNOWN GOOD: exec_ever=0xf, conv0 distinct=239
+#                                     (sanity: build is fine, engage intact).
+#   RUN 2  cont + in-stream op_en  -> THE CRUX. task_number=29, units SHOULD engage
+#                                     (exec_ever=0xf). Watch the "multitask %u/29"
+#                                     climb + task-0 cnalive/perf:
+#                                       TASK_STATUS 0->29 = PC iterates (JACKPOT).
+#                                       stuck 0 w/ exec_ever=0xf = units engage,
+#                                         task 0 never completes its DPU write
+#                                         (the register/microcode wall) OR the
+#                                         in-stream 0x1d restarts the PC each task.
+#   RUN 3  cont + STRIP_OPEN        -> contrast (last boot's data): exec_ever=0,
+#                                     TASK_STATUS stuck 1. Same-boot so no drift.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+P=/sys/module/rocket/parameters
 log() { echo "$@" > "$C"; }
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "warmchain: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "forkA: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
-	echo 0 > /sys/module/rocket/parameters/cbuf_reset 2>/dev/null
-	echo -1 > /sys/module/rocket/parameters/enable_mask 2>/dev/null
-	echo 0 > /sys/module/rocket/parameters/multitask_poll 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/perjob_ppinit 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/wg_warm_chain 2>/dev/null
 
+	echo 0 > $P/cbuf_reset 2>/dev/null
+	echo -1 > $P/enable_mask 2>/dev/null
+	echo 1 > $P/perjob_ppinit 2>/dev/null
+	echo 1 > $P/wg_warm_chain 2>/dev/null
+
+	# ---- RUN 1: sequential kick + in-stream op_en (KNOWN-GOOD baseline) ----
+	echo 0 > $P/multitask_poll 2>/dev/null
+	echo 0 > $P/wg_continuous 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== FORK A: wg_warm_chain=1 (first kick arms, re-kicks keep CBUF warm) ====="
+	log "===== FORK A RUN 1: seq + in-stream op_en (baseline exec_ever=0xf) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-	log "---- exec_ever + per-task output distinct + perf (chained compute?) ----"
-	dmesg | grep -aE "rocket dbg exec: ever_bit16|rocket dbg buf\[[1-6]\] out task=|rocket dbg perf:" | grep -avE "@0x|cover|fine" | head -30 > "$C" 2>&1
-	log "===== DONE: chained distinct>1 = warm-CBUF-across-kicks carries the chain ====="
+
+	# ---- RUN 2: continuous submit task_number=N + in-stream op_en (THE CRUX) ----
+	echo 1 > $P/multitask_poll 2>/dev/null
+	echo 1 > $P/wg_continuous 2>/dev/null
+	log ""
+	log "===== FORK A RUN 2: continuous + in-stream op_en (crux: engage vs complete) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	# ---- RUN 3: continuous submit + STRIP_OPEN (contrast, same boot) ----
+	log ""
+	log "===== FORK A RUN 3: continuous + STRIP_OPEN (contrast, no-engage) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_STRIP_OPEN=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	log "===== FORK A DONE: RUN1 engages+computes; RUN2 = does task_number=N engage AND advance? ====="
 	sync
 }
 

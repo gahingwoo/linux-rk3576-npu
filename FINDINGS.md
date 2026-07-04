@@ -1,5 +1,39 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork A experiment 1: engage × dispatch matrix) — the crux refined one layer: in task_number=N mode conv0 LOADS its operands byte-identically to the working single-task, but the CACC never commits (dt_wr=0) and the PC wedges. Engage and continuous-iteration are mutually exclusive in our mechanism.
+
+Added `rocket.wg_continuous` (rocket_job.c): dispatch the whole job as ONE task_number=task_count PC submit
+(vendor commit_pc), instead of N sequential single-task kicks. One board boot, three inferences differing only
+in dispatch × op_en (all MobileNet whole-graph, task_count=29):
+
+| RUN | dispatch | in-stream op_en | conv0 load (top) | conv0 commit (core dt_wr) | PC state |
+|-----|----------|-----------------|------------------|---------------------------|----------|
+| 1 | N sequential kicks | kept | dt_rd=9408 wt_rd=96 | **25088** | completes, output distinct=239 |
+| 2 | continuous N=29 | kept | dt_rd=9408 wt_rd=96 | **0** | OP_EN stuck 1, PC_RAW bit16, TASK_STATUS never advances |
+| 3 | continuous N=29 | STRIP_OPEN | dt_rd=**0** | 0 | units never engage, no DMA at all |
+
+What this nails:
+- **RUN 2 conv0 loads its input (dt_rd=9408) and weights (wt_rd=96) — the SAME counters as the working
+  single-task RUN 1.** So the multi-task wall is NOT an operand/DMA-fetch problem; the operands are in.
+- **Yet core/CACC dt_wr=0** (RUN 1 = 25088): the compute/write-back never commits. Same operands, same config;
+  task_number=1 writes 25088, task_number≥2 writes nothing. This refines the old "engages but never completes
+  its DPU write" — the DMA does run, only the CACC commit / done-handshake is gated.
+- **The PC wedges**: OP_EN stuck at 1 + PC_RAW bit16 set. This is exactly the kernel-comment warning that the
+  in-stream 0x1d op_en, firing mid-iteration, restarts/wedges the PC. (After the stall, mesa's later jobs come
+  in with DATA_ADDR=0 and each stalls the 500ms cap — noise; the board recovered, RUN 3 ran clean.)
+- **RUN 3 reverse-proof**: strip the in-stream op_en and conv0 does not even DMA (dt_rd=0). So the in-stream
+  0x1d is what TRIGGERS the CNA feature/weight DMA in our path. It is required for engage AND it wedges the PC
+  in multi-task mode.
+
+So the dilemma is proven both ways: **engage (CNA-DMA trigger) needs the in-stream 0x1d op_en; continuous PC
+iteration needs it absent (else the PC wedges, OP_EN stuck 1).** Mutually exclusive in our current mechanism.
+The vendor decouples them by folding ENABLE_MASK (0xf008=0x1d) into the submit (no in-stream op_en at all), but
+our CPU write of 0xf008=0x1d before OP_EN hangs (prior finding). **Next Fork A lever: replicate the vendor's
+ENABLE_MASK-at-submit so the CNA engages without an in-stream op_en and without hanging — read the exact
+ENABLE_MASK write/ordering in rknpu_job_subcore_commit_pc and find what our earlier hanging write was missing.**
+(Correction to the prior entry's claim that STRIP_OPEN units engage from the S_POINTER arm + one pulse — RUN 3
+disproves it for our 0x1 pulse: armed S_POINTER=0x0e + one pulse with no op_en → exec_ever=0, dt_rd=0.)
+
 ## 2026-07-04 (Fork A opened) — the vendor's rknpu driver gives the exact continuous-submit recipe; the "1/29 stuck" crux is now precise: a task completes as task_number=1 but not as task 0 of a task_number=N submit.
 
 Read the vendor rknpu kernel driver (rk3576-vendor-kernel/drivers/rknpu) instead of guessing at NVDLA RTL —
