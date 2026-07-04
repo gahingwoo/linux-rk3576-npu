@@ -1,5 +1,25 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Audit part 2 — the per-layer regcmd is CLEAN too: requant/OUT_CVT is validated and the model is per-tensor; the S_POINTER value matches the vendor and the mesa comment's own "0x0e desyncs multi-task" theory is REFUTED by the vendor using 0x0e as well.)
+
+Continued the audit into the mesa per-layer regcmd generation (rkt_regcmd.c fill_regcmd_rk3576_normal):
+- **Requant / OUT_CVT is validated.** `conv_scale = in_scale*wt_scale/out_scale → cvt_scale (15-bit) + shift`
+  (rkt_regcmd.c:352-360). This is the same math proven byte-exact on conv2d-cal, and mobilenet_v1_1.0_224_quant
+  is per-tensor (single weights_scale), so a scalar requant is correct. offset = output_zp - 0x80. Not a bug.
+- **S_POINTER value matches the vendor.** mesa's default per-task `sptr = 0x0e` (ROCKET_SPTR, rkt_regcmd.c:400):
+  POINTER=0 | PP_EN | EXECUTER_PP_EN | PP_MODE(1). The mesa comment (380-397) theorises that PP_MODE=1
+  auto-alternates the ping-pong group and DESYNCS on a multi-task graph → geometry lands in a group the executer
+  never reads → "units engage but the DPU writes nothing" (= the dt_wr=0 symptom). BUT the vendor's own dw
+  regcmd entry[0] is `reg=1004 val=0x0e` — the vendor uses the SAME 0x0e (PP_MODE=1) and its multi-task works.
+  So the desync theory is REFUTED and 0x0e is not the bug.
+
+So both the submit path (part 1) and the per-layer regcmd (part 2) are clean and vendor-matching. Everything the
+software controls — the packed bytes and the submit register sequence — is byte-identical to the vendor across
+every path audited. The remaining anomaly (vendor's bare pulse engages, ours needs the per-unit op_ens; and
+task 0 never commits in task_number≥2 with a byte-identical stream) has no software cause left in the audited
+surface. Still unaudited: the completion/finalize path and the clock/power/iommu environment (both unlikely to
+gate a task_number-specific commit, since single-task commits in the same environment).
+
 ## 2026-07-04 (Audit part 1 — the kernel submit path + mesa whole-graph packing are CLEAN: they match the vendor. No second bug there. Reinforces that the multi-task wall is the PC's internal task_number≥2 behavior, not a submit bug. Still to audit: completion path, per-layer regcmd correctness, clock/power/iommu.)
 
 Chewed through the kernel `rocket_job_hw_submit` and mesa `rkt_pack_graph_regcmd` line by line vs the vendor
