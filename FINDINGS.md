@@ -52,6 +52,26 @@ a 112-wide layer wouldn't fit the CBUF and had to be tiled. So the lead is the p
 weight-bank / block-DMA trigger that warm-chain doesn't cover — the execution-state sibling of the feature CBUF
 staleness, now pinned to exactly the large-weight case.
 
+Two board levers, both clean negatives, that close the cheap options and sharpen the cause (2026-07-04):
+- **cbuf_reset=1 (H/control-only) + warm-chain**: does NOT clear the pointwise weight-valid state (pw wt_rd
+  still 0, feature stayed warm). So the weight-valid, like the feature-valid, is coupled to the AXI/MMU reset
+  domain (which cbuf_reset=2 touches but breaks translation) — not the H domain.
+- **a fresh pointwise WEIGHT_BANK (ROCKET_WT_BANK=1, pw gets a different CBUF weight bank than the depthwise
+  before it)**: does NOT force the pw weight DMA either (pw wt_rd still 0). So it isn't a "bank looks valid"
+  skip. (Side effect: it did move a *depthwise* layer's output from distinct=3 to distinct=16 — the bank change
+  shifts the CBUF layout — but the pointwise weight fetch is untouched.)
+
+That rules out both the reset-invalidate and the bank levers, and points at the real mechanism: the vendor
+runs the whole graph as one **continuous** PC submit, so while a layer computes the PC **pre-stages the next
+layer's weights into CBUF** (double-buffering). The vendor's pointwise almost certainly shows wt_rd=0 too — it
+doesn't DMA at run time, it reads weights that were staged during the previous task. Our sequential kicks have
+no such pipeline, so a pointwise layer's weights are never pre-staged and it computes weightless (bias only →
+relu → zero-point). warm-chain got the *feature* and the small *depthwise* weights across with per-kick
+fetches; the large *pointwise* weights are the one thing that genuinely needs the pipeline. So the pointwise
+weight is the last hold-out, and it is architectural: it wants either the continuous PC submit (Fork A's hard
+wall, where the pre-staging is free) or an explicit kernel-side weight pre-load before each pointwise kick.
+(Mesa: ROCKET_WT_BANK knob added to rkt_regcmd.c for the test; kernel branch rk3576-warmchain unchanged.)
+
 ## 2026-07-03 (latest) — forcing a per-job NPU power-cycle to clear CBUF: it fires, but the power domain hangs on the way back up. Fork B (clear the on-chip buffer in software) is now fully exhausted.
 
 The chain needs a cold on-chip buffer per layer. cbuf_reset=1 can't invalidate it and cbuf_reset=2 corrupts
