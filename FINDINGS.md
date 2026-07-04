@@ -1,5 +1,28 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (★ PARTIAL BREAKTHROUGH — the RK3576 PC DOES follow next-pointers. A task_number=N submit advanced past conv0 for the first time: the PC chained conv0→dw1 and loaded dw1's operands. This overturns the "iteration only / silicon wall" conclusion. The empty-MAC wall persists though, and the chain stalls after one hop.)
+
+Board test of the next-pointer build (ROCKET_NEXTPTR trailer + wg_continuous task_number=29), RUN 2 vs the
+baseline seq-kick RUN 1:
+- **The PC followed the trailer.** RUN 2's first job: `top dt_rd=29792 wt_rd=132`. From the baseline, conv0 =
+  dt_rd 9408 / wt_rd 96 and dw1 = dt_rd 20384 / wt_rd 36. **9408+20384 = 29792 and 96+36 = 132, exactly** — so
+  the PC loaded conv0's operands AND dw1's operands in one submit. Before the trailer (Fork A EXP-1), the same
+  task_number=N submit loaded only conv0 (dt_rd=9408). **So the RK3576 PC does follow next-pointers — the first
+  time a multi-task submit ever advanced past conv0.** This contradicts the earlier "the PC only auto-strides,
+  the wall is silicon" conclusion.
+- **conv0 now commits.** core dt_wr went 0 → 25088 (before the trailer, task 0 of task_number=N never committed).
+- **But two walls remain.** (1) The output is degenerate (distinct=1): conv0 wrote 25088 bytes but the MAC was
+  empty (bias→relu→zp), the same task_number≥2 empty-MAC. (2) The chain stalled after one hop — dt_rd never
+  exceeded 29792 (task 2 / pw1's 5152 never loaded), TASK_STATUS stuck 0/29; dw1 loaded its operands but never
+  committed, so the PC stalled at dw1.
+
+**This reopens everything.** The multi-task wall was never "the PC can't chain" — it CAN (conv0→dw1 proven).
+The remaining wall is the empty MAC in task_number≥2 mode: even task 0 computes nothing when task_number=29,
+though it commits and advances. The natural next lever falls straight out of it: run each task in the committing
+(task_number=1) mode while the trailer does the advancing — i.e. dispatch task_number=1 + the next-pointer
+trailer, so the PC follows the chain but each task runs in the mode that does real MACs. NEXT: task_number=1 +
+trailer (a kernel knob to submit task_number=1 with the chained regcmd).
+
 ## 2026-07-04 (The next-pointer path is the ONE untried PC mechanism and is worth trying — correcting my earlier over-hasty dismissal. It is RK3588's tile-chaining, not a whole-graph or a vendor-RK3576 mechanism, so this is a NOVEL cross-op construction and a gamble on whether the RK3576 PC follows next-pointers — but it is a DIFFERENT PC code path than the walled iteration, and it could keep each task in the committing (task_number=1-like) mode while the trailer advances.)
 
 Woo relayed a task to route RK3576 through RK3588's embedded next-pointer chaining. Read the code to judge it:
