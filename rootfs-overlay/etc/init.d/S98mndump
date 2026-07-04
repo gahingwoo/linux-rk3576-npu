@@ -1,21 +1,22 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# FORK A UNIT_OPEN sweep (2026-07-04 v3). Research nailed the untested lever:
-# mesa's default (non-STRIP) whole-graph path already replaces the broadcast
-# op_en (which wedges the PC via reg 0x08) with FOUR per-unit OP_EN writes
-# (CNA 0x1008 / CORE 0x3008 / DPU 0x4008 / RDMA 0x5008) that DON'T touch the PC.
-# Prior data: per-unit value 0x1 engages the CNA (conv0 dt_rd=9408) but the task
-# never COMPLETES (core dt_wr=0, TASK_STATUS stuck 1/29). The broadcast that DOES
-# complete writes 0x1d (the RKNPU enable_mask). So the hypothesis (mesa comment's
-# own): per-unit value 0x1d gives the units the FULL enable the broadcast gives,
-# WITHOUT touching the PC's 0x08 -> units complete AND the PC iterates. Pure env
-# test (deployed libteflon has ROCKET_UNIT_OPEN); wg_continuous=1 = one PC submit.
-#   RUN 1  seq baseline (sanity: exec_ever=0xf, conv0 distinct=239).
-#   RUN 2  continuous + UNIT_OPEN=0x1d = THE HYPOTHESIS. Watch "multitask %u/29":
-#            climbs 1->29 = units complete, PC iterates (JACKPOT); stuck 1 = 0x1d
-#            doesn't drive completion either -> completion is task_number-gated,
-#            not an op_en-value thing.
-#   RUN 3  continuous + UNIT_OPEN=0x1 = control (reproduce the 1/29 stall).
+# RK3576 NEXT-POINTER experiment (2026-07-04). Port RK3588's embedded next-pointer
+# self-chaining to RK3576: mesa (ROCKET_NEXTPTR) now emits the RK3588-style trailer
+# (PC BASE_ADDRESS 0x10 + REGISTER_AMOUNTS 0x14) at the end of every task and the
+# whole-graph packer chains each task to the next. The kernel runs the RK3588-style
+# dispatch (wg_continuous = task_number=N, one OP_EN); if the RK3576 PC follows the
+# trailer, one kick walks the whole graph with each task in the committing mode,
+# instead of the task_number iteration that walls (only the cold-start task commits).
+#   RUN 1  baseline sequential-kick, NO next-pointer -> the known state: conv0
+#          (feb2d000) computes (core dt_wr=25088, distinct=239); dw1 (fea69000) and
+#          later layers dt_wr=0, distinct=1.
+#   RUN 2  NEXT-POINTER (wg_continuous + multitask_poll + ROCKET_NEXTPTR) = THE TEST:
+#          do tasks AFTER conv0 now show core dt_wr>0 and output distinct>1?
+#            dw1 distinct>1 / dt_wr>0 = the RK3576 PC FOLLOWS next-pointers -> the
+#              chain computes ->穿墙.
+#            dw1 still distinct=1 / dt_wr=0 = the PC does NOT follow next-pointers ->
+#              iteration is the only path and the wall is silicon.
+# Watch the "multitask %u/29" climb + per-task perf(core dt_wr) + buf out distinct.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -26,38 +27,34 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "forkA: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "nextptr: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
 	echo 0 > $P/cbuf_reset 2>/dev/null
 	echo -1 > $P/enable_mask 2>/dev/null
 	echo 1 > $P/perjob_ppinit 2>/dev/null
+	echo 0 > $P/bisect 2>/dev/null
+	echo 0 > $P/rekick_reset 2>/dev/null
 	echo 1 > $P/wg_warm_chain 2>/dev/null
 
-	# ---- RUN 1: sequential baseline (sanity) ----
+	# ---- RUN 1: baseline sequential-kick, no next-pointer ----
 	echo 0 > $P/multitask_poll 2>/dev/null
 	echo 0 > $P/wg_continuous 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== FORK A RUN 1: seq baseline (exec_ever=0xf, distinct=239) ====="
+	log "===== NEXTPTR RUN 1: baseline seq-kick (no next-pointer) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 2: continuous + per-unit OP_EN = 0x1d (THE HYPOTHESIS) ----
+	# ---- RUN 2: next-pointer chain (RK3588 mechanism on RK3576) ----
 	echo 1 > $P/multitask_poll 2>/dev/null
 	echo 1 > $P/wg_continuous 2>/dev/null
 	log ""
-	log "===== FORK A RUN 2: continuous + ROCKET_UNIT_OPEN=0x1d (full per-unit enable) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_UNIT_OPEN=0x1d \
+	log "===== NEXTPTR RUN 2: next-pointer chain (wg_continuous + ROCKET_NEXTPTR) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_NEXTPTR=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 3: continuous + per-unit OP_EN = 0x1 (control, 1/29 stall) ----
-	log ""
-	log "===== FORK A RUN 3: continuous + ROCKET_UNIT_OPEN=0x1 (control) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_UNIT_OPEN=0x1 \
-		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-
-	log "===== FORK A DONE: RUN2 (0x1d) TASK_STATUS climb past 1 = units complete + PC iterates ====="
+	log "===== NEXTPTR DONE: RUN2 dw1(fea69000) dt_wr>0/distinct>1 = PC follows next-pointers ====="
 	sync
 }
 
