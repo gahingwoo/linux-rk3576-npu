@@ -1,5 +1,29 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (CBUF audit_all pins the break at CBUF->CMAC, NOT CNA->CBUF. dw1's real data DOES reach the CBUF (6 windows changed PRE->POST, nz 714->1023) yet the CMAC outputs zero -> NBUF is RULED OUT, the break is downstream of CBUF staging. CBUF_CON live=0x44 identical for conv0 and dw1; the CNA rawor CSC bit is 0 for BOTH so it does not pin CSC.)
+
+Board, seq-kick + warm-chain, rocket.audit_all=1 (per-task 16x64KB CBUF windows PRE/POST + changed-window
+diff + CBUF_CON live/regcmd decode, kernel branch rk3576-cbuf-audit-alljobs 47b58df1d). Per-task snapshots
+labelled by DPU-out iova (conv0=0xfeb2d000, dw1=0xfea69000):
+- **dw1's data reaches the CBUF.** dw1 PRE (= conv0's leftover, 242/714 ...) -> POST 188/1023 192/1022 ...,
+  POST changed[0x00000 0x10000 0x20000 0x30000 0x40000 0x50000] = SIX windows changed, nonzero rose
+  ~714->~1023 (dense real data staged). conv0 stages too (changed[0x0..0x40000], 5 windows). **Both layers
+  stage into CBUF; only conv0's is consumed by the CMAC. So CNA->CBUF is NOT the break -> NBUF RULED OUT
+  -> the break is CBUF->CSC->CMAC (data present, not consumed).**
+- **CBUF_CON does not differentiate.** live=0x00000044 for BOTH conv0 and dw1 (DBANK=4, WBANK=4) while the
+  regcmd requests DBANK=0 for both (conv0 CON0=0x10000000, dw1 CON0=0x14000000; low 14 bits 0 both) -> the
+  executer runs a default bank config the regcmd never latches (same PP-latch as geom_both), identical
+  across layers. DATA_ENTRIES differ (conv0=15, dw1=56) as expected per layer size.
+- **CORRECTION / caveat:** the CNA rawor CSC bit is 0 for conv0 (which COMPUTES) as well as dw1, so
+  "CSC never fired" is NOT supported by rawor -- it does not pin the break. (conv0 rawor=0x30000000,
+  dw1=0x20000008; the decoded FEAT/WT/CSC bits 0-5 are ~0 for both; dw1 has WT1=1, conv0 WT=0, which is
+  the opposite of a "dw1 didn't load" story.)
+- **NEXT:** the break is CBUF->CMAC. If the 64KB windows == the 16 CBUF banks, DBANK=4 => the CMAC reads
+  bank 4 (window 0x40000), which BOTH layers changed -- so pin the exact bytes/offset the CMAC reads per
+  (DBANK=4, DATA_ENTRIES): does dw1's staged data actually occupy the sub-range the CMAC walks, or does
+  dw1's DENTRIES=56 layout leave the CMAC's read window empty? i.e. match "where the CNA wrote" against
+  "where the CMAC reads" for dw1 vs conv0.
+
 ## 2026-07-04 (geom_both REFUTED as the dw1 miss — config-latch is NOT it. dw1 still distinct=1 with its config CPU-forced into both PP-groups, and conv0 even DEGRADED 239->111 (proving the CPU writes DO reach the executer). The wall is confirmed to be CNA->CBUF->CMAC data staging, not register geometry.)
 
 Board A/B, seq-kick + warm-chain (the regime where dw1 reads dt_rd=20384), all-tasks readback. geom_both
