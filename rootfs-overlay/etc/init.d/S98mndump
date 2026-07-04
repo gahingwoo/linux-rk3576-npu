@@ -1,19 +1,18 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 geom_all A/B (2026-07-04). CBUF audit pinned the break at CBUF->CMAC
-# (dw1's data reaches CBUF, CMAC still zero). geom_both proved the arm is NOT a
-# CNA/CORE config reg (dw1 stayed 0, conv0 degraded 239->111 = CPU writes reach
-# the executer). geom_all is the exhaustive twin: CPU-write EVERY regcmd config
-# target incl. the DPU(0x4xxx)/RDMA(0x5xxx) blocks geom_both skipped, deciding
-# whether the arm is ANY regcmd config register or none at all.
-#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1. The all-tasks
-#   readback prints one "out task=N" line per layer.
-#   RUN A  geom_all=0 (baseline): conv0 (out task=0) distinct>200, dw1 (task=1)=1.
-#   RUN B  geom_all=1 (THE TEST): watch dw1 (out task=1, iova 0xfea69000).
-#            - dw1 distinct>1 => arm WAS a DPU/RDMA regcmd reg the PC never latched.
-#            - dw1 distinct=1 => arm is NOT any regcmd reg => cold-start internal
-#              state; the regcmd-register line is closed.
-#            - conv0 drops => geom_all perturbs conv0 too (like geom_both did).
+# RK3576 conv0_twice (2026-07-04). geom_all closed the regcmd-register line; the
+# RK3588-vs-RK3576 diff shows the per-task register sequence is byte-identical,
+# so the chained-layer wall is a cold-start internal CONTEXT (position), not a
+# register. conv0_twice nails position directly: after the whole seq-kick job
+# completes, re-run task 0 (conv0) ONE more time with NO reset/re-init, then
+# finalise. Same regcmd + same external input; only difference = it is no longer
+# the first-task-after-NPU-init.
+#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1.
+#   WATCH the LAST "out task=0 iova=0xfeb2d000" line (right after the log line
+#   "rocket conv0_twice: re-running task 0"):
+#     - 2nd conv0 distinct=1 (1st was ~240) => PURE POSITION: the arm is consumed
+#       by the first-after-init task, independent of layer/data. Decisive.
+#     - 2nd conv0 still ~240 => position is NOT the gate; something else re-arms.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -24,10 +23,10 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "geom_all: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "conv0_twice: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
-	# ---- regime: seq-kick + warm-chain (dw1 reads its input here) ----
+	# ---- regime: seq-kick + warm-chain ----
 	echo 0 > $P/cbuf_reset 2>/dev/null
 	echo -1 > $P/enable_mask 2>/dev/null
 	echo 1 > $P/perjob_ppinit 2>/dev/null
@@ -38,25 +37,18 @@ start() {
 	echo 0 > $P/wg_continuous 2>/dev/null
 	echo 0 > $P/chain_task_number 2>/dev/null
 	echo 0 > $P/geom_both 2>/dev/null
+	echo 0 > $P/geom_all 2>/dev/null
 	echo 0 > $P/audit_all 2>/dev/null
 	echo 0 > $P/audit_arm 2>/dev/null
 
-	# ---- RUN A: geom_all=0 (baseline) ----
-	echo 0 > $P/geom_all 2>/dev/null
+	echo 1 > $P/conv0_twice 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== GEOM_ALL RUN A: geom_all=0 (baseline seq-kick) ====="
+	log "===== CONV0_TWICE: seq-kick, re-run task 0 after job completes ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN B: geom_all=1 (THE TEST) ----
-	echo 1 > $P/geom_all 2>/dev/null
-	log ""
-	log "===== GEOM_ALL RUN B: geom_all=1 (CPU-write EVERY regcmd config reg incl DPU/RDMA) ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
-		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-
-	log "===== GEOM_ALL DONE: dw1 'out task=1' distinct>1 in B = arm was a DPU/RDMA regcmd reg; still 1 = not any regcmd reg ====="
+	log "===== CONV0_TWICE DONE: last 'out task=0 0xfeb2d000' (after 're-running task 0') distinct=1 = PURE POSITION ====="
 	sync
 }
 

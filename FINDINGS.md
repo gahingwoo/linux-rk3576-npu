@@ -1,5 +1,45 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (RK3588-vs-RK3576 task-2+ diff (read-only, upstream pristine rocket at e7d700e14). The per-task register sequence is byte-IDENTICAL to upstream, and our completion handshake already matches/exceeds it. The ONLY per-kick deviation is the seq-kick macro's extra OP_EN=0 pulse AT SUBMIT (upstream leaves OP_EN high during execution). Ranked below. Built the safe conv0_twice position-confirmation knob; did NOT build the OP_EN-high variant (risks an uncapped poll->hang->reset->iommu-death).)
+
+Diffed the pristine upstream RK3588 rocket (linux-next import e7d700e14, 635 lines) against our RK3576
+rocket_job.c, the task-2+ path specifically. geom_all already closed the regcmd-register line (see below);
+this pins what STRUCTURALLY differs from the WORKING RK3588 path.
+
+- **upstream RK3588 hw_submit (per task, WORKS):** reset check; task=tasks[idx]; idx++; BASE_ADDRESS=0x1;
+  CNA S_POINTER = PP_EN|EXECUTER_PP_EN|PP_MODE|extra_bit (0x0e for core 0); CORE S_POINTER same;
+  BASE_ADDRESS=task->regcmd; REGISTER_AMOUNTS; INT_MASK=DPU_0|DPU_1 (0x300); INT_CLEAR=DPU_0|DPU_1;
+  TASK_CON=RESERVED_0|TASK_COUNT_CLEAR|TASK_NUMBER(1)|TASK_PP_EN; TASK_DMA_BASE_ADDR=0; **OP_EN=1 (only)**.
+  Completion (DPU-done IRQ): **OP_EN=0; INT_CLEAR=0x1ffff**; re-kick next or finish. job_run: pm_get +
+  iommu_attach + hw_submit -- NO reset/re-init (rocket_core_reset is error-path only).
+- **RANKED diff (task-2+ arming candidates):**
+  1. **[TOP, concrete, but risky to test] submit-time OP_EN=0 pulse.** Our seq-kick macro pulses OP_EN
+     1->0 AT SUBMIT (vendor single-shot style); upstream sets OP_EN=1 and leaves it HIGH through
+     execution, clearing to 0 only at completion. For a per-task RE-KICK model (which upstream is and we
+     are), the OP_EN=1->0 transition AT COMPLETION may be the HW's per-task commit/re-arm; pulsing at
+     submit (OP_EN=0 during execution) skips it. The vendor's submit-pulse works only because the vendor
+     uses PC HARDWARE ITERATION (task_number=N, one pulse, PC advances internally) -- not re-kick.
+     Adaptation: drop the macro's OP_EN=0, leave OP_EN high, clear at completion (already done at the
+     completion site). NOT BUILT: our seq-kick poll waits on PC_DONE with no cap, and PC_DONE may not
+     assert while OP_EN is high -> infinite poll -> sched timeout -> rocket_core_reset -> shared rk_iommu
+     dies. Needs a poll cap first; flag before flashing.
+  2. **[weaker] pp_state_init per-job.** RK3576-only (rocket_core_pp_state_init: S_POINTER PP_CLEAR +
+     DS1=0x80000000 to both PP groups). Upstream RK3588 runs it NEVER; vendor RK3576 runs it ONCE at
+     probe; we run it at probe AND per-job (perjob_ppinit=1). warm_chain (skip on re-kicks, task 0 still
+     gets it) already tested -> engage+DMA, no MAC, so a plain skip is not the fix -- but "only at probe,
+     never per-job" (perjob_ppinit=0, matching vendor+upstream) is a distinct, untested config, testable
+     with the existing knob and no new code. Risk: may break conv0 (probe-time state stale by inference).
+  3. **[not it] completion handshake.** We already do OP_EN=0 + full INT_CLEAR=0x1ffff at completion
+     before each re-kick (>= upstream). Matches; ruled out.
+  4. **[not it] per-task register values.** Byte-identical to upstream (S_POINTER 0x0e, TASK_CON equiv,
+     INT_MASK 0x300, OP_EN=1). Confirms geom_all -- no register value is the miss.
+  5. **[not it, intra-job] job_run adds attach-once + tlb_flush** (per-job; a seq-kick graph is ONE job,
+     so these don't fire between tasks). mesa: per-task regcmd byte-identical; the next-pointer trailer is
+     only used in wg_continuous, not seq-kick.
+- **Completion detection differs (poll PC_DONE vs upstream DPU-done IRQ) but the register actions match.**
+- **NEXT: test #1 first (highest likelihood) but only after adding a poll cap so OP_EN-high can't hang;
+  meanwhile conv0_twice (built, rk3576-arm-hunt 66245517d) gives a 1-flash pure-position verdict.**
+
 ## 2026-07-04 (geom_all CLOSES the regcmd-register line — the chained-layer CMAC arm is NOT any regcmd register. dw1 stays distinct=1 with the ENTIRE regcmd config (88 CNA + 8 CORE + 67 DPU + 20 RDMA) CPU-forced, and conv0 CRASHES to distinct=1 (uniform 0xfe). Not CBUF data, not any register -> it is a cold-start internal hardware context.)
 
 Board A/B, seq-kick + warm-chain, rocket.geom_all=1 (kernel branch rk3576-geom-all 7cc4032e1: CPU-write
