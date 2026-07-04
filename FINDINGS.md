@@ -1,5 +1,42 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork B — the resume soft-reset is NOT the MAC-enabler [REFUTED], the reset-per-layer fix CRASHES, and a self-check debunks the "bytes-vs-context" pivot: the "vendor dw computes" evidence was an EXTERNAL-INPUT dw, not a chained layer. No chained/later layer has ever computed on this open stack, in any dispatch mode.)
+
+Two board runs + one offline self-check, all pointing the same way:
+
+**(1) The resume soft-reset hypothesis, REFUTED.** The runtime_resume callback runs a full NPU soft-reset
+(rocket_core_reset) and its comment claims "without the CBUF reset ... the CMAC reads zero out of an
+uninitialised CBUF." So I guessed the cold-start's reset is what enables its MACs. Board control
+`rocket.soft_reset=0` (verified it took effect — log shows "soft_reset=0, skipping full NPU reset" on a real
+resume): **conv0 still computes (distinct=241).** So the resume soft-reset is NOT the MAC-enabler; conv0 does
+not need it. Hypothesis dead.
+
+**(2) The reset-per-layer fix, CRASHES.** `rocket.rekick_reset=2` (detach IOMMU → rocket_core_reset →
+re-attach, per re-kick) faulted: `rocket_gem_bo_free → iommu_unmap` NULL deref at cleanup, "recursive fault,
+reboot needed" — my inline detach/re-attach corrupts the domain's iommu mapping state, so freeing BOs later
+NULLs. A driver bug in the experiment, not a HW verdict; dw1 stayed distinct=1 anyway. (The mid-graph
+detach/reset/re-attach domain is exactly what the prior cbuf_reset=2 / power-cycle attempts died in.)
+
+**(3) Self-check — the "bytes-vs-context" pivot is SHAKY.** I'd concluded "it's context, not the regcmd bytes,
+because the vendor's dw computes from byte-identical bytes." Re-reading how that was measured (replay_rocket.c
+SPREAD = N single-task DRM jobs in one submit ioctl, one session): the "standalone dw112 computes" case is a
+dw reading **external** DRAM input — it computes for the same reason conv0 does. The **chained** SPREAD replay
+(conv0→dw1→pw1→dw2) showed conv0 compute and **every chained layer read nothing (dt_rd=0) and produced
+nothing.** So there is NO evidence any chained/later layer has ever computed on this open stack, vendor bytes or
+ours, in any dispatch mode. The honest statement: **the first/external-input layer always computes; a
+chained/later layer never has.** The byte-diff (mesa dw regcmd == vendor dw regcmd) is still a fact; what's not
+supported is the leap "therefore a comparable computing case exists, so it must be context."
+
+**What this sharpens.** Our mesa sequential-kick dw1 is actually one step further than the SPREAD chain: warm-
+chain makes it **read its input** (dt_rd=20384, from conv0's real output feb2d000 which holds distinct=239),
+yet it still does no MAC. The only difference between the computing standalone-dw and the non-computing
+chained-dw1 is external-input vs intermediate-input. **Prime suspect: does dw1's CNA actually read conv0's REAL
+output, or stale/zero data?** dt_rd=20384 says it read 20384 bytes, not that the bytes were right — an
+NPU-write-then-NPU-read producer/consumer coherency gap would give a warm-looking read of zeros → MAC on empty
+→ degenerate. NEXT: before dw1's submit, dump the actual bytes of its input BO (feb2d000) — conv0's distinct=239
+real data, or zeros? Real data → it genuinely is "later layers don't MAC" (HW state); zeros → a coherency bug,
+tractable.
+
 ## 2026-07-04 (Fork B teardown bisect — the per-kick teardown is EXONERATED. Skipping ALL of it does not restore a re-kick's MACs. The MAC-enabler is the fresh-job context, not any between-kick software step.)
 
 Added `rocket.bisect` (bitmask) to disable each per-kick teardown step and measured the true dw1 output
