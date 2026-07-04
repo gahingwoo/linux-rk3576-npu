@@ -1,22 +1,21 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 NEXT-POINTER experiment (2026-07-04). Port RK3588's embedded next-pointer
-# self-chaining to RK3576: mesa (ROCKET_NEXTPTR) now emits the RK3588-style trailer
-# (PC BASE_ADDRESS 0x10 + REGISTER_AMOUNTS 0x14) at the end of every task and the
-# whole-graph packer chains each task to the next. The kernel runs the RK3588-style
-# dispatch (wg_continuous = task_number=N, one OP_EN); if the RK3576 PC follows the
-# trailer, one kick walks the whole graph with each task in the committing mode,
-# instead of the task_number iteration that walls (only the cold-start task commits).
-#   RUN 1  baseline sequential-kick, NO next-pointer -> the known state: conv0
-#          (feb2d000) computes (core dt_wr=25088, distinct=239); dw1 (fea69000) and
-#          later layers dt_wr=0, distinct=1.
-#   RUN 2  NEXT-POINTER (wg_continuous + multitask_poll + ROCKET_NEXTPTR) = THE TEST:
-#          do tasks AFTER conv0 now show core dt_wr>0 and output distinct>1?
-#            dw1 distinct>1 / dt_wr>0 = the RK3576 PC FOLLOWS next-pointers -> the
-#              chain computes ->穿墙.
-#            dw1 still distinct=1 / dt_wr=0 = the PC does NOT follow next-pointers ->
-#              iteration is the only path and the wall is silicon.
-# Watch the "multitask %u/29" climb + per-task perf(core dt_wr) + buf out distinct.
+# RK3576 next-pointer + task_number=1 (2026-07-04). The next-pointer build proved
+# the RK3576 PC follows the trailer (conv0->dw1 loaded), but with PC_TASK_CON
+# task_number=task_count the MAC is EMPTY (distinct=1) and the chain stalls after one
+# hop. The SAME conv0 does a real MAC as a task_number=1 kick (distinct=239): the
+# empty MAC is gated by the task_number FIELD. Upstream RK3588 sets task_number=1 AND
+# relies on the trailer to advance. rocket.chain_task_number=1 overrides ONLY that
+# field (trailer still advances; completion still waits for the whole chain via
+# job->task_count). Combine: task_number=1 = real MAC per task; trailer = chaining.
+#   RUN 1  baseline seq-kick (no next-pointer): conv0 (feb2d000) distinct=239, rest 1.
+#   RUN 2  NEXT-POINTER + task_number=1 = THE TEST (chain_task_number=1). Watch:
+#            - TASK_STATUS climbs past 0 + total core dt_wr large + MANY output BOs
+#              distinct>1 (esp conv0 distinct>200) = the chain COMPUTES每一层 ->穿墙.
+#            - conv0 distinct>1 but chain short = real MAC returned but advance limited.
+#            - all distinct=1 = task_number=1 alone doesn't restore the MAC here.
+#   RUN 3  NEXT-POINTER + task_number=N (chain_task_number=0) = the prior one-hop /
+#            empty-MAC result, same boot, for direct contrast.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -27,7 +26,7 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "nextptr: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "chain-tn1: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
 	echo 0 > $P/cbuf_reset 2>/dev/null
@@ -40,21 +39,30 @@ start() {
 	# ---- RUN 1: baseline sequential-kick, no next-pointer ----
 	echo 0 > $P/multitask_poll 2>/dev/null
 	echo 0 > $P/wg_continuous 2>/dev/null
+	echo 0 > $P/chain_task_number 2>/dev/null
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== NEXTPTR RUN 1: baseline seq-kick (no next-pointer) ====="
+	log "===== CHAIN-TN1 RUN 1: baseline seq-kick (no next-pointer) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	# ---- RUN 2: next-pointer chain (RK3588 mechanism on RK3576) ----
+	# ---- RUN 2: next-pointer + task_number=1 (committing mode) = THE TEST ----
 	echo 1 > $P/multitask_poll 2>/dev/null
 	echo 1 > $P/wg_continuous 2>/dev/null
+	echo 1 > $P/chain_task_number 2>/dev/null
 	log ""
-	log "===== NEXTPTR RUN 2: next-pointer chain (wg_continuous + ROCKET_NEXTPTR) ====="
+	log "===== CHAIN-TN1 RUN 2: next-pointer + task_number=1 (chain_task_number=1) ====="
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_NEXTPTR=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
 
-	log "===== NEXTPTR DONE: RUN2 dw1(fea69000) dt_wr>0/distinct>1 = PC follows next-pointers ====="
+	# ---- RUN 3: next-pointer + task_number=N (prior one-hop/empty-MAC), contrast ----
+	echo 0 > $P/chain_task_number 2>/dev/null
+	log ""
+	log "===== CHAIN-TN1 RUN 3: next-pointer + task_number=N (chain_task_number=0) contrast ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 ROCKET_NEXTPTR=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	log "===== CHAIN-TN1 DONE: RUN2 TASK_STATUS>0 + core dt_wr large + outputs distinct>1 = chain computes ====="
 	sync
 }
 
