@@ -1,5 +1,28 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Audit COMPLETE — the completion path, perf counters, and clock/power/iommu are clean too. Every software path is byte-identical/equivalent to the vendor. No software bug anywhere in the audited surface; the multi-task wall is definitively the PC's internal task_number≥2 behavior.)
+
+Finished the audit — the completion/finalize path and the environment:
+- **Completion + finalize are correct.** poll_timer_fn (multitask) waits PC_TASK_STATUS==task_count with a
+  500ms cap, then schedule_work → handle_irq → finalize; finalize re-kicks while next_task_idx < task_count and
+  signals the fence + puts pm_runtime when all tasks are consumed (rocket_job.c:2136-2144). Correct.
+- **Perf-counter offsets are correct.** Vendor rknpu_top_amount = 0x2210/0x2234/0x2238/0x223c and
+  rknpu_core_amount = 0x2410/0x2434/0x2438/0x243c; ours read 0x210/0x234/… (top) and 0x410/0x434/… (core) from
+  stats_iomem, i.e. our stats_iomem base is the vendor's core+0x2000 — the offsets match. And single-task reads
+  dt_wr=25088 correctly, so **dt_wr=0 in multi-task is a REAL zero, not a mis-read** (corroborated by output
+  distinct=1).
+- **Clock/power/iommu are not task_number-specific.** Single-task commits in the exact same environment (same
+  clocks/PVTPLL, same power domain, same attached domain), so none of these can gate a task_number≥2-only
+  failure.
+
+**AUDIT CONCLUSION (thorough).** Everything the software controls is byte-identical or equivalent to the vendor
+across every path: the packed regcmd bytes (part 2), the submit register sequence (part 1), the requant, the
+S_POINTER, the completion, the perf offsets, state_init/arm/pulse, and no 0xf008 either side. There is **no
+software bug in the audited surface.** The multi-task wall — task_number≥2: task 0 loads its operands (dt_rd>0)
+but the CACC never commits (dt_wr=0, output distinct=1) and PC_DONE asserts instantly (samples=1), while
+task_number=1 with the identical stream commits (dt_wr=25088) — is the **PC task-sequencer's internal behavior
+for task_number≥2**, below the software surface. That is the definitive, audited answer to a month of walls.
+
 ## 2026-07-04 (Audit part 2 — the per-layer regcmd is CLEAN too: requant/OUT_CVT is validated and the model is per-tensor; the S_POINTER value matches the vendor and the mesa comment's own "0x0e desyncs multi-task" theory is REFUTED by the vendor using 0x0e as well.)
 
 Continued the audit into the mesa per-layer regcmd generation (rkt_regcmd.c fill_regcmd_rk3576_normal):
