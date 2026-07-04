@@ -1,5 +1,30 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Audit part 1 — the kernel submit path + mesa whole-graph packing are CLEAN: they match the vendor. No second bug there. Reinforces that the multi-task wall is the PC's internal task_number≥2 behavior, not a submit bug. Still to audit: completion path, per-layer regcmd correctness, clock/power/iommu.)
+
+Chewed through the kernel `rocket_job_hw_submit` and mesa `rkt_pack_graph_regcmd` line by line vs the vendor
+`rknpu_job_subcore_commit_pc`:
+- **The commit_pc 8-step sequence matches** (S_POINTER arm 0xe on CNA 0x1004 / CORE 0x3004 → PC_DATA_ADDR
+  (0x10) → PC_DATA_AMOUNT → INT_MASK=last → INT_CLEAR=first → PC_TASK_CONTROL (0x30) → PC_DMA_BASE_ADDR →
+  PC_OP_EN 1→0). Order and values match; RKNPU_OFFSET_PC_DATA_ADDR=0x10 == our BASE_ADDRESS.
+- **`BASE_ADDRESS=0x1` (rocket_job.c:893) is harmless dead cruft** — PC_BASE_ADDRESS bit0 is PC_SEL (TRM-reserved);
+  it's overwritten by the regcmd-addr write at :972, and the vendor also leaves PC_SEL=0 (regcmd_addr is aligned).
+- **The vendor NEVER writes 0xf008 (ENABLE_MASK) anywhere** (only the macro + a struct field exist); its units
+  engage from rk3576_state_init + the per-submit S_POINTER arm + the PC_OP_EN pulse — identical to ours.
+- **rk3576_state_init == our rocket_core_pp_state_init** exactly (re-confirmed).
+- **The whole-graph stride is NOT a bug.** mesa packs at a uniform `stride_amount = ((max_amount+5)/2)*2`
+  (rkt_ml.c:140) and reports every task's amount as that uniform stride (all 522 kicks show DATA_AMOUNT=0x49 =
+  143), so the kernel's PC_DATA_AMOUNT (from task[0]) equals the packing stride — the PC strides correctly and
+  shorter tasks are zero-padded to the stride.
+
+So the submit path is clean and vendor-matching. The one thing that still doesn't add up structurally: the
+vendor's single PC_OP_EN pulse engages its units (no in-stream op_en, no 0xf008) while ours needs mesa's
+injected per-unit op_ens to engage — with a byte-identical arm+pulse+state_init. That per-unit-op_en engage is
+what loads the operands in continuous mode (dt_rd=9408) but the CACC still never commits (dt_wr=0). NOT YET
+AUDITED (bugs may hide here): the completion/finalize path, the per-layer regcmd generation in mesa
+(requant/OUT_CVT, feature/weight/bias addresses, DPU+RDMA config — correctness bugs that would bite the chain
+once it runs), and the clock/power/iommu environment.
+
 ## 2026-07-04 (Reframe: the next-pointer angle is not the RK3576 mechanism [vendor uses pure task_number iteration, which WORKS for the vendor], so the wall is not the bytes or the mechanism — it is OUR rocket driver's task_number=N execution environment. Even the vendor's exact bytes replayed through our driver wall in ONEJOB mode. Next: a thorough audit of the driver's whole submit→completion path.)
 
 Checked the RK3588 self-chain next-pointer path (rkt_ml.c:282, guarded soc!=RK3576) as the last "adapt working
