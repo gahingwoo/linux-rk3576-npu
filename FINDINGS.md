@@ -1,5 +1,38 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (Fork B teardown bisect — the per-kick teardown is EXONERATED. Skipping ALL of it does not restore a re-kick's MACs. The MAC-enabler is the fresh-job context, not any between-kick software step.)
+
+Added `rocket.bisect` (bitmask) to disable each per-kick teardown step and measured the true dw1 output
+(iova 0xfea69000; the task-index labels in the buf readback are unreliable — a readback of conv0's bo was
+mislabeled task=1 d=238, which is NOT dw1). One boot, sequential-kick mode, sweeping bisect:
+
+| bisect | disables | conv0 (feb2d000) | dw1 (fea69000) |
+|--------|----------|------------------|----------------|
+| 0 baseline | — | 235 | **1** |
+| 0xf | ALL teardown | 238 | **1** |
+| 0x1 | sptr-toggle diag | **98** (worse) | 1 |
+| 0x2 | sptr-rearm | 239 | 1 |
+| 0x4 | int-clear-full | 238 | 1 |
+| 0x8 | perf-clear | 236 | 1 |
+
+**dw1 stays distinct=1 in every configuration, including 0xf (skip ALL teardown).** So none of the between-kick
+software steps — the diagnostic S_POINTER 0→1 toggle, the driver S_POINTER re-arm, the full INTERRUPT_CLEAR, the
+perf-counter clear — is the MAC-killer. **The per-kick teardown is exonerated; the original instinct is wrong.**
+(Side note: skipping the diagnostic S_POINTER toggle, 0x1, made conv0 *worse* — 235→98 — so that toggle is
+somehow helping the group state, not hurting it.)
+
+So the discriminator is the **fresh-job context vs a re-kick**, not any register we clear between kicks:
+- the vendor's standalone dw112 replayed as 6 separate single-task **jobs** computes;
+- our dw1 as a **re-kick within one job** does not — same input read (dt_rd=20384), byte-identical regcmd.
+
+The only thing a job boundary does that a re-kick doesn't: `pm_runtime_get_sync` + drm_sched arbitration +
+`dma_fence_signal` + `pm_runtime_put_autosuspend`. The leading hypothesis is that **`pm_runtime_get_sync` (the
+per-job PM resume) re-inits some HW state that enables the MACs, and a re-kick — which skips it — runs on a
+state the first task consumed.** NEXT: dispatch each layer as its own DRM job (fresh pm_runtime_get_sync per
+layer) with the intermediates persisted in DRAM, and see whether dw1 then computes (distinct>10). If yes, the
+fix is per-job dispatch (not re-kicks); if no, even a fresh job doesn't help and the enabler is narrower
+(a genuine per-inference/reset state).
+
 ## 2026-07-04 (Fork B byte-diff — the mesa dw regcmd is byte-identical to the vendor's; the bytes are NOT why it produces zero. It is EXECUTION CONTEXT. Next: bisect the per-kick teardown.)
 
 To settle bytes-vs-context: byte-diffed the live mesa dw1 regcmd (board dump_regcmd, 139 entries) against the
