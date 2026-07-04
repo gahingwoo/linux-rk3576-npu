@@ -1,5 +1,25 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (COHERENCY RULED OUT from existing logs — dw1's input probe reads conv0's REAL 244; no flash needed. The intermediate is NOT clobbered with zeros; dw1 reads real data and still MACs to zero. Wall = cold-start CMAC-arm, data-independent.)
+
+The NPU-intermediate cache-coherency/clobber hypothesis (dirty CPU zero-lines on the producer-output ==
+consumer-input BO get written back after the producer's NPU write, so the consumer reads zeros) is
+DISPROVEN by the all-tasks readback already on disk — no new build/flash required:
+- dw1's `in ` probe iova == conv0's `out` iova == `0xfeb2d000` (the SAME physical BO; producer output
+  IS consumer input). It reads **distinct=242 (RUN3, chain) / 244 (RUN1, seq-kick), min=00 max=ff** — a
+  full real feature map. The readback path is `dma_sync_for_cpu` (invalidate) → read DRAM, so 244 means
+  **DRAM genuinely holds conv0's real output**; a zero-clobber would have made it read 0.
+- Nothing writes `0xfeb2d000` between conv0 (task 0) and dw1 (task 1), so at dw1's read time it was 244.
+  **dw1 reads dt_rd=20384 of REAL input and still writes all-zero (distinct=1).**
+- A `dma_sync_for_device`-all-BOs flush would clean CPU→DRAM, but the input DRAM is already real — there
+  is nothing to clean that changes dw1's read. The flush test is predicted to be a no-op and was NOT
+  built (would cost a flash to confirm what the log already shows).
+
+So the discriminating variable is NOT input content (it is real) — it is task POSITION / cold-start:
+conv0 and a standalone dw (first/only task) compute; dw1 (a later task) reads the same real bytes and
+does not MAC. **Wall = only the cold-start task after NPU-init arms the CMAC; data-independent.** Next
+lever is Stage-2 (rknpu init path / what one-time state the first task consumes), NOT coherency.
+
 ## 2026-07-04 (★★ DIAGNOSTIC GAP CLOSED — the "empty MAC" verdict was a MEASUREMENT ARTIFACT. The all-tasks readback shows conv0 does a REAL MAC (distinct=242/244, full 0x00–0xff) in EVERY dispatch mode, including the task_number=N chain. conv0 is EXONERATED. The sole remaining wall: every layer AFTER conv0 reads its input but its CMAC never fires — only the cold-start/external-input layer computes.)
 
 Board test of the all-tasks readback (kernel branch rk3576-readback-alltasks, fe66cfa59: the post-completion
