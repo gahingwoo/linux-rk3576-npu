@@ -1,5 +1,25 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (task_number=1 REFUTED — the RK3576 PC follows the trailer only at task_number=N, not =1 (opposite of RK3588). AND a diagnostic gap surfaced: the continuous-mode readback dumps the LAST task (28), never conv0, so the "empty MAC" premise is UNCONFIRMED — conv0's actual output in a chained submit has never been seen.)
+
+Board test of `rocket.chain_task_number=1` (override PC_TASK_CON task_number field to 1 while the trailer stays;
+kernel branch rk3576-chain-tn1, d168a289a). RUN 2 (task_number=1) vs RUN 3 (task_number=N contrast):
+- **task_number=1 does NOT chain.** RUN 2: `TASK_CON=0x00010001` (field=1, override confirmed), but `top dt_rd`
+  peaked at 9408 — only conv0's operands loaded, the PC ran ONE task and stopped, no trailer follow. RUN 3
+  (field=N) reproduced dt_rd=29792 (conv0+dw1, one hop). **So the RK3576 PC follows the trailer only in
+  task_number=N mode; at task_number=1 it runs a single task — the OPPOSITE of upstream RK3588 (task_number=1 +
+  trailer chains).** The task's premise (port RK3588's task_number=1 + trailer) does not hold on RK3576. So
+  trailer-follow (needs task_number=N) and single-task committing mode (task_number=1) are mutually exclusive
+  here.
+- **★ Diagnostic gap — the "empty MAC" premise is UNCONFIRMED.** The whole-graph readback dumps the BOs of task
+  `next_task_idx-1` = 28 (the LAST task, which never runs) — e.g. RUN 2's only output readback is
+  `out task=28 iova=0xfe250000 distinct=1`. **conv0's own output BO has NEVER been read back in a chained
+  submit.** So the earlier "conv0 commits (dt_wr=25088) but the MAC is empty (distinct=1)" was inferred from the
+  WRONG BO (task 28, or a mislabeled task=0 iova). conv0's real MAC quality in a task_number=N chain is unknown.
+  If conv0 actually computes real there and merely fails to advance past dw1, the problem is ADVANCE, not MAC —
+  a completely different shape. NEXT (must do before more levers): fix the readback to dump the FIRST task's
+  (conv0's) output BO in continuous mode, and settle real-vs-empty definitively.
+
 ## 2026-07-04 (★ PARTIAL BREAKTHROUGH — the RK3576 PC DOES follow next-pointers. A task_number=N submit advanced past conv0 for the first time: the PC chained conv0→dw1 and loaded dw1's operands. This overturns the "iteration only / silicon wall" conclusion. The empty-MAC wall persists though, and the chain stalls after one hop.)
 
 Board test of the next-pointer build (ROCKET_NEXTPTR trailer + wg_continuous task_number=29), RUN 2 vs the
