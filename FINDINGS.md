@@ -1,6 +1,6 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
-## 2026-07-03 (latest) — Fork A first move: the chain is no longer dead. Skip the per-kick pp_state_init and the on-chip buffer stays warm across layers — every chained layer now engages, DMAs, and computes non-zero (still saturating, but the wall became a slope).
+## 2026-07-03 (latest, corrected) — Fork A first move: the chain is no longer dead. Skip the per-kick pp_state_init and the chained layers finally engage and DMA their input — but the weight path is still stale, so the CMAC accumulator is empty. The wall became a slope; the FEATURE side is fixed, the WEIGHT side is next.
 
 The chain needs the on-chip buffer warm across layers, which the sequential kicks were cooling. The suspect
 was pp_state_init: the kernel re-runs it (S_POINTER group reset + POINTER_PP_CLEAR + the degenerate DS1 default
@@ -18,13 +18,39 @@ Board result, MobileNet whole-graph:
   top dt_rd=50176 / wt_rd=72 (it DMA'd its input and weights) and core dt_wr jumped from 25088 to 100464
   (4x the MACs). Data is flowing across layers now.
 
-It is not correct yet: the chained outputs saturate to the output zero-point (0x80/0x7f ≈ 0 after dequant), so
-they collapse to nothing over a few layers and the final result is still degenerate (Top-1 index 0). But this
-is the decisive shift the whole month was missing — keeping the on-chip buffer warm across the sequential kicks
-turned the conv0->chain wall from "dead, no compute" into "computes, wrong scale". The remaining problem is the
-saturation (a requant/scale issue on the chained layers, or only some layers reading the warm buffer), which is
-an ordinary calibration bug class, not a below-the-registers wall. (Kernel: branch rk3576-warmchain, commit
-d54b57d94, off rk3576-sequential-kick; rocket.wg_warm_chain=1.)
+It is not correct yet, and a follow-up diagnostic corrected my first read of *why*. The chained outputs
+saturate to the output zero-point (0x80/0x7f), so the final result is still degenerate (Top-1 index 0). I first
+called this "computes, wrong scale" — a requant problem. **That was wrong.** Forcing the chained-layer OUT_CVT
+shift down to an absolute 12 (`ROCKET_OUT_SHIFT_ABS=12`, amplifying the requant by ~2^10 vs the computed
+shift 17-25) did not move the output off the zero-point at all — task 1 stayed uniform 0x80, tasks 2/4 stayed
+distinct=2 at 0x7f/0x80. If there were a real accumulator being crushed, amplifying it 1000x would light it up;
+it didn't. So the chained CMAC accumulator is **empty or negative** (relu'd to zero → output = out_zp), not a
+non-zero MAC scaled wrong. Same wall MidG971 is on with RK3568 ("the MAC is empty, the zero-rail is upstream of
+the SDP").
+
+The clue is in the counters: some chained layers show **wt_rd=0** — they DMA their input but never fetch their
+weights (task 2 and task 4 wt_rd=0, while task 1/3/5 read 36/128/72). A conv with no weights accumulates only
+the bias, which after the ReLU collapses to the output zero-point. So warm-chain fixed the *feature* path (the
+chained layers now read their input) but the *weight* path is still broken — a sibling of the on-chip-buffer
+staleness the feature side had. The next lever is exactly that: why the chained layers' weight fetch doesn't
+fire (weight-reuse/CBUF vs a fresh DRAM read, weight bank, or the 0x1110 weight address), so the weights reach
+the CMAC the way the input now does. (Kernel: branch rk3576-warmchain, commit d54b57d94, off
+rk3576-sequential-kick; rocket.wg_warm_chain=1.)
+
+Narrowing the weight-fetch bug (offline vendor-capture diff, 2026-07-04). First guess was `k_word`: the mesa
+encoder sets the CNA kernel-extent word to 0 for any k<3 (`k_word = (k>=3) ? ... : 0`), which for a 1x1
+pointwise layer emits 0x1024 = 0x0000_003f — I suspected the zero extent stopped the weight DMA. **Refuted by
+the vendor's own bytes:** in the captured 24-task chain the vendor's pointwise tasks (0x100c=0) also emit
+0x1024 high-half = 0x0000, and their whole weight-config block (0x101c/0x1020/0x1024/0x1030) is byte-identical
+to what the mesa encoder produces. So k_word=0 is correct for pointwise and is not the bug. That collapses the
+possibilities hard: it is **not the regcmd** (pointwise config == vendor), **not the mapping** (the weight BOs
+are mapped — conv0 and the depthwise layers fetch fine), and **not all weights** — the *depthwise* layers, whose
+weights are small (k·k·C), do fetch (wt_rd=36/128). It is specifically the **pointwise** layers, whose weights
+are large (Cin·Cout), whose weight DMA never fires. That small-fetches / large-doesn't split is the strong clue:
+the same "too big for the on-chip buffer in one go, needs an extra mechanism" pattern the feature side hit when
+a 112-wide layer wouldn't fit the CBUF and had to be tiled. So the lead is the pointwise large-weight path — a
+weight-bank / block-DMA trigger that warm-chain doesn't cover — the execution-state sibling of the feature CBUF
+staleness, now pinned to exactly the large-weight case.
 
 ## 2026-07-03 (latest) — forcing a per-job NPU power-cycle to clear CBUF: it fires, but the power domain hangs on the way back up. Fork B (clear the on-chip buffer in software) is now fully exhausted.
 
