@@ -1,5 +1,31 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-04 (The next-pointer path is the ONE untried PC mechanism and is worth trying — correcting my earlier over-hasty dismissal. It is RK3588's tile-chaining, not a whole-graph or a vendor-RK3576 mechanism, so this is a NOVEL cross-op construction and a gamble on whether the RK3576 PC follows next-pointers — but it is a DIFFERENT PC code path than the walled iteration, and it could keep each task in the committing (task_number=1-like) mode while the trailer advances.)
+
+Woo relayed a task to route RK3576 through RK3588's embedded next-pointer chaining. Read the code to judge it:
+- **The trailer is two PC registers.** RK3588's `rkt_fill_regcmd` ends each task with `EMIT(REG_PC_BASE_ADDRESS,
+  0)` + `EMIT(REG_PC_REGISTER_AMOUNTS, 0)` (rkt_regcmd.c:1283-1285); `compile_operation` patches them with the
+  next task's address/count (`|= next_addr<<16`, rkt_ml.c:293-306), guarded `soc != RK3576`. REG_PC_BASE_ADDRESS
+  = 0x10 = RK3576's PC_DATA_ADDR, so the trailer registers exist on RK3576 — mechanically portable.
+- **But the next-pointer chains TILES within one operation** (compile_operation loops `operation->tasks`), not
+  layers across the graph. On RK3588 the whole graph is **per-op jobs** (one DRM job per layer); cross-layer is
+  DRAM. MobileNet's mostly-single-tile layers (num_tasks=1) emit NO trailer, so next-pointers are not even what
+  makes RK3588's MobileNet work.
+- **The vendor RK3576 works via task_number=N iteration with NO trailer.** So next-pointers are NOT "the missing
+  RK3576 piece the vendor has" — the vendor doesn't use them. This corrects the task's framing.
+
+**Corrected judgment (my earlier FINDINGS dismissal "next-pointer is not the RK3576 mechanism" was a
+non-sequitur — the vendor choosing iteration doesn't preclude the RK3576 PC also following next-pointers).**
+Worth trying, because: (1) our only tried multi-task path (task_number=N iteration) walls, byte-identical to the
+vendor yet failing — an unresolved paradox; (2) the next-pointer is a DIFFERENT PC code path the audit never
+touched; (3) if the whole graph is chained task-by-task via trailers with each task run in the committing
+(task_number=1-like) mode and the PC advancing on the trailer, it could sidestep the task_number≥2 commit gate
+entirely. Honest unknown: the vendor doesn't use next-pointers on RK3576, so whether the RK3576 PC follows them
+is the experiment — if it does, later tasks compute (dt_wr>0, distinct>1); if not, the chain stops after task 0.
+Implementation is NOT a direct RK3588 port (that's per-op tile chaining) but a novel cross-op construction: emit
+the trailer in the RK3576 fills + patch next-pointers across the whole packed graph + dispatch so the PC walks
+the chain. Cheap (build; Woo flashes), resolves the question either way. Branches rk3576-nextpointer (mesa+kernel).
+
 ## 2026-07-04 (Audit COMPLETE — the completion path, perf counters, and clock/power/iommu are clean too. Every software path is byte-identical/equivalent to the vendor. No software bug anywhere in the audited surface; the multi-task wall is definitively the PC's internal task_number≥2 behavior.)
 
 Finished the audit — the completion/finalize path and the environment:
