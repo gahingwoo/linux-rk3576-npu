@@ -1,5 +1,41 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (SPREAD-CONFIRM — the per-op-dispatch ESCAPE HATCH is CLOSED. N genuinely-independent single-task submits do NOT re-arm the CSC: only op0 (the first job after each NPU resume) computes REAL; every subsequent independent submit is EMPTY. Cold-start is PER-POWER-SESSION, not per-submit. The SPREAD distinct=254 was a stale-BO artifact, now refuted by the clean zeroed-BO oracle. Only a full power-cycle re-arms — impractical per-op for an LLM.)
+
+Board, rocket.spread_confirm=1 (branch rk3576-spread-confirm 4b2590be7), regime = per-op independent
+single-task submits (mesa ROCKET_TILE_JOBS=1, NO ROCKET_WHOLE_GRAPH) + zero_out_bos=1. Each op is its OWN
+single-task drm job (task_count=1 confirmed on every line) — own PC kick, own regcmd, own perf-clear — on a
+warm-powered pipeline (autosuspend keeps the NPU on across the ~40 tile-jobs of one inference; PART 1). Clean
+oracle = out_class over the WHOLE pre-zeroed primary output BO (nz), NOT final-BO distinct.
+- **361 spread lines across 2 inferences. Exactly 2 REAL — BOTH are op=0** (19.24s + 55.79s, one per
+  inference; nz≈400k/802k min00 maxff = real feature map). **358 EMPTY** (nz=0 — not even zero-point written)
+  = every non-first op in both inferences.
+- **DECISIVE data point = op1:** it reads op0's REAL output (real input in DRAM), is its own independent
+  submit, and still writes nz=0 (EMPTY). Reading real data as a non-first submit STILL does not compute →
+  same position/cold-start wall.
+- **VERDICT: per-op independent submits do NOT re-arm the CSC. The dispatch-granularity ESCAPE HATCH is
+  CLOSED.** The SPREAD distinct=254 "COMPUTED" was a STALE-BO artifact (the weak distinct oracle on a reused
+  final BO); the clean zeroed-BO nz oracle refutes it.
+- **Mechanism sharpened: the cold-start arm is PER-POWER-SESSION (per NPU resume), NOT per-submit.** The two
+  REALs are exactly the two inferences' first ops, separated by ~35s of autosuspend→power-down→resume. A
+  power-cycle re-arms (both op0 compute); a new submit WITHOUT a power-cycle does not (all ops 1+ within one
+  powered session are EMPTY). Within one inference the ~40 tile-jobs are 20-30ms apart = no autosuspend gap =
+  one power session = only op0 arms.
+- **Note (per-op-dispatch is strictly WORSE than whole-graph chained for later layers):** here non-first ops
+  write nz=0 EMPTY (don't even engage the DPU); in the warm whole-graph chain they at least engaged and wrote
+  0x80 ZEROPOINT. Matches mesa's own note that a standalone non-first kick "never engages." Either way neither
+  produces REAL.
+- **Metric-discipline caveat:** core_dt_wr=25088 is IDENTICAL on every line (even EMPTY ones) — the perf
+  counter is NOT cleared/read cleanly across separate jobs (frozen at op0's value), so dt_wr is NOT a valid
+  per-op oracle in this mode. The pre-zeroed BO nz/out_class IS. Good thing both were logged. [[feedback-metric-discipline]]
+- **LLM/matmul consequence:** a matmul/LLM dispatched as independent per-op submits would have ONLY the first
+  matmul compute, all others EMPTY — useless. The only thing that re-arms is a full power-cycle (genpd
+  down+up + IOMMU re-attach + CBUF re-init) BETWEEN every op; for an LLM with thousands of matmuls/token that
+  is catastrophic throughput — a correctness-PoC option at most, not a viable path. [[project-rk3576-dispatch-step2]]
+- **Where this leaves it:** the escape hatch (bypass the wall via dispatch granularity) is CLOSED. Back to
+  attacking the wall itself (RTL / extract-replay), or the impractical power-cycle-per-op route only to prove
+  correctness.
+
 ## 2026-07-05 (READ-MARGIN CLOSED — the one concrete non-NPU-block GRF diff, written voltage-matched, has ZERO effect on the chained CMAC. The strongest platform-software candidate for the CBUF-SRAM wall is spent, and its null result undercuts the whole CBUF-timing theme. All thematically-aligned software/platform levers now exhausted → the consume-arm is internal cold-start sequencer state.)
 
 Board, rocket.read_margin (branch rk3576-read-margin): write the vendor's npu_grf SRAM read-margin

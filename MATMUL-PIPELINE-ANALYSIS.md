@@ -10,7 +10,24 @@ the rocket/mesa stack, and the NVDLA architecture.
 
 ---
 
-## VERDICT
+## ⚠ RESOLVED 2026-07-05 (spread_confirm board test) — the pivotal gate came back NEGATIVE; the DISPATCH BYPASS is CLOSED
+
+The verdict below hinged on one untested assumption: that a genuinely-independent per-op submit re-cold-start-
+arms the CSC (so per-op dispatch would bypass the chained-only wall). **That was tested directly and REFUTED.**
+Per-op independent single-task submits (mesa ROCKET_TILE_JOBS=1, no WHOLE_GRAPH) + zero_out_bos, clean nz
+oracle: across 361 submits / 2 inferences, ONLY op0 of each inference is REAL; every subsequent independent
+submit is EMPTY (nz=0), INCLUDING op1 which reads op0's real output. **The cold-start arm is PER-POWER-SESSION
+(per NPU resume), NOT per-submit** — the only two REALs are the two inferences' first ops, separated by an
+autosuspend power-cycle. The SPREAD distinct=254 that motivated the "bypass" hope was a stale-BO artifact.
+**Consequence: an open-stack LLM/matmul dispatched per-op does NOT bypass the wall** — only the first matmul
+after each power-cycle computes. The sole re-arm is a full power-cycle between every op (catastrophic
+throughput → correctness-PoC only, not viable). So matmul = FC-mode conv through the same CSC/CBUF/CMAC hits
+the wall and CANNOT be dispatched around it. See FINDINGS.md 2026-07-05 SPREAD-CONFIRM. The pipeline analysis
+below stands; only its "dispatch escape hatch" is now closed.
+
+---
+
+## VERDICT (superseded on the dispatch half — see RESOLVED note above)
 
 **SAME COMPUTE PIPELINE — but a real DISPATCH bypass exists.**
 
