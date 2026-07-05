@@ -1,18 +1,27 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# RK3576 zero_out_bos ground truth (2026-07-04). open_high refuted; one loose end
-# left: per-completion core dt_wr grew (25088,45248,50176,90944...) which fits
-# neither "only conv0 computes" nor a clean counter. distinct can read STALE data
-# on a reused BO (conv0_twice trap), so this zeros every output BO before the run
-# and scans the WHOLE BO after, classifying each task EMPTY / ZEROPOINT / REAL.
-#   Regime: seq-kick (WHOLE_GRAPH, wg_continuous=0) + warm_chain=1, zero_out_bos=1.
-#   WATCH "rocket groundtruth task=N ... class=":
-#     - conv0 (task=0) REAL + every later task EMPTY/ZEROPOINT => chained layers
-#       write nothing real; dt_wr growth is a dirty counter; software line CLOSED
-#       (pivot below software: NVDLA CSC/CMAC RTL / RK3576 quirk).
-#     - ANY later task REAL (distinct>2, spread) => CMAC fired, output mis-routed
-#       => REVERSAL, chase the address not the arm.
-#   Also "rocket dtwr task=N ... delta=" shows whether dt_wr tracks real outputs.
+# RK3576 SPREAD-CONFIRM (2026-07-05): does each GENUINELY INDEPENDENT single-
+# task submit cold-start re-arm the CSC? This is the gate before any matmul/LLM
+# build -- the escape hatch is per-op dispatch (the cold-start task always MACs).
+#
+#   Regime: NO ROCKET_WHOLE_GRAPH (so we are NOT in the chained one-submit mode)
+#           + ROCKET_TILE_JOBS=1 (mesa emits ONE single-task drm job PER OP/tile,
+#             each its own PC kick + own perf-counter clear = genuinely
+#             independent submit on a warm-powered pipeline) + kernel
+#           rocket.zero_out_bos=1 (pre-zero every output BO = stale-proof) +
+#           rocket.spread_confirm=1 (ONE compact oracle line per op).
+#
+#   ORACLE (clean, per-op -- NOT final-BO distinct):
+#     "rocket spread op=N core_dt_wr=.. core_wt_rd=.. out_class=.. (task_count=1 ..)"
+#     - op 0 (conv0, cold-start): expect core_dt_wr large + out_class=REAL.
+#     - ops 1,2,3.. (dw1/pw1/dw2): the decisive read --
+#         * core_dt_wr large + core_wt_rd nonzero + out_class=REAL
+#             => each independent submit DOES re-arm the CSC
+#             => the wall is BYPASSABLE by per-op dispatch (LLM/matmul route OPEN).
+#         * core_dt_wr ~0 / out_class=ZEROPOINT|EMPTY
+#             => independent submits do NOT re-arm (same wall; SPREAD's
+#                distinct=254 was a stale-BO artifact) => per-op does NOT bypass.
+#     task_count in the line must read 1 (confirms genuinely single-task per op).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -23,18 +32,18 @@ log() { echo "$@" > "$C"; }
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "zero_out_bos: no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || { log "spread-confirm: no accel device"; return 0; }
 	dmesg -n 8 2>/dev/null
 
-	# ---- regime: seq-kick + warm-chain ----
+	# ---- regime: per-op independent single-task submits ----
 	echo 0 > $P/cbuf_reset 2>/dev/null
 	echo -1 > $P/enable_mask 2>/dev/null
 	echo 1 > $P/perjob_ppinit 2>/dev/null
-	echo 0 > $P/bisect 2>/dev/null
+	echo 0 > $P/bisect 2>/dev/null            # bisect=0 => perf counter cleared per kick => dt_wr is per-op
 	echo 0 > $P/rekick_reset 2>/dev/null
-	echo 1 > $P/wg_warm_chain 2>/dev/null
+	echo 0 > $P/wg_warm_chain 2>/dev/null
 	echo 0 > $P/multitask_poll 2>/dev/null
-	echo 0 > $P/wg_continuous 2>/dev/null
+	echo 0 > $P/wg_continuous 2>/dev/null     # NOT whole-graph
 	echo 0 > $P/chain_task_number 2>/dev/null
 	echo 0 > $P/geom_both 2>/dev/null
 	echo 0 > $P/geom_all 2>/dev/null
@@ -42,17 +51,21 @@ start() {
 	echo 0 > $P/open_high 2>/dev/null
 	echo 0 > $P/audit_all 2>/dev/null
 	echo 0 > $P/audit_arm 2>/dev/null
-
-	# ---- zero output BOs before the run + whole-BO classify after ----
-	echo 1 > $P/zero_out_bos 2>/dev/null
+	echo 0 > $P/pp_alt 2>/dev/null
+	echo -1 > $P/sptr_override 2>/dev/null
+	echo 0 > $P/trailer_check 2>/dev/null
+	echo 0 > $P/bare_tasknum 2>/dev/null
+	echo 0 > $P/read_margin 2>/dev/null
+	echo 1 > $P/zero_out_bos 2>/dev/null      # stale-proof output oracle
+	echo 1 > $P/spread_confirm 2>/dev/null    # one compact per-op line
 
 	dmesg -c >/dev/null 2>&1
 	log ""
-	log "===== ZERO_OUT_BOS: seq-kick, zero every output BO pre-run, whole-BO classify ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_WHOLE_GRAPH=1 \
+	log "===== SPREAD-CONFIRM: per-op independent single-task submits (ROCKET_TILE_JOBS, no WHOLE_GRAPH) ====="
+	# NO ROCKET_WHOLE_GRAPH => default/per-op dispatch; ROCKET_TILE_JOBS=1 => each op/tile is its own single-task job.
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_TILE_JOBS=1 \
 		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
-
-	log "===== ZERO_OUT_BOS DONE: conv0 REAL + all later EMPTY/ZEROPOINT = wall; any later REAL = reversal ====="
+	log "===== DONE. Read 'rocket spread op=N ..' per op: ops 1+ REAL w/ nonzero dt_wr => per-op re-arms (wall bypassable); only op 0 REAL => does not (same wall). task_count must be 1. ====="
 	sync
 }
 
