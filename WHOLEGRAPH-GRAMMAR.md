@@ -4,10 +4,25 @@ Question: does mesa's RK3576 regcmd stream LACK a per-task self-iteration gramma
 element the vendor emits (GO — implement in mesa), or does it already carry it and
 the PC wedges anyway (NO-GO — internal, close #1, go RTL)?
 
-**Verdict: GO** — the vendor multi-task regcmd ends every task with a self-iteration
-trailer that mesa's RK3576 whole-graph packer does NOT reproduce (it replaces the
-key element). But the compile-time evidence contains a contradiction that ONE cheap
-runtime capture must resolve before/with implementing. Details below.
+**Verdict: GO — RUNTIME-CONFIRMED (2026-07-05).** The vendor multi-task regcmd ends
+every task with a self-iteration trailer that mesa's RK3576 whole-graph packer does
+NOT reproduce (it replaces the key element). A runtime dump of the actual
+task_number=8 submit buffer (rknpu.trailer_dump, branch rk3576-runtime-trailer)
+EXACTLY matches the compile-time .rknn — librknnrt does NOT rewrite the trailer —
+settling all three unknowns:
+- **OP_EN per task = BROADCAST** (tgt 0x81 reg 0x08 = 0x1d), NOT per-unit.
+- **PC 0x10 next-pointer = ABSOLUTE**: T0 0x10 = 0xffff7980 == T1's regcmd_addr
+  exactly; T1 -> 0xffff7e00 (T2), T2 -> 0xffff8280 (T3). librknnrt patches it to the
+  absolute iova at load (mesa's ROCKET_NEXTPTR math already produces this).
+- **SYNC 0x41 present** at trailer position [141]; order [0x10][0x14][SYNC][broadcast].
+Also confirmed at runtime: task_number=8, task_base_addr=0x0, each task = 139 config
++ 4 trailer + pad at a 0x480 contiguous stride (T0..T3 regcmd_addr = 0xffff7500,
+7980, 7e00, 8280). PC 0x14 = 0x47 (= pc_data_amount). The mesa "broadcast 0x08
+RESTARTS the PC" note was a CONFOUND: the broadcast re-fires with PC 0x10 still
+pointing at the CURRENT task (no next-pointer written) -> re-runs the same task ->
+looks like a restart. With the absolute next-pointer written BEFORE the broadcast,
+the broadcast commits-and-advances to the next task. Order is load-bearing. Phase B
+(below) copies this confirmed grammar verbatim.
 
 ## A1 — the vendor whole-graph grammar (decoded from vendor-toolkit .rknn)
 

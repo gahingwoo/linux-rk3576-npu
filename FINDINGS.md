@@ -1,5 +1,26 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (WHOLE-GRAPH GRAMMAR runtime-CONFIRMED — GO on Phase B (mesa). A runtime dump of the vendor's task_number=8 submit buffer EXACTLY matches the compile-time .rknn (librknnrt does NOT rewrite the trailer): each task ends with a self-iteration trailer [PC 0x10 = ABSOLUTE next regcmd_addr][PC 0x14 = 0x47 amount][SYNC 0x41][BROADCAST OP_EN 0x81/0x08 = 0x1d]. mesa RK3576 whole-graph deviates on all three; Phase B copies the confirmed grammar.)
+
+Board, vendor kernel + rknpu.trailer_dump=1 (branch rk3576-runtime-trailer 4daa62ae1), whole-graph chain
+(task_number=8, task_base_addr=0x0). Dumped the first 3 tasks' trailer (read PAST regcfg_amount where the
++4 EXTRA lives). Three VERDICT lines:
+- **OP_EN = BROADCAST** (tgt 0x81 reg 0x08 = 0x1d), NOT per-unit -- every task. Settles the biggest mesa
+  deviation (the RK3576 packer replaces the broadcast with 4 per-unit OP_ENs).
+- **PC 0x10 next-pointer = ABSOLUTE**: T0 0x10 = 0xffff7980 == T1's regcmd_addr exactly; T1 -> 0xffff7e00
+  (T2), T2 -> 0xffff8280 (T3). librknnrt patches it to the absolute iova at load. (mesa ROCKET_NEXTPTR math
+  = graph_addr + (g+1)*stride already yields this.) PC 0x14 = 0x47 = pc_data_amount.
+- **SYNC 0x41 present** at trailer position [141]; order [0x10][0x14][SYNC][broadcast].
+- Structure confirmed: each task = 139 config [0..138] + 4 trailer [139..142] + pad [143], 0x480 (=144 u64)
+  contiguous stride; T0..T3 regcmd_addr = 0xffff7500/7980/7e00/8280.
+- **The mesa "broadcast 0x08 RESTARTS the PC" note was a CONFOUND**: broadcast re-fires with PC 0x10 still
+  pointing at the CURRENT task (no next-pointer) -> re-runs the same task -> looks like a restart. With the
+  absolute next-pointer written BEFORE the broadcast, it commits-and-advances. Order is load-bearing.
+- **GO, runtime-confirmed** (upgrades the earlier compile-time GO). Phase B (mesa rkt_pack_graph_regcmd):
+  emit per task [139 config][PC 0x10 abs next = graph_base+(g+1)*stride][PC 0x14 amount][SYNC 0x41][BROADCAST
+  0x1d], last task next-ptr = 0; drop the per-unit substitution; kernel unchanged (task_number=N stop-count).
+  See WHOLEGRAPH-GRAMMAR.md. [[project-rk3576-no-writel-gap]]
+
 ## 2026-07-05 (pp_alt (candidate #2) CLOSED — alternating the seq-kick producer ping-pong group does NOT arm any chained-layer MAC. Board, seq-kick+warm-chain, clean output-distinct oracle: conv0 real / every chained task empty in BOTH pp_alt=0 and =1. Confirmed TRUE NEGATIVE, not a no-op: pp_alt=1 flipped task1's output from untouched 0x00 to written zero-point 0x80 — the regcmd patch reached HW and moved the WRITE path, but the MAC accumulator stays empty. The arm is below the register/config level, as geom_both + pure-position already implied.)
 
 Board (branch rk3576-pp-pointer a75db5cdc, LOCAL; rocket.pp_alt): the seq-kick producer S_POINTER POINTER
