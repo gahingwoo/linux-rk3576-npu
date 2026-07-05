@@ -1,5 +1,27 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (PHASE B board result — the runtime-exact trailer makes the PC self-iterate ONE hop (dt_rd=29792 = conv0+task1, TASK_STATUS 0->2, task1 engages+reads+writes) but task1's MAC is EMPTY (output all 0x80 = requant zero-point) and the PC stalls after ~1 task (task2+ untouched, 0x00). Matches the earlier ROCKET_NEXTPTR one-hop result; the exact trailer (broadcast+SYNC+abs-ptr) did not advance further. NOT yet "#1 closed": a TASK_CON latch CONFOUND is flagged — kernel WROTE PC TASK_CON=0x0007001d but the readback = 0x0001001d (the 0x6<<16 iterate-control bits absent). Resolving whether those bits latch (post-exec clear vs real write-failure) BEFORE any RTL verdict.)
+
+Board, whole-graph one-submit (mesa Phase B branch rk3576-wholegraph-trailer 1233c5f: emit the vendor
+trailer [PC 0x10 abs next][PC 0x14 amount][SYNC 0x41][BROADCAST OP_EN 0x1d] per task) + kernel
+rocket.wg_continuous=1 + zero_out_bos=1. task_count=29, ONE submit (TASK_CON=0x…001d, DATA_ADDR=0xfe22c000,
+DATA_AMOUNT=0x49).
+- **Trailer advanced the PC (old wg_continuous wedged at task 0):** top dt_rd=29792 = conv0 (9408) + task1
+  (20384) input BOTH read; TASK_STATUS 0->2; task1 engaged, read its input, and WROTE its output.
+- **But chained MAC still EMPTY (zero_out_bos oracle):** conv0 (task0) distinct=240 min00maxff REAL; task1
+  distinct=1 all 0x80 (WROTE, but zero-point = empty accumulator); task2..28 distinct=1 all 0x00 (untouched,
+  PC stalled after ~1 hop, PC_DONE fired ~9ms, samples=1). No chained task computed a real feature map.
+- Same "only cold-start task MACs" wall; trailer solved ITERATION (advance) not the chained-MAC arm.
+  Reproduces the earlier ROCKET_NEXTPTR one-hop-then-stall; the runtime-exact additions (kept broadcast,
+  SYNC, absolute next-ptr) did not improve on it.
+- **CONFOUND before the RTL verdict:** TASK_CON write 0x0007001d vs readback 0x0001001d (only bit16 present,
+  the 0x6<<16 control bits gone). If 0x6<<16 is the "iterate N tasks" enable and it did not latch, the PC
+  may be 1-shot-committing, not N-walking -> Phase B never truly tested vendor-grammar iteration and the
+  1-hop-empty result is a control-bit artifact, NOT proof of an internal arm wall. Being resolved (branch
+  rk3576-taskcon-latch): 3-point TASK_CON readback (before OP_EN / after OP_EN / at completion) + vendor
+  TASK_CON write-path diff. Same class of confound as the earlier "broadcast restarts the PC" (a mis-set
+  next-pointer). #1 is NOT closed until this is cleared.
+
 ## 2026-07-05 (WHOLE-GRAPH GRAMMAR runtime-CONFIRMED — GO on Phase B (mesa). A runtime dump of the vendor's task_number=8 submit buffer EXACTLY matches the compile-time .rknn (librknnrt does NOT rewrite the trailer): each task ends with a self-iteration trailer [PC 0x10 = ABSOLUTE next regcmd_addr][PC 0x14 = 0x47 amount][SYNC 0x41][BROADCAST OP_EN 0x81/0x08 = 0x1d]. mesa RK3576 whole-graph deviates on all three; Phase B copies the confirmed grammar.)
 
 Board, vendor kernel + rknpu.trailer_dump=1 (branch rk3576-runtime-trailer 4daa62ae1), whole-graph chain
