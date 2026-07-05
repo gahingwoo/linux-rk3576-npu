@@ -1,5 +1,29 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (pp_alt (candidate #2) CLOSED — alternating the seq-kick producer ping-pong group does NOT arm any chained-layer MAC. Board, seq-kick+warm-chain, clean output-distinct oracle: conv0 real / every chained task empty in BOTH pp_alt=0 and =1. Confirmed TRUE NEGATIVE, not a no-op: pp_alt=1 flipped task1's output from untouched 0x00 to written zero-point 0x80 — the regcmd patch reached HW and moved the WRITE path, but the MAC accumulator stays empty. The arm is below the register/config level, as geom_both + pure-position already implied.)
+
+Board (branch rk3576-pp-pointer a75db5cdc, LOCAL; rocket.pp_alt): the seq-kick producer S_POINTER POINTER
+is hardcoded 0 every kick; pp_alt alternates it by per-job task index (task 0 -> group 0 control unchanged,
+odd -> group 1), patching the regcmd's own CNA 0x1004 / CORE 0x3004 entries in DRAM too (the driver write
+alone is overwritten mid-run by those entries). S98mndump ran the pp_alt=0 baseline; pp_alt=1 over serial.
+- **Every chained task empty in BOTH modes (output-distinct oracle, NOT dt_wr).** pp_alt=0: conv0 (task0)
+  distinct=240 min00 maxff REAL, task1 distinct=1 all-0x00, task2..28 distinct<=3 (zero-point). pp_alt=1:
+  conv0 distinct=241 REAL, task1 distinct=1 all-**0x80**, task2..28 distinct<=3. No task>=1 ever reaches a
+  real feature map (the lone distinct=3 is task3's {0d,7f,80} = zero-point +/-1, present identically in
+  both runs). Every task engages (cna_eng=1 core_eng=1) in both.
+- **TRUE NEGATIVE, not "didn't take effect."** The pp lines show prod correctly alternating (task odd
+  prod=1, even prod=0, task0 prod=0), and task1's output BO flipped from baseline `0x00 nz=0/4096`
+  (untouched) to pp_alt=1 `0x80 nz=4096/4096` (written full zero-point). So the regcmd patch DID reach the
+  hardware and changed the DPU write path -- but the accumulator is still empty (empty MAC -> requant ->
+  zero-point 0x80). Group alternation touches the pipeline, not the MAC arm.
+- **CLOSED.** Consistent with geom_both (config in BOTH groups didn't arm dw1) and pure position ("only
+  task 0 computes" is inconsistent with a stuck-producer/advancing-consumer story, which predicts 0/2/4).
+  Directly measured now. NOTE (reusable): the consumer group is NOT a readable index -- CNA/CORE S_POINTER
+  bit0 = producer echo, bit16 = executer engage-status; exec_ever + the output-distinct oracle are the real
+  signals, not a consumer-group read, and dt_wr counts zero-point writes so it is not a clean compute
+  oracle. The only lever left is #1 (mesa regcmd laid out for the PC's own task auto-advance = the vendor
+  whole-graph grammar), which is a mesa change, not a kernel one.
+
 ## 2026-07-04 (WRITEL AUDIT — complete static enumeration of EVERY NPU register write, both drivers, across a FULL inference: NO writel the vendor makes that rocket does not. task_base_addr=0 even for task_number=2 REFUTES the descriptor-DMA idea. The difference is grammar (one submit / PC iterates N vs seq-kick N kicks), not a missing register. Live writel-trace built into both stacks for the decisive runtime diff. See WRITEL-AUDIT.md.)
 
 Part 1 (read-only) enumerated every NPU-register writel in the vendor rknpu driver (rk3576-vendor-kernel/
