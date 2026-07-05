@@ -1,5 +1,30 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (BARE task_number=N CONFIRMED — native HW iteration (no busy-poll, no driver intervention) is BYTE-IDENTICAL to Phase B: chained CMAC still empty. NPU-software surface EXHAUSTED. Firmware RULED OUT (user boots the VENDOR SPI firmware — Rockchip TF-A + OP-TEE — under the mainline buildroot image, so BL31/BL32/OP-TEE is the SAME as the vendor, not the cause). Remaining dimension = the kernel's NON-NPU register spaces (GRF/CRU/power/syscon) that the NPU-block writel audit structurally missed, + mesa.)
+
+Board, rocket.bare_tasknum (branch rk3576-bare-tasknum be86a968a): skip the per-run cnalive busy-poll so the
+PC iterates task_number=N natively with ZERO driver register access during the run. Run A (busy-poll) vs
+B (bare):
+- **A == B, byte-identical.** conv0 distinct=240/241 REAL; task1/2 all 0x80; task3/4 distinct=3 {0d,7f,80};
+  task5 distinct=2 nz=896; task6..28 all 0x00. Stripping the busy-poll changed NOTHING.
+- `rocket bare: TASK_STATUS=6 top_wt_rd=332 core_wt_rd=0 top_dt_rd=110208` — chained weights AND inputs
+  DMA'd to CBUF (top_wt_rd grew past conv0's ~36; top_dt_rd=110208), PC walked 6 tasks, yet chained CMAC
+  empty. (core wt_rd=0 is NORMAL, not the oracle.)
+- **VERDICT: bare native HW iteration does NOT self-arm the CSC on rocket.** rocket now runs the vendor's
+  EXACT dispatch mechanism (byte-matched trailer + native task_number=N iteration + no per-task intervention
+  + operands staged into CBUF) and the chained CMAC is still empty — so the rocket-vs-vendor gap is NOT in
+  the NPU software (registers/regcmd/dispatch/init all matched AND now exercised in the vendor's own mode).
+- **Firmware RULED OUT (new fact from the user):** the board boots the vendor's SPI firmware (Rockchip TF-A
+  + OP-TEE) under the mainline buildroot rootfs -> the secure/firmware side is IDENTICAL to the vendor's, so
+  a BL31/BL32/OP-TEE-SMC difference is NOT the cause. Supersedes the earlier "mesa=mainline TF-A/no OP-TEE"
+  firmware lead as the explanation.
+- **Remaining dimension (the one the audit structurally missed):** the writel audit covered ONLY the NPU
+  register block (0x2770_xxxx). It did NOT cover GRF / CRU / power-domain / PVTPLL / memory-repair /
+  syscon-regmap. RK SoCs commonly place NPU mode/repair/PVTPLL/enable bits in GRF, not the NPU block. A GRF
+  (or CRU/power) bit the vendor sets that rocket + the DTS don't would look EXACTLY like this. Being chased
+  (read-only enumeration of vendor rknpu's regmap/GRF/CRU/power writes vs rocket + DTS). [[project-rk3576-no-writel-gap]]
+  [[project-rk3576-firmware-bl31-bl32]]
+
 ## 2026-07-05 (SESSION CLOSE-OUT — dispatch/iteration half SOLVED (upstreamable); wall localized to the CBUF->CSC->CMAC cold-start consume-arm; full software-lever ledger; per-task CSC-rearm (PP_CLEAR) CLOSED. Software surface exhausted -> RTL, with ONE standing software question (bare task_number=N).)
 
 **WHAT IS NOW SOLVED (dispatch/iteration half — all confirmed working end-to-end, upstreamable):**
