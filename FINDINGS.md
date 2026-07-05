@@ -1,5 +1,31 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (READ-MARGIN CLOSED — the one concrete non-NPU-block GRF diff, written voltage-matched, has ZERO effect on the chained CMAC. The strongest platform-software candidate for the CBUF-SRAM wall is spent, and its null result undercuts the whole CBUF-timing theme. All thematically-aligned software/platform levers now exhausted → the consume-arm is internal cold-start sequencer state.)
+
+Board, rocket.read_margin (branch rk3576-read-margin): write the vendor's npu_grf SRAM read-margin
+(0x26018000 + 0x08/0x0c/0x10) matched to rocket's actual voltage, at runtime_resume. A (read_margin=0,
+default) vs B (read_margin=1) with an autosuspend gap so B lands on the next resume.
+- **The write LANDED, voltage-matched:** `rocket rm: v=750mV rm=3 wrote 0x001c000c/0x003c000c/0x001c000c to
+  grf+0x08/0x0c/0x10 (row 675mV) readback 0x0000140c/0x003c000c/0x0004000c`. rocket runs at **750 mV** →
+  **rm=3** (correct per the vendor table row 675 mV, since 675≤750<765). Readback confirms the rm field
+  (bits 2-4) = 3 landed: 0x08 `..140c` and 0x10 `..000c` both have bits 2-4 = 3 (0x0c s/2); 0x0c stored the
+  full value. So the read-margin IS set to the exact voltage-matched vendor value.
+- **A vs B chained output: BYTE-IDENTICAL.** task0 conv0 REAL; task1/2 = 0x80 zero-point; task3/4 = {0d,7f}
+  degenerate; task5 = 0x80; task6..28 = 0x00. The read-margin changed NOTHING.
+- **VERDICT: read-margin CLOSED (candidate #1 from GRF-PLATFORM-REVIEW).** And this is stronger than one
+  null: the read-margin is the MOST DIRECT on-chip SRAM read-timing control, set correctly (rm matched to
+  voltage), with zero effect on the chained CMAC → it also **undercuts the whole CBUF-SRAM-timing theme**, so
+  the remaining timing candidate (#2 CBUF clock rate) is thematically weakened too. What technically remains
+  (CBUF clock, operating point) is weaker AND undermined by this null.
+- **The platform-software dimension is now matched where it thematically matters.** Combined with the
+  exhausted NPU-software surface (writel audit + byte-matched Phase B trailer + bare native task_number=N HW
+  iteration) and ruled-out firmware (same vendor SPI TF-A+OP-TEE): every concrete, thematically-aligned
+  software/platform lever is spent. The chained CMAC's CBUF→CSC→CMAC consume-arm is internal cold-start
+  sequencer state the vendor's chip carries through its HW iteration and rocket's doesn't — not reachable by
+  NPU registers, driver writes, dispatch grammar, firmware, or the SRAM read-margin. Paths left:
+  extract-replay / lean on Tomeu's working RK3588 int8 recipe [[project-rk3588-int8-is-solved]] / RTL.
+  [[project-rk3576-no-writel-gap]]
+
 ## 2026-07-05 (BARE task_number=N CONFIRMED — native HW iteration (no busy-poll, no driver intervention) is BYTE-IDENTICAL to Phase B: chained CMAC still empty. NPU-software surface EXHAUSTED. Firmware RULED OUT (user boots the VENDOR SPI firmware — Rockchip TF-A + OP-TEE — under the mainline buildroot image, so BL31/BL32/OP-TEE is the SAME as the vendor, not the cause). Remaining dimension = the kernel's NON-NPU register spaces (GRF/CRU/power/syscon) that the NPU-block writel audit structurally missed, + mesa.)
 
 Board, rocket.bare_tasknum (branch rk3576-bare-tasknum be86a968a): skip the per-run cnalive busy-poll so the
