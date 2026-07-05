@@ -1,5 +1,30 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (DISPATCH/ITERATION HALF CLOSED — trailer chain 29/29 perfect, weight regcmd present+plausible every task, all 4 units engage, DMA clean; YET chained CMAC empty. The wall is now precisely localized to ONE stage: CBUF->CSC->CMAC consumption. Converges with the earlier CBUF audit. The task-6 stall is a SYMPTOM: CMAC doesn't drain CBUF -> operands pile up -> the fixed CBUF fills after ~6 layers -> PC can't stage layer 7.)
+
+Board, whole-graph one-submit, mesa Phase B fix + kernel trlchk-all-tasks (branch rk3576-weightfetch
+5c9925792). The all-task trailer + weight dump settles both open questions:
+- **Trailer chain PERFECT end-to-end (29/29):** task0..27 match=YES (pc10 == the next task's regcmd iova
+  exactly), task28 match=LAST (pc10=0 terminator), sync=1 bcast=1 on EVERY task. So the task-6 stall is NOT
+  a chain break -- the chain is intact all the way.
+- **Weight regcmd PRESENT + PLAUSIBLE every task:** each has a real weight addr (0x1110) + byte-count
+  (0x101c) with sensible per-layer sizes -- conv0 wtsz=0x600 (1536), depthwise wtsz=0x240 (576 = 9*64, the
+  dw signature), pointwise/conv 0x2000/0x4000/0x8000..., task28 0x100000 (1 MB). NOT missing, NOT zero =>
+  NOT a mesa weight-regcmd bug. (cbuf CBUF_CON0 0x1040 also set: 0x10000000 / 0x14000000 per task.)
+- **VERDICT -- dispatch/iteration half is CLOSED and CORRECT:** trailer grammar, PC self-iteration, per-task
+  engage (exec_ever=0xf all 4 units), input DMA, weight DMA, and per-task weight+CBUF config are ALL
+  confirmed working/correct, reproduced end-to-end in a single whole-graph submit. The remaining wall is one
+  specific pipeline stage: **CBUF->CSC->CMAC consumption** -- the operands reach CBUF (earlier CBUF audit
+  proved data lands in CBUF) but the CMAC never drains/consumes them, so every chained layer outputs
+  zero-point. Same stage the earlier CBUF audit fingered, now cornered with everything upstream eliminated.
+- **task-6 stall = a SYMPTOM of the same cause, not a separate bug:** if the CMAC doesn't drain CBUF, each
+  layer's staged operands accumulate in the fixed on-chip CBUF -> it fills after ~6 layers -> the PC can't
+  stage the 7th -> stalls (PC_DONE fired fast, ~10 ms, not a poll-cap timeout). One coherent root: the CSC
+  consume/weight-load stage arms only on the cold-start task (the mechanism-level form of the long-standing
+  "only cold-start MACs" / "input reads but weights don't" wall). Next: attack the CBUF->CSC->CMAC stage
+  directly; review (rk3576-weightfetch report) whether the CSC consume/drain trigger was ever touched vs
+  only the CBUF-side staging/reset. [[project-rk3576-no-writel-gap]]
+
 ## 2026-07-05 (PHASE B TRAILER FIX — REVERSES the premature "internal wall" verdict. The mesa packer keyed the trailer on the broadcast OP_EN (0x81/0x08), which ONLY conv0's firstconv fill emits; the dw/pw normal fill emits 4 PER-UNIT OP_ENs by default -> only conv0 got a next-pointer -> the chain broke after 1 hop. Fixed to key on ANY in-stream OP_EN. Board: trlchk all match=YES, exec_ever=0xf (all 4 units engage, was 0x8), PC walks 6 tasks (TASK_STATUS=6, was 1), dt_rd=110208, RDERR=0/WRERR=0, clean PC_DONE. Trailer + iteration CONFIRMED WORKING. Remaining wall is NARROW: chained outputs still zero-point (empty accumulator) despite all units engaging + reading input. NB the reversal was the TRAILER FIX, not TASK_CON (that confound was refuted analytically, never built). **CORRECTION (metric discipline): my first read "core wt_rd=0 = chained fetch no weights" was WRONG -- core wt_rd=0 is NORMAL (vendor capture too: top[wt_rd=36] core[wt_rd=0]); weights count in TOP wt_rd (=332 here, cumulative, grew beyond conv0's ~36 so it can't prove chained fetch nothing). Real remaining wall = the earlier "operands don't reach the CMAC from CBUF, independent of content" (CBUF->CSC->CMAC staging), now in a working whole-graph walk. The rk3576-weightfetch diagnostic checks the per-task weight regcmd + the trailer past task 2.**)
 
 Board, whole-graph one-submit, mesa Phase B FIX (branch rk3576-wholegraph-trailer 8ff472f) + kernel
