@@ -1,5 +1,32 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (PHASE B TRAILER FIX — REVERSES the premature "internal wall" verdict. The mesa packer keyed the trailer on the broadcast OP_EN (0x81/0x08), which ONLY conv0's firstconv fill emits; the dw/pw normal fill emits 4 PER-UNIT OP_ENs by default -> only conv0 got a next-pointer -> the chain broke after 1 hop. Fixed to key on ANY in-stream OP_EN. Board: trlchk all match=YES, exec_ever=0xf (all 4 units engage, was 0x8), PC walks 6 tasks (TASK_STATUS=6, was 1), dt_rd=110208, RDERR=0/WRERR=0, clean PC_DONE. Trailer + iteration CONFIRMED WORKING. Remaining wall is NARROW: chained layers read input but core wt_rd=0 (fetch NO weights) -> empty accumulator -> zero-point 0x80. NOT an internal-HW dead end; a concrete weight-fetch lead. NB the reversal was the TRAILER FIX, not TASK_CON (that confound was refuted analytically, never built).)
+
+Board, whole-graph one-submit, mesa Phase B FIX (branch rk3576-wholegraph-trailer 8ff472f) + kernel
+rocket.trailer_check=1 (branch rk3576-trailer-check 3b48f285b).
+- **Root cause of the earlier 1-hop stall = a mesa packer bug, NOT the HW wall.** The packer located the
+  per-task trailer by scanning for the broadcast OP_EN (tgt 0x81 reg 0x08). But only conv0 uses the
+  firstconv fill (which emits the broadcast); every dw/pw uses the normal fill, which by DEFAULT emits FOUR
+  per-unit OP_ENs (CNA 0x1008/CORE 0x3008/DPU 0x4008/RDMA 0x5008), no broadcast. So the scan matched conv0
+  only -> only conv0 got a next-pointer -> board trlchk task0 match=YES, task1+ NO-PC10 -> the PC walked one
+  hop and stalled. Fix: key the trailer on ANY in-stream OP_EN (broadcast OR per-unit), so every task gets
+  [0x10 abs next][0x14 amount][SYNC][broadcast].
+- **After the fix (board):** trlchk task0/1/2 all match=YES (next-ptr == next task's iova). exec_ever=0xf
+  (CNA+CORE+DPU+RDMA all engage on chained tasks, was 0x8=RDMA-only). PC walks to TASK_STATUS=6 (was ~1).
+  top dt_rd=110208 (many layers' input read), core dt_wr=100464, RDERR=0 WRERR=0, PC_DONE fired ~10 ms
+  (fast, not a poll-cap timeout). So the trailer + PC self-iteration + per-task engage are CONFIRMED WORKING
+  -- the earlier "internal wall" verdict was premature (it was the packer bug).
+- **Remaining wall (narrow, concrete):** chained outputs still zero-point -- conv0 distinct=243 REAL; task1
+  distinct=1 all 0x80; task2 0x80; task3/4 distinct=3 {0d,7f,80}; task5 partial. The oracle: **core wt_rd=0**
+  -- chained layers read their INPUT (dt_rd huge) but fetch NO WEIGHTS -> empty accumulator -> requant
+  zero-point. (top wt_rd=332 covers conv0, so the weight-DMA mechanism itself works.) This is the SAME
+  "input reads but the weights don't" wall from the earlier single-task work, now reproduced inside a
+  working whole-graph walk -- a concrete lead, not an internal dead end.
+- **Two open sub-questions:** (a) why chained weight-fetch doesn't trigger (core wt_rd=0) though all units
+  engage; (b) why the PC stops at task 6 not 29 (fast PC_DONE, not a timeout) -- possibly the trailer breaks
+  past task 2 (trlchk only checked 0-2) or a downstream stall. Being chased (branch rk3576-weightfetch):
+  extend trlchk to ALL tasks + diff conv0-vs-chained weight regcmd. See WHOLEGRAPH-GRAMMAR.md.
+
 ## 2026-07-05 (PHASE B board result — the runtime-exact trailer makes the PC self-iterate ONE hop (dt_rd=29792 = conv0+task1, TASK_STATUS 0->2, task1 engages+reads+writes) but task1's MAC is EMPTY (output all 0x80 = requant zero-point) and the PC stalls after ~1 task (task2+ untouched, 0x00). Matches the earlier ROCKET_NEXTPTR one-hop result; the exact trailer (broadcast+SYNC+abs-ptr) did not advance further. NOT yet "#1 closed": a TASK_CON latch CONFOUND is flagged — kernel WROTE PC TASK_CON=0x0007001d but the readback = 0x0001001d (the 0x6<<16 iterate-control bits absent). Resolving whether those bits latch (post-exec clear vs real write-failure) BEFORE any RTL verdict.)
 
 Board, whole-graph one-submit (mesa Phase B branch rk3576-wholegraph-trailer 1233c5f: emit the vendor
