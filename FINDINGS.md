@@ -1,6 +1,6 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
-## 2026-07-05 (PHASE B TRAILER FIX — REVERSES the premature "internal wall" verdict. The mesa packer keyed the trailer on the broadcast OP_EN (0x81/0x08), which ONLY conv0's firstconv fill emits; the dw/pw normal fill emits 4 PER-UNIT OP_ENs by default -> only conv0 got a next-pointer -> the chain broke after 1 hop. Fixed to key on ANY in-stream OP_EN. Board: trlchk all match=YES, exec_ever=0xf (all 4 units engage, was 0x8), PC walks 6 tasks (TASK_STATUS=6, was 1), dt_rd=110208, RDERR=0/WRERR=0, clean PC_DONE. Trailer + iteration CONFIRMED WORKING. Remaining wall is NARROW: chained layers read input but core wt_rd=0 (fetch NO weights) -> empty accumulator -> zero-point 0x80. NOT an internal-HW dead end; a concrete weight-fetch lead. NB the reversal was the TRAILER FIX, not TASK_CON (that confound was refuted analytically, never built).)
+## 2026-07-05 (PHASE B TRAILER FIX — REVERSES the premature "internal wall" verdict. The mesa packer keyed the trailer on the broadcast OP_EN (0x81/0x08), which ONLY conv0's firstconv fill emits; the dw/pw normal fill emits 4 PER-UNIT OP_ENs by default -> only conv0 got a next-pointer -> the chain broke after 1 hop. Fixed to key on ANY in-stream OP_EN. Board: trlchk all match=YES, exec_ever=0xf (all 4 units engage, was 0x8), PC walks 6 tasks (TASK_STATUS=6, was 1), dt_rd=110208, RDERR=0/WRERR=0, clean PC_DONE. Trailer + iteration CONFIRMED WORKING. Remaining wall is NARROW: chained outputs still zero-point (empty accumulator) despite all units engaging + reading input. NB the reversal was the TRAILER FIX, not TASK_CON (that confound was refuted analytically, never built). **CORRECTION (metric discipline): my first read "core wt_rd=0 = chained fetch no weights" was WRONG -- core wt_rd=0 is NORMAL (vendor capture too: top[wt_rd=36] core[wt_rd=0]); weights count in TOP wt_rd (=332 here, cumulative, grew beyond conv0's ~36 so it can't prove chained fetch nothing). Real remaining wall = the earlier "operands don't reach the CMAC from CBUF, independent of content" (CBUF->CSC->CMAC staging), now in a working whole-graph walk. The rk3576-weightfetch diagnostic checks the per-task weight regcmd + the trailer past task 2.**)
 
 Board, whole-graph one-submit, mesa Phase B FIX (branch rk3576-wholegraph-trailer 8ff472f) + kernel
 rocket.trailer_check=1 (branch rk3576-trailer-check 3b48f285b).
@@ -16,16 +16,22 @@ rocket.trailer_check=1 (branch rk3576-trailer-check 3b48f285b).
   top dt_rd=110208 (many layers' input read), core dt_wr=100464, RDERR=0 WRERR=0, PC_DONE fired ~10 ms
   (fast, not a poll-cap timeout). So the trailer + PC self-iteration + per-task engage are CONFIRMED WORKING
   -- the earlier "internal wall" verdict was premature (it was the packer bug).
-- **Remaining wall (narrow, concrete):** chained outputs still zero-point -- conv0 distinct=243 REAL; task1
-  distinct=1 all 0x80; task2 0x80; task3/4 distinct=3 {0d,7f,80}; task5 partial. The oracle: **core wt_rd=0**
-  -- chained layers read their INPUT (dt_rd huge) but fetch NO WEIGHTS -> empty accumulator -> requant
-  zero-point. (top wt_rd=332 covers conv0, so the weight-DMA mechanism itself works.) This is the SAME
-  "input reads but the weights don't" wall from the earlier single-task work, now reproduced inside a
-  working whole-graph walk -- a concrete lead, not an internal dead end.
-- **Two open sub-questions:** (a) why chained weight-fetch doesn't trigger (core wt_rd=0) though all units
-  engage; (b) why the PC stops at task 6 not 29 (fast PC_DONE, not a timeout) -- possibly the trailer breaks
-  past task 2 (trlchk only checked 0-2) or a downstream stall. Being chased (branch rk3576-weightfetch):
-  extend trlchk to ALL tasks + diff conv0-vs-chained weight regcmd. See WHOLEGRAPH-GRAMMAR.md.
+- **Remaining wall (narrow):** chained outputs still zero-point -- conv0 distinct=243 REAL; task1 distinct=1
+  all 0x80; task2 0x80; task3/4 distinct=3 {0d,7f,80}; task5 partial -- empty accumulator despite all units
+  engaging + reading input.
+- **CORRECTION (metric discipline, my misread):** I first called `core wt_rd=0` the oracle for "chained
+  fetch no weights." WRONG -- core wt_rd=0 is NORMAL: the vendor's own est capture reads top[wt_rd=36]
+  core[wt_rd=0] (weights count in TOP wt_rd, not core). Our run top wt_rd=332 is CUMULATIVE and grew beyond
+  conv0's ~36, so it cannot prove chained layers fetch nothing. So "no weight fetch" is UNPROVEN. The actual
+  earlier localization (single-task work, [[project-rk3576-conv0-weightlayout]] / [[project-rk3576-dispatch-step2]])
+  was **"the CMAC operands (weights and/or input) do NOT reach the CMAC from CBUF, INDEPENDENT of weight
+  content"** -- a CBUF->CSC->CMAC staging issue, not a weight-DMA or weight-value bug. That is the same wall,
+  now reproduced inside a working whole-graph walk.
+- **Two open sub-questions:** (a) whether the chained weight regcmd (CNA 0x1110 addr / 0x101c size) is even
+  present + plausible per task (the diagnostic checks this) vs the operands staging into CBUF but not
+  reaching the CMAC; (b) why the PC stops at task 6 not 29 (fast PC_DONE, not a timeout) -- possibly the
+  trailer breaks past task 2 (trlchk only checked 0-2) or a downstream stall. Being chased (branch
+  rk3576-weightfetch): extend trlchk to ALL tasks + dump per-task weight regcmd. See WHOLEGRAPH-GRAMMAR.md.
 
 ## 2026-07-05 (PHASE B board result — the runtime-exact trailer makes the PC self-iterate ONE hop (dt_rd=29792 = conv0+task1, TASK_STATUS 0->2, task1 engages+reads+writes) but task1's MAC is EMPTY (output all 0x80 = requant zero-point) and the PC stalls after ~1 task (task2+ untouched, 0x00). Matches the earlier ROCKET_NEXTPTR one-hop result; the exact trailer (broadcast+SYNC+abs-ptr) did not advance further. NOT yet "#1 closed": a TASK_CON latch CONFOUND is flagged — kernel WROTE PC TASK_CON=0x0007001d but the readback = 0x0001001d (the 0x6<<16 iterate-control bits absent). Resolving whether those bits latch (post-exec clear vs real write-failure) BEFORE any RTL verdict.)
 
