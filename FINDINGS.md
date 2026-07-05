@@ -1,5 +1,45 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-05 (SESSION CLOSE-OUT — dispatch/iteration half SOLVED (upstreamable); wall localized to the CBUF->CSC->CMAC cold-start consume-arm; full software-lever ledger; per-task CSC-rearm (PP_CLEAR) CLOSED. Software surface exhausted -> RTL, with ONE standing software question (bare task_number=N).)
+
+**WHAT IS NOW SOLVED (dispatch/iteration half — all confirmed working end-to-end, upstreamable):**
+- Whole-graph trailer grammar: absolute next-pointer (PC 0x10 = next task's iova) + PC 0x14 amount + SYNC
+  0x41 + broadcast OP_EN 0x1d, order [0x10][0x14][SYNC][broadcast], last task terminates 0/0 —
+  runtime-confirmed byte-for-byte vs the vendor (task_number=8 dump == compile-time .rknn).
+- The mesa rkt_pack_graph_regcmd fix emitting that grammar (key the trailer on ANY in-stream OP_EN —
+  broadcast for conv0's firstconv fill OR the 4 per-unit OP_ENs the dw/pw normal fill emits — else only
+  conv0 got a next-pointer and the chain broke after 1 hop).
+- PC self-iteration via the trailer: trailer chain 29/29 (task0..27 match=YES, task28 LAST), TASK_STATUS
+  walks the tasks.
+- The TASK_CON upper-control-bit (0x6<<16 iterate-enable) — with it all 4 units engage (exec_ever=0xf, was
+  0x8=RDMA-only); the earlier "internal wall" reading was the trailer packer bug, not this.
+- Per-task engage + input DMA + weight DMA + per-task weight/CBUF config all correct (weight regcmd present
+  per task, sensible sizes: conv0 0x600, depthwise 0x240, ... task28 1MB; DMA clean, RDERR=0/WRERR=0).
+
+**THE REMAINING WALL (precisely localized):** CBUF->CSC->CMAC consume-arm. The chained CMAC never drains
+CBUF -> empty accumulator -> requant zero-point. The task-6 stall is a SYMPTOM (CMAC doesn't drain -> CBUF
+fills after ~6 layers -> PC can't stage layer 7). One coherent cause: the CSC consume/weight-load stage arms
+only on the cold-start task — the mechanism-level, fully-cornered form of "only the cold-start task MACs."
+(NB core wt_rd=0 is NORMAL, vendor too; not an oracle. The oracle is the zero-point output with data
+confirmed in CBUF by the earlier CBUF audit.)
+
+**SOFTWARE-LEVER LEDGER (tried against the consume-arm, result):**
+- geom_all — forced every regcmd register into both PP groups -> no arm (regressed conv0).
+- writel audit (vendor vs rocket, full driver enumeration + 1-task & 2-task captures) -> NO NPU register the
+  vendor writes that rocket doesn't; descriptor-DMA falsified (task_number=2, base=0).
+- pp_alt (alternate ping-pong PRODUCER pointer per task) -> reached the write path, not the MAC arm.
+- Phase B trailer (runtime-exact vendor grammar) -> iteration + engage work, MAC still empty.
+- per-task PP_CLEAR / CSC-rearm in the trailer -> did NOT reach CSC_WL; REGRESSED (chained tasks went fully
+  inert 0x00 instead of writing zero-point 0x80). CLOSED.
+- vendor per-task trailer contains NO re-arm entry to copy (S_POINTER 0x0e, no PP_CLEAR) -> its per-task
+  re-arm is internal to the PC HW iteration.
+
+**STANDING QUESTION (still open, NOT closed):** rocket has never actually run the vendor's bare
+task_number=N HW-iteration mode (wg_continuous always wedged pre-trailer-fix, then was replaced by the
+trailer-walk / seq-kick). Whether that bare mode self-arms the CSC is the one remaining software-side
+question before committing fully to RTL. See CSC-CONSUME-REVIEW.md, WHOLEGRAPH-GRAMMAR.md.
+[[project-rk3576-no-writel-gap]]
+
 ## 2026-07-05 (DISPATCH/ITERATION HALF CLOSED — trailer chain 29/29 perfect, weight regcmd present+plausible every task, all 4 units engage, DMA clean; YET chained CMAC empty. The wall is now precisely localized to ONE stage: CBUF->CSC->CMAC consumption. Converges with the earlier CBUF audit. The task-6 stall is a SYMPTOM: CMAC doesn't drain CBUF -> operands pile up -> the fixed CBUF fills after ~6 layers -> PC can't stage layer 7.)
 
 Board, whole-graph one-submit, mesa Phase B fix + kernel trlchk-all-tasks (branch rk3576-weightfetch
