@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Fri, 10 Jul 2026 00:00:00 +1200
+Subject: [PATCH 25/27] iommu/rockchip: implement flush_iotlb_all (ZAP the IOTLB)
+
+rk_iommu implemented neither .flush_iotlb_all nor .iotlb_sync, so the generic
+iommu_flush_iotlb_all() was a silent no-op on Rockchip: a domain whose driver
+relies on it (e.g. the accel/rocket NPU, which flushes the TLB before each
+submit) never actually got a flush. On the non-coherent RK3576 NPU a reused
+IOVA could then keep a previous BO's translation -> stale/zero device reads.
+
+Add a flush_iotlb_all that ZAP_CACHEs every bank of every IOMMU attached to the
+domain, under the same runtime-PM + clk guard as rk_iommu_zap_iova().
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -1202,6 +1202,37 @@
+ 	return 0;
+ }
+ 
++/*
++ * Kiln B: full IOTLB shootdown for a domain. rk_iommu never implemented
++ * flush_iotlb_all, so the generic iommu_flush_iotlb_all() was a SILENT no-op --
++ * a reused iova could keep a previous BO's translation (stale/zero NPU reads ->
++ * partial/empty conv output). The vendor rknpu zaps the TLB directly; this lets
++ * the standard call actually flush, ZAP_CACHE'ing every bank of every IOMMU on
++ * the domain (same power/clk guard as rk_iommu_zap_iova).
++ */
++static void rk_iommu_flush_iotlb_all(struct iommu_domain *domain)
++{
++	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
++	struct list_head *pos;
++	unsigned long flags;
++
++	spin_lock_irqsave(&rk_domain->iommus_lock, flags);
++	list_for_each(pos, &rk_domain->iommus) {
++		struct rk_iommu *iommu = list_entry(pos, struct rk_iommu, node);
++		int ret = pm_runtime_get_if_in_use(iommu->dev);
++
++		if (WARN_ON_ONCE(ret < 0))
++			continue;
++		if (ret) {
++			WARN_ON(clk_bulk_enable(iommu->num_clocks, iommu->clocks));
++			rk_iommu_command(iommu, RK_MMU_CMD_ZAP_CACHE);
++			clk_bulk_disable(iommu->num_clocks, iommu->clocks);
++			pm_runtime_put(iommu->dev);
++		}
++	}
++	spin_unlock_irqrestore(&rk_domain->iommus_lock, flags);
++}
++
+ static const struct iommu_ops rk_iommu_ops = {
+ 	.identity_domain = &rk_identity_domain,
+ 	.domain_alloc_paging = rk_iommu_domain_alloc_paging,
+@@ -1214,6 +1245,7 @@
+ 		.map_pages	= rk_iommu_map,
+ 		.unmap_pages	= rk_iommu_unmap,
+ 		.iova_to_phys	= rk_iommu_iova_to_phys,
++		.flush_iotlb_all = rk_iommu_flush_iotlb_all,
+ 		.free		= rk_iommu_domain_free,
+ 	}
+ };

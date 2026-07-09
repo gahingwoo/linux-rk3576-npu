@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Fri, 10 Jul 2026 00:00:00 +1200
+Subject: [PATCH 27/27] DEBUG: rocket prep_bo explicit dcache-invalidate probe
+
+The prep_bo dual-path cache check used memremap(MEMREMAP_WC), which returns
+NULL on RAM (wc=0xdeadbeef is just the NULL marker), so it never actually
+cross-checked the CPU cache against DRAM. Add an explicit dcache_inval_poc() +
+re-read: if the forced value differs from the dma_sync'd read, the "empty
+output" was a stale-cache READ artifact (the DPU did write DRAM). Result on
+RK3576: they match (output truly unwritten) -> the wall is real, not a
+cache-read artifact.
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
+--- a/drivers/accel/rocket/rocket_gem.c
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -11,6 +11,7 @@
+ #include <linux/iosys-map.h>
+ 
+ #include <linux/moduleparam.h>
++#include <asm/cacheflush.h>	/* Kiln: dcache_inval_poc for the prep_bo cache probe */
+ 
+ #include "rocket_drv.h"
+ #include "rocket_gem.h"
+@@ -214,6 +215,24 @@
+ 
+ 		if (wc)
+ 			memunmap((void *)wc);
++
++		/*
++		 * Kiln: the memremap-WC uncached cross-check fails on RAM (NULL ->
++		 * wc=0xdeadbeef), so the "cached" read above only reflects DRAM IF
++		 * dma_sync_sgtable_for_cpu() actually invalidated. The NPU is
++		 * non-coherent and the vendor uses an explicit dcache_inval_poc, not
++		 * dma_sync. Force an explicit invalidate-to-PoC of the first line and
++		 * re-read: if this DIFFERS from "cached", dma_sync did NOT invalidate
++		 * -> the DPU wrote real output that we were reading stale (the "empty"
++		 * wall is a cache-read artifact). If it matches, the DPU truly wrote
++		 * nothing.
++		 */
++		dcache_inval_poc((unsigned long)cached,
++				 (unsigned long)cached + 16);
++		drm_info(dev,
++			 "rocket dbg prep_bo INVAL: iova=0x%llx forced=%08x %08x %08x %08x\n",
++			 (unsigned long long)rkt_obj->mm.start,
++			 cached[0], cached[1], cached[2], cached[3]);
+ 	}
+ 
+ 	drm_gem_object_put(gem_obj);

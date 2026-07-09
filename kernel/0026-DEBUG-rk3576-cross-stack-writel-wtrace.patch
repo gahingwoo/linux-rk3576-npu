@@ -1,0 +1,165 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Fri, 10 Jul 2026 00:00:00 +1200
+Subject: [PATCH 26/27] DEBUG: rk3576 cross-stack writel wtrace (rknpu vs rocket)
+
+Log every NPU-block readl/writel as an absolute phys address so the vendor
+rknpu and the open rocket driver's register-access sequences can be diffed on
+one kernel (the direct-writel surface the regmap tracepoint can't see). Off by
+default: rocket.wtrace=1; the rk_iommu COMMAND writes are logged too so rocket's
+IOMMU flushes appear in the same trace. Pairs with capture/wtrace-diff.py.
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -104,6 +104,7 @@
+ struct rk_iommu {
+ 	struct device *dev;
+ 	void __iomem **bases;
++	phys_addr_t *dbg_phys;	/* Kiln B: per-bank phys, for the wtrace ZAP log */
+ 	int num_mmu;
+ 	int num_irq;
+ 	struct clk_bulk_data *clocks;
+@@ -339,12 +340,21 @@
+ 	writel(value, base + offset);
+ }
+ 
++/* Kiln B: trace the rk_iommu COMMAND writes (esp. ZAP_CACHE) in the same
++ * "rocket wt" format as the accel/rocket driver, so wtrace-diff sees rocket's
++ * IOMMU flushes -- the one inference in the writel-diff turned into a real trace.
++ * Gated by the accel/rocket module param (both are built-in). */
++extern int rocket_wtrace;
+ static void rk_iommu_command(struct rk_iommu *iommu, u32 command)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < iommu->num_mmu; i++)
++	for (i = 0; i < iommu->num_mmu; i++) {
++		if (rocket_wtrace && iommu->dbg_phys)
++			pr_info("rocket wt w %08x %08x\n",
++				(u32)(iommu->dbg_phys[i] + RK_MMU_COMMAND), command);
+ 		writel(command, iommu->bases[i] + RK_MMU_COMMAND);
++	}
+ }
+ 
+ static void rk_iommu_base_command(void __iomem *base, u32 command)
+@@ -1284,6 +1294,8 @@
+ 				    GFP_KERNEL);
+ 	if (!iommu->bases)
+ 		return -ENOMEM;
++	iommu->dbg_phys = devm_kcalloc(dev, num_res, sizeof(*iommu->dbg_phys),
++				       GFP_KERNEL);	/* Kiln B: per-bank phys */
+ 
+ 	for (i = 0; i < num_res; i++) {
+ 		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
+@@ -1292,6 +1304,8 @@
+ 		iommu->bases[i] = devm_ioremap_resource(&pdev->dev, res);
+ 		if (IS_ERR(iommu->bases[i]))
+ 			continue;
++		if (iommu->dbg_phys)
++			iommu->dbg_phys[i] = res->start;	/* Kiln B */
+ 		iommu->num_mmu++;
+ 	}
+ 	if (iommu->num_mmu == 0)
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -15,30 +15,53 @@
+ 
+ struct rocket_iommu_domain;
+ 
+-#define rocket_pc_readl(core, reg) \
+-	readl((core)->pc_iomem + (REG_PC_##reg))
+-#define rocket_pc_writel(core, reg, value) \
+-	writel(value, (core)->pc_iomem + (REG_PC_##reg))
+-
+-#define rocket_cna_readl(core, reg) \
+-	readl((core)->cna_iomem + (REG_CNA_##reg) - REG_CNA_S_STATUS)
+-#define rocket_cna_writel(core, reg, value) \
+-	writel(value, (core)->cna_iomem + (REG_CNA_##reg) - REG_CNA_S_STATUS)
+-
+-#define rocket_core_readl(core, reg) \
+-	readl((core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+-#define rocket_core_writel(core, reg, value) \
+-	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+-
+-#define rocket_dpu_readl(core, reg) \
+-	readl((core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS)
+-#define rocket_dpu_writel(core, reg, value) \
+-	writel(value, (core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS)
+-
+-#define rocket_dpu_rdma_readl(core, reg) \
+-	readl((core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS)
+-#define rocket_dpu_rdma_writel(core, reg, value) \
+-	writel(value, (core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS)
++/*
++ * Kiln B (wtrace): log every NPU-block readl/writel as an ABSOLUTE phys address
++ * so it diffs directly against the vendor rknpu's rknpu_wtrace. Block phys bases
++ * from the rknn_core DT reg: pc 0x27700000, cna 0x27701000, core 0x27703000,
++ * dpu 0x27704000, dpu_rdma 0x27705000. Off by default: `rocket.wtrace=1`.
++ */
++extern int rocket_wtrace;
++static inline void rocket_wt(char rw, u32 abs, u32 val)
++{
++	if (rocket_wtrace)
++		pr_info("rocket wt %c %08x %08x\n", rw, abs, val);
++}
++
++#define rocket_pc_readl(core, reg) ({ \
++	u32 _v = readl((core)->pc_iomem + (REG_PC_##reg)); \
++	rocket_wt('r', 0x27700000u + (REG_PC_##reg), _v); _v; })
++#define rocket_pc_writel(core, reg, value) do { \
++	rocket_wt('w', 0x27700000u + (REG_PC_##reg), (u32)(value)); \
++	writel(value, (core)->pc_iomem + (REG_PC_##reg)); } while (0)
++
++#define rocket_cna_readl(core, reg) ({ \
++	u32 _v = readl((core)->cna_iomem + (REG_CNA_##reg) - REG_CNA_S_STATUS); \
++	rocket_wt('r', 0x27701000u + (REG_CNA_##reg) - REG_CNA_S_STATUS, _v); _v; })
++#define rocket_cna_writel(core, reg, value) do { \
++	rocket_wt('w', 0x27701000u + (REG_CNA_##reg) - REG_CNA_S_STATUS, (u32)(value)); \
++	writel(value, (core)->cna_iomem + (REG_CNA_##reg) - REG_CNA_S_STATUS); } while (0)
++
++#define rocket_core_readl(core, reg) ({ \
++	u32 _v = readl((core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS); \
++	rocket_wt('r', 0x27703000u + (REG_CORE_##reg) - REG_CORE_S_STATUS, _v); _v; })
++#define rocket_core_writel(core, reg, value) do { \
++	rocket_wt('w', 0x27703000u + (REG_CORE_##reg) - REG_CORE_S_STATUS, (u32)(value)); \
++	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS); } while (0)
++
++#define rocket_dpu_readl(core, reg) ({ \
++	u32 _v = readl((core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS); \
++	rocket_wt('r', 0x27704000u + (REG_DPU_##reg) - REG_DPU_S_STATUS, _v); _v; })
++#define rocket_dpu_writel(core, reg, value) do { \
++	rocket_wt('w', 0x27704000u + (REG_DPU_##reg) - REG_DPU_S_STATUS, (u32)(value)); \
++	writel(value, (core)->dpu_iomem + (REG_DPU_##reg) - REG_DPU_S_STATUS); } while (0)
++
++#define rocket_dpu_rdma_readl(core, reg) ({ \
++	u32 _v = readl((core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS); \
++	rocket_wt('r', 0x27705000u + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS, _v); _v; })
++#define rocket_dpu_rdma_writel(core, reg, value) do { \
++	rocket_wt('w', 0x27705000u + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS, (u32)(value)); \
++	writel(value, (core)->dpu_rdma_iomem + (REG_DPU_RDMA_##reg) - REG_DPU_RDMA_RDMA_S_STATUS); } while (0)
+ 
+ struct rocket_core {
+ 	struct device *dev;
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -34,6 +34,16 @@
+ MODULE_PARM_DESC(soft_reset, "Run the full NPU soft-reset on power-up (default 1)");
+ 
+ /*
++ * Kiln B (wtrace): log every NPU-block readl/writel (as absolute phys) via the
++ * rocket_wt() helper in rocket_core.h, so rocket's register-access sequence on
++ * this mainline-7.1.3 stack diffs directly against the vendor rknpu's
++ * rknpu_wtrace -- the direct-writel surface the regmap env-diff cannot see.
++ */
++int rocket_wtrace;
++module_param_named(wtrace, rocket_wtrace, int, 0644);
++MODULE_PARM_DESC(wtrace, "log every NPU-block readl/writel for the cross-stack writel diff");
++
++/*
+  * Board-debug knobs: force NPU clock RATES on power-up (Hz; 0 = leave default).
+  * The vendor manages these via devfreq/OPP (408MHz..1200MHz); rocket only enables
+  * the clocks and runs at the bootloader default. conv0 truncates at a variable
