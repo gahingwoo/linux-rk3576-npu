@@ -20,6 +20,7 @@ rocket-only work.
 | read-based pd-arm | vendor's `readl(VERSION)`+MMU-DTE cycle is a shared pm-domains arm both stacks run | doesn't fix the wall |
 | **stale IOMMU TLB** | see below | **doesn't fix — but the project's own fix was a no-op** |
 | **data-cache coherency** | see below | **wall is real, not a stale-read artifact** |
+| driver submit-register values + order | wtrace with values, vendor vs rocket | match (below) |
 
 ## The stale-TLB finding (the big one)
 
@@ -66,16 +67,41 @@ prep_bo INVAL: iova=0xfff57000 forced=aaaaaaaa aaaaaaaa aaaaaaaa aaaaaaaa
 `0xAA` fill. **The DPU wrote nothing to the final output; the wall is real, not a
 cache-read artifact.**
 
+## Driver submit-registers — values and order
+
+The env/writel diffs above are unordered set diffs. wtrace also logs the value, so the
+driver's own per-submit register writes (not the mesa/replay regcmd payload) can be
+compared value-for-value:
+
+| reg | vendor | rocket |
+|---|---|---|
+| `0x10` state_init | `1` | `1` |
+| `0x1004` toggle | `0 / 1 / 0x1e / 0xe` | `0 / 1 / 0x1e / 0xe` |
+| `0x3004` | `0xe` | `0xe` |
+| `0x20` INT_MASK | `0x300` | `0x300` |
+| `0x24` INT_CLEAR | `0x300` / `0x1ffff` | `0x30000300` / `0x3001ffff` |
+| `0x30` TASK_CON | `0x00070050` | `0x00070001` |
+| `0x34` | `0` | `0` |
+| `0x8` OP_EN | `1` → `0` | `1` → `0` |
+
+Values and order match, with two benign differences: rocket clears extra INT bits
+(`0x30000000`, PC_DONE) at `0x24` — rocket does *more*, not less; and `0x30` differs
+only in the task count `N` (`0x50` vs `0x1`, the two runs' workloads). The
+iterate-enable `0x7<<16` in TASK_CON is written by both, and the PC demonstrably walks
+all tasks in the replay (per-task engage, buf[1..4]), so the earlier TASK_CON
+"didn't latch" confound does not hold here — the wall is *after* task iteration
+(tasks run; the final CMAC output never lands).
+
 ## Where this leaves it
 
 On this stack the software surface checked so far — regmap env, direct writel
-(incl. IOMMU), the read-based pd-arm, per-submit TLB flush (really done), and CPU
-cache coherency — is negative: no register or maintenance op the vendor does that
-rocket doesn't accounts for the wall. This **hardens** the "arm is below software
-(RTL / internal sequencer state)" reading each time a candidate falls, but does not
-by itself prove it. Not yet checked: an ordered/valued register diff (env + wtrace
-were unordered set diffs, and the two stacks run different workloads), and
-barrier/fence timing.
+(incl. IOMMU), the read-based pd-arm, per-submit TLB flush (really done), CPU cache
+coherency, and the driver's submit-register values + order — is negative: no
+register, value, or maintenance op the vendor does that rocket doesn't accounts for
+the wall. This **hardens** the "arm is below software (RTL / internal sequencer
+state)" reading each time a candidate falls, but does not by itself prove it. The
+regcmd payload's own values are identical by construction (`replay_rocket` replays
+the vendor-captured bytes). Not checked: barrier/fence timing (low-probability).
 
 ## Repro
 
