@@ -2,6 +2,17 @@
 
 Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
+## ⚠ Chained-task compute: parked (2026-07-10), pending new evidence
+
+Single-task inference works end to end (below). Multi-task chained inference
+(any real multi-layer network) hits a wall: only the first task per NPU power
+session actually computes; every falsifiable software cause — dispatch
+mechanism, registers, config, CBUF staging, cache/TLB, environment, firmware —
+has been tested to a clean negative across two independent investigations. This
+is a deliberate stop, not an abandoned attempt: **[CHAINED-CMAC-STOPPING-POINT.md](CHAINED-CMAC-STOPPING-POINT.md)**
+is the falsification-first writeup of what was ruled out, how, and what would
+actually be needed to reopen it (vendor RTL/TRM, not another register trace).
+
 | | |
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
