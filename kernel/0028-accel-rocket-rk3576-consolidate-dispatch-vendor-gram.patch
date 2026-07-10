@@ -1,0 +1,1436 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gahingwoo <huhuvmb88@outlook.com>
+Date: Fri, 10 Jul 2026 00:00:00 +1200
+Subject: [PATCH 28/28] accel/rocket: rk3576 consolidate dispatch to the vendor-grammar single-kick (Phase A/B settled state)
+
+Phase A/B and the BARE task_number=N experiments (FINDINGS.md, WHOLEGRAPH-
+GRAMMAR.md, all 2026-07-05) settled the RK3576 dispatch question: a single
+PC submit with TASK_CON.task_number = job->task_count (the vendor
+rknpu_job_subcore_commit_pc grammar), one PC_OP_EN pulse, and mesa's
+task regcmds packed contiguously at a fixed 64-byte-aligned stride
+(PC_DATA_AMOUNT computed as (regcfg_amount+4+scale-1)/scale-1 so the PC's own
+fetch advances into the next task) makes the PC genuinely walk the whole
+chain -- TASK_STATUS advances (confirmed to 6), all four units engage
+(exec_ever=0xf), DMA is clean, PC_DONE fires clean. Native BARE task_number=N
+iteration (zero driver intervention during the run) reproduces the identical
+result byte-for-byte. A live wtrace capture of the vendor's own multi-task
+submit additionally confirmed PC_DMA_BASE_ADDR/TASK_DMA_BASE_ADDR = 0 in every
+capture (task_number=2 and 8 alike) -- the vendor does NOT use a descriptor-
+array/DMA-fetch mechanism; TASK_DMA_BASE_ADDR stays 0 here too, matching it.
+
+None of this fixes the wall: every task after the first in a power session
+computes empty (zero-point) regardless of dispatch mechanism -- chained,
+natively-iterated, or (per the separate SPREAD-CONFIRM board result)
+completely independent single-task submits. The remaining wall is the
+CBUF->CSC->CMAC "consume-arm", a per-power-session resource that only a full
+NPU power-cycle re-arms, not a dispatch/register/regcmd-grammar bug.
+
+This patch removes the now-dead experimental module_param forks that
+enumerated the alternatives (chain_task_number, wg_continuous flag,
+bare_tasknum, wg_warm_chain, bisect, rekick_reset, audit_all, pw_weight_sram,
+geom_all, conv0_twice, open_high, pp_alt, trailer_check, zero_out_bos,
+spread_confirm, read_margin sweep, cbuf_reset variants, and related dump
+helpers) now that each is independently concluded, and makes the settled
+single-kick TASK_CON=job->task_count dispatch the unconditional default --
+consolidation only, no behavioral change to the settled dispatch path itself.
+Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+---
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -25,7 +25,6 @@
+ #include "rocket_core.h"
+ #include "rocket_device.h"
+ #include "rocket_drv.h"
+-#include "rocket_gem.h"
+ #include "rocket_job.h"
+ 
+ /*
+@@ -83,16 +82,6 @@
+ MODULE_PARM_DESC(audit_arm, "Dump CBUF SRAM PRE/POST for the next job, then self-clear (default 1)");
+ 
+ /*
+- * audit_all: run the CBUF audit PRE/POST for EVERY kick, without self-clearing.
+- * PRE is in hw_submit and POST in the done-handler, and each seq-kick task is its
+- * own kick, so this yields a per-task CBUF snapshot (conv0, dw1, ...) -- lets us
+- * see whether dw1's data/weights ever land in the CBUF (CNA->CBUF vs CBUF->CMAC).
+- */
+-static int rocket_audit_all;
+-module_param_named(audit_all, rocket_audit_all, int, 0644);
+-MODULE_PARM_DESC(audit_all, "Run the CBUF audit PRE/POST for EVERY kick (not just the next). Default 0.");
+-
+-/*
+  * FIX ATTEMPT (rocket.weight_sram): the audit proved the weights never reach
+  * the on-chip CBUF SRAM (PRE==POST on the weight blocks) while the vendor's
+  * weight source (CNA 0x1110 / DCOMP_ADDR0) points at the NBUF (0xffff8000), not
+@@ -101,30 +90,11 @@
+  * the SRAM IOVA -- testing whether the RK3576 weight path needs an on-chip
+  * source. Self-clears (one job per arm), so the boot diag can A/B it.
+  */
+-/*
+- * Non-static: the on-chip weight-SRAM nbuf reservation in rocket_drv.c takes it
+- * as `extern int rocket_weight_sram` to reserve the 0xfff00000 aperture only when
+- * the feature is armed. Keep it global so a clean (buildroot) build links.
+- */
+-int rocket_weight_sram;
++static int rocket_weight_sram;
+ module_param_named(weight_sram, rocket_weight_sram, int, 0644);
+ MODULE_PARM_DESC(weight_sram, "Stage the next job's weights into on-chip SRAM + repoint 0x1110 (default 0)");
+ 
+ /*
+- * Fork B concept test (pw_weight_sram): the POINTWISE (standard-mode, 0x100c==0)
+- * chained layers never fire their weight DMA (wt_rd=0) so they compute weightless.
+- * Stage each pw task's weights into the on-chip NBUF SRAM and repoint 0x1110 there,
+- * so the pw reads weights from on-chip instead of the CBUF weight DMA. One page
+- * (4 KB, phys-contiguous = safe) per pw task at a rolling NBUF offset -- enough for
+- * the small early pw layers. If those light up (distinct>1), the on-chip preload
+- * delivers weights to the pw CMAC and B is worth engineering; if not, B is closed.
+- */
+-static int rocket_pw_weight_sram;
+-module_param_named(pw_weight_sram, rocket_pw_weight_sram, int, 0644);
+-MODULE_PARM_DESC(pw_weight_sram, "Stage POINTWISE-layer weights into on-chip NBUF + repoint 0x1110 (Fork B concept test, default 0)");
+-static int rocket_pwdbg_n;  /* pw_weight_sram diagnostic print limiter */
+-
+-/*
+  * Board-debug knob: override the CNA/CORE S_POINTER arming value (and patch the
+  * regcmd's own 0x1004/0x3004 S_POINTER entries to match) so the ping-pong
+  * group selection can be swept on the board. conv0's geometry lands in the
+@@ -196,112 +166,6 @@
+ MODULE_PARM_DESC(perjob_ppinit, "Re-run pp_state_init at the head of every job (default 1)");
+ 
+ /*
+- * Fork A warm-chain: run pp_state_init only on the FIRST task of a job (the cold
+- * start that needs the arming to engage), and SKIP it on the sequential re-kicks
+- * (tasks after the first within the same job). pp_state_init's POINTER_PP_CLEAR
+- * cools the on-chip CBUF between kicks -- the CNA reads a cleared group instead of
+- * the buffer the previous task just wrote, so the layer chain reads empty. Each
+- * task's regcmd arms its own S_POINTER (mesa writes 0x1004 per task), so the first
+- * kick's pp_state_init suffices; skipping it on re-kicks keeps the CBUF warm across
+- * layers the way the vendor's continuous submit does, while still using the proven
+- * per-task single kick for engage. rocket.wg_warm_chain (default 0 = off).
+- */
+-static int rocket_wg_warm_chain;
+-module_param_named(wg_warm_chain, rocket_wg_warm_chain, int, 0644);
+-MODULE_PARM_DESC(wg_warm_chain, "Skip pp_state_init on within-job re-kicks to keep CBUF warm across layers (default 0)");
+-
+-/*
+- * Fork A continuous submit: dispatch the whole job as ONE PC submit with
+- * task_number = task_count (the vendor rknpu_job_subcore_commit_pc model), letting
+- * the PC iterate all tasks from a single OP_EN pulse, instead of the N sequential
+- * single-task kicks (task_number=1, one advance per DPU-done). This is the mode
+- * that pre-stages the next layer's weights into CBUF while the current computes
+- * (the double-buffer the sequential kicks lack -> pointwise weight_rd=0). The known
+- * wall: the PC engages task 0's units (exec_ever=0xf) but task 0 never completes
+- * its DPU write (distinct=1, PC_TASK_STATUS stuck at 0) -> PC stalls; the SAME task
+- * 0 completes as a task_number=1 kick. Pair with multitask_poll=1 (waits
+- * TASK_STATUS==task_count, 500ms safe cap) to A/B task-0's live status against the
+- * sequential path on one build. rocket.wg_continuous (default 0 = sequential kick).
+- */
+-static int rocket_wg_continuous;
+-module_param_named(wg_continuous, rocket_wg_continuous, int, 0644);
+-MODULE_PARM_DESC(wg_continuous, "Dispatch the whole job as one task_number=N PC submit (Fork A), not N sequential single-task kicks (default 0)");
+-
+-/*
+- * bare_tasknum: the vendor's BARE task_number=N HW-iteration mode. wg_continuous
+- * already submits ONCE (task_number=N, no per-task re-kick); the only per-run
+- * driver intervention left is the cnalive busy-poll (4000x register reads during
+- * execution). Set bare_tasknum=1 (with wg_continuous=1) to SKIP that busy-poll so
+- * the PC iterates natively with zero driver register access during the run --
+- * just submit, one OP_EN, wait for the single final completion, then read back.
+- * Tests whether native HW iteration self-arms the CSC (chained core wt_rd/output)
+- * without any injected re-arm. Default 0.
+- */
+-static int rocket_bare_tasknum;
+-module_param_named(bare_tasknum, rocket_bare_tasknum, int, 0644);
+-MODULE_PARM_DESC(bare_tasknum, "Skip the per-run cnalive busy-poll so the PC iterates task_number=N natively with no driver intervention during the run (use with wg_continuous=1). Default 0.");
+-
+-/*
+- * Fork B teardown bisect (2026-07-04). The mesa dw regcmd is byte-identical to the
+- * vendor's, yet only the cold-start task 0 does MACs; every re-kick reads its input
+- * with a correct regcmd but the CMAC never fires. The vendor's continuous PC submit
+- * does NO teardown between tasks; our sequential kicks do. This bitmask disables the
+- * per-kick teardown one step at a time to find which one kills the MACs on a re-kick:
+- *   0x1  skip the done-handler diagnostic CNA S_POINTER 0->1->restore toggle (a write
+- *        the vendor never does, between every kick — could disturb the CBUF group).
+- *   0x2  skip the driver S_POINTER re-arm (0xe) on re-kicks (task 1+); the task's own
+- *        regcmd re-arms 0x1004/0x3004, so the extra driver write may be redundant AND
+- *        re-init the executer/ping-pong the vendor leaves alone.
+- *   0x4  minimal INTERRUPT_CLEAR at completion (only PC_DONE, not the full 0x1ffff
+- *        that also clears every CNA/CORE/DPU sub-stage event).
+- *   0x8  skip the per-kick perf-counter clear (writes to the stats page between kicks).
+- * bisect=0xf (skip all) vs 0 (baseline) is the decisive first cut: if 0xf makes task 1
+- * compute (distinct>10), bisect down; if 0xf still fails, the teardown is NOT the cause
+- * (it's the fresh-power/cold-start HW state task 0 alone has). rocket.bisect (default 0).
+- */
+-static int rocket_bisect;
+-module_param_named(bisect, rocket_bisect, int, 0644);
+-MODULE_PARM_DESC(bisect, "Bitmask: disable per-kick teardown steps to find the MAC-killer (0x1 sptr-toggle, 0x2 sptr-rearm, 0x4 int-clear, 0x8 perf-clear; default 0)");
+-
+-/*
+- * Fork B re-kick reset (2026-07-04). The runtime_resume callback runs a full NPU
+- * soft-reset (rocket_core_reset) that initialises the CBUF; without it "the CMAC
+- * reads zero out of an uninitialised CBUF" (rocket_drv.c comment). conv0, the first
+- * task after resume, runs on that fresh CBUF and does MACs; every re-kick rides the
+- * same powered session with a CBUF the previous task left, and the CMAC produces
+- * zero. This knob re-runs the soft-reset before each re-kick (task 1+) to give every
+- * layer the fresh-CBUF the cold start gets:
+- *   1  bare rocket_core_reset (may corrupt the attached NPU-MMU banks -> stale DMA).
+- *   2  detach IOMMU -> reset -> re-attach (the resume sequence: reset lands on an
+- *      unattached MMU, then re-attach on a clean one) -> then the normal re-config.
+- * Pair with soft_reset=0 (disable the resume reset) as the mechanism control: if that
+- * makes conv0 go zero, the resume soft-reset IS the MAC-enabler. rocket.rekick_reset
+- * (default 0). WARNING: mid-graph reset is the domain the prior cbuf_reset=2 /
+- * power-cycle attempts corrupted (-14 / hang); treat 1 and 2 as experiments.
+- */
+-static int rocket_rekick_reset;
+-module_param_named(rekick_reset, rocket_rekick_reset, int, 0644);
+-MODULE_PARM_DESC(rekick_reset, "Re-run the NPU soft-reset before each re-kick (1 bare, 2 detach+reset+reattach; default 0)");
+-
+-/*
+- * Chained-submit task_number field override (2026-07-04). The next-pointer board
+- * result proved the RK3576 PC follows the trailer (conv0->dw1), but with the
+- * wg_continuous PC_TASK_CON task_number=task_count the MAC is EMPTY even for task 0
+- * (output distinct=1) and the chain stalls after one hop. The SAME conv0 does a real
+- * MAC as a task_number=1 kick (distinct=239): the empty MAC is gated by the task_
+- * number FIELD value. Upstream RK3588 rocket sets PC_TASK_CON_TASK_NUMBER(1) AND
+- * relies on the trailer to advance — our task_number=task_count was the deviation.
+- * This overrides ONLY the task_number field in the wg_continuous submit; the trailer
+- * (mesa ROCKET_NEXTPTR) still advances the PC, and the completion still waits for the
+- * whole chain (PC_TASK_STATUS==task_count, 500ms cap) because that path keys off
+- * job->task_count, not this field. Set 1 to run each chained task in committing mode.
+- * rocket.chain_task_number (0 = use task_count, current; >0 = force this value).
+- */
+-static int rocket_chain_task_number;
+-module_param_named(chain_task_number, rocket_chain_task_number, int, 0644);
+-MODULE_PARM_DESC(chain_task_number, "In the wg_continuous chained submit, force PC_TASK_CON task_number to this value (0=task_count). Use 1 to run each next-pointer-chained task in committing mode.");
+-
+-/*
+  * Whole-graph PC_OP_EN pulse value. Vendor pulses 0x1 (PC start; units engage
+  * from the arming). 0x1d is the broadcast that also force-engages the units but
+  * restarts the PC. Default 0x1 (vendor) -- pair with ROCKET_WHOLE_GRAPH=1 +
+@@ -336,124 +200,6 @@
+ MODULE_PARM_DESC(geom_both, "CPU-write the regcmd CNA/CORE config into both PP groups (default 0)");
+ 
+ /*
+- * geom_all: geom_both's exhaustive twin. CPU-write EVERY regcmd config target --
+- * CNA/CORE into both PP groups (as geom_both) AND the DPU (0x4xxx) + RDMA (0x5xxx)
+- * targets geom_both skipped, once each (they are not PP-grouped), via the driver's
+- * own dpu_iomem/dpu_rdma_iomem mappings. Skips the 0x81/0xf008 broadcast (CPU-
+- * writing ENABLE_MASK wedges the bus) and every block's S_POINTER/OP_EN
+- * (0x_004/0x_008 -- driven by the kick). geom_both proved the chained-layer arm is
+- * not a CNA/CORE config reg; this decides whether it is ANY regcmd config reg (in
+- * a block geom_both skipped) or not a regcmd reg at all (a cold-start internal state).
+- */
+-static int rocket_geom_all;
+-module_param_named(geom_all, rocket_geom_all, int, 0644);
+-MODULE_PARM_DESC(geom_all, "CPU-write EVERY regcmd config target (CNA/CORE both groups + DPU/RDMA once), except the 0x81/0xf008 broadcast and per-block S_POINTER/OP_EN (default 0)");
+-
+-/*
+- * conv0_twice: the pure-position confirmation. After the whole seq-kick job has
+- * completed, re-run task 0 (conv0) ONE more time with NO reset/re-init between,
+- * then finalise (do NOT continue to task 1). The all-tasks readback dumps this
+- * 2nd conv0 output (task=0). Same regcmd + same external input as the 1st conv0,
+- * the only difference being it is no longer the first-task-after-NPU-init. If the
+- * 2nd conv0 comes back distinct=1 while the 1st was ~240, the arm is proven to be
+- * pure POSITION -- a cold-start context consumed by the first task, independent of
+- * layer/data. If the 2nd conv0 is still ~240, position is NOT the gate.
+- */
+-static int rocket_conv0_twice;
+-module_param_named(conv0_twice, rocket_conv0_twice, int, 0644);
+-MODULE_PARM_DESC(conv0_twice, "After a job completes, re-run task 0 once more with no reset, then finalise (pure-position test). Default 0.");
+-static bool conv0_twice_replaying;
+-/*
+- * File-scope so the conv0_twice replay path can reset it (below) -- the readback
+- * caps dumps at the first 8 completions, but the replay is completion ~30, so
+- * without a reset the 2nd conv0 would never be dumped.
+- */
+-static atomic_t rocket_buf_dump_jobs = ATOMIC_INIT(0);
+-
+-/*
+- * open_high: upstream RK3588's per-task arm model. Our seq-kick pulses PC OP_EN
+- * 1->0 AT SUBMIT (OP_EN=0 during execution); upstream sets OP_EN=1 and leaves it
+- * HIGH through execution, clearing to 0 only at completion (handle_irq already
+- * does OP_EN=0 + INT_CLEAR=0x1ffff). Hypothesis: the completion-time OP_EN 1->0 is
+- * the HW's per-task re-arm; our submit-pulse skips it for re-kicks. When set, drop
+- * the submit OP_EN=0 pulse (leave OP_EN high) and treat DPU-done (raw & 0x300) as
+- * completion (the inline exec loop + the poll both check it) since PC_DONE (bits
+- * 28/29) may not assert while OP_EN is high. The poll cap below is unconditional so
+- * this can never hang -> sched-timeout -> rocket_core_reset -> shared rk_iommu death.
+- */
+-static int rocket_open_high;
+-module_param_named(open_high, rocket_open_high, int, 0644);
+-MODULE_PARM_DESC(open_high, "Upstream-style per-task arm: leave PC OP_EN HIGH through execution (drop the submit OP_EN=0 pulse), complete on DPU-done. Default 0.");
+-
+-/*
+- * pp_alt (measure-first candidate #2, writel-audit). The seq-kick producer
+- * S_POINTER POINTER field is hardcoded 0 every kick, so every task programs
+- * ping-pong group 0 while the vendor sets S_POINTER once and the PC advances
+- * the group 0->1->0 per task in HARDWARE. When set, alternate the producer
+- * group by the per-job task index (task 0 -> group 0 so the cold-start control
+- * is unchanged; 1 -> group 1; 2 -> group 0; ...). NOTE: the driver S_POINTER
+- * write alone is overwritten by the regcmd's own 0x1004/0x3004=0x0e entries
+- * during PC execution (see rocket_sptr_override), so pp_alt also patches those
+- * two regcmd entries' POINTER bit in DRAM -- otherwise it is a no-op. Default 0.
+- * CAVEAT: geom_both already put config in BOTH groups without arming dw1, which
+- * weakly argues against a producer/consumer group mismatch; this is a cheap
+- * long shot, and the compact per-task "rocket pp" line is what actually decides.
+- */
+-static int rocket_pp_alt;
+-module_param_named(pp_alt, rocket_pp_alt, int, 0644);
+-MODULE_PARM_DESC(pp_alt, "seq-kick: alternate S_POINTER POINTER = (per-job task index & 1) per kick (patches CNA 0x1004 / CORE 0x3004 regcmd entries too); task 0 stays group 0. Default 0.");
+-
+-/*
+- * trailer_check (why does the whole-graph PC stop after ~1 hop?). Single-shot,
+- * dumps the first 3 packed tasks' in-DRAM trailer next-pointer (PC reg 0x10) and
+- * whether it equals the NEXT task's regcmd iova (trailer break vs correct chain),
+- * plus TASK_STATUS at completion (how far the PC walked). Default 0.
+- */
+-static int rocket_trailer_check;
+-module_param_named(trailer_check, rocket_trailer_check, int, 0644);
+-MODULE_PARM_DESC(trailer_check, "whole-graph: dump the first 3 tasks' packed trailer next-pointer vs the next task's iova + TASK_STATUS at completion. Default 0.");
+-
+-/* Seq-kick completion-poll cap (ms). Unconditional safety net so the PC_DONE poll
+- * can never spin forever (esp. with open_high, where PC_DONE may never assert). */
+-#define ROCKET_SEQ_POLL_CAP_MS 300
+-
+-/*
+- * zero_out_bos: ground-truth cross-check for the "chained layers write nothing"
+- * wall. distinct on a re-used BO can read STALE 1st-run data (conv0_twice trap),
+- * so before the job kicks, memset every output BO to 0 (+ flush to DRAM). Then the
+- * post-run whole-BO scan classifies each output EMPTY / ZEROPOINT / REAL with no
+- * stale ambiguity: any non-zero is a DEFINITIVE write this run. Default 0.
+- */
+-static int rocket_zero_out_bos;
+-module_param_named(zero_out_bos, rocket_zero_out_bos, int, 0644);
+-MODULE_PARM_DESC(zero_out_bos, "memset each output BO to 0 before the job kicks + whole-BO classify after, so post-run reads can't be stale. Default 0.");
+-
+-/*
+- * spread_confirm: the decisive gate for "does each GENUINELY INDEPENDENT single-
+- * task submit cold-start re-arm the CSC?" (the escape hatch for a matmul/LLM
+- * path). Run the layers in per-op dispatch (mesa DEFAULT / ROCKET_TILE_JOBS =
+- * one single-task drm job PER OP) with zero_out_bos=1, and this emits ONE compact
+- * line per op completion. core dt_wr is PER-OP here (not cumulative): the perf
+- * counter is cleared at every single-task job's own kick (rocket_job_hw_submit),
+- * unlike the whole-graph one-submit case where the clear runs once for N tasks.
+- * READ: ops 1,2,3.. with dt_wr large + wt_rd nonzero + out_class=REAL => each
+- * independent submit DOES re-arm => wall bypassable by per-op dispatch (LLM
+- * route open). Only op 0 REAL, ops 1+ dt_wr~0 / ZEROPOINT => independent submits
+- * do NOT re-arm => same wall (SPREAD distinct was a stale-BO artifact). Default 0.
+- */
+-static int rocket_spread_confirm;
+-module_param_named(spread_confirm, rocket_spread_confirm, int, 0644);
+-MODULE_PARM_DESC(spread_confirm, "Per-op independent-submit oracle: one compact 'rocket spread op=N core_dt_wr=.. core_wt_rd=.. out_class=..' line per op (use with per-op dispatch + zero_out_bos). Default 0.");
+-
+-/* Previous completion's core dt_wr, so the per-completion log can print the delta
+- * (does dt_wr grow per real layer output, or is it a dirty/cumulative counter?). */
+-static u32 rocket_prev_core_dtwr;
+-
+-/* Producer ping-pong group written for the in-flight seq-kick task, so the
+- * per-task "rocket pp" completion line can report it next to dt_wr_delta. */
+-static u32 rocket_pp_prod_last;
+-
+-/*
+  * Per-job CBUF reset. conv0 only computes (~1 in 10) on a fresh state right
+  * after a full power-up soft-reset; geom_both ruled out the register geometry,
+  * leaving the CNA->CBUF->CMAC data staging as the racy part (stale CBUF data on
+@@ -855,127 +601,39 @@
+  * count over 1 KiB) AND the first 16 bytes as hex. Called PRE-kick and POST so
+  * the two can be diffed.
+  */
+-static void rocket_cbuf_audit(struct rocket_core *core, struct rocket_job *job,
+-			      const char *tag)
++static void rocket_cbuf_audit(struct rocket_core *core, const char *tag)
+ {
+ 	static void __iomem *cbuf;
+-	static u32 pre_d[16], pre_nz[16];	/* last PRE snapshot for the POST diff */
+-	u32 win_d[16], win_nz[16];
+-	int is_post = (tag[1] == 'O');		/* "POST" vs "PRE " */
+-	char line[256];
+-	int lp = 0, w;
+-	u32 out_iova = 0, rcon0 = 0, rcon1 = 0, con0, con1;
+-	struct rocket_task *task = NULL;
+-	const u64 *rv = NULL;
++	static const u32 offs[] = { 0x0, 0x20000, 0x40000, 0x60000,
++				    0x80000, 0xc0000, 0xe0000, 0xf0000 };
++	u32 o;
+ 
+ 	if (!cbuf)
+ 		cbuf = ioremap(0x3fe80000, 0x100000);
+ 	if (!cbuf)
+ 		return;
+ 
+-	/*
+-	 * 16 windows of 64 KiB across the 1 MiB CBUF SRAM (cannot miss dw1's data
+-	 * bank the way the old 4-fixed-offset scan could). Per window: distinct byte
+-	 * values + nonzero count over the first 1 KiB.
+-	 */
+-	for (w = 0; w < 16; w++) {
++	for (o = 0; o < ARRAY_SIZE(offs); o++) {
+ 		DECLARE_BITMAP(seen, 256);
+-		u32 k, nz = 0;
++		u32 k, d, nz = 0;
++		char hex[40];
++		int hp = 0;
+ 
+ 		bitmap_zero(seen, 256);
+ 		for (k = 0; k < 1024; k++) {
+-			u8 b = readb(cbuf + (w << 16) + k);
++			u8 b = readb(cbuf + offs[o] + k);
+ 
+ 			__set_bit(b, seen);
+ 			nz += !!b;
+ 		}
+-		win_d[w] = bitmap_weight(seen, 256);
+-		win_nz[w] = nz;
+-		lp += scnprintf(line + lp, sizeof(line) - lp, "%u/%u ",
+-				win_d[w], win_nz[w]);
+-	}
+-
+-	/*
+-	 * Match this snapshot to a layer: the just-kicked/just-completed task is
+-	 * tasks[next_task_idx-1] (hw_submit advances next_task_idx before the kick).
+-	 * Scan its regcmd for the DPU out addr (0x4018) = the layer's output iova,
+-	 * and the CBUF config it REQUESTED (0x1040/0x1044) -- ground truth, since the
+-	 * live CNA read below reads back the pp_state_init default, not the regcmd.
+-	 */
+-	if (job && job->task_count) {
+-		u32 idx = job->next_task_idx ? job->next_task_idx - 1 : 0;
+-
+-		if (idx < job->task_count) {
+-			phys_addr_t rp;
+-
+-			task = &job->tasks[idx];
+-			rp = task->regcmd_count ?
+-			     iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
+-			if (rp && pfn_valid(PFN_DOWN(rp))) {
+-				u32 i;
+-
+-				rv = (const u64 *)phys_to_virt(rp);
+-				for (i = 0; i < task->regcmd_count; i++) {
+-					u16 r = (u16)(rv[i] & 0xffff);
+-					u32 v = (u32)((rv[i] >> 16) & 0xffffffffu);
+-
+-					if (r == 0x4018 && !out_iova)
+-						out_iova = v;
+-					else if (r == 0x1040)
+-						rcon0 = v;
+-					else if (r == 0x1044)
+-						rcon1 = v;
+-				}
+-			}
+-		}
+-	}
+-
+-	dev_info(core->dev,
+-		 "rocket cbuf-audit %s out=0x%08x win16(d/nz): %s\n",
+-		 tag, out_iova, line);
+-
+-	if (!is_post) {
+-		for (w = 0; w < 16; w++) {
+-			pre_d[w] = win_d[w];
+-			pre_nz[w] = win_nz[w];
+-		}
+-	} else {
+-		char chg[160];
+-		int cp = 0;
+-
+-		for (w = 0; w < 16; w++)
+-			if (win_d[w] != pre_d[w] || win_nz[w] != pre_nz[w])
+-				cp += scnprintf(chg + cp, sizeof(chg) - cp,
+-						"0x%05x ", w << 16);
+-		dev_info(core->dev, "rocket cbuf-audit POST changed[%s]\n",
+-			 cp ? chg : "none");
+-		for (w = 0; w < 16; w++) {
+-			char hex[40];
+-			int hp = 0;
+-			u32 k;
+-
+-			if (win_d[w] == pre_d[w] && win_nz[w] == pre_nz[w])
+-				continue;
+-			for (k = 0; k < 16; k++)
+-				hp += scnprintf(hex + hp, sizeof(hex) - hp, "%02x",
+-						readb(cbuf + (w << 16) + k));
+-			dev_info(core->dev, "rocket cbuf-audit POST @0x%05x [%s]\n",
+-				 w << 16, hex);
+-		}
++		d = bitmap_weight(seen, 256);
++		for (k = 0; k < 16; k++)
++			hp += scnprintf(hex + hp, sizeof(hex) - hp, "%02x",
++					readb(cbuf + offs[o] + k));
++		dev_info(core->dev,
++			 "rocket dbg cbuf-audit %s @0x%05x: d%u/nz%u [%s]\n",
++			 tag, offs[o], d, nz, hex);
+ 	}
+-
+-	/*
+-	 * CBUF config: live executer read + the regcmd's requested value. Decode the
+-	 * regcmd value (ground truth) -- if conv0 and dw1 differ in DATA_BANK /
+-	 * DATA_ENTRIES the bank allocation itself is layer-dependent.
+-	 */
+-	con0 = rocket_cna_readl(core, CBUF_CON0);
+-	con1 = rocket_cna_readl(core, CBUF_CON1);
+-	dev_info(core->dev,
+-		 "rocket cbuf-audit %s CBUF_CON live=0x%08x/0x%08x regcmd=0x%08x/0x%08x  DBANK=%u WBANK=%u FCBANK=%u DREUSE=%u WREUSE=%u DENTRIES=%u\n",
+-		 tag, con0, con1, rcon0, rcon1,
+-		 rcon0 & 0xf, (rcon0 >> 4) & 0xf, (rcon0 >> 8) & 0x7,
+-		 (rcon0 >> 12) & 1, (rcon0 >> 13) & 1, rcon1 & 0x3fff);
+ }
+ 
+ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *job)
+@@ -1093,51 +751,20 @@
+ 	 * rocket.perjob_ppinit knob; skipping it tests whether this per-job reset is
+ 	 * what stops the executers engaging from the arming.
+ 	 */
+-	/*
+-	 * rekick_reset: give a re-kick (task 1+) the fresh-CBUF the cold start gets by
+-	 * re-running the NPU soft-reset the resume path runs. Mode 2 mirrors resume
+-	 * exactly: detach the IOMMU so the reset's MMU-bank disturbance lands unattached,
+-	 * then re-attach on a clean MMU before configuring. pp_state_init below then
+-	 * re-inits the pointers on the freshly reset core.
+-	 */
+-	if (rocket_rekick_reset && job->next_task_idx > 0) {
+-		if (rocket_rekick_reset >= 2) {
+-			rocket_core_detach_iommu(core);
+-			rocket_core_reset(core);
+-			if (iommu_attach_group(job->domain->domain,
+-					       core->iommu_group) < 0)
+-				dev_err(core->dev,
+-					"rekick_reset: re-attach failed\n");
+-			core->attached_domain = job->domain;
+-		} else {
+-			rocket_core_reset(core);
+-		}
+-	}
+-
+-	if (rocket_perjob_ppinit &&
+-	    !(rocket_wg_warm_chain && job->next_task_idx > 0))
++	if (rocket_perjob_ppinit)
+ 		rocket_core_pp_state_init(core);
+ 
+ 	task = &job->tasks[job->next_task_idx];
+ 	/*
+-	 * Sequential single-task kick (reverted from the task_number=N one-shot).
+-	 * On RK3576 the PC's own task iteration (task_number>=2, one OP_EN) never
+-	 * engages the compute executers (S_POINTER bit16 stays 0), while a single
+-	 * task engages reliably. So dispatch each of the job's tasks as its own PC
+-	 * kick with task_number=1, advancing one task per call; the DPU-done handler
+-	 * re-kicks the next until all are consumed. Crucially the kicks stay inside
+-	 * ONE job with no soft/CBUF reset and no iommu detach between them, so the
+-	 * on-chip CBUF a layer leaves stays live for the next layer to chain from --
+-	 * the vendor's whole-graph behaviour, reached via N single-task kicks instead
+-	 * of PC hardware iteration. Matches the mainline RK3588 sequential-kick path.
+-	 *
+-	 * Fork A (rocket.wg_continuous): consume ALL tasks in this one submit and let
+-	 * the PC iterate them (task_number=N below); no per-DPU-done re-kick.
++	 * Pipeline ALL of this job's tasks in one PC submit, the way the vendor does
++	 * (task_con task_number = task_count, one OP_EN). mesa packs a job's task
++	 * regcmds contiguously (64-aligned) in one buffer, so PC_DATA_ADDR = task[0]
++	 * + task_number lets the PC sequencer run them back-to-back with a continuous
++	 * ping-pong. The old per-task dispatch (one OP_EN each) left the FIRST task of
++	 * every kick on a cold PP, so it never engaged (CORE_OPEN=0). Mark all tasks
++	 * consumed so the completion handler finalises the job instead of re-kicking.
+ 	 */
+-	if (rocket_wg_continuous && job->task_count > 1)
+-		job->next_task_idx = job->task_count;
+-	else
+-		job->next_task_idx++;
++	job->next_task_idx = job->task_count;
+ 
+ 	rocket_pc_writel(core, BASE_ADDRESS, 0x1);
+ 
+@@ -1152,53 +779,8 @@
+ 	 * here too (which we used to do) is an extra write the vendor never makes;
+ 	 * drop it so the whole-graph pipeline matches the working sequence.
+ 	 */
++	pp_pointer = 0;
+ 	core->pp_task_idx++;
+-	/*
+-	 * pp_alt: alternate the producer ping-pong group by the per-job task index
+-	 * (task 0 -> group 0 keeps the cold-start control unchanged). next_task_idx
+-	 * was already ++'d above, so the task being kicked now is next_task_idx-1.
+-	 * Default (pp_alt=0) keeps POINTER=0 every kick, unchanged.
+-	 */
+-	{
+-		u32 this_task = job->next_task_idx ? job->next_task_idx - 1 : 0;
+-
+-		pp_pointer = rocket_pp_alt ? (this_task & 1u) : 0;
+-		rocket_pp_prod_last = pp_pointer;
+-	}
+-
+-	/*
+-	 * The driver S_POINTER write below is overwritten mid-run by the regcmd's
+-	 * own CNA 0x1004 / CORE 0x3004 = 0x0e entries (POINTER=0), so for pp_alt to
+-	 * actually reach the executer, patch those two entries' POINTER bit in DRAM
+-	 * to match (same mechanism rocket_sptr_override uses). Only when pp_alt is on
+-	 * and sptr_override is off, so the two knobs don't fight over the regcmd.
+-	 */
+-	if (rocket_pp_alt && rocket_sptr_override < 0) {
+-		phys_addr_t rp = task->regcmd_count ?
+-			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
+-
+-		if (rp && pfn_valid(PFN_DOWN(rp))) {
+-			u64 *rv = (u64 *)phys_to_virt(rp);
+-			u32 i;
+-
+-			for (i = 0; i < task->regcmd_count; i++) {
+-				u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
+-				u16 reg = (u16)(rv[i] & 0xffff);
+-				u32 val;
+-
+-				if ((tgt == 0x0201 && reg == 0x1004) ||
+-				    (tgt == 0x0801 && reg == 0x3004)) {
+-					val = (u32)((rv[i] >> 16) & 0xffffffff);
+-					val = (val & ~1u) | (pp_pointer & 1u);
+-					rv[i] = ((u64)tgt << 48) |
+-						((u64)val << 16) | reg;
+-				}
+-			}
+-			arch_sync_dma_for_device(rp,
+-				task->regcmd_count * sizeof(u64),
+-				DMA_TO_DEVICE);
+-		}
+-	}
+ 
+ 	if (!rocket_armdbg_done)
+ 		rocket_armdump(core, "pre-arm");
+@@ -1238,9 +820,7 @@
+ 					DMA_TO_DEVICE);
+ 			}
+ 		}
+-	} else if (!((rocket_bisect & 0x2) && job->next_task_idx > 1)) {
+-		/* bisect 0x2: on re-kicks (task 1+; next_task_idx already ++'d) skip the
+-		 * driver S_POINTER re-arm — the task's own regcmd re-writes 0x1004/0x3004. */
++	} else {
+ 		rocket_cna_writel(core, S_POINTER, CNA_S_POINTER_POINTER(pp_pointer) |
+ 						   CNA_S_POINTER_POINTER_PP_EN(1) |
+ 						   CNA_S_POINTER_EXECUTER_PP_EN(1) |
+@@ -1308,25 +888,8 @@
+ 	 * place, so the task sequencer never dispatches the single real task and the
+ 	 * compute executers never engage. Write the vendor value directly:
+ 	 *   ((0x6 | pingpong) << 16) | task_number  ==  (0x7 << 16) | 1.
+-	 *
+-	 * Fork A (rocket.wg_continuous): task_number = task_count so the PC iterates
+-	 * the whole packed graph from this one submit (vendor commit_pc value).
+ 	 */
+-	if (rocket_wg_continuous && job->task_count > 1) {
+-		/*
+-		 * task_number FIELD: task_count (iterate) by default, or the
+-		 * chain_task_number override (e.g. 1 = RK3588's committing mode) so
+-		 * each next-pointer-chained task does a real MAC while the trailer
+-		 * advances the PC. Upper control bits ((0x6|pp)<<16) unchanged.
+-		 */
+-		u32 tn = rocket_chain_task_number > 0 ?
+-			 (u32)rocket_chain_task_number : job->task_count;
+-
+-		rocket_pc_writel(core, TASK_CON,
+-				 ((0x6u | 0x1u) << 16) | (tn & 0xffffu));
+-	} else {
+-		rocket_pc_writel(core, TASK_CON, (0x7u << 16) | 1u);
+-	}
++	rocket_pc_writel(core, TASK_CON, (0x7u << 16) | (job->task_count & 0xffffu));
+ 
+ 	if (job->task_count > 1)
+ 		dev_info(core->dev,
+@@ -1340,71 +903,6 @@
+ 				 RK3576_PC_TASK_NUMBER_MASK);
+ 
+ 	/*
+-	 * TRAILER + WEIGHT CHECK (ALL tasks, single-shot). Per task: verify the trailer
+-	 * next-pointer (PC 0x10, tgt 0x0101) == the NEXT task's regcmd iova (locate any
+-	 * chain break past task 2 that would explain the task-6 stall), report SYNC /
+-	 * broadcast presence, AND the weight regcmd -- CNA weight DMA addr (reg 0x1110)
+-	 * + CBUF_CON0 (reg 0x1040) -- to compare conv0 (weights fetch, wt_rd>0) vs the
+-	 * chained layers (core wt_rd=0): is the chained weight entry present/plausible
+-	 * or missing/zero? One compact line each. Dump-only.
+-	 */
+-	if (rocket_trailer_check && job->task_count > 1) {
+-		static int trlchk_done;
+-
+-		if (!trlchk_done) {
+-			unsigned int ti;
+-
+-			trlchk_done = 1;
+-			for (ti = 0; ti < job->task_count; ti++) {
+-				struct rocket_task *t = &job->tasks[ti];
+-				u64 iova = t->regcmd;
+-				u64 next_iova = (ti + 1 < job->task_count) ?
+-					job->tasks[ti + 1].regcmd : 0;
+-				phys_addr_t p =
+-					iommu_iova_to_phys(job->domain->domain, iova);
+-				u32 pc10 = 0, pc14 = 0, wt = 0, wtsz = 0, cbuf = 0, e, lim;
+-				int found = 0, sync = 0, bcast = 0;
+-
+-				if (p && pfn_valid(PFN_DOWN(p))) {
+-					const u64 *rv = (const u64 *)phys_to_virt(p);
+-
+-					lim = t->regcmd_count + 8;
+-					for (e = 0; e < lim; e++) {
+-						u16 tgt = (u16)((rv[e] >> 48) & 0xffff);
+-						u16 reg = (u16)(rv[e] & 0xffff);
+-						u32 val = (u32)((rv[e] >> 16) & 0xffffffff);
+-
+-						if (tgt == 0x0101 && reg == 0x0010) {
+-							pc10 = val; found = 1;
+-							if (e + 1 < lim)
+-								pc14 = (u32)((rv[e + 1] >> 16) &
+-									     0xffffffff);
+-						} else if (tgt == 0x0041) {
+-							sync = 1;
+-						} else if (tgt == 0x0081 && reg == 0x0008) {
+-							bcast = 1;
+-						} else if (reg == 0x1110) {
+-							wt = val;   /* CNA weight DMA addr */
+-						} else if (reg == 0x101c) {
+-							wtsz = val; /* CNA weight byte count */
+-						} else if (reg == 0x1040) {
+-							cbuf = val; /* CNA CBUF_CON0 */
+-						}
+-					}
+-				}
+-				dev_info(core->dev,
+-					 "rocket trlchk task=%u rc=0x%08x cnt=%u next=0x%08x pc10=0x%08x match=%s sync=%d bcast=%d | wt=0x%08x wtsz=0x%08x cbuf=0x%08x\n",
+-					 ti, (u32)iova, t->regcmd_count,
+-					 (u32)next_iova, pc10,
+-					 ti + 1 == job->task_count ? "LAST" :
+-					   (!found ? "NO-PC10" :
+-					     (pc10 == (u32)next_iova ? "YES" : "MISMATCH")),
+-					 sync, bcast, wt, wtsz, cbuf);
+-			}
+-		}
+-	}
+-
+-	/*
+ 	 * Live capture of the vendor RK3576 submit shows PC_DMA_BASE_ADDR = 0 (no
+ 	 * task-descriptor dispatch — the descriptor experiment was wrong). The
+ 	 * working submit is just PC_DATA_ADDR=regcmd + INT_MASK/INT_CLEAR=0x300 +
+@@ -1419,15 +917,11 @@
+ 	 * 0x80000101 (clear, bit31) then 0x101 (enable) to each clr_all register.
+ 	 * top clr_all = +0x210, core clr_all = +0x410 (offsets into stats page).
+ 	 */
+-	/* bisect 0x8: skip the per-kick perf-counter clear (writes to the stats page
+-	 * between kicks). Loses per-task dt_rd/wt_rd/dt_wr but tests if the clear is
+-	 * what disturbs the compute state on a re-kick. */
+-	if (core->stats_iomem &&
+-	    !((rocket_bisect & 0x8) && job->next_task_idx > 1)) {
+-		rocket_twrite(core->stats_iomem + 0x210, 0x2210, 0x80000101, __func__);
+-		rocket_twrite(core->stats_iomem + 0x210, 0x2210, 0x00000101, __func__);
+-		rocket_twrite(core->stats_iomem + 0x410, 0x2410, 0x80000101, __func__);
+-		rocket_twrite(core->stats_iomem + 0x410, 0x2410, 0x00000101, __func__);
++	if (core->stats_iomem) {
++		writel(0x80000101, core->stats_iomem + 0x210);
++		writel(0x00000101, core->stats_iomem + 0x210);
++		writel(0x80000101, core->stats_iomem + 0x410);
++		writel(0x00000101, core->stats_iomem + 0x410);
+ 	}
+ 
+ 	/*
+@@ -1506,75 +1000,6 @@
+ 		}
+ 	}
+ 
+-	if (rocket_geom_all) {
+-		phys_addr_t rp = task->regcmd_count ?
+-			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
+-
+-		if (rp && pfn_valid(PFN_DOWN(rp))) {
+-			const u64 *rv = (const u64 *)phys_to_virt(rp);
+-			u32 sp_cna = rocket_cna_readl(core, S_POINTER);
+-			u32 sp_core = rocket_core_readl(core, S_POINTER);
+-			int g, i;
+-			int ncna = 0, ncore = 0, ndpu = 0, nrdma = 0, nskip = 0;
+-
+-			/* CNA/CORE config into BOTH pp-groups (exactly as geom_both). */
+-			for (g = 0; g <= 1; g++) {
+-				rocket_cna_writel(core, S_POINTER, g);
+-				rocket_core_writel(core, S_POINTER, g);
+-				for (i = 0; i < (int)task->regcmd_count; i++) {
+-					u16 reg = (u16)(rv[i] & 0xffff);
+-					u32 val = (u32)((rv[i] >> 16) & 0xffffffff);
+-
+-					if (reg >= 0x1000 && reg < 0x2000 &&
+-					    reg != 0x1004 && reg != 0x1008) {
+-						writel(val, core->cna_iomem + (reg - 0x1000));
+-						ncna++;
+-					} else if (reg >= 0x3000 && reg < 0x4000 &&
+-						   reg != 0x3004 && reg != 0x3008) {
+-						writel(val, core->core_iomem + (reg - 0x3000));
+-						ncore++;
+-					}
+-				}
+-			}
+-			rocket_cna_writel(core, S_POINTER, sp_cna);
+-			rocket_core_writel(core, S_POINTER, sp_core);
+-
+-			/*
+-			 * DPU (0x4xxx) + RDMA (0x5xxx) config, once each (not PP-grouped),
+-			 * via the driver's own mappings (NOT a hardcoded ioremap -- these
+-			 * resources are mapped by name at probe). Skip S_POINTER/OP_EN
+-			 * (0x_004/0x_008) and the 0x81/0xf008 broadcast ENABLE_MASK.
+-			 */
+-			for (i = 0; i < (int)task->regcmd_count; i++) {
+-				u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
+-				u16 reg = (u16)(rv[i] & 0xffff);
+-				u32 val = (u32)((rv[i] >> 16) & 0xffffffff);
+-
+-				if (tgt == 0x81 || reg == 0xf008 ||
+-				    (reg & 0xf000) == 0xf000) {
+-					nskip++;
+-					continue;
+-				}
+-				if (reg >= 0x4000 && reg < 0x5000 &&
+-				    reg != 0x4004 && reg != 0x4008) {
+-					if (core->dpu_iomem) {
+-						writel(val, core->dpu_iomem + (reg - 0x4000));
+-						ndpu++;
+-					}
+-				} else if (reg >= 0x5000 && reg < 0x6000 &&
+-					   reg != 0x5004 && reg != 0x5008) {
+-					if (core->dpu_rdma_iomem) {
+-						writel(val, core->dpu_rdma_iomem + (reg - 0x5000));
+-						nrdma++;
+-					}
+-				}
+-			}
+-			dev_info(core->dev,
+-				 "rocket geom_all: wrote %d CNA + %d CORE (both groups) + %d DPU + %d RDMA regs (skipped %d broadcast)\n",
+-				 ncna, ncore, ndpu, nrdma, nskip);
+-		}
+-	}
+-
+ 	if (rocket_double_kick) {
+ 		/*
+ 		 * Warmup kick: run the task once on the (stale) executer group to
+@@ -1615,10 +1040,10 @@
+ 		}
+ 	}
+ 
+-	/* PRE-kick SRAM snapshot (rocket.audit_arm / audit_all): the CBUF state the
+-	 * CMAC is about to read from, before this kick's CNA stages anything. */
+-	if (rocket_audit_arm || rocket_audit_all)
+-		rocket_cbuf_audit(core, job, "PRE ");
++	/* PRE-kick SRAM snapshot (rocket.audit_arm): the CBUF state the CMAC is
++	 * about to read from, before this job's CNA stages anything. */
++	if (rocket_audit_arm)
++		rocket_cbuf_audit(core, "PRE ");
+ 
+ 	/*
+ 	 * FIX ATTEMPT (rocket.weight_sram): stage this job's weights into the
+@@ -1679,82 +1104,6 @@
+ 		rocket_weight_sram = 0;
+ 	}
+ 
+-	/* Fork B concept test: stage POINTWISE weights into the on-chip NBUF. */
+-	if (rocket_pw_weight_sram) {
+-		static void __iomem *pw_sram;
+-		static bool pw_mapped;
+-		static u32 pw_off;
+-		phys_addr_t rp = task->regcmd_count ?
+-			iommu_iova_to_phys(job->domain->domain, task->regcmd) : 0;
+-
+-		if (!pw_sram)
+-			pw_sram = ioremap(0x3fe80000, 0x100000);
+-		/* 256K (not 1M): 0xfff00000+0x100000 == 4GB overflows the 32-bit
+-		 * IOMMU aperture and iommu_map fails; 0xfff00000+0x40000 fits. */
+-		if (pw_sram && !pw_mapped &&
+-		    !iommu_map(job->domain->domain, 0xfff00000, 0x3fe80000,
+-			       0x40000, IOMMU_READ | IOMMU_WRITE, GFP_ATOMIC))
+-			pw_mapped = true;
+-
+-		if (rocket_pwdbg_n < 12) {
+-			dev_info(core->dev,
+-				 "rocket dbg pw_weight_sram gate: rp=%pa pfn_ok=%d pw_sram=%d pw_mapped=%d cnt=%u\n",
+-				 &rp, rp ? pfn_valid(PFN_DOWN(rp)) : 0,
+-				 !!pw_sram, pw_mapped, task->regcmd_count);
+-			rocket_pwdbg_n++;
+-		}
+-		if (rp && pfn_valid(PFN_DOWN(rp)) && pw_sram && pw_mapped) {
+-			u64 *rv = (u64 *)phys_to_virt(rp);
+-			bool is_pw = false;
+-			u32 c100c = 0xdead;
+-			int i;
+-
+-			/* 0x100c: dw==1, firstconv==0x2000a006, pointwise==0 */
+-			for (i = 0; i < (int)task->regcmd_count; i++)
+-				if ((u16)((rv[i] >> 48) & 0xffff) == 0x0201 &&
+-				    (u16)(rv[i] & 0xffff) == 0x100c) {
+-					c100c = (u32)((rv[i] >> 16) & 0xffffffff);
+-					is_pw = c100c == 0;
+-					break;
+-				}
+-			if (rocket_pwdbg_n < 24) {
+-				dev_info(core->dev,
+-					 "rocket dbg pw_weight_sram: 0x100c=0x%x is_pw=%d\n",
+-					 c100c, is_pw);
+-				rocket_pwdbg_n++;
+-			}
+-			if (is_pw)
+-				for (i = 0; i < (int)task->regcmd_count; i++) {
+-					u16 tgt = (u16)((rv[i] >> 48) & 0xffff);
+-					u16 reg = (u16)(rv[i] & 0xffff);
+-					u32 waddr = (u32)((rv[i] >> 16) & 0xffffffff);
+-					phys_addr_t wp;
+-
+-					/* skip already-patched (NBUF) entries */
+-					if (tgt != 0x0201 || reg != 0x1110 ||
+-					    !waddr || waddr >= 0xfff00000)
+-						continue;
+-					wp = iommu_iova_to_phys(job->domain->domain, waddr);
+-					if (wp && pfn_valid(PFN_DOWN(wp))) {
+-						if (pw_off + 0x1000 > 0x40000)
+-							pw_off = 0;
+-						memcpy_toio(pw_sram + pw_off,
+-							    phys_to_virt(wp), 0x1000);
+-						rv[i] = ((u64)tgt << 48) |
+-							((u64)(0xfff00000 + pw_off) << 16) | reg;
+-						arch_sync_dma_for_device(rp,
+-							task->regcmd_count * sizeof(u64),
+-							DMA_TO_DEVICE);
+-						dev_info(core->dev,
+-							 "rocket dbg pw_weight_sram: pw weights 0x%x -> NBUF@0x%x (iova 0x%x)\n",
+-							 waddr, pw_off, 0xfff00000 + pw_off);
+-						pw_off += 0x1000;
+-					}
+-					break;
+-				}
+-		}
+-	}
+-
+ 	if (rocket_multitask_poll && job->task_count > 1) {
+ 		rocket_pc_writel(core, OPERATION_ENABLE, rocket_wg_open);
+ 		if (!rocket_armdbg_done)
+@@ -1764,12 +1113,7 @@
+ 		rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
+ 		if (!rocket_armdbg_done)
+ 			rocket_armdump(core, "post-op1");
+-		/*
+-		 * open_high: leave OP_EN HIGH through execution (upstream RK3588 model);
+-		 * handle_irq clears it to 0 at completion. Default: pulse 1->0 now.
+-		 */
+-		if (!rocket_open_high)
+-			rocket_pc_writel(core, OPERATION_ENABLE, 0);
++		rocket_pc_writel(core, OPERATION_ENABLE, 0);
+ 	}
+ 	if (!rocket_armdbg_done) {
+ 		rocket_armdump(core, "post-op0");
+@@ -1786,13 +1130,7 @@
+ 	 */
+ 	core->exec_ever = 0;
+ 	core->exec_samples = 0;
+-	/*
+-	 * bare_tasknum: SKIP this per-run busy-poll entirely so the PC iterates
+-	 * task_number=N natively with ZERO driver register access during the run
+-	 * (the vendor's bare mode). Loses exec_ever/cnalive sampling; the oracle is
+-	 * the post-completion per-task output readback + cumulative wt_rd.
+-	 */
+-	if (!rocket_bare_tasknum) {
++	{
+ 		int s;
+ 		/*
+ 		 * During-execution CNA group probe. The done-time CNA dump reads the
+@@ -1857,10 +1195,6 @@
+ 			if (raw & (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+ 				   PC_INTERRUPT_MASK_RK3576_PC_DONE_1))
+ 				break;
+-			/* open_high: PC_DONE may never assert with OP_EN high; the
+-			 * DPU-done substage (bits 8/9) is the completion signal. */
+-			if (rocket_open_high && (raw & 0x300))
+-				break;
+ 			udelay(1);
+ 		}
+ 
+@@ -2079,40 +1413,6 @@
+ 	if (rocket_tlb_flush)
+ 		iommu_flush_iotlb_all(job->domain->domain);
+ 
+-	/*
+-	 * zero_out_bos: memset every output BO to 0 (+ flush to DRAM) before the NPU
+-	 * runs, so a post-run non-zero byte is a DEFINITIVE write this run, not stale
+-	 * 1st-run data. Reaches the pages the same iova->phys->virt way the readback
+-	 * does (out_bos are DRAM; the open stack never allocs on-chip cache BOs).
+-	 */
+-	if (rocket_zero_out_bos) {
+-		u32 bi;
+-
+-		for (bi = 0; bi < job->out_bo_count; bi++) {
+-			struct rocket_gem_object *rbo = to_rocket_bo(job->out_bos[bi]);
+-			u64 iova = rbo->mm.start;
+-			size_t sz = rbo->size, off;
+-			u32 zeroed = 0;
+-
+-			for (off = 0; off < sz; off += PAGE_SIZE) {
+-				phys_addr_t p = iommu_iova_to_phys(job->domain->domain,
+-								   iova + off);
+-				struct scatterlist sg;
+-
+-				if (!p || !pfn_valid(PFN_DOWN(p)))
+-					continue;
+-				memset(phys_to_virt(p), 0, PAGE_SIZE);
+-				sg_init_table(&sg, 1);
+-				sg_set_page(&sg, pfn_to_page(PFN_DOWN(p)), PAGE_SIZE, 0);
+-				dma_sync_sg_for_device(core->dev, &sg, 1, DMA_TO_DEVICE);
+-				zeroed += PAGE_SIZE;
+-			}
+-			dev_info(core->dev,
+-				 "rocket zero_out_bos: bo%u iova=0x%08x size=%zu zeroed=%u\n",
+-				 bi, (u32)iova, sz, zeroed);
+-		}
+-	}
+-
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		core->in_flight_job = job;
+ 		rocket_job_hw_submit(core, job);
+@@ -2185,38 +1485,12 @@
+ 		return HRTIMER_RESTART;
+ 	}
+ 
+-	{
+-		u32 raw = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
+-		bool done = raw & (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+-				   PC_INTERRUPT_MASK_RK3576_PC_DONE_1);
+-
+-		/*
+-		 * open_high: OP_EN stays high through execution so PC_DONE (28/29) may
+-		 * never assert -- the DPU-done substage (bits 8/9) is the completion.
+-		 */
+-		if (rocket_open_high && (raw & 0x300))
+-			done = true;
+-
+-		/*
+-		 * Unconditional safety net: cap the poll so it can never spin forever
+-		 * (a hang would hit the drm-sched timeout -> rocket_core_reset -> the
+-		 * shared rk_iommu MMU gets raw-reset and dies). On cap, log the regs
+-		 * and finalise gracefully.
+-		 */
+-		core->poll_iters++;
+-		if (!done && core->poll_iters >= ROCKET_SEQ_POLL_CAP_MS) {
+-			dev_info(core->dev,
+-				 "rocket seq-kick poll TIMEOUT after %ums OP_EN=0x%x PC_DONE_RAW=0x%08x -- finalising\n",
+-				 core->poll_iters,
+-				 rocket_pc_readl(core, OPERATION_ENABLE), raw);
+-			done = true;
+-		}
+-
+-		if (done) {
+-			atomic_set(&core->poll_active, 0);
+-			schedule_work(&core->poll_work);
+-			return HRTIMER_NORESTART;
+-		}
++	if (rocket_pc_readl(core, INTERRUPT_RAW_STATUS) &
++	    (PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
++	     PC_INTERRUPT_MASK_RK3576_PC_DONE_1)) {
++		atomic_set(&core->poll_active, 0);
++		schedule_work(&core->poll_work);
++		return HRTIMER_NORESTART;
+ 	}
+ 
+ 	hrtimer_forward_now(timer, ns_to_ktime(RK3576_POLL_INTERVAL_NS));
+@@ -2241,12 +1515,10 @@
+ 
+ 	pm_runtime_mark_last_busy(core->dev);
+ 
+-	dev_info(core->dev, "rocket dbg done: PC_RAW=0x%08x CNA_STAT=0x%08x CORE_STAT=0x%08x TASK_STATUS=%u\n",
++	dev_info(core->dev, "rocket dbg done: PC_RAW=0x%08x CNA_STAT=0x%08x CORE_STAT=0x%08x\n",
+ 		 rocket_pc_readl(core, INTERRUPT_RAW_STATUS),
+ 		 rocket_cna_readl(core, S_STATUS),
+-		 rocket_core_readl(core, S_STATUS),
+-		 readl(core->pc_iomem + RK3576_PC_TASK_STATUS_OFF) &
+-			 RK3576_PC_TASK_NUMBER_MASK);
++		 rocket_core_readl(core, S_STATUS));
+ 
+ 	/*
+ 	 * Vendor DMA bandwidth counters (scale = 2 on RK3576).  dt_wr is the
+@@ -2256,62 +1528,14 @@
+ 	 * top @ +0x234/0x238/0x23c, core @ +0x434/0x438/0x43c.
+ 	 */
+ 	if (core->stats_iomem) {
+-		u32 cdw = readl(core->stats_iomem + 0x434);
+-		u32 tidx = core->in_flight_job ?
+-			(core->in_flight_job->next_task_idx ?
+-			 core->in_flight_job->next_task_idx - 1 : 0) : 0;
+-
+ 		dev_info(core->dev,
+ 			 "rocket dbg perf: top[dt_wr=%u dt_rd=%u wt_rd=%u] core[dt_wr=%u dt_rd=%u wt_rd=%u]\n",
+ 			 readl(core->stats_iomem + 0x234),
+ 			 readl(core->stats_iomem + 0x238),
+ 			 readl(core->stats_iomem + 0x23c),
+-			 cdw,
++			 readl(core->stats_iomem + 0x434),
+ 			 readl(core->stats_iomem + 0x438),
+ 			 readl(core->stats_iomem + 0x43c));
+-		/*
+-		 * bare_tasknum oracle line. NB core wt_rd is NORMALLY 0 (vendor too) --
+-		 * top_wt_rd (cumulative) growing past conv0's baseline = chained weights
+-		 * DMA'd to CBUF; the real compute oracle is the per-task output distinct
+-		 * below (buf out task=N). SINGLE completion (this handler runs once in
+-		 * wg_continuous) => the numbers are cumulative over the whole native walk.
+-		 */
+-		if (rocket_bare_tasknum)
+-			dev_info(core->dev,
+-				 "rocket bare: single-completion TASK_STATUS=%u top_wt_rd=%u core_wt_rd=%u top_dt_rd=%u (oracle = per-task 'out task=N distinct' below)\n",
+-				 readl(core->pc_iomem + RK3576_PC_TASK_STATUS_OFF) &
+-					 RK3576_PC_TASK_NUMBER_MASK,
+-				 readl(core->stats_iomem + 0x23c),
+-				 readl(core->stats_iomem + 0x43c),
+-				 readl(core->stats_iomem + 0x238));
+-		/*
+-		 * Delta from the previous completion: if core dt_wr grows per real layer
+-		 * output, the DPU is writing per task; a flat/0 delta on a task that DMA'd
+-		 * (dt_rd>0) means the counter is cumulative/dirty, not a per-kick write.
+-		 */
+-		dev_info(core->dev,
+-			 "rocket dtwr task=%u core_dt_wr=%u delta=%d\n",
+-			 tidx, cdw, (int)(cdw - rocket_prev_core_dtwr));
+-		/*
+-		 * pp measure (always on, one compact line per task): the producer
+-		 * group we wrote (prod), whether the CNA/CORE executer ENGAGED this
+-		 * task (cna_eng/core_eng, from exec_ever = bit16 sampled during the
+-		 * run -- bit16 is engage-status, NOT a readable consumer-group index,
+-		 * and reads 0 once idle, so this is the real "did it run" signal), the
+-		 * settled S_POINTER readbacks (bit0 = producer echo), and the per-task
+-		 * core dt_wr delta (the compute oracle). Baseline pp_alt=0: expect
+-		 * cna_eng=1 on every task but dtwr_delta jumping only on task 0. If
+-		 * pp_alt=1 makes dtwr_delta jump on task>=1, alternating the producer
+-		 * group was the arm; else the candidate is closed.
+-		 */
+-		dev_info(core->dev,
+-			 "rocket pp task=%u prod=%u cna_eng=%u core_eng=%u cna_sptr=0x%08x core_sptr=0x%08x dtwr_delta=%d\n",
+-			 tidx, rocket_pp_prod_last,
+-			 !!(core->exec_ever & 1), !!(core->exec_ever & 2),
+-			 rocket_cna_readl(core, S_POINTER),
+-			 rocket_core_readl(core, S_POINTER),
+-			 (int)(cdw - rocket_prev_core_dtwr));
+-		rocket_prev_core_dtwr = cdw;
+ 	}
+ 
+ 	/*
+@@ -2322,9 +1546,9 @@
+ 	 * does stage *something*, so the weight-block result isn't a dead bus.
+ 	 * Self-clears audit_arm so only the first job after each (re)arm dumps.
+ 	 */
+-	if (rocket_audit_arm || rocket_audit_all) {
+-		rocket_cbuf_audit(core, core->in_flight_job, "POST");
+-		rocket_audit_arm = 0;	/* single-shot arm clears; audit_all persists */
++	if (rocket_audit_arm) {
++		rocket_cbuf_audit(core, "POST");
++		rocket_audit_arm = 0;
+ 	}
+ 
+ 	/*
+@@ -2338,6 +1562,9 @@
+ 	 */
+ 	if (core->in_flight_job && core->in_flight_job->next_task_idx > 0) {
+ 		struct rocket_job *j = core->in_flight_job;
++		struct rocket_task *t = &j->tasks[j->next_task_idx - 1];
++		phys_addr_t rphys = iommu_iova_to_phys(j->domain->domain, t->regcmd);
++		static atomic_t buf_dump_jobs = ATOMIC_INIT(0);
+ 		static unsigned long last_dump_jiffies;
+ 		unsigned long now = jiffies;
+ 		int bdj;
+@@ -2352,9 +1579,9 @@
+ 		 */
+ 		if (last_dump_jiffies &&
+ 		    time_after(now, last_dump_jiffies + HZ / 4))
+-			atomic_set(&rocket_buf_dump_jobs, 0);
++			atomic_set(&buf_dump_jobs, 0);
+ 		last_dump_jiffies = now;
+-		bdj = atomic_inc_return(&rocket_buf_dump_jobs);
++		bdj = atomic_inc_return(&buf_dump_jobs);
+ 
+ 		/*
+ 		 * Optionally wait before reading the output BO: if conv0's growing
+@@ -2370,31 +1597,10 @@
+ 			{ 0x5020, "bia" },
+ 		};
+ 
+-		/*
+-		 * DIAGNOSTIC: loop over ALL tasks, not just next_task_idx-1. In
+-		 * continuous mode next_task_idx == task_count at submit, so the
+-		 * old next_task_idx-1 always read the LAST task (which in a
+-		 * stalled chain never ran -> distinct=1). That read the "empty
+-		 * MAC" verdict off the wrong BO. Dump every task's output BO
+-		 * labelled by its real index so conv0 (task 0) is finally
+-		 * visible. The per-probe body below is unchanged (not reindented
+-		 * to keep the diff to this wrapper); each iteration re-derives
+-		 * this task's regcmd phys (rphys/rv) and scans t->regcmd_count.
+-		 */
+-		if (bdj <= 8) {
+-			u32 t_idx;
+-
+-		for (t_idx = 0; t_idx < j->task_count; t_idx++) {
+-			struct rocket_task *t = &j->tasks[t_idx];
+-			phys_addr_t rphys =
+-				iommu_iova_to_phys(j->domain->domain, t->regcmd);
+-			const u64 *rv;
++		if (bdj <= 8 && rphys && pfn_valid(PFN_DOWN(rphys))) {
++			const u64 *rv = (const u64 *)phys_to_virt(rphys);
+ 			u32 p;
+ 
+-			if (!rphys || !pfn_valid(PFN_DOWN(rphys)))
+-				continue;
+-			rv = (const u64 *)phys_to_virt(rphys);
+-
+ 			for (p = 0; p < ARRAY_SIZE(probes); p++) {
+ 				u32 iova = 0, i;
+ 				phys_addr_t bphys;
+@@ -2455,7 +1661,7 @@
+ 
+ 					dev_info(core->dev,
+ 						 "rocket dbg buf[%d] %s task=%u iova=0x%08x first=%02x %02x %02x %02x %02x %02x %02x %02x nz=%u/%lu distinct=%u min=%02x max=%02x\n",
+-						 bdj, probes[p].tag, t_idx, iova,
++						 bdj, probes[p].tag, j->next_task_idx - 1, iova,
+ 						 b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+ 						 nz, PAGE_SIZE, distinct, vmin, vmax);
+ 				}
+@@ -2468,11 +1674,8 @@
+ 				 * spatially CONSTANT -> the producing layer collapsed
+ 				 * to a constant (e.g. CBUF fed the MAC one row), which
+ 				 * is what makes the next depthwise come out flat.
+-				 * Gated to conv0 (t_idx==0): the cover16K + fine256
+-				 * lines would otherwise balloon the log across all
+-				 * ~29 tasks. Every task still gets its distinct line.
+ 				 */
+-				if (t_idx == 0) {
++				{
+ 					static const u32 offs[] = {
+ 						0x00000, 0x04000, 0x08000, 0x0c000,
+ 						0x10000, 0x14000, 0x18000, 0x1c000,
+@@ -2580,7 +1783,6 @@
+ 					}
+ 				}
+ 			}
+-		}	/* end for (t_idx): every task's output BO dumped */
+ 		}
+ 	}
+ 
+@@ -2640,10 +1842,7 @@
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_STATUS),
+ 			 rocket_dpu_rdma_readl(core, RDMA_S_POINTER),
+ 			 rocket_dpu_rdma_readl(core, RDMA_SRC_BASE_ADDR));
+-	/* bisect 0x1: skip this per-kick diagnostic S_POINTER 0->1->restore toggle — a
+-	 * write the vendor never does between tasks, which could disturb the CBUF group
+-	 * the next kick reads. */
+-	if (!(rocket_bisect & 0x1)) {
++	{
+ 		/* CNA per-group readback: switch POINTER to read both groups */
+ 		u32 cna_sptr_live = rocket_cna_readl(core, S_POINTER);
+ 		u32 ds0_g0, ds1_g0, fda_g0;
+@@ -2699,10 +1898,8 @@
+ 	}
+ 
+ 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+-	/* bisect 0x4: minimal INTERRUPT_CLEAR (only PC_DONE), skip the full 0x1ffff that
+-	 * also clears every CNA/CORE/DPU sub-stage event between kicks. */
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR,
+-			 ((rocket_bisect & 0x4) ? 0 : 0x1ffff) |
++			 0x1ffff |
+ 			 PC_INTERRUPT_MASK_RK3576_PC_DONE_0 |
+ 			 PC_INTERRUPT_MASK_RK3576_PC_DONE_1);
+ 
+@@ -2719,200 +1916,10 @@
+ 		 * mid-graph task address). Just finalise when all tasks are consumed.
+ 		 */
+ 		if (job->next_task_idx < job->task_count) {
+-			/*
+-			 * conv0_twice replay: after the 2nd run of task 0, finalise here
+-			 * instead of continuing to task 1 -- we only want conv0 run twice.
+-			 */
+-			if (conv0_twice_replaying)
+-				conv0_twice_replaying = false;
+-			else {
+-				rocket_job_hw_submit(core, job);
+-				return;
+-			}
+-		} else if (rocket_conv0_twice && !conv0_twice_replaying) {
+-			/*
+-			 * All tasks done: re-run task 0 (conv0) once more, no reset/
+-			 * re-init between (same regcmd + same external input, but no
+-			 * longer the first-after-init task). The all-tasks readback dumps
+-			 * this 2nd conv0 (task=0): distinct=1 (was ~240) => pure position.
+-			 */
+-			conv0_twice_replaying = true;
+-			job->next_task_idx = 0;
+-			/* Reset the readback cap so the replay's completion re-dumps
+-			 * task 0 (this is completion ~30, past the bdj<=8 window). */
+-			atomic_set(&rocket_buf_dump_jobs, 0);
+-			dev_info(core->dev, "rocket conv0_twice: re-running task 0 (2nd conv0, no reset)\n");
+ 			rocket_job_hw_submit(core, job);
+ 			return;
+ 		}
+ 
+-		/*
+-		 * zero_out_bos ground truth: the whole job has run and (with zeroing on)
+-		 * every output BO started at 0, so any non-zero byte now is a definitive
+-		 * write THIS run. Per task, scan its own output region -- [its 0x4018
+-		 * iova, the next task's output start in the same BO, clamped to BO end and
+-		 * 1 MB] -- and classify EMPTY / ZEROPOINT / REAL over the whole region.
+-		 * conv0=REAL + all later EMPTY/ZEROPOINT => wall confirmed; any later task
+-		 * REAL => the CMAC fired and the output is mis-routed (reversal).
+-		 */
+-		if (rocket_zero_out_bos && job->task_count) {
+-			static u32 oiova[64];
+-			u32 ntc = min_t(u32, job->task_count, 64u);
+-			u32 ti, i;
+-
+-			for (ti = 0; ti < ntc; ti++) {
+-				struct rocket_task *t = &job->tasks[ti];
+-				phys_addr_t rp = t->regcmd_count ?
+-					iommu_iova_to_phys(job->domain->domain,
+-							   t->regcmd) : 0;
+-
+-				oiova[ti] = 0;
+-				if (rp && pfn_valid(PFN_DOWN(rp))) {
+-					const u64 *rv = (const u64 *)phys_to_virt(rp);
+-
+-					for (i = 0; i < t->regcmd_count; i++)
+-						if ((u16)(rv[i] & 0xffff) == 0x4018) {
+-							oiova[ti] = (u32)((rv[i] >> 16) &
+-									  0xffffffffu);
+-							break;
+-						}
+-				}
+-			}
+-
+-			for (ti = 0; ti < ntc; ti++) {
+-				u32 iv = oiova[ti];
+-				u64 bo_end = 0, scan_end, off;
+-				u32 bi, len, distinct, nz = 0;
+-				u8 vmin = 0xff, vmax = 0x00;
+-				const char *cls;
+-				DECLARE_BITMAP(seen, 256);
+-
+-				if (!iv)
+-					continue;
+-				for (bi = 0; bi < job->out_bo_count; bi++) {
+-					struct rocket_gem_object *rbo =
+-						to_rocket_bo(job->out_bos[bi]);
+-
+-					if (iv >= rbo->mm.start &&
+-					    iv < rbo->mm.start + rbo->size) {
+-						bo_end = rbo->mm.start + rbo->size;
+-						break;
+-					}
+-				}
+-				if (!bo_end) {
+-					dev_info(core->dev,
+-						 "rocket groundtruth task=%u out_iova=0x%08x NOT in any out_bo\n",
+-						 ti, iv);
+-					continue;
+-				}
+-				scan_end = bo_end;
+-				for (i = 0; i < ntc; i++)
+-					if (i != ti && oiova[i] > iv &&
+-					    oiova[i] < scan_end)
+-						scan_end = oiova[i];
+-				if (scan_end - iv > (1u << 20))
+-					scan_end = iv + (1u << 20);
+-				len = (u32)(scan_end - iv);
+-
+-				bitmap_zero(seen, 256);
+-				for (off = 0; off < len; off += PAGE_SIZE) {
+-					phys_addr_t p = iommu_iova_to_phys(
+-						job->domain->domain, iv + off);
+-					u32 k, plen = min_t(u32, PAGE_SIZE, len - off);
+-					struct scatterlist sg;
+-					const u8 *b;
+-
+-					if (!p || !pfn_valid(PFN_DOWN(p)))
+-						continue;
+-					sg_init_table(&sg, 1);
+-					sg_set_page(&sg, pfn_to_page(PFN_DOWN(p)),
+-						    PAGE_SIZE, 0);
+-					dma_sync_sg_for_cpu(core->dev, &sg, 1,
+-							    DMA_FROM_DEVICE);
+-					b = (const u8 *)phys_to_virt(p);
+-					for (k = 0; k < plen; k++) {
+-						nz += !!b[k];
+-						__set_bit(b[k], seen);
+-						if (b[k] < vmin)
+-							vmin = b[k];
+-						if (b[k] > vmax)
+-							vmax = b[k];
+-					}
+-				}
+-				distinct = bitmap_weight(seen, 256);
+-				cls = (nz == 0) ? "EMPTY" :
+-				      (distinct > 2) ? "REAL" : "ZEROPOINT";
+-				dev_info(core->dev,
+-					 "rocket groundtruth task=%u out_iova=0x%08x len=%u distinct=%u nz=%u/%u min=%02x max=%02x class=%s\n",
+-					 ti, iv, len, distinct, nz, len, vmin, vmax, cls);
+-			}
+-		}
+-
+-		/*
+-		 * spread_confirm: ONE compact per-op line. In per-op dispatch each op
+-		 * is its OWN single-task job, so the perf counter was cleared at THIS
+-		 * op's kick => core dt_wr below is per-op (not cumulative). out_class
+-		 * scans the WHOLE pre-zeroed primary output BO (task_count printed so a
+-		 * multi-tile op that is NOT actually single-task is visible). The read:
+-		 * ops 1+ REAL with nonzero dt_wr/wt_rd => independent submits re-arm the
+-		 * CSC (wall bypassable); only op 0 REAL => they do not (same wall).
+-		 */
+-		if (rocket_spread_confirm && core->stats_iomem && job->out_bo_count) {
+-			static unsigned long spread_last_jiffies;
+-			static u32 spread_op;
+-			unsigned long now = jiffies;
+-			u32 cdw = readl(core->stats_iomem + 0x434);
+-			u32 cwr = readl(core->stats_iomem + 0x43c);
+-			struct rocket_gem_object *rbo =
+-				to_rocket_bo(job->out_bos[0]);
+-			u64 iova = rbo->mm.start;
+-			u32 len = min_t(u32, (u32)rbo->size, 1u << 20);
+-			u32 nz = 0, distinct, off;
+-			u8 vmin = 0xff, vmax = 0x00;
+-			const char *cls;
+-			DECLARE_BITMAP(seen, 256);
+-
+-			/* new inference (>250ms gap) restarts the op index at 0 */
+-			if (spread_last_jiffies &&
+-			    time_after(now, spread_last_jiffies + HZ / 4))
+-				spread_op = 0;
+-			spread_last_jiffies = now;
+-
+-			bitmap_zero(seen, 256);
+-			for (off = 0; off < len; off += PAGE_SIZE) {
+-				phys_addr_t p = iommu_iova_to_phys(
+-					job->domain->domain, iova + off);
+-				u32 k, plen = min_t(u32, PAGE_SIZE, len - off);
+-				struct scatterlist sg;
+-				const u8 *b;
+-
+-				if (!p || !pfn_valid(PFN_DOWN(p)))
+-					continue;
+-				sg_init_table(&sg, 1);
+-				sg_set_page(&sg, pfn_to_page(PFN_DOWN(p)),
+-					    PAGE_SIZE, 0);
+-				dma_sync_sg_for_cpu(core->dev, &sg, 1,
+-						    DMA_FROM_DEVICE);
+-				b = (const u8 *)phys_to_virt(p);
+-				for (k = 0; k < plen; k++) {
+-					nz += !!b[k];
+-					__set_bit(b[k], seen);
+-					if (b[k] < vmin)
+-						vmin = b[k];
+-					if (b[k] > vmax)
+-						vmax = b[k];
+-				}
+-			}
+-			distinct = bitmap_weight(seen, 256);
+-			cls = (nz == 0) ? "EMPTY" :
+-			      (distinct > 3) ? "REAL" : "ZEROPOINT";
+-			dev_info(core->dev,
+-				 "rocket spread op=%u core_dt_wr=%u core_wt_rd=%u out_class=%s (task_count=%u distinct=%u nz=%u/%u min=%02x max=%02x)\n",
+-				 spread_op, cdw, cwr, cls, job->task_count,
+-				 distinct, nz, len, vmin, vmax);
+-			spread_op++;
+-		}
+-
+ 		/* Attach-once: keep the domain attached (detached on suspend/switch). */
+ 		dma_fence_signal(job->done_fence);
+ 		pm_runtime_put_autosuspend(core->dev);
+@@ -3019,6 +2026,7 @@
+ {
+ 	struct drm_sched_init_args args = {
+ 		.ops = &rocket_sched_ops,
++		.num_rqs = DRM_SCHED_PRIORITY_COUNT,
+ 		.credit_limit = 1,
+ 		.timeout = msecs_to_jiffies(JOB_TIMEOUT_MS),
+ 		.name = dev_name(core->dev),

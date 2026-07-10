@@ -1,5 +1,39 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-10 (INDEPENDENT RE-AUDIT + CONSOLIDATION — a from-scratch, source-only
+audit (no findings docs read first) covering the rocket kernel driver, the vendor
+rknpu kernel driver, and the mesa regcmd/task-chain builder independently converged
+on the same wall this file already closed, and one of its two leading candidates was
+found to duplicate a change already tried and reverted here. Kernel patch 0028
+consolidates the settled Phase A/B dispatch (TASK_CON.task_number=job->task_count,
+one PC_OP_EN pulse, mesa-packed contiguous task regcmds) into the driver's
+unconditional default and removes the now-dead experimental module_param forks
+(chain_task_number, wg_continuous flag, bare_tasknum, wg_warm_chain, bisect,
+rekick_reset, audit_all, pw_weight_sram, geom_all, conv0_twice, open_high, pp_alt,
+trailer_check, zero_out_bos, spread_confirm, read_margin, cbuf_reset variants) that
+enumerated the now-concluded alternatives.)
+
+The audit's first candidate — build a vendor-style flat task-descriptor array +
+`TASK_DMA_BASE_ADDR` pointing at it + `TASK_CON.task_number=N` together, on the
+theory that no prior experiment had varied `task_number` and the array pointer
+*together* — is refuted by this file's own WRITEL AUDIT entry (2026-07-04, below):
+a live capture of the vendor's own submit shows `task_base_addr=0` even at
+`task_number=2`, i.e. the vendor was captured *not* using the descriptor-array
+mechanism either. So the untested combination doesn't exist to test: the vendor
+grammar is the contiguous-stream self-iteration trailer (WHOLEGRAPH-GRAMMAR.md), not
+an array walk, and that grammar was already implemented, board-tested, and hit the
+same wall (Phase B, 2026-07-05 below).
+
+The audit's second candidate — a CBUF/executer "arming state does not survive
+task-to-task" gap — is not new: it is this file's own SPREAD-CONFIRM /
+cold-start-is-per-power-session verdict (2026-07-05, below), independently
+re-derived from a blind source read rather than assumed. No new candidate survived
+the fresh pass. This is the second, independent line (the other being the same-
+kernel vendor-vs-rocket dual-image cross-check, `FINDINGS-DUAL-IMAGE.md`) to close
+on the identical RTL/internal-sequencer verdict — cross-validation across dispatch-
+mechanism, cache/TLB/register-value, and now a from-scratch full-stack re-derivation.
+Nothing further is actionable from software alone without vendor RTL/TRM access.
+
 ## 2026-07-05 (SPREAD-CONFIRM — the per-op-dispatch ESCAPE HATCH is CLOSED. N genuinely-independent single-task submits do NOT re-arm the CSC: only op0 (the first job after each NPU resume) computes REAL; every subsequent independent submit is EMPTY. Cold-start is PER-POWER-SESSION, not per-submit. The SPREAD distinct=254 was a stale-BO artifact, now refuted by the clean zeroed-BO oracle. Only a full power-cycle re-arms — impractical per-op for an LLM.)
 
 Board, rocket.spread_confirm=1 (branch rk3576-spread-confirm 4b2590be7), regime = per-op independent
