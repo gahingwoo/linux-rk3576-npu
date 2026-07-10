@@ -126,6 +126,38 @@ else working on this driver.
   different name. If you have one, the falsification ledger above is the bar
   it needs to clear.
 
+## Would fp16 reopen this? — leans no (checked 2026-07-10)
+
+A natural hope: the whole wall was hit under int8 (MobileNet UINT8); fp16 was
+never run chained on rocket. Maybe fp16 sidesteps it. Two propositions were kept
+separate, and one was answered without a port:
+
+- **fp16 precision path works, and bypasses the int8 blob** — verified. A real
+  vendor w4a16 matmul's regcmd, captured off this silicon, confirms the 16-bit
+  recipe: `CNA_CONV_CON1.PROC_PRECISION = 2`, `DPU_DATA_FORMAT = 0xa0000002`, and
+  `DPU_OUT_CVT = identity` (offset 0, scale 1 — no requant). The identity OUT_CVT
+  is the point: the 16-bit path never reads the value-dependent int8 coefficient
+  surface that `FINDINGS-FLOATSURFACE.md` proved underivable. So fp16 is the
+  upstreamable path for single-op inference, independent of the wall.
+- **fp16 breaks the chained wall** — *not* verified, and the existing record
+  leans against it. The wall is localized (`CSC-CONSUME-REVIEW.md`) to the CSC
+  consume/weight-load *trigger* — a per-task re-arm of an internal consumer
+  credit/latch, armed once at cold-start. That trigger is *downstream* of CBUF
+  staging (data and weights demonstrably reach CBUF; "not a weight-DMA failure")
+  and *independent of weight content* (conv0_twice: the same int8 conv computes
+  as task 0, goes empty as a follow-on kick). The wall is position / power-session
+  dependent, not weight dependent. fp16 changes the weight *format/staging*
+  (hardware DCOMP of 4-bit weights → software-flat fp16), which is upstream of and
+  orthogonal to the failing trigger; precision is a property of the op, not its
+  position. The one software re-arm lever (per-task PP_CLEAR / CSC re-arm, mesa
+  `ROCKET_CSC_REARM`) was already tested and failed.
+
+Not a proof (the trigger is undocumented internal state), but the burden now sits
+on "fp16 breaks the wall," with nothing supporting it. Conclusion: don't build a
+multi-day w16a16 port *to break the wall* — the evidence says it won't. Build fp16
+only for its own value (blob-free single-op inference), and treat the chained-fp16
+run as a cheap rider with an expected-negative result.
+
 ## Repro
 
 The same-kernel cross-check (vendor `rknpu` and open `rocket` booting off one
