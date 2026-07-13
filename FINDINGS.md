@@ -155,11 +155,21 @@ confirmed in CBUF by the earlier CBUF audit.)
 - vendor per-task trailer contains NO re-arm entry to copy (S_POINTER 0x0e, no PP_CLEAR) -> its per-task
   re-arm is internal to the PC HW iteration.
 
-**STANDING QUESTION (still open, NOT closed):** rocket has never actually run the vendor's bare
+**STANDING QUESTION (~~still open, NOT closed~~ — ANSWERED 2026-07-13, see below):** rocket has never actually run the vendor's bare
 task_number=N HW-iteration mode (wg_continuous always wedged pre-trailer-fix, then was replaced by the
 trailer-walk / seq-kick). Whether that bare mode self-arms the CSC is the one remaining software-side
 question before committing fully to RTL. See CSC-CONSUME-REVIEW.md, WHOLEGRAPH-GRAMMAR.md.
 [[project-rk3576-no-writel-gap]]
+
+> **ANSWERED 2026-07-13 by the dual-image replay — do NOT re-chase bare task_number=N.**
+> The closed-vs-open cross-check (`FINDINGS-DUAL-IMAGE.md`) ran `replay_rocket`, which
+> replays the vendor's OWN captured regcmd bytes through the rocket driver in
+> `task_number=N` mode — i.e. exactly the bare vendor HW-iteration stream this question
+> asked about. It STILL walls (chained CMAC empty). So the bare task_number=N mode does
+> NOT self-arm the CSC on rocket even when driven by the vendor's exact byte stream. This
+> was the last remaining software-side question; with it answered negative, the RTL /
+> internal-cold-start-sequencer reading is the justified conclusion, not just the
+> converged one.
 
 ## 2026-07-05 (DISPATCH/ITERATION HALF CLOSED — trailer chain 29/29 perfect, weight regcmd present+plausible every task, all 4 units engage, DMA clean; YET chained CMAC empty. The wall is now precisely localized to ONE stage: CBUF->CSC->CMAC consumption. Converges with the earlier CBUF audit. The task-6 stall is a SYMPTOM: CMAC doesn't drain CBUF -> operands pile up -> the fixed CBUF fills after ~6 layers -> PC can't stage layer 7.)
 

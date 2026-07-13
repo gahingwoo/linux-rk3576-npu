@@ -1,5 +1,17 @@
 # RK3576 whole-graph regcmd grammar — vendor vs mesa, and the Phase-B go/no-go (2026-07-05)
 
+> **STATUS 2026-07-13 — OUTCOME: Phase B was a GO and the trailer grammar WORKS; it does
+> NOT get you chained MACs (that is a separate, exhausted wall).** Implementing the trailer
+> (absolute next-pointer PC 0x10 + PC 0x14 amount + SYNC 0x41 + broadcast OP_EN 0x1d, order
+> `[0x10][0x14][SYNC][broadcast]`, last task 0/0) is CORRECT and upstreamable — it makes the
+> PC self-iterate all tasks, all four units engage (exec_ever=0xf), input+weight DMA per
+> task. Do build it. BUT: after it works, chained tasks STILL output zero-point (empty MAC).
+> The remaining wall is the CBUF→CSC→CMAC cold-start consume-arm, which is BELOW this grammar
+> and has since been exhausted (per-task PP_CLEAR re-arm tested+failed; closed-vs-open
+> dual-image capture all-negative; vendor's exact bytes replayed still wall). So: use this
+> doc to implement the (solved) dispatch/iteration half; do NOT read the Phase-B "GO" as a
+> path to chained compute. See `FINDINGS.md`, `CSC-CONSUME-REVIEW.md`, `FINDINGS-DUAL-IMAGE.md`.
+
 Question: does mesa's RK3576 regcmd stream LACK a per-task self-iteration grammar
 element the vendor emits (GO — implement in mesa), or does it already carry it and
 the PC wedges anyway (NO-GO — internal, close #1, go RTL)?

@@ -1,0 +1,80 @@
+# RK3576 fp16 (a8w16) regcmd wiring — PARTIAL / NOT RUNNABLE (2026-07-13)
+#
+# Down-payment on the fp16 single-op port, gated on ROCKET_FP16 (default off, does
+# NOT affect the int8 build). Wires the regcmd precision half only: CNA + CORE
+# PROC_PRECISION=2, and OUT_CVT drops weights_scale (baked into the fp16 weights in
+# rkt_coefs.c) -> requant becomes the derivable in_sc/out_sc.
+#
+# INSUFFICIENT to run: the weight DMA descriptor is still int8 (0x101c hardcoded
+# 0x600, CNA_WEIGHT_SIZE0 int8 element count, int8 banks/DCOMP) so the CNA reads a
+# fp16 buffer with int8 sizing -> garbage; the input activation arrives at runtime
+# (no compile-time convert); and a8w16 CMAC support is unverified. See
+# CHAINED-CMAC-STOPPING-POINT.md (fp16 CORRECTION) — completing this is the
+# multi-day port, not a cheap rider. Archived so the wiring is not lost.
+#
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index c80a495..e79fc1f 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -714,6 +714,23 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    unsigned weights_zero_point = task->weights_zero_point;
+    unsigned offset = output_zero_point - 0x80;
+ 
++   /*
++    * ROCKET_FP16 (a8w16 experiment, run-once diagnostic). rkt_coefs.c dequantises
++    * the int8 weights to real-valued fp16 (bypassing the value-dependent int8 SDP
++    * coefficient blob). The regcmd half is wired here: PROC_PRECISION=2 (fp16) on
++    * the CNA + CORE MAC, and OUT_CVT drops the weights_scale (already baked into the
++    * fp16 weights) so the requant is the derivable in_sc/out_sc.
++    *
++    * The input activation stays uint8 (it arrives at RUNTIME, so mesa cannot pre-
++    * convert it at compile time) -> this is an a8w16 MAC, NOT the vendor's captured
++    * a16w4. Whether the RK3576 CMAC accepts a8w16 is UNKNOWN; that is what this one
++    * run decides: structured/non-zero output = a8w16 engages (next: add the per-
++    * channel -in_zp*Sum(w_real) bias); zero-rail = HW needs a16w16 (fp16 input),
++    * which requires a runtime input-convert pass (the multi-day port, out of scope).
++    * Weight path already gates on !depthwise; mirror that here.
++    */
++   bool fp16 = getenv("ROCKET_FP16") && !operation->depthwise;
++
+    /*
+     * PP_CLEAR fires at the END of this regcmd (just before 0x0041), after all
+     * shadow registers have been written.  This ensures each job triggers its
+@@ -773,6 +790,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    if (operation->depthwise)
+       con1 |= CNA_CONV_CON1_CONV_MODE(3);
+ 
++   /* fp16 MAC precision (a8w16): IN_PRECISION stays 0 (uint8 input). */
++   if (fp16)
++      con1 |= CNA_CONV_CON1_PROC_PRECISION(2);
++
+    EMIT(REG_CNA_CONV_CON1, con1);
+ 
+    /* Re-arm A: keep POINTER=0 so subsequent writes go to Group 0 shadow. */
+@@ -959,6 +980,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    if (operation->depthwise)
+       misc_cfg |= CORE_MISC_CFG_DW_EN(1);
+ 
++   /* fp16 MAC precision on the CORE array (matches CNA PROC_PRECISION). */
++   if (fp16)
++      misc_cfg |= CORE_MISC_CFG_PROC_PRECISION(2);
++
+    EMIT(REG_CORE_MISC_CFG, misc_cfg);
+    EMIT(REG_CORE_DATAOUT_SIZE_0,
+         CORE_DATAOUT_SIZE_0_DATAOUT_HEIGHT(task->output_height - 1) |
+@@ -1172,8 +1197,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+       EMIT(REG_DPU_EW_RELUX_CMP_VALUE, 0);
+       EMIT(REG_DPU_OUT_CVT_OFFSET, offset);
+ 
++      /*
++       * fp16: the weights_scale is already baked into the real-valued fp16 weights
++       * (rkt_coefs.c), so the remaining requant is just in_sc/out_sc (derivable,
++       * not the value-dependent blob). int8 keeps the in_sc*wt_sc/out_sc form.
++       */
+       float conv_scale =
+-         (task->input_scale * task->weights_scale) / task->output_scale;
++         fp16 ? (task->input_scale / task->output_scale)
++              : (task->input_scale * task->weights_scale) / task->output_scale;
+       // DBG("conv_scale %f\n", conv_scale);
+       uint32_t scale_bits = fui(conv_scale);
+       /* Taken from

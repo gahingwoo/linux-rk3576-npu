@@ -1,5 +1,16 @@
 # CBUF→CSC→CMAC consume — was the CSC drain/weight-load trigger ever touched? (2026-07-05)
 
+> **STATUS 2026-07-13 — lever #1 is CLOSED, do NOT re-run.** This review's proposed
+> "next step" (#1 below, the per-task PP_CLEAR / CSC re-arm in the trailer, mesa
+> `ROCKET_CSC_REARM`) was subsequently implemented, flashed, and tested on the board —
+> it did NOT reach CSC_WL and REGRESSED (chained tasks went fully inert 0x00 instead of
+> even writing zero-point 0x80). See `FINDINGS.md` ("SOFTWARE-LEVER LEDGER") +
+> `CHAINED-CMAC-STOPPING-POINT.md`. With #1 spent, the closed-vs-open dual-image capture
+> (`FINDINGS-DUAL-IMAGE.md`) then exhausted the environment dimension too — including
+> replaying the vendor's EXACT regcmd bytes through rocket, which STILL walls. The
+> "one untouched lever" framing below is HISTORICAL: the lever was pulled, it failed,
+> and the RTL/internal-sequencer reading holds. Kept for the reasoning trail only.
+
 Read-only review. The dispatch/iteration half is closed (trailer 29/29, weights present, all units engage,
 DMA clean) yet chained CMAC outputs zero-point. Question: was the CSC consume/weight-load trigger (the stage
 that makes the CMAC drain CBUF) ever touched by prior work, or is it the one untouched lever behind
@@ -75,6 +86,10 @@ CSC/ping-pong CONSUME state that the cold-start reset sets once and nothing re-a
    is no remaining software-writable path → the CSC consume arm is the cold-start internal context = RTL.
 
 ## Honest bottom line
+**[SUPERSEDED 2026-07-13 — see the STATUS banner at the top. #1 was tested and FAILED;
+the RTL conclusion is now the justified one. The paragraph below is the pre-test
+reasoning, kept verbatim for the trail.]**
+
 The CSC consume/weight-load trigger is the **one untouched lever** — all prior work was CBUF-side staging or
 regcmd VALUES, never a per-task CSC re-arm SEQUENCE. There IS a concrete, software-reachable, distinct thing
 to try before any RTL verdict: **#1, inject a per-task PP_CLEAR / CSC re-arm into the trailer** (the walk
@@ -82,3 +97,11 @@ never re-arms the consumer the cold-start reset set once). Only if that fails is
 conclusion justified — and at that point it would be, because geom_all (all regcmd regs) + the writel audit
 (all driver regs) + a per-task re-arm sequence would together exhaust the software surface. Register-mapping
 claims here are hypotheses (RK3576 compute regs are undocumented); #1 is the falsifiable next step.
+
+**What actually happened:** #1 was implemented (`ROCKET_CSC_REARM`, mesa `rkt_ml.c`),
+flashed, and run — the per-task PP_CLEAR did NOT reach CSC_WL and REGRESSED the chained
+tasks to fully inert 0x00. That was the last software-reachable re-arm; combined with
+geom_all + the writel audit + the closed-vs-open dual-image capture (vendor's exact
+bytes replayed through rocket still wall), the software+platform surface is exhausted
+and the consume-arm is internal cold-start sequencer state (RTL). See `FINDINGS.md`,
+`FINDINGS-DUAL-IMAGE.md`, `CHAINED-CMAC-STOPPING-POINT.md`.

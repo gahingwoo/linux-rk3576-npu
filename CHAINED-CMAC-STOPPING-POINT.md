@@ -158,6 +158,20 @@ multi-day w16a16 port *to break the wall* — the evidence says it won't. Build 
 only for its own value (blob-free single-op inference), and treat the chained-fp16
 run as a cheap rider with an expected-negative result.
 
+> **CORRECTION 2026-07-13 — the "cheap rider" is a TRAP: there is no working fp16
+> single-op path to ride on.** mesa `ROCKET_FP16` is a STUB — it only dequantises the
+> weights to fp16 (`rkt_coefs.c`); the regcmd side is unwired: the weight DMA descriptor
+> is still int8 (`0x101c` hardcoded 0x600, `CNA_WEIGHT_SIZE0` int8 element count, int8
+> banks/DCOMP), so the CNA would read a fp16 buffer with int8 sizing → garbage, and the
+> input activation arrives at RUNTIME so mesa can't compile-time-convert it. "fp16 works,
+> verified" above means the vendor w4a16 *recipe* was confirmed from a capture, NOT that
+> mesa's path was ever run to correctness. A readable fp16 single-op run = coherently
+> wiring weight-DMA + input-convert + accumulator/OUT_CVT semantics, several with unknown
+> HW behaviour (is a8w16 even a valid CMAC mode?) = the SAME multi-day port, not a free
+> add-on. A partial down-payment (CNA/CORE PROC_PRECISION=2 + OUT_CVT dropping wt_sc,
+> gated on `ROCKET_FP16`, default off) sits in `rkt_regcmd.c`; necessary but far from
+> runnable. Do NOT flash it expecting a "cheap rider" run.
+
 ## Repro
 
 The same-kernel cross-check (vendor `rknpu` and open `rocket` booting off one
