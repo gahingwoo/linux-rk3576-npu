@@ -1,5 +1,15 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-16 (VENDOR TWO-SUBMIT CONTROL + PINNED-SPREAD — falsifies the "locked state is normal, the blob recovers from it" proposal (alchark). The working vendor stack NEVER enters the wall on a 2nd submit in one power session; the warm re-arm is not a register write and not a power/reset teardown — it is below the register interface. Fifth independent line converging on the RTL/sequencer verdict.)
+
+The literal proposal (run the blob right after a rocket submit, same boot, no powerdown) is not doable: rocket and the vendor rknpu can't both bind `npu@27700000` (one DTB/boot), and the handoff forces a genpd power-cycle + the vendor's `state_init` re-arm, so the blob would run on a fresh core. So the underlying question — does the WORKING vendor stack ever wall on a 2nd submit in one power session — was tested three ways.
+
+- **Vendor, 5 back-to-back independent submits in ONE power session** (`runner_multi` + `exp2` calibrated non-saturating conv; gaps 45ms << the 3s autosuspend, so no powerdown): all 5 outputs byte-identical (`md5 659251174b58bb655bd0ac310f008e7f`) and match the rknn simulator golden (`min -1.559e6 max 1.321e6`). **The vendor re-arms on every submit — it never enters the wall.** So the locked state is NOT normal HW behaviour; it is rocket-specific.
+- **Ordered writel trace of the vendor driver** (`rknpu wtrace`, `split_wt.py`): the warm-submit register kick is BYTE-IDENTICAL to the cold one (`0x1004=0xe, 0x3004=0xe, 0x0010=regcmd, 0x0014=0x47, 0x0020/0x0024=0x300, 0x0030=0x00070001, 0x0034=0, 0x0008=1`). Between submits the vendor does NOTHING — no reset, no CBUF reinit, no IOMMU touch; just the IRQ int-clear (`0x0024=0x0001ffff`) + a ping-pong S_POINTER re-arm. No "detect + recover" step: the cold-start `state_init` latch (`0x10=1`; `0x1004` 0→1→0x1e; `0x1024=0x80000000` ×2) persists for the whole power session.
+- **Rocket, power pinned to one session** (`S98mndump-pinned`, `autosuspend_delay_ms=3600000` on `27700000.npu`): removes the genpd power-off between per-op submits, so no reset / `pp_state_init` / IOMMU teardown — exactly the vendor's regime. **ops 1+ still come out all-zero** (361 spread lines: op0 REAL, ops 1..360 `out_class=EMPTY nz=0`). `core_dt_wr=25088` is constant across ops of output size 4096..1048576, i.e. the dirty-counter artifact, not real MACs.
+
+**VERDICT: the missing warm re-arm is silicon-level — below the register interface (the CSC/CMAC sequencer) — not a normal/recoverable state and not a power/reset teardown.** The blob never gets into the wall; rocket can't be coaxed out of it by removing the teardown. Fifth independent line (after WRITEL AUDIT, the ordered trace, the dual-image replay `FINDINGS-DUAL-IMAGE.md`, and the from-scratch re-audit 2026-07-10) landing on the same RTL verdict. Lead closed.
+
 ## 2026-07-10 (INDEPENDENT RE-AUDIT + CONSOLIDATION — a from-scratch, source-only
 audit (no findings docs read first) covering the rocket kernel driver, the vendor
 rknpu kernel driver, and the mesa regcmd/task-chain builder independently converged
