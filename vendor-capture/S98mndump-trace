@@ -1,0 +1,60 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# RK3576 ROCKET ORDERED WRITEL-TRACE (2026-07-17). Capture rocket's per-submit
+# driver register writes WITH timestamps for a cold op0 + a warm op1, to line up
+# against the vendor's (dirty/vendor_wt.trace) and answer alchark's timing Q.
+#
+# MobileNet + ROCKET_TILE_JOBS=1 => op0 (conv0, cold, REAL) then op1.. (warm,
+# empty) as independent single-task submits in ONE power session (power pinned,
+# no autosuspend between them). perjob_ppinit=0 => pp_state_init runs at
+# cold/resume ONLY (not per job) = TRUE apples-to-apples with the vendor, which
+# arms once. rocket's `wtrace` emits "rocket wt <seq> <off> <val> <caller>"
+# identical to the vendor's "rknpu wt ..." so it diffs directly.
+# ---------------------------------------------------------------------------
+NPU_DIR=/opt/npu-test
+C=/dev/console
+M="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+P=/sys/module/rocket/parameters
+log() { echo "$@" > "$C"; }
+
+start() {
+	i=0
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -c /dev/accel/accel0 ] || { log "rocket-trace: no accel device"; return 0; }
+	dmesg -n 8 2>/dev/null
+
+	# pin power => one session (match the vendor 5-run regime, no autosuspend between ops)
+	for f in $(find /sys/devices -path '*power/autosuspend_delay_ms' 2>/dev/null); do
+		case "$f" in
+		*npu*|*27700000*|*rocket*) echo 3600000 > "$f" 2>/dev/null ;;
+		esac
+	done
+
+	echo 1 > $P/zero_out_bos 2>/dev/null      # stale-proof output oracle
+	echo 1 > $P/spread_confirm 2>/dev/null    # per-op REAL/EMPTY line
+	echo 0 > $P/wg_continuous 2>/dev/null     # per-op submits, not whole-graph
+	echo 0 > $P/perjob_ppinit 2>/dev/null     # MATCH VENDOR: pp_state_init at cold/resume ONLY, not per job
+
+	echo 1 > $P/wtrace 2>/dev/null            # enable ordered trace + reset seq
+	dmesg -c >/dev/null 2>&1
+	log ""
+	log "===== ROCKET WRITEL-TRACE: conv2x (op0 cold + op1 warm), one pinned session ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_TILE_JOBS=1 \
+		python3 "$NPU_DIR/infer.py" "$M" > "$C" 2>&1
+	echo 0 > $P/wtrace 2>/dev/null
+
+	dmesg 2>/dev/null | grep -aE 'rocket (wt |spread op=)' > "$NPU_DIR/rocket_wt.trace"
+	log "----- rocket wt writes: $(grep -ac 'rocket wt ' "$NPU_DIR/rocket_wt.trace" 2>/dev/null) ; per-caller: -----"
+	grep -a 'rocket wt ' "$NPU_DIR/rocket_wt.trace" 2>/dev/null | awk '{c[$NF]++} END{for(k in c) printf "    %6d  %s\n", c[k], k}' > "$C" 2>&1
+	log "----- spread oracle (expect op0 REAL, op1 EMPTY): -----"
+	grep -a 'spread op=' "$NPU_DIR/rocket_wt.trace" 2>/dev/null | head -4 > "$C" 2>&1
+	log "===== DONE. pull $NPU_DIR/rocket_wt.trace ====="
+	sync
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart) : ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0
