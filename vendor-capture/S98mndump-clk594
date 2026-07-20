@@ -1,0 +1,75 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# RK3576 ROCKET @ 594 MHz multi-task test (2026-07-17, for issue #2 / Olaf).
+# The same-kernel clk-tree diff showed rocket runs the NPU compute+CBUF AXI
+# domain at 786 MHz while the WORKING vendor (kiln, same mainline kernel) runs
+# it at 594 MHz (aclk_cbuf 786 vs 594; hclk_cbuf 198 both). This forces rocket
+# to the vendor's exact 594 and re-runs a multi-task job.
+#
+#   op1+ REAL  => the CBUF/compute clock RATE was the wall (Olaf right, fixable).
+#   op1+ EMPTY => rate matched, still walls => rate is NOT it; residual closed.
+# rocket clock params are runtime-writable and apply on the next power-up, so we
+# set them, then the first submit's resume applies 594 (confirmed by the driver's
+# own "rocket dbg clk" line).
+# ---------------------------------------------------------------------------
+NPU_DIR=/opt/npu-test
+C=/dev/console
+MN="$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite"
+P=/sys/module/rocket/parameters
+log() { echo "$@" > "$C"; }
+
+start() {
+	i=0
+	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -c /dev/accel/accel0 ] || { log "clk594: no accel device"; return 0; }
+	dmesg -n 8 2>/dev/null
+
+	# ---- THE DELTA: force the NPU clocks to the vendor's 594 MHz (applied on next resume) ----
+	echo 594000000 > $P/npu_clk_hz 2>/dev/null
+	echo 594000000 > $P/aclk_hz 2>/dev/null
+	echo 594000000 > $P/cbuf_clk_hz 2>/dev/null
+	log "clk594: set npu/aclk/cbuf = 594000000 (applies on next NPU power-up)"
+
+	# pin power so all per-op submits share ONE session (vendor regime)
+	for f in $(find /sys/devices -path '*power/autosuspend_delay_ms' 2>/dev/null); do
+		case "$f" in *npu*|*27700000*|*rocket*) echo 3600000 > "$f" 2>/dev/null ;; esac
+	done
+
+	# per-op independent single-task submits (spread-confirm regime, arm-once)
+	echo 1 > $P/zero_out_bos 2>/dev/null
+	echo 1 > $P/spread_confirm 2>/dev/null
+	echo 0 > $P/wg_continuous 2>/dev/null
+	echo 0 > $P/perjob_ppinit 2>/dev/null
+
+	dmesg -c >/dev/null 2>&1
+	log ""
+	log "===== ROCKET @ 594 MHz: multi-task (does matching the vendor clock unblock op1+?) ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_TILE_JOBS=1 \
+		python3 "$NPU_DIR/infer.py" "$MN" > "$C" 2>&1
+
+	log "----- confirm the rate actually took (expect aclk_cbuf=594000000) -----"
+	dmesg 2>/dev/null | grep -aE 'rocket dbg clk:' | tail -1 > "$C"
+
+	# verdict from the per-op oracle
+	dmesg 2>/dev/null | grep -aE 'rocket spread op=' > "$NPU_DIR/clk594.log"
+	log "----- per-op oracle (op0 REAL, op1+ ?): -----"
+	grep -a 'spread op=' "$NPU_DIR/clk594.log" | head -5 > "$C"
+	later_real=$(awk '/rocket spread op=/{op=-1;dt=0;cls="";for(i=1;i<=NF;i++){if($i~/^op=/){sub("op=","",$i);op=$i}if($i~/^core_dt_wr=/){sub("core_dt_wr=","",$i);dt=$i}if($i~/^out_class=/){sub("out_class=","",$i);cls=$i}}if(op+0>=1&&cls=="REAL"&&dt+0>0)c++}END{print c+0}' "$NPU_DIR/clk594.log")
+	log ""
+	log "=========================== VERDICT ==========================="
+	if [ "${later_real:-0}" -gt 0 ]; then
+		log " VERDICT: op1+ REAL at 594 MHz -> the CBUF/compute clock RATE was the wall. FIXABLE."
+	else
+		log " VERDICT: op1+ still EMPTY at 594 MHz (vendor's exact rate) -> rate is NOT the wall."
+		log "  => Olaf's CBUF-clock residual is now closed with data. (check aclk_cbuf=594 above took.)"
+	fi
+	log "==============================================================="
+	sync
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart) : ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

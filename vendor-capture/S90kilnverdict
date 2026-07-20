@@ -1,0 +1,52 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# KILN DISCRIMINATOR (2026-07-17, for issue #2 / Olaf): does the VENDOR rknpu
+# driver, running on the MAINLINE-7.1.3 kernel (not the 6.1.115 vendor BSP),
+# compute a real MULTI-LAYER inference correctly? MobileNetV2 = 53 layers = the
+# exact multi-task workload the chained-CMAC wall bites. librknnrt (real vendor
+# runtime) + rknpu.ko (out-of-tree vendor driver, autoloaded by S89rknpu).
+#
+#   top-1 confident (score > 0.20)  => vendor COMPUTES task2+ on mainline
+#       => the wall is NOT the mainline platform/clock; it is purely rocket_job.c
+#          (directly diffable). The ledger's "RTL" reading holds.
+#   top-1 flat / near-zero          => vendor OUTPUT DEGENERATE on mainline
+#       => the vendor driver ALSO walls on mainline => it works only with its own
+#          6.1.115 OPP/PVTPLL/clock bring-up => platform/clock deficiency
+#          (Olaf's CBUF/OPP theory). This would REOPEN a platform (not RTL) path.
+# ---------------------------------------------------------------------------
+case "$1" in start) : ;; *) exit 0 ;; esac
+C=/dev/console
+MODEL=/opt/models/mobilenetv2-12_rk3576.rknn
+IMG=/opt/models/test.jpg
+LAB=/opt/models/imagenet_labels.txt
+log() { echo "$@" > "$C"; }
+
+i=0
+while [ ! -e /dev/dri/renderD129 ] && [ ! -e /dev/rknpu ] && [ "$i" -lt 60 ]; do
+	sleep 0.5; i=$((i + 1))
+done
+sleep 2
+
+log ""
+log "===== KILN DISCRIMINATOR: vendor rknpu on MAINLINE-7.1.3, librknnrt MobileNetV2 (53 layers) ====="
+lsmod 2>/dev/null | grep -q rknpu && log "rknpu.ko loaded" || log "WARN: rknpu.ko NOT loaded"
+OUT=$(rknn_mobilenet "$MODEL" "$IMG" "$LAB" 2>&1)
+echo "$OUT" > "$C"
+
+score=$(echo "$OUT" | grep -aE '^ +1\. \[' | head -1 | awk '{print $NF}')
+log ""
+log "===== VERDICT ====="
+if [ -z "$score" ]; then
+	log " VERDICT: could not parse a top-1 score (inference errored?). Read the output above."
+elif awk -v s="$score" 'BEGIN{ exit !(s+0 > 0.20) }'; then
+	log " VERDICT: vendor COMPUTES multi-task on mainline (top-1 score=$score, confident class)."
+	log "  => wall is NOT the mainline platform/clock -- it is purely rocket_job.c, directly diffable."
+	log "  => the ledger's RTL/rocket-specific reading holds; Olaf's CBUF/OPP theory is weakened."
+else
+	log " VERDICT: vendor output DEGENERATE on mainline (top-1 score=$score, flat/near-zero)."
+	log "  => vendor driver ALSO walls on mainline => works only with its own 6.1.115 OPP/PVTPLL/clock."
+	log "  => platform/clock deficiency (Olaf's CBUF/OPP theory GAINS weight) -- reopens a non-RTL path."
+fi
+log "==================="
+sync
+exit 0
