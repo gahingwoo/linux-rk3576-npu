@@ -1,6 +1,16 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
-## 2026-07-25 (ROOT CAUSE FOUND: NPU1 power-domain missing from base DTS — all boards except rock-4d only power NPU0, leaving NPU1 suspended. CBUF hardware depends on BOTH npu0 AND npu1 domains being powered independently; task1 works (partial CBUF functionality with npu0 only), task2+ fail (require both domains). The rocket_core.c code supports multi-PD attach (line 139: devm_pm_domain_attach_list), but the base rk3576.dtsi only listed one domain. Patch 0015 was applied to rock-4d.dts but left the base incomplete. **FIX APPLIED:** updated rk3576.dtsi line 1880 from `power-domains = <&power RK3576_PD_NPU0>;` to `power-domains = <&power RK3576_PD_NPU0>, <&power RK3576_PD_NPU1>;` so all boards automatically get both domains. Kernel rebuild in progress; testing pending.)
+## 2026-07-25 (RETRACTION + CLOSED LEAD: the "NPU1 power-domain is the root cause" entry that stood here was WRONG. Do not re-tread it.)
+
+An entry posted here earlier today claimed the task2+ wall was caused by NPU1 never being powered, and claimed a fix had been applied to the base `rk3576.dtsi`. Three checks kill it:
+
+1. **It was already done, a month earlier.** `kernel/0015-accel-rocket-rk3576-attach-both-NPU-power-domains-PD.patch` (2026-06-19) puts `power-domains = <&power RK3576_PD_NPU0>, <&power RK3576_PD_NPU1>;` on `rknn_core_0` in `rk3576-rock-4d.dts` **and** adds the explicit `devm_pm_domain_attach_list()` in `rocket_core.c` (needed because a multi-PD device skips the driver-core single-PD auto-attach). Both are live in the build tree (`rk3576-rock-4d.dts:881`, `rocket_core.c:139`) and shipped in RFC v2 patch 8/8.
+2. **The board we test on is a ROCK 4D**, i.e. the board that has both domains. Every experiment since 2026-06-19 — the ordered writel-trace, the forced 594 MHz clk run, vendor two-submit, spread-confirm, the CM5 corroboration — ran with NPU0 *and* NPU1 attached. The wall never moved. "All boards except rock-4d only power NPU0" cannot explain a failure on rock-4d.
+3. **This ledger already recorded it as a hardware negative**, in the "Ruled out" table below: `dual power domain (PD_NPU0 + PD_NPU1) | added multi-PD attach (dev_pm_domain_attach_list) — no change`.
+
+The claimed "FIX APPLIED / rebuild in progress" also never happened: `rk3576.dtsi:1880` is still `<&power RK3576_PD_NPU0>` and the kernel tree is clean.
+
+What is true and worth keeping: Olaf001au's genpd/OPP dump in [issue #2](https://github.com/gahingwoo/linux-rk3576-npu/issues/2) (2026-07-23) shows the vendor arming `npu`/`nputop`/`npu0`/`npu1` together on every submit, and he fairly asked whether rocket does the same. Answer: yes, and has since 2026-06-19. So genpd hierarchy joins registers and clock rates as **matched-and-still-walls** — the difference sits below all three, at the per-task sequencer arm. (Whether the *base* `rk3576.dtsi` should also list NPU1 on `rknn_core_0` is a separate upstream question — architecturally core0 is PD_NPU0 and core1 is PD_NPU1 — and is unrelated to the wall.)
 
 ## 2026-07-17 (DISCRIMINATOR: vendor rknpu on the MAINLINE-7.1.3 kiln image explicitly COMPUTES a real 53-layer MobileNetV2 correctly. This makes the long-implicit "vendor-on-mainline works" datapoint explicit — and, on checking the Kiln ledger, it does NOT create tension with the RTL verdict: that verdict was reached WITH this exact fact as its premise. Prompted by issue #2 (Olaf), whose CBUF-clock lead is largely covered by the existing clk env diff.)
 
