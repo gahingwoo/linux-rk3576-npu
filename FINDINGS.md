@@ -1,5 +1,76 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-25 (DECISIVE: the "one op per power session" wall is NOT per-power-session. A mid-session NPU reset re-arms it — 64 times in one power session, 64 completion interrupts, and the input+weight fetch comes back. Only the write-back never returns.)
+
+Follow-on to the bit-31 entry below. Rounds 8-10 of the interrupt probe, on a
+single power session (`npu -> ON` at 19.13, `-> OFF` at 21.84 — no power cycle
+anywhere in between).
+
+**Method that finally worked.** Do not reset inline in `rocket_job_hw_submit()` —
+this driver already documents why in `rocket_device_runtime_resume()`: the reset
+disturbs the MMU banks, so it must land on an *unattached* IOMMU. Instead request
+the driver's own recovery path (`reset.pending = 1` + `queue_work(core->reset.wq,
+&core->reset.work)`), which does `drm_sched_stop` → detach iommu →
+`rocket_core_reset` → `drm_sched_start`, and let the next job re-attach on a clean
+MMU. Clean every time: `RDERR=0`, no freeze.
+
+**Result 1 — the interrupt lockout is fully and repeatably breakable.**
+
+```
+reset #1  irqs=1/0      reset #2  irqs=2/0   ...   reset #64  irqs=64/0
+```
+
+64 resets, 64 GIC completion interrupts, one power session. Every previous run in
+this investigation got exactly one interrupt per session. It was never a
+per-session limit; it was one arm per *reset*, and the only reset was the one
+`runtime_resume()` does at power-up.
+
+**Result 2 — the fetch path comes back with it, and deepens.** Ops that directly
+follow a reset (`b31=clear`) fetch; ops that do not (`b31=SET`) fetch nothing.
+64 samples, strict correspondence:
+
+```
+op63  (after reset)  top[dt_wr=0 dt_rd=12544 wt_rd=512]
+op64  (after reset)  top[dt_wr=0 dt_rd=25088 wt_rd=1024]
+op65  (cap hit)      top[dt_wr=0 dt_rd=0     wt_rd=0]
+op66  (cap hit)      top[dt_wr=0 dt_rd=0     wt_rd=0]
+```
+
+`wt_rd > 0` is new: in every earlier run the ops after op0 fetched **no weights at
+all**. And the depth grows across successive resets — op1 `dt_rd=5152 wt_rd=0`,
+op63 `12544/512`, op64 `25088/1024` — as if the pipeline warms back up rather than
+snapping back. The counter is genuinely per-op, not cumulative: op65 onward read
+exactly 0, which a stale counter could not do.
+
+**Result 3 — the write-back never returns.** `top[dt_wr] = 0` throughout. By this
+ledger's own oracle (`dt_wr == 0` with `dt_rd`/`wt_rd` > 0 = "reads input+weights
+but never writes — a compute/config gate"), the MAC result still does not land.
+
+**So the wall's shape changes.** It is not "the CBUF→CSC→CMAC arm only fires once
+per power session". It is: **a reset re-arms the read side of the pipeline —
+interrupts, input fetch, and then weight fetch — and something on the write side
+stays gated regardless.** Power cycling only ever appeared to be the cure because
+it contains a reset.
+
+**Two honest limits on Result 3.** The per-BO output dump is capped to the first
+few jobs, so op63/op64's buffers were not read directly — "no output" rests on the
+`dt_wr` oracle, not on a byte comparison. And the `exec: ever_bit16` readings
+contradicted themselves this round (0 for the ops that fetched, 1 for the ops that
+did not); they are single-sample snapshots and nothing above leans on them. The
+next run raises the reset cap to cover every op and re-enables the output dump for
+late ops, to replace the indirect read with a direct one.
+
+**Probe bugs found along the way — recorded so nobody re-treads them as data.**
+Four runs looked like results and were not: (1) a one-shot ladder fired before op0
+because bit 31 is already set at boot, burning its only run before the lockout it
+was meant to break; (2) the every-submit step was logged behind an `op_index < 8`
+gate while the op index is module-lifetime, so it ran silently for two whole runs;
+(3) an inline reset over a live IOMMU attachment produced `RDERR=1` and confounded
+"compute did not come back" with "we broke the mappings"; (4) requesting a reset
+means bailing out of the submit, so the scheduler retried the same job, which
+requested another reset — 64 resets in 150 ms with not one op in between. Fixed by
+gating on the *submit* counter, which only advances for jobs that reach hardware.
+
 ## 2026-07-25 (THE WALL NOW HAS A REGISTER ADDRESS: PC INTERRUPT_MASK bit 31 is a session-scoped hardware state that gates the completion interrupt AND the compute, together, and only a genpd power cycle clears it. Five board runs.)
 
 Prompted by Alexey Charkov's review of RFC v2 on lore: *"This whole polled-interrupt
