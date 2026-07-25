@@ -1,5 +1,88 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-25 (THE WALL NOW HAS A REGISTER ADDRESS: PC INTERRUPT_MASK bit 31 is a session-scoped hardware state that gates the completion interrupt AND the compute, together, and only a genpd power cycle clears it. Five board runs.)
+
+Prompted by Alexey Charkov's review of RFC v2 on lore: *"This whole polled-interrupt
+part looks very suspicious. Does the vendor stack do the same thing? ... one theory
+could be that the interrupt bits are not read-only per se, but rather gated inactive
+by some internal hardware state which must be cleared before jobs are submitted ...
+If so, this same hardware state may well be the cause of your observed 'first
+(forced) job completes, others don't'."* He was right, and the probe found the state.
+
+**First, the fact that answers his question:** the vendor rknpu driver is fully
+interrupt-driven on RK3576. `rk3576_npu_irqs[] = { "npu0_irq", "npu1_irq" }`
+(rknpu_drv.c:129), `devm_request_irq()` + `wait_event_timeout(job_done_wq)`, on
+`GIC_SPI 247/248` — **the same lines rocket uses**. It does not poll.
+
+**What five board runs established (all reproducible, three independent power
+sessions in one boot):**
+
+| | first op of a power session | every op after it |
+|---|---|---|
+| GIC interrupt | fires once, `raw=0x30000155` | never fires again |
+| INTERRUPT_MASK bit 31 | clear | **SET** |
+| `top[dt_rd / wt_rd]` | 9408 / 96 | **0 / 0** |
+| output | REAL (`nz=4094/4096 distinct=239`) | empty |
+
+`0x155` decodes as `DPU_0 | CORE_0 | CNA_CSC_0 | CNA_WEIGHT_0 | CNA_FEATURE_0` —
+the whole group-0 pipeline reporting done, i.e. exactly the completion the vendor
+arms with `int_mask = 0x300`. So the interrupt path works; we get precisely one
+per power session, on the one op that does real work.
+
+**Bit 31 is set by hardware, not by us.** The armdbg PC dump reads `20=0x80000300`
+*before* our handler had run, and it survives the handler writing
+`INTERRUPT_MASK=0x0` (the dump then reads `20=0x80000000`).
+
+**Within a power session, no software write clears it.** Swept as a ladder and then
+as composite steps applied on every submit, at two different insertion points
+(before the mask arm, and after the INTERRUPT_CLEAR write — the last interrupt
+register write before OP_EN):
+
+| write | result |
+|---|---|
+| `INTERRUPT_CLEAR = 0x1ffff` (the vendor's own `RKNPU_INT_CLEAR`) | bit 31 still set |
+| `INTERRUPT_CLEAR = 0x80000000` | still set |
+| `INTERRUPT_CLEAR = 0xffffffff` | still set |
+| `INTERRUPT_MASK = 0x80000000` | still set |
+| `INTERRUPT_MASK = 0 → 0x300` | still set |
+| all six in the round-2 order, every submit | still set |
+| **genpd power-off → power-on** | **clear** |
+
+(One false positive to not re-tread: an early one-shot ladder DID report CLEARED.
+It ran *before* the session's single interrupt — bit 31 is clearable up to the
+first interrupt and unclearable after. The one-shot also burned its only run
+before op0, and its every-submit successor was logged behind an `op_index < 8`
+gate while the op index is module-lifetime, so two intermediate runs looked like
+data and were not. Sampling at OP_EN (`at-kick`) is the only reading that counts.)
+
+**Second, independent result: `INTERRUPT_RAW_STATUS` bits 28-29 (PC_DONE) are
+permanently latched.** `raw 30000000->30000000` even after writing `0xffffffff` to
+INTERRUPT_CLEAR. They are high at *every* submit, including the first. So rocket's
+hrtimer completion poll — which waits for exactly those bits — has a condition that
+is already true before the hardware has done anything. **The completion poll is not
+a completion oracle.** It has never been one.
+
+**What this changes.** The wall's description tightens from a behavioural inference
+("the CBUF→CSC→CMAC cold-start consume-arm only fires once per power session") to
+something with an address: **there is a session-scoped hardware state, visible as PC
+`INTERRUPT_MASK` bit 31, which gates interrupt generation and CMAC compute together,
+and which only the NPU power domain cycling resets.** This is also why a year of
+writel-auditing could not see it: that audit diffs *writes*, and this is a
+hardware-set bit that only differs on *readback*.
+
+Bit 31 is a thermometer, not a lever — it cannot be pulled. But it is now a
+one-line oracle: any future "did this re-arm the pipeline?" question can be answered
+by reading it, instead of running a full inference and classifying the output.
+
+**Consequences for the RFC (independent of anything above):** the v2 patch 6 comment
+claiming PC_DONE "is read-only in INTERRUPT_MASK, so it cannot be routed to the GIC"
+is wrong about completion in general — `0x300` is writable, sticks, and the line
+fires. That justification must be corrected in v3, and the completion detection
+itself reworked since the bits it polls are permanently latched. Also to fix in v3:
+the sent v2 `hw_submit` arms a DMA-error-only mask while the tree we actually test
+arms the vendor's `0x300`, so a reviewer reproducing from v2 would not see what we
+see. Probe lives behind `rocket.intprobe` / `int_vendor_ack` / `int_b31_*`.
+
 ## 2026-07-25 (RETRACTION + CLOSED LEAD: the "NPU1 power-domain is the root cause" entry that stood here was WRONG. Do not re-tread it.)
 
 An entry posted here earlier today claimed the task2+ wall was caused by NPU1 never being powered, and claimed a fix had been applied to the base `rk3576.dtsi`. Three checks kill it:
