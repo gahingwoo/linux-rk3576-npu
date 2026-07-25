@@ -1,5 +1,65 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-26 (CORRECTION to the entry below, and a sharper localisation: with a reset before every op the ENTIRE data path works — interrupts, per-layer input fetch, per-layer weight fetch, and DPU write-back. What is still dead is the multiply-accumulate itself.)
+
+**Correction first.** The entry below concluded "`top[dt_wr]` stays 0 throughout, so
+by this ledger's own oracle the write-back is still gated". That inference is wrong.
+`top[dt_wr]` reads 0 for **op0 as well**, and op0 demonstrably produces a real output
+(`distinct=239`). The write counter is `core[dt_wr]`, not `top[dt_wr]`. Everything
+else in that entry stands; this one deduction does not.
+
+**Round 11: 90 ops, 90 mid-session resets, 87 completion interrupts, one power
+session.** With the reset cap raised past the op count and the per-BO dump limit
+lifted (it was hard-coded to the first 8 jobs, which is why round 10 could not read
+the interesting ops), `core[dt_wr]` is nonzero for roughly 56 of the 90 ops:
+
+```
+core[dt_wr=6272 ] x19   core[dt_wr=25088] x16   core[dt_wr=3136] x10
+core[dt_wr=9408 ] x5    core[dt_wr=4928 ] x5    core[dt_wr=12544] x5
+core[dt_wr=16112] x1    core[dt_wr=0    ] x34
+```
+
+**The DPU writes.** And the fetches are no longer "warming up" — they are the real
+per-layer shapes of the graph:
+
+```
+wt_rd in {96, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536}
+dt_rd in {1568, 3136, 4704, 6272, 9408, 12544, 25088}
+```
+
+**But what lands is empty.** Output buffers across the run:
+
+```
+distinct=1  x17    distinct=2 x6    distinct=3 x4
+distinct=10 x4     first=1d 80 80 80 80 df 80 80   (zero-point dominated)
+distinct=239 x3    all iova=0xfeb2d000 with identical bytes -- op0's own buffer
+                   being re-read as a later layer's input, not a new result
+```
+
+**So the wall localises much more sharply than "the pipeline does not re-arm".**
+With a per-op reset the arm works, the input DMA works, the weight DMA works, and
+the DPU write-back works — every stage moves the right number of bytes for its
+layer. The multiply-accumulate is what produces nothing: the DPU faithfully writes
+out a zero-point surface. This lines up with the long-standing "empty conv, MAC≈0"
+reading in the payload-replay work rather than with any arm/dispatch theory.
+
+**Per-op reset is not a usable workaround.** After 90 mid-session resets the NPU
+power domain could not be shut down, and it took the system with it:
+
+```
+21.58  npu0 -> OFF
+25.91  rockchip-pm-domain: failed to set idle on domain 'nputop', val=0
+26.75  cpu4: _set_opp_voltage: failed to set voltage (712500 ...): -110
+       cpufreq: __target_index: Failed to change cpu frequency: -110
+42.52  rcu: INFO: rcu_preempt detected stalls on CPUs/tasks  -> CPU0 wedged
+```
+
+Something is left outstanding on the NPU's AXI/BIU by the repeated resets, `nputop`
+never reaches idle, and the failure propagates into the shared regulator/I2C path
+(-110 = ETIMEDOUT), then cpufreq, then an RCU stall. The inference itself had
+already completed; this is a teardown hazard, not a data failure. Any future use of
+mid-session resets needs a drain/quiesce before power-off.
+
 ## 2026-07-25 (DECISIVE: the "one op per power session" wall is NOT per-power-session. A mid-session NPU reset re-arms it — 64 times in one power session, 64 completion interrupts, and the input+weight fetch comes back. Only the write-back never returns.)
 
 Follow-on to the bit-31 entry below. Rounds 8-10 of the interrupt probe, on a
