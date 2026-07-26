@@ -53,6 +53,38 @@ poisons the pipeline for everything. If it recovers, only the new configuration
 fails to land and the old one is still resident — which would put the defect
 squarely in the weight/descriptor load itself.
 
+**First attempt at that was invalid, and the control is why.** With B=`dwconv` it
+gave a clean-looking `A ok / B all-zero / A' ok`, read as "only the incoming
+config fails to land". Then the control — run dwconv *first*, as the only config
+in a fresh session — returned `distinct=2 maxdiff=248 exact=0.5%`. dwconv is
+simply broken on its own, so B failing said nothing about second loads. Any A/B
+experiment here needs a B that is independently known good.
+
+**Model catalogue (each measured as the FIRST config of its own power session,
+with a sleep between models so the NPU autosuspends in between):**
+
+| model | standalone verdict |
+|---|---|
+| `conv2d-cal` | **OK** — `maxdiff=1 exact=100.0%` |
+| `conv2d` | **OK** — `maxdiff=0 exact=100.0%` |
+| `conv2x` | WRONG — all zeros |
+| `dwconv` | WRONG — `distinct=2`, essentially all zeros |
+| `md003` | WRONG — `distinct=1`, all zero-point |
+| `add` | not delegated (no NPU output line) |
+| `md011` | segfaults |
+
+Two independently-good models is the minimum needed to run the A/B experiment at
+all, and until this sweep there was only one. Also settles two things that had
+been assumed rather than measured: `conv2x`'s op0 is broken **standalone**, so its
+failure is its own bug and not the wall (an earlier note calling it "known good"
+was wrong); and `conv2d` is usable as an oracle after all — the old warning about
+it applied to `distinct` as a proxy, not to maxdiff against the relu reference,
+where it scores exactly 0.
+
+`dwconv` being broken standalone is worth its own line: MobileNet is mostly
+depthwise layers, so some part of "op1+ produce nothing" may be this separate
+depthwise bug rather than the wall.
+
 ## 2026-07-26 (RETRACTION: the "NPU power domain cannot reach idle" hazard reported below was a SERIAL CONSOLE PRINTK FLOOD, not a power bug. Plus: the wall itself re-measured on a quiet console and is unchanged.)
 
 **Retract this, from the entry below:**
