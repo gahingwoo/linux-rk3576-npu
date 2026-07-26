@@ -1,5 +1,58 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-26 (THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
+
+Every experiment on this wall until now varied two things at once. Chained models
+run *different layers*, so "op1 is wrong" could be the position or could be that
+layer. `conv2x` cannot arbitrate it either — its op0 is broken too
+(`core[dt_wr]=16` where 25600 is due). `conv2d-cal` can: it is byte-exact against
+the correct reference, and has been since 2026-06-27.
+
+So run *it* — one known-good conv, six invokes, one interpreter, one delegate, no
+teardown and no reset in between, so every invoke after the first is a "later op":
+
+```
+invoke 0: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+invoke 1: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+invoke 2: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+invoke 3: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+invoke 4: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+invoke 5: distinct=128 mean=145.1 | vs RELU-ref maxdiff=1 exact=100.0%  OK
+
+top[dt_wr=0 dt_rd=6400 wt_rd=3200] core[dt_wr=12800 ...]   (identical each time)
+```
+
+**Six for six, no reset needed.** So "only the first op of a power session
+computes" is wrong as stated. Re-running the *same configuration* re-arms
+perfectly and indefinitely.
+
+What MobileNet's op1 and conv2x's op1 have that invoke 1 does not is a **different
+configuration**. The wall restates as:
+
+> Re-running a configuration already loaded is fine. **Loading a new one is what
+> fails.** The defect is in the reconfiguration path — the descriptor/weight load
+> that must replace an already-resident configuration — not in a start gate that
+> only opens once.
+
+This also explains why a mid-session reset restores the read path (interrupts,
+per-layer input and weight fetch): the reset clears the resident configuration, so
+the next load lands as if it were the first.
+
+It is a different object from everything the ledger has chased under
+dispatch/arm/engage, and it points at CBUF/CSC configuration reload.
+
+(Oracle note: the output zero point must come from the model's quantisation
+params, not be guessed from the data. A `bincount().argmax()` guess returned 126
+instead of 128 on conv2d-cal and made all six invokes read as `maxdiff=2
+exact=50.3% WRONG` — a fake result that briefly looked like a third-invoke
+degradation.)
+
+**Next discriminator: A → B → A.** Run conv2d-cal, then a different model, then
+conv2d-cal again. If the third run also fails, loading a second configuration
+poisons the pipeline for everything. If it recovers, only the new configuration
+fails to land and the old one is still resident — which would put the defect
+squarely in the weight/descriptor load itself.
+
 ## 2026-07-26 (RETRACTION: the "NPU power domain cannot reach idle" hazard reported below was a SERIAL CONSOLE PRINTK FLOOD, not a power bug. Plus: the wall itself re-measured on a quiet console and is unchanged.)
 
 **Retract this, from the entry below:**
