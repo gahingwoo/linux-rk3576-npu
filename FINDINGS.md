@@ -1,5 +1,62 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+## 2026-07-26 (RETRACTION: the "NPU power domain cannot reach idle" hazard reported below was a SERIAL CONSOLE PRINTK FLOOD, not a power bug. Plus: the wall itself re-measured on a quiet console and is unchanged.)
+
+**Retract this, from the entry below:**
+
+> After 90 mid-session resets the NPU power domain could not be shut down, and
+> it took the system with it [...] Something is left outstanding on the NPU's
+> AXI/BIU by the repeated resets, `nputop` never reaches idle [...]
+
+Wrong. It reproduces with **zero** mid-session resets, on a single-op model,
+with the whole interrupt probe disabled. What actually caused it: the test
+script ran `dmesg -n 8`, so every kernel message went to the 115200 serial
+console, and the debug kernel emits several hundred `CNAREG` lines per job.
+That is seconds of interrupt-blocking output per op. The symptom list was the
+signature of exactly that, and it was misread as an NPU power problem:
+
+```
+dwmmc_rockchip: Unexpected interrupt latency      <- classic long-printk symptom
+cpu4: _set_opp_voltage: failed to set voltage: -110   <- ETIMEDOUT on the PMIC I2C
+rcu: INFO: rcu_preempt detected stalls on CPUs/tasks
+rockchip-pm-domain: failed to set idle on domain 'nputop', val=0
+```
+
+Setting `dmesg -n 4` (console gets warnings only; the ring buffer, which every
+summary actually reads, is untouched) makes it go away completely: all four
+domains power down cleanly, both models run to completion, and Python's stdout
+— which had been queued behind the same serial port — appears again. Three
+successive attributions for this were wrong before that one (the resets, then
+the vendor-style ack not writing INTERRUPT_MASK=0, then the runtime_suspend
+quiesce added to fix it); none of them was the cause.
+
+**The wall itself is NOT a console artifact.** Re-measured with the probe off
+and the console quiet, MobileNet reproduces byte for byte:
+
+```
+op0   top[dt_rd=9408 wt_rd=96]  core[dt_wr=25088]  out distinct=238  (real)
+op1+  top[dt_rd=0    wt_rd=0 ]                     out distinct=1
+```
+
+`conv2d-cal` also still passes against the correct reference — the hardware
+applies a ReLU at the zero point, so `max(CPU, zp)` is the reference, not raw
+CPU: `vs RELU-ref maxdiff=1 mean|diff|=0.00 exact=100.0%`.
+
+**Counting results re-measured on a quiet console — mostly hold, one does not.**
+Per-op resets still break the interrupt lockout (63 interrupts in one power
+session against exactly 1 without resets), and the per-layer fetch depth still
+returns in full (`wt_rd` 512…65536, `dt_rd` 1568…25088). But the **"one
+interrupt per reset" 1:1 does not survive**: 90 resets yielded 63 interrupts.
+The earlier 64/64 was measured with the reset cap set to 64, so both counters
+hit the same ceiling and the 1:1 was partly an artifact of the cap.
+
+**New minimal repro: `conv2x.tflite`** (40x40x16, two chained convs). Its
+*first* conv already fails — `core[dt_wr]=16` where 25600 is expected, output
+all zeros — and test_conv.py classifies the failure as `PER-CHANNEL (A/bias/C
+coef -- DERIVABLE)`, which points straight at the requant coefficient work.
+Two ops instead of ninety, and op0 broken rather than op0 good, makes this a far
+better place to work than MobileNet.
+
 ## 2026-07-26 (CORRECTION to the entry below, and a sharper localisation: with a reset before every op the ENTIRE data path works — interrupts, per-layer input fetch, per-layer weight fetch, and DPU write-back. What is still dead is the multiply-accumulate itself.)
 
 **Correction first.** The entry below concluded "`top[dt_wr]` stays 0 throughout, so
