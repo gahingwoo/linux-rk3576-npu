@@ -2,22 +2,54 @@
 
 Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
-## ⚠ Chained-task compute: parked (2026-07-10), pending new evidence
+## Upstream
 
-Single-task inference works end to end (below). Multi-task chained inference
-(any real multi-layer network) hits a wall: only the first task per NPU power
-session actually computes; every falsifiable software cause — dispatch
-mechanism, registers, config, CBUF staging, cache/TLB, environment, firmware —
-has been tested to a clean negative across two independent investigations. This
-is a deliberate stop, not an abandoned attempt: **[CHAINED-CMAC-STOPPING-POINT.md](CHAINED-CMAC-STOPPING-POINT.md)**
-is the falsification-first writeup of what was ruled out, how, and what would
-actually be needed to reopen it (vendor RTL/TRM, not another register trace).
+The driver support is on the list. Current series:
+
+**[RFC PATCH v3 0/6: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260731043507.1832277-1-gahing@gahingwoo.com/)**
+(2026-07-31, against next-20260730)
+
+Earlier revisions: [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
+[v2](https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/)
+
+Merged already, out of the v2 series:
+
+| commit | |
+|---|---|
+| `841363ebb508` | iommu/rockchip: Take all DT clocks |
+| `b10d5920cafa` | iommu/rockchip: Clear stale page faults before enabling stall |
+
+## ⚠ Inference is not correct yet
+
+Bring-up works: the NPU probes, powers up and down through runtime PM, and runs
+jobs to completion. A single convolution is byte exact against the CPU
+reference, and re-running that same convolution is byte exact every time, six
+for six in one power session, with no reset in between.
+
+What fails is loading a **different** configuration after it. The second one
+computes nothing and writes out a zero point surface, while the one already
+resident keeps working; going back to it is byte exact again, and the same
+holds with the two models swapped. The register command list is identical in
+both positions, byte for byte, so it is not what the driver programs. A full
+NPU reset clears the condition: with one before every op, per layer input and
+weight fetch return at the graph's real shapes and the DPU writes back, but
+what lands is still zero point.
+
+So dispatch, DMA and write back are all fine, and the multiply accumulate is
+what produces nothing. Tomeu Vizoso suggested on the list that this looks like
+the ping-pong register bank never switching, which fits: S_POINTER bit 0
+selects the bank, and both the driver and every regcmd write it as 0.
+
+Full ledger: **[FINDINGS.md](FINDINGS.md)** (newest first, including the
+retractions). Note that earlier writeups here described this as "only the first
+task per power session computes"; that framing is wrong and was corrected on
+2026-07-26.
 
 | | |
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Board | Radxa ROCK 4D |
-| Kernel | linux-next ≥ 7.1-rc5 (20260527) |
+| Kernel | linux-next ≥ 7.2-rc5 (20260730) |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
 ## Status
