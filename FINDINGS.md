@@ -2,6 +2,43 @@
 
 
 
+
+## 2026-08-03 (v4 sent: six bugs fixed, none of them the wall. Board-verified before sending.)
+
+`[RFC PATCH v4 0/6]`
+<https://lore.kernel.org/all/20260803094125.3285895-1-gahing@gahingwoo.com/>
+
+A fixes only revision. Five of the six came from the Sashiko review bot on v3 and
+each was checked against the vendor DT, the vendor driver or the board before
+being believed.
+
+| fix | how it was verified |
+|---|---|
+| `rknn_core_1` was at 0x27710000 | vendor node is `reg = <0x27700000 0x8000>, <0x27708000 0x8000>` and its driver takes `base[i]` from those, so core 1 is at **0x27708000**. `rknn_mmu_1` at 0x2770a000 was right all along |
+| both cores had 5 reg entries incl. dpu/dpu_rdma | binding says `maxItems: 3`, and the driver maps three. ⚠ v3 validated the binding with `dt-doc-validate` but never ran `dtbs_check` on the DTS against it |
+| `rknn_core_1` missing the CBUF clocks | the driver asks for six by name on RK3576, so it could never have probed |
+| one power domain per core | `dev_pm_domain_attach_list()` returns **-EEXIST** if the driver core already attached a single domain. It only ever worked because rk3576-rock-4d.dts overrode it. Both domains on each core now, board override dropped |
+| `rocket_job_fini()` left the poll timer and work running | use-after-free on unbind |
+| a queued poll work could finalise the next job | now carries the sequence number of the job it was started for |
+
+⚠ **Near miss worth recording:** a blanket replace of the single-domain line also
+hit `rknn_mmu_0`, giving the IOMMU two domains. That would stop the driver-core
+auto-attach that `rk_iommu` depends on, since it never attaches a list itself, and
+the MMU would run on an unpowered domain. Caught by reading the diff before
+flashing. The IOMMUs keep one domain each.
+
+Board verification before sending, four parts: the NPU probes with the two-domain
+list and no attach failure, `conv2d-cal` stays byte exact 6/6, A -> B -> A is
+unchanged (the wall is untouched by any of this), and an unbind/rebind cycle
+rebinds cleanly and runs again with no warning or oops.
+
+That last one also reproduced Igor Paunovic's devres leak independently: after
+unbind/rebind our `/dev/accel/accel0` comes back as `accel1`. His pending patch 1/2
+fixes it.
+
+Igor's `Tested-by` from v3 was not carried over, since patch 4 changed after it.
+The cover letter says so and leaves the tag to him.
+
 ## 2026-08-04 (Two more clean negatives: the register file is identical between a job that computes and one that does not, and adding the vendor's state_init changes nothing.)
 
 Both of these came out of a list of four ideas, two of which turned out to be

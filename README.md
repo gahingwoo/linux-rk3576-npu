@@ -6,11 +6,17 @@ Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
 The driver support is on the list. Current series:
 
-**[RFC PATCH v3 0/6: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260731043507.1832277-1-gahing@gahingwoo.com/)**
-(2026-07-31, against next-20260730)
+**[RFC PATCH v4 0/6: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260803094125.3285895-1-gahing@gahingwoo.com/)**
+(2026-08-03, against next-20260730)
 
 Earlier revisions: [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
-[v2](https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/)
+[v2](https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/) |
+[v3](https://lore.kernel.org/all/20260731043507.1832277-1-gahing@gahingwoo.com/)
+
+v4 is a fixes only revision: six bugs found in v3, five of them by the Sashiko
+review bot, each checked against the vendor DT, the vendor driver or the board
+before being believed. Igor Paunovic tested the v3 driver patch on RK3588, which
+is hardware this project does not have.
 
 Merged already, out of the v2 series:
 
@@ -36,9 +42,17 @@ weight fetch return at the graph's real shapes and the DPU writes back, but
 what lands is still zero point.
 
 So dispatch, DMA and write back are all fine, and the multiply accumulate is
-what produces nothing. Tomeu Vizoso suggested on the list that this looks like
-the ping-pong register bank never switching, which fits: S_POINTER bit 0
-selects the bank, and both the driver and every regcmd write it as 0.
+what produces nothing.
+
+Tomeu Vizoso suggested on the list that this looks like the ping-pong register
+bank never switching. The pointer is indeed stuck, and reading it back shows we
+write S_POINTER bit 0 as 0 and it reads 1 on every job for the rest of the
+session. But the driver cannot move it: flipping the bit, selecting a bank the
+way the vendor's state_init does, and pulsing POINTER_PP_CLEAR all change
+nothing, and the vendor does not switch banks per submit either. A read snapshot
+of every block the driver can reach, 20 KB across pc, cna, core, dpu and rdma,
+differs between a job that computed and one that did not in exactly one word,
+and that word is OPERATION_ENABLE.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)** (newest first, including the
 retractions). Note that earlier writeups here described this as "only the first
