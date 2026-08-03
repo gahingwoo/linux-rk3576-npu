@@ -27,13 +27,33 @@ snap: job2 differs from job0 in 1 words
 moment of sampling. Everything else in 12 KB is identical, and the job that
 computed nothing looks the same as the two that computed correctly.
 
-Scope, honestly: three blocks only, sampled at completion. It does not cover
-DPU or RDMA (the driver does not map them), the MMU, or the CBUF SRAM.
+Extended afterwards to DPU and RDMA as well, which rocket does not map: the
+vendor DT covers each core as one 32 KB range and its driver reads
+0x4000/0x4004/0x4008/0x4018 and 0x5000/0x5004/0x5008, so both blocks are decoded
+and safe to read through a separate ioremap. Same answer over all five blocks,
+20 KB in total: **one word differs, and it is OPERATION_ENABLE.**
+
+So at completion the hardware presents identical register state whether the job
+computed correctly or produced nothing at all. There is no stuck state bit to
+find in the register file.
+
+Scope, honestly: sampled at completion, not during execution, and it does not
+cover the MMU. A difference confined to the roughly 1 ms the job is actually
+running would not show up here, and sampling that window means polling hard
+enough to perturb the timing being measured.
 
 ⚠ A first attempt swept `0x27700000` to `0x27706000` as one contiguous range and
-wedged the board with RCU stalls. The address space is not a single register
-file: `0x27702000` in the middle of it is the NPU IOMMU, and past core there may
-be nothing decoded. Only sweep through the driver's own mappings.
+wedged the board with RCU stalls. The culprit is `0x27702000`: mainline splits it
+out as `rknn_mmu_0` and `rk_iommu` owns it, so mapping over it is what hung the
+bus. DPU and RDMA were innocent and read fine once they got their own ioremap.
+
+⚠ Also learned from the vendor DT while checking this: **`rknn_core_1` in our
+rk3576.dtsi has the wrong address.** The vendor node is
+`reg = <0x27700000 0x8000>, <0x27708000 0x8000>` and its driver takes
+`base[i]` straight from those, so core 1 is at **0x27708000**, not the
+0x27710000 we wrote. Our `rknn_mmu_1` at 0x2770a000 is 0x27708000 + 0x2000 and
+was right all along. The core is `status = "disabled"` so nothing has hit it,
+but it needs fixing.
 
 **The vendor's state_init, which rocket has no equivalent of.** `rk3576_state_init`
 runs at probe and after every reset and is the only place either driver selects a
