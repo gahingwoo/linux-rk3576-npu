@@ -1,5 +1,60 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
+
+## 2026-08-03 (Tomeu's ping-pong lead: the pointer IS stuck, but the driver cannot move it. Four ways tried, all null.)
+
+Tomeu Vizoso, on the v3 thread: *"This sounds to me as related to the ping-pong
+register mechanism. Your NPU seems to be stuck in the bank 0 and is not
+switching to bank 1. This should be done via writes to S_POINTER."*
+
+The register layout supports the idea. `S_POINTER` bit 0 (`POINTER`) selects
+the bank; bits 1-3 are `POINTER_PP_EN`, `EXECUTER_PP_EN`, `POINTER_PP_MODE`;
+bit 4 is `POINTER_PP_CLEAR`; bit 16 reads back as `EXECUTER`. The vendor's
+`rk3576_state_init()` selects a bank with a bare `0` then a bare `1`, writing
+`DATA_SIZE1` into each, and finishes with `0x1e`. rocket writes `0xe` both
+directly in `hw_submit` and, via mesa, four times inside every regcmd, so bit 0
+is always 0 and `POINTER_PP_CLEAR` is never pulsed after power-on.
+
+**The observation is right: the pointer is stuck.** Reading it back:
+
+```
+sptr at-kick : cna=0000000f core=0000000f     (we wrote bit 0 = 0)
+sptr at-done : cna=0001000f core=0001000f     (EXECUTER latches, stays)
+```
+
+We write 0 and it reads 1, on every job, for the rest of the session.
+
+**But the driver cannot move it.** Four attempts, each with the A -> B -> A
+oracle (two independently byte-exact models) and a same-config repeat as a
+safety net:
+
+| attempt | result |
+|---|---|
+| flip bit 0 per submit, in the direct writes and in all four regcmd entries | readback unchanged, A ok / B wrong, exactly as baseline |
+| bare bank select like `rk3576_state_init` (PP bits cleared) | **units stop arming**: `EXECUTER` never latches and even the normally-good model fails |
+| pulse `POINTER_PP_CLEAR` before each submit | pointer does not move, A ok / B wrong |
+| pulse `POINTER_PP_CLEAR` + `EXECUTER_PP_CLEAR` | same |
+
+The same-config repeat stayed 6/6 byte exact under the clear pulses, so they
+are not breaking anything either. They simply have no effect.
+
+One caveat on reading that table: `post-clear` reading back `0x0f` does not
+prove the write was dropped, since `PP_CLEAR` is plausibly a self-clearing
+pulse bit. What it does show is that **bit 0 never moved**, which is the thing
+being tested.
+
+So the lead is confirmed in its observation and closed in its remedy: the
+pointer sits at 1 with `EXECUTER` latched, and `S_POINTER` is not a lever the
+driver has. What actually drives it is still unknown.
+
+**What this leaves.** The vendor driver computes multiple different
+configurations correctly on this same silicon and the same mainline kernel
+(the kiln dual-image result). So it is achievable in software, and something
+the vendor does we do not. The old writel audit that found the two byte
+identical was taken on what was effectively a first load, before we knew the
+failure needs a *second, different* configuration. Re-running that capture
+across an A -> B -> A sequence is the obvious next move and has not been done.
+
 ## 2026-07-26 (THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
 
 Every experiment on this wall until now varied two things at once. Chained models
