@@ -1,6 +1,73 @@
 # RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
 
 
+
+## 2026-08-04 (Two more clean negatives: the register file is identical between a job that computes and one that does not, and adding the vendor's state_init changes nothing.)
+
+Both of these came out of a list of four ideas, two of which turned out to be
+answerable from material already on disk.
+
+**Read snapshot instead of write audit.** Every register comparison in this
+project so far has been a writel audit, which by construction cannot see a bit
+the hardware sets and the driver never writes. That is exactly the class
+`INTERRUPT_MASK` bit 31 belongs to, so it was worth sweeping from the read side.
+
+Snapshot of pc, cna and core (4 KB each, through the driver's own mappings)
+taken at the same point in three consecutive jobs of an A -> B -> A run:
+
+```
+snap: job0 baseline captured
+snap diff pc+0x0008: job0=00000000 job1=00000001
+snap: job1 differs from job0 in 1 words
+snap diff pc+0x0008: job0=00000000 job2=00000001
+snap: job2 differs from job0 in 1 words
+```
+
+`pc+0x0008` is `OPERATION_ENABLE`, i.e. the instantaneous OP_EN state at the
+moment of sampling. Everything else in 12 KB is identical, and the job that
+computed nothing looks the same as the two that computed correctly.
+
+Scope, honestly: three blocks only, sampled at completion. It does not cover
+DPU or RDMA (the driver does not map them), the MMU, or the CBUF SRAM.
+
+⚠ A first attempt swept `0x27700000` to `0x27706000` as one contiguous range and
+wedged the board with RCU stalls. The address space is not a single register
+file: `0x27702000` in the middle of it is the NPU IOMMU, and past core there may
+be nothing decoded. Only sweep through the driver's own mappings.
+
+**The vendor's state_init, which rocket has no equivalent of.** `rk3576_state_init`
+runs at probe and after every reset and is the only place either driver selects a
+ping-pong bank: `S_POINTER 0`, write `DATA_SIZE1`, `S_POINTER 1`, write it again,
+arm with `0x1e`. rocket never initialises bank 1 at all, which fit the shape of
+the bug well: the first configuration computes and a second, different one does
+not.
+
+Added it verbatim, called once per `runtime_resume` exactly where the vendor
+calls it (not per job; the old debug tree did it per job, which is a different
+thing and also walled). Result: `A ok / B wrong / A' ok`, unchanged in every
+respect, with the same-config repeat still 6/6. The story fits the symptoms and
+is simply not true.
+
+**Two ideas from the same list closed without a board run:**
+
+- The vendor driver issues no SMC at all. `grep -riE 'smccc|arm_smccc|SMC_|sip|optee'`
+  over the whole of `drivers/rknpu` returns one `RKNPU_MEM_SECURE` ioctl flag
+  definition and nothing else. The `arm_smccc` calls are in
+  `pmdomain/rockchip/pm-domains.c`, which both stacks share.
+- `task_pp_en` is already captured and matches. The vendor's real submit records
+  `task_con=0x70008`, i.e. `(0x6|pp) << 16 | 8` with `pp = 1`, and rocket writes
+  `PC_TASK_CON_TASK_PP_EN(1)`. It also cannot vary per task: it comes from
+  `args->flags` and is written into TASK_CON once per submit.
+
+**What is left.** The vendor computes different configurations correctly on this
+silicon and this kernel, so a difference exists. It is not in the NPU register
+writes (both enumerated), not in the regcmd payload (vendor bytes replayed
+through rocket still wall), not in the register state at completion (this entry),
+not in clocks, genpd, IOMMU, cache or resets, and not in the ping-pong controls.
+The candidates that remain are the CBUF SRAM contents, the DPU and RDMA blocks
+that nothing has ever read, and the submit fence timing the dual-image work left
+open at low probability.
+
 ## 2026-08-03 (Tomeu's ping-pong lead: the pointer IS stuck, but the driver cannot move it. Four ways tried, all null.)
 
 Tomeu Vizoso, on the v3 thread: *"This sounds to me as related to the ping-pong
