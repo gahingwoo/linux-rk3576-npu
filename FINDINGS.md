@@ -3,6 +3,89 @@
 
 
 
+## 2026-08-05 (THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
+
+Igor Paunovic asked on the v4 thread whether the regcmd is read at all on the
+submits that fail, and pointed out that everything measured so far is either what
+the driver wrote or what the registers hold at completion, neither of which can
+separate "fetched and ignored" from "never fetched". He was right that this was
+the unexamined half of the path. Four rounds on the board, two of them wasted on
+broken probes.
+
+**Round 4, the two results that stand.**
+
+Probe A, `rocket.scribble=N`: overwrite the first N words of the regcmd buffer in
+place, just before OP_EN. Finds the BO by walking `priv->mm` (the regcmd BO is NOT
+in `job->in_bos`), flushes with `dma_sync_sgtable_for_device` because the NPU is
+not `dma-coherent` here, and logs the first word before and after so a write that
+did not land is visible as such.
+
+| submit | scribbled | result |
+|---|---|---|
+| first of the session | yes | **WRONG** (distinct=1, maxdiff=127) |
+| a repeat of the same config | yes | **byte exact** |
+
+Same BO, same iova, same 64 words, `first 000e1004 -> deadbeef` confirmed both
+times. So a submit that must load does load, and a repeat submit runs from
+resident state without re-reading a thing.
+
+Probe B, `rocket.prefill=0xa5`: fill `job->out_bos` with a marker just before
+OP_EN. teflon copies the output BO out with a `+0x80` applied
+(`rkt_ml_subgraph_read_outputs`), so the marker surfaces in the tensor as **37**
+and cannot be confused with the zero point fill.
+
+| submit | marker survives | result |
+|---|---|---|
+| A, first of the session (control) | **0.0%** | byte exact, maxdiff=1 |
+| B, after A is resident (the wall) | **100.0%** | mean 37.0 |
+
+**So the walled submit does nothing at all.** It does not read its configuration,
+it does not compute, and it never writes its output buffer, which means it does
+not even know where the output goes.
+
+⚠ **RETRACTION.** Every report since June, including the v3 and v4 cover letters
+on lore, described the walled output as the DPU "writing out a zero point
+surface", and read that as the MAC producing nothing. That is wrong. A fresh
+shmem BO is zeroed, `0x00` plus teflon's `+0x80` is 128, and 128 is exactly what
+we called the zero point fill. The buffer was simply never written. Nothing was
+ever measured about the MAC on this path.
+
+Scope: measured for the single-conv A -> B case. The 2026-07-26 entry below, where
+`core[dt_wr]` was nonzero on ~56 of 90 ops, is a different regime (a reset before
+every op) and is not overwritten by this. But the "it computes zero" reading of
+the A -> B wall is retired.
+
+**Probe bugs that cost two board runs. Do not re-tread:**
+
+1. Pointer poison (`rocket.regcmd_probe`): point PC_BASE_ADDRESS at an unmapped
+   iova and wait for an rk_iommu fault. No fault on either the walled or the
+   working submit, and the poisoned job still computed byte exact. The readback
+   added in round 3 explains it: **PC_BASE_ADDRESS reads back 0x00000000 straight
+   after the write**. The poison never reached the register, so the probe was
+   measuring nothing. Worth knowing on its own: that register is write-only or its
+   writes are swallowed.
+2. First scribble attempt searched `job->in_bos`. The regcmd BO is not there; it
+   is referenced only by iova in the task. Walk `priv->mm` instead.
+3. The first wall test compared B's output with and without a corrupted regcmd and
+   got "identical". **Void**: B produces a flat constant surface either way, and
+   two constant buffers always compare identical. The oracle returned the same
+   answer for both of its hypotheses. This is the third time this project has been
+   burned by a metric that cannot fail; ask what it reads for a known-wrong input
+   BEFORE the flash, not after.
+4. `rocket_open()` creates a fresh IOMMU domain and a fresh `drm_mm` per fd, and
+   each `load_delegate()` opens its own fd. So two models' regcmd BOs legitimately
+   sit at the same iova in different address spaces, and a bare address in a log
+   does not identify a buffer. Log `regcmd_count` and the BO size too.
+
+**What this leaves.** The block loads a configuration under some condition, and
+when that condition is not met the submit is a no-op that still looks like a
+completion, because `INTERRUPT_RAW_STATUS` PC_DONE is permanently latched and the
+poll condition is therefore always already true. What that condition is, is the
+open question. The ping-pong lead is retired: it was about which bank the
+configuration lands in, and the configuration is not being read in the first
+place.
+
+
 ## 2026-08-03 (v4 sent: six bugs fixed, none of them the wall. Board-verified before sending.)
 
 `[RFC PATCH v4 0/6]`
