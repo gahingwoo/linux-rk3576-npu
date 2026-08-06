@@ -1,4 +1,4 @@
-# RK3576 NPU (rocket + Mesa Teflon) — conv0 zero-output: complete findings
+# RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
 
@@ -76,7 +76,7 @@ configuration fetch stop happening after the first post-reset submit".
 
 **A partial counter-argument from data already in hand, with a hole in it.** The
 output BO is 409600 bytes = 0x64000, and in both A's and B's `drm_mm` dumps the
-only node of that size is at **0xa5000** — the two address spaces have identical
+only node of that size is at **0xa5000**, so the two address spaces have identical
 layouts because the models are structurally identical and each fd gets a fresh
 allocator. So A's output iova and B's output iova are numerically the same. B's
 domain is attached during B's job, so a write to "A's output address" would land
@@ -126,7 +126,7 @@ whatever else is true. What is NOT established is that the walled submit does
 nothing at all, as opposed to re-running the resident configuration elsewhere.
 The v5 cover letter states the stronger claim; it needs correcting in v6.
 
-## 2026-08-05 (⚠ SEE THE QUALIFIER ABOVE — the headline claim here is unfalsified, not established. THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
+## 2026-08-05 (⚠ SEE THE QUALIFIER ABOVE, the headline claim here is unfalsified, not established. THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
 
 Igor Paunovic asked on the v4 thread whether the regcmd is read at all on the
 submits that fail, and pointed out that everything measured so far is either what
