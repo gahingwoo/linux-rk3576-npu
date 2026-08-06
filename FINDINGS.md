@@ -3,7 +3,78 @@
 
 
 
-## 2026-08-05 (THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
+## 2026-08-06 (⚠ QUALIFIER on the entry below: the no-op reading is UNFALSIFIED, not established. Igor Paunovic named an alternative that fits every measurement, and the probe built to separate them perturbed the system and failed its own control.)
+
+Igor's point, from the v5 thread: marking the failing job's own output BO and
+finding it untouched shows the block did not write THERE. It does not show the
+block wrote nothing. Everything measured is equally consistent with the block
+never having stopped executing the RESIDENT configuration and writing to the
+PREVIOUS task's addresses:
+
+- a repeat submit computes byte exact from a regcmd full of 0xdeadbeef, so it is
+  demonstrably not fetching;
+- the failing job's output is untouched in 100% of the buffer, which is what you
+  would see if the write went to the previous task's addresses;
+- the resident convolution keeps working across the failure;
+- and the one case where corruption does change the result is the first submit
+  after a resume, the one submit that follows patch 5's domain reset cycling.
+
+Under that reading the question is not "why does it not start" but "why does the
+configuration fetch stop happening after the first post-reset submit".
+
+**A partial counter-argument from data already in hand, with a hole in it.** The
+output BO is 409600 bytes = 0x64000, and in both A's and B's `drm_mm` dumps the
+only node of that size is at **0xa5000** — the two address spaces have identical
+layouts because the models are structurally identical and each fd gets a fresh
+allocator. So A's output iova and B's output iova are numerically the same. B's
+domain is attached during B's job, so a write to "A's output address" would land
+in B's output BO, which was measured 100% untouched. ⚠ The hole: rk_iommu has a
+TLB, this tree carries a `flush_iotlb_all` patch precisely because invalidation
+here has been a problem, and a stale entry could still translate 0xa5000 to A's
+physical pages. Not airtight, and it does not remove the need for the direct test.
+
+**The direct test was run and FAILED ITS OWN CONTROL (2026-08-06).** `mark_prev`
+filled A's output BO with 0xa5 and `check_watch` reported the surviving fraction:
+
+| step | result |
+|---|---|
+| 1 invoke A | OK |
+| 3 marker in place | 100% (placed correctly) |
+| 4 invoke B | WRONG, as always |
+| 5 THE QUESTION | 100% |
+| 6 invoke A again | **WRONG**, output is all 37 = the marker |
+| 7 CONTROL | 100% |
+
+A's own re-invoke did not clear its marker, so the check cannot see writes and
+step 5 says nothing. Note step 6: A came back WRONG, and `test_aba` in the SAME
+boot had A -> B -> A' with A' fine. **The probe broke A.**
+
+⚠ **Probe bug, third distinct kind, do not re-tread.** The first was looking in
+the wrong place, the second was a metric that could not fail, this one is
+**perturbing the system under test**. `mark_prev` wrote the BO then did
+`dma_sync_sgtable_for_device(DMA_TO_DEVICE)`, and `check_watch` read it after
+`dma_sync_sgtable_for_cpu(DMA_FROM_DEVICE)` and never returned ownership. That
+inserts an unpaired, direction-inconsistent sync sequence into a buffer whose
+ownership teflon manages through its own prep_bo/fini_bo ioctls, on a device that
+is **not** `dma-coherent` (only the two PCIe nodes are, in rk3576.dtsi). Both
+"the NPU did not write" and "the NPU wrote and the CPU read a stale line" fit the
+result.
+
+**Replacement, not yet run:** do not write anything. Checksum the resident job's
+output BO and watch whether it changes across the walling submit. A(input X) ->
+hash, A(input Y) -> hash must differ (that is the control, and it needs no
+perturbation), A(input X) -> hash, then B -> hash. A change across B means B wrote
+A's buffer. Read-only, ownership returned symmetrically, and A keeps working
+throughout.
+
+**Status of the entry below**: the two scribble results stand (a repeat submit
+does not re-read its regcmd; the first submit after a resume does). The retraction
+of the "zero point surface" reading stands: that buffer is measurably unwritten,
+whatever else is true. What is NOT established is that the walled submit does
+nothing at all, as opposed to re-running the resident configuration elsewhere.
+The v5 cover letter states the stronger claim; it needs correcting in v6.
+
+## 2026-08-05 (⚠ SEE THE QUALIFIER ABOVE — the headline claim here is unfalsified, not established. THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
 
 Igor Paunovic asked on the v4 thread whether the regcmd is read at all on the
 submits that fail, and pointed out that everything measured so far is either what
