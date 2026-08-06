@@ -35,7 +35,7 @@ start() {
 	dmesg -c >/dev/null 2>&1
 	# Silence the per-job CNAREG/cnalive kernel dump; it floods serial and can
 	# wedge the board before the userspace RESULT line prints.
-	echo 0 > /sys/module/rocket/parameters/audit_arm 2>/dev/null
+	{ echo 0 > /sys/module/rocket/parameters/audit_arm; } 2>/dev/null
 
 	# Keep the NPU powered through the test. The post-job autosuspend (pm_runtime_put
 	# _autosuspend) races the userspace maxdiff print: when it wins, the genpd powers
@@ -106,7 +106,7 @@ start() {
 	IDX=/opt/npu-test/sweep_idx
 	i=$(cat "$IDX" 2>/dev/null || echo 0)
 	echo $((i + 1)) > "$IDX"; sync
-	echo 50 > /sys/module/rocket/parameters/readback_delay_ms 2>/dev/null
+	{ echo 50 > /sys/module/rocket/parameters/readback_delay_ms; } 2>/dev/null
 	# V3 + offset=-128 LOCKED (centering confirmed: min=0, mean=127). Now compress the
 	# too-wide spread: sweep shift_add up. Watch maxdiff bottom out AND NPU_sat -> 0
 	# (un-saturate). If maxdiff hits single digits + sat~0 -> BYTE-EXACT, closed.

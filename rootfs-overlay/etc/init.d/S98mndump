@@ -87,8 +87,22 @@ start() {
 			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== done. 5 controls 6. 7 controls 8. In 8, a SURVIVING marker means ====="
-	log "===== the walled submit never wrote anything; a gone marker means it did. ====="
+	log "===== 9) ONE CONFIG, TWO INPUTS: does the second submit compute at all? ====="
+	log "  (round 6 found A with a different input returns a byte identical buffer)"
+	sleep 3
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_once.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+
+	log ""
+	log "===== 10) THE WALL, with the buffer latched this time ====="
+	sleep 3
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_hash.py" "$NPU_DIR/conv2d-cal.tflite" \
+			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
+
+	log ""
+	log "===== done. 9 decides whether every 'byte exact re-run' since June was ====="
+	log "===== a stale buffer. Read it before anything else.                    ====="
 	sync
 }
 

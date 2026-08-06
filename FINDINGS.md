@@ -3,6 +3,58 @@
 
 
 
+## 2026-08-06 (THE WALL IS POSITIONAL AFTER ALL: only the FIRST submit after a reset computes. Every "same op re-runs byte exact" result since June was a stale output buffer. Control passed in both directions.)
+
+One config, two inputs, one latched output BO, checksummed read-only:
+
+| step | result | crc32 |
+|---|---|---|
+| 1 A(input X), first submit of the session | OK, maxdiff 1 | `20a556ae` |
+| 2 A(input Y), no reset in between | WRONG, maxdiff 127 | **`20a556ae`** |
+| 3 A(input Y) again, after idling past the 50 ms autosuspend | OK, maxdiff 1 | **`dda67317`** |
+
+Step 3 moves the checksum, so it demonstrably sees the block's writes. Step 2
+does not move it, with the same configuration and only the input data changed.
+**The second submit does not write the output buffer at all.** A runtime
+suspend and resume restores it.
+
+**So only the first submit after a reset computes, and everything after it is a
+no-op that leaves the output buffer holding whatever was there before.**
+
+⚠ **This retires a whole line of evidence.** Every "re-running the same op is
+byte exact" measurement in this file since June fed the SAME input each time, so
+a stale buffer and a correct recomputation were indistinguishable. They were
+stale. Specifically:
+
+- the 2026-07-26 entry "THE WALL IS NOT POSITIONAL" is **wrong**. It is
+  positional. Its evidence was `test_twice.py` with a fixed input;
+- "A -> B -> A' gives ok / wrong / ok" is fully explained without any
+  configuration story: A computes, B is a no-op so its freshly zeroed buffer
+  reads back as the zero point, A' is a no-op so it returns A's old result;
+- the scribble result "computes byte exact from a regcmd full of 0xdeadbeef" is
+  **wrong**: it does not compute, the buffer is stale. The narrower claim that a
+  repeat submit does not re-read its regcmd survives, since it does not read
+  anything;
+- the 2026-07-25 "one arm per RESET" finding was **right all along**, and the
+  90-ops-with-90-resets run agrees: with a reset before every op, every op is a
+  first-after-reset and every op computes.
+
+**Igor Paunovic's alternative is refuted, from the same run.** With the watched
+BO latched once instead of following each submit, A's buffer is `20a556ae`
+before B's submit and `20a556ae` after it. The walled submit does not write the
+resident job's addresses either. It writes nothing anywhere.
+
+⚠ **Probe bug that made round 6 unreadable**: the stash followed every submit,
+so after B the checksum was of B's own buffer, and the "change" from `20a556ae`
+to `25c7ae02` was just crc32 of 409600 zero bytes, an untouched BO. Latch the
+buffer once. Verified: `python3 -c "import zlib; print(hex(zlib.crc32(b'\0'*409600)))"`.
+
+**What this reframes.** The question is no longer "why does a second
+configuration fail to load". It is "why does the block accept exactly one task
+per reset". That is a much narrower question, it matches the interrupt
+behaviour already recorded here, and it means the mesa side was never the
+problem.
+
 ## 2026-08-06 (⚠ QUALIFIER on the entry below: the no-op reading is UNFALSIFIED, not established. Igor Paunovic named an alternative that fits every measurement, and the probe built to separate them perturbed the system and failed its own control.)
 
 Igor's point, from the v5 thread: marking the failing job's own output BO and
@@ -333,7 +385,7 @@ identical was taken on what was effectively a first load, before we knew the
 failure needs a *second, different* configuration. Re-running that capture
 across an A -> B -> A sequence is the obvious next move and has not been done.
 
-## 2026-07-26 (THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
+## 2026-07-26 (⚠ RETRACTED 2026-08-06, SEE THE TOP ENTRY: it IS positional; the evidence below used a fixed input and was reading a stale buffer. THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
 
 Every experiment on this wall until now varied two things at once. Chained models
 run *different layers*, so "op1 is wrong" could be the position or could be that

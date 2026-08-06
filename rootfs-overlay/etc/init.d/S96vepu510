@@ -1,0 +1,19 @@
+#!/bin/sh
+# Load the VEPU510 H.264 encoder driver.
+#
+# CONFIG_VIDEO_ROCKCHIP_VEPU510 is forced to =m by Kconfig (it depends on
+# CONFIG_VIDEO_DEV, which this kernel builds as a module too), and this
+# rootfs has no mdev/udev coldplug autoload configured -- so unlike the
+# built-in rocket NPU driver, this one needs an explicit modprobe or it
+# never binds to the vepu0/vepu1 device-tree nodes.
+
+start() {
+	modprobe rockchip_vepu510 2>/dev/null
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart) : ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0
