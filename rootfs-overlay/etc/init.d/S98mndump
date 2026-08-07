@@ -1,56 +1,52 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 3. Round 2 killed both of its own hypotheses:
+# 2026-08-08 round 4. CNA 0x1080 is the PADDING register, and mesa hardcoded it.
 #
-#   cal_ozp0   conv2d-cal with out_zp forced to 0   -> 3/3 OK   (zero point is not it)
-#   cal_izp0   conv2d-cal with in_zp forced to 0    -> 3/3 OK
-#   mn_pw24    one task, zp 0                       -> 0/3 FAIL (task split is not it)
-#   md003      16 in / 16 out channels, like cal    -> 0/3 FAIL (channel count is not it)
+# Round 3's diff of conv2d-cal (computes) against cal_s1 (same model, stride the
+# only change, does not compute) came out at 14 entries, ten of them plain
+# geometry. 0x1080 was not: mesa emits a captured 0x02020101 for any stride-2
+# conv and plain 0 for a stride-1 one.
 #
-# What the table says now is blunter than any of those: conv2d-cal is the ONLY
-# convolution geometry this driver has ever computed correctly, and it is the
-# only one that is 5x5 STRIDE 2. Every failure is stride 1 except mn_conv0,
-# which takes the separate first-conv path on 3 input channels.
+# Compiling vendor .rknn files at chosen geometries on the host and reading the
+# register back pins the encoding, with a direct test at k=5 stride 1 on 80x80:
 #
-# Two things run here, so the round is useful either way.
+#   ONNX pad 0 -> 0x00000000   pad 1 -> 0x01010101   pad 2 -> 0x02020202
 #
-# PROBE. Change only the stride. SAME padding makes the output ceil(in/stride),
-# which mutate_stride.py resizes; weights, scales and zero points do not move.
-#   cal_s1     conv2d-cal 5x5 stride 2 -> 1.  Stride predicts FAIL
-#   md003_s2   md003 1x1 stride 1 -> 2.       Stride predicts PASS
-# Both must flip, or stride joins the list of refuted single variables.
+# and the asymmetric pair says which half is which: before 1 / after 2 gives
+# 0x02020101, before 2 / after 1 gives 0x01010202. The vendor's tiled depthwise
+# gives 0x01000101 on the first row window and 0x01010100 on the last, which is
+# the top pad only at the top and the bottom pad only at the bottom.
 #
-# EVIDENCE. Dump and decode the regcmd mesa emits for the passing conv2d-cal and
-# for cal_s1, which differ in one variable. That is a readable diff whatever the
-# verdict, and it is the input to the vendor comparison on the host: the method
-# that broke the TASK_CON wall was diffing an ordered register trace against the
-# vendor's, not guessing which knob mattered.
+#   0x1080 = (pad_right << 24) | (pad_bottom << 16) | (pad_left << 8) | pad_top
+#
+# mesa's stride-2 constant 0x02020101 IS tflite SAME padding for a 5x5 stride-2
+# conv. That is conv2d-cal's own padding, taken from the capture it was fitted
+# to, which is why conv2d-cal is the only geometry that has ever computed here:
+# a stride-1 conv got no padding at all and every other stride-2 conv got 5x5's.
+#
+# rkt_split_tasks already computes pad_top/bottom/left/right per task, windowing
+# included; the RK3576 path just never read them. It does now.
+#
+# ROCKET_PAD_LADDER=1 restores the old constants, so every claim below has its
+# own A/B in one boot.
+#
+# ⚠ conv2d-cal's derived value is 0x02020101, identical to the constant, so step
+# 1 passing is a self-check that the change is a no-op where it was already
+# right. Steps 6 and 7 are k=1 convs whose padding is 0 either way; they are
+# expected to STAY broken, because their failure is a different bug (0x1018 and
+# 0x1040, which the vendor keys off the CBUF fit and mesa keys off the stride).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-# $1 model, $2 runs, $3 unique marker (two steps running the same model would
-# otherwise share a marker and the dmesg slice would replay the first one, which
-# is what made step 8 print step 1's task_count last round)
+# $1 model, $2 runs, $3 marker, $4.. extra env
 run() {
-	echo "SMARK-$3" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$1" "${2:-3}" > "$C" 2>&1
-	dmesg | sed -n "/SMARK-$3/,\$p" | grep -a "job: task_count=" | head -3 > "$C" 2>&1
-}
-
-# Emit the regcmd mesa built for one model, decoded.
-regcmd() {
-	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$1" > /dev/null 2>&1
-	for f in /tmp/rc/mesa-regcmd-*.bin; do
-		[ -f "$f" ] || continue
-		log "--- $1 $(basename "$f") ---"
-		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
-	done
-	cd / || return 0
+	m="$1"; n="$2"; mark="$3"; shift 3
+	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
+	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
 }
 
 start() {
@@ -63,42 +59,56 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
 	log ""
-	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)" \
-	    "job_log=$(cat /sys/module/rocket/parameters/job_log 2>/dev/null)"
+	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal, 5x5 stride 2, the one that computes ====="
-	run conv2d-cal.tflite 3 cal-first
+	log "===== 1) CONTROL: conv2d-cal, derived padding ====="
+	log "  derived == 0x02020101 == the old constant, so this must stay 3/3"
+	run conv2d-cal.tflite 3 cal-derived
 
 	log ""
-	log "===== 2) cal_s1: conv2d-cal with ONLY the stride 2->1 ====="
-	log "  stride hypothesis says FAIL. Everything else about it is unchanged."
+	log "===== 2) THE TEST: cal_s1, derived padding (0x02020202, was 0) ====="
+	log "  it computed nothing in round 3 with no padding at all"
 	sleep 2
-	run cal_s1.tflite 3 cal-s1
+	run cal_s1.tflite 3 s1-derived
 
 	log ""
-	log "===== 3) md003_s2: md003 with ONLY the stride 1->2 ====="
-	log "  stride hypothesis says PASS. It failed at stride 1 last round."
+	log "===== 3) A/B: the SAME cal_s1 with the old hardcoded ladder ====="
+	log "  must reproduce round 3's failure, or 2 proves nothing"
 	sleep 2
-	run md003_s2.tflite 3 md003-s2
+	run cal_s1.tflite 3 s1-ladder ROCKET_PAD_LADDER=1
 
 	log ""
-	log "===== 4) REPEAT CONTROL: conv2d-cal again ====="
+	log "===== 4) mn_conv0: MobileNet first conv, derived 0x01010000 ====="
+	log "  it was getting 5x5's padding on a 3x3 stride-2 conv"
+	sleep 2
+	run mn_conv0.tflite 3 conv0-derived
+
+	log ""
+	log "===== 5) mn_dw1: MobileNet depthwise 3x3, derived padding ====="
+	sleep 2
+	run mn_dw1.tflite 3 dw1-derived
+
+	log ""
+	log "===== 6) mn_pw2: 1x1, padding is 0 either way ====="
+	log "  EXPECTED STILL BROKEN. A pass here would mean I read this wrong."
+	sleep 2
+	run mn_pw2.tflite 3 pw2-derived
+
+	log ""
+	log "===== 7) md003: 1x1, padding is 0 either way ====="
+	sleep 2
+	run md003.tflite 3 md003-derived
+
+	log ""
+	log "===== 8) REPEAT CONTROL: conv2d-cal again ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 5) REGCMD: what mesa emits for the pass and for cal_s1 ====="
-	log "  one variable apart, so this diff is readable whatever 2 says"
-	sleep 2
-	regcmd conv2d-cal.tflite
-	log ""
-	regcmd cal_s1.tflite
-
-	log ""
-	log "===== 2 and 3 must BOTH flip for stride to be the answer. If they   ====="
-	log "===== do not, stride is refuted too and the regcmd in 5 is where    ====="
-	log "===== the next step comes from.                                     ====="
+	log "===== 2 against 3 is the whole round. If cal_s1 computes with the  ====="
+	log "===== derived padding and fails with the ladder, 0x1080 is settled ====="
+	log "===== and 6 and 7 are the next bug, not this one.                  ====="
 	sync
 }
 

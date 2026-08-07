@@ -3,6 +3,64 @@
 
 
 
+## 2026-08-08 round 3 (⚠ SOLVED: CNA 0x1080 is the PADDING register and mesa hardcoded it. That is why exactly one geometry has ever computed.)
+
+Stride was refuted as a single variable (`cal_s1` failed as predicted, but
+`md003_s2` failed too). The regcmd diff it produced is what mattered.
+
+`conv2d-cal` against `cal_s1`, one model change, **14 differing entries of 143**.
+Ten are plain geometry (0x27 = 40 - 1, 0x4f = 80 - 1, 0x640 = 1600, 0x1900 =
+6400). Four are not, and in `rkt_regcmd.c` all four are `s == 2 ? A : B` with
+constants fitted to the captures this project happens to own:
+
+| reg | conv2d-cal, computes | cal_s1, does not |
+|---|---|---|
+| CNA 0x1014 | `00000012` | `00000009` |
+| CNA 0x1018 | `40000404` | `40000505` |
+| CNA 0x1040 | `10000000` | `14000000` |
+| **CNA 0x1080** | **`02020101`** | **`00000000`** |
+
+**Host-side vendor data settles it.** The toolkit compiles .rknn on this machine
+from ONNX, so vendor register values are available at any geometry without a
+board (`vendor-capture/gen_geom.py`, `ladder.py`, both new). Direct test, k=5
+stride 1 on 80x80, varying only the ONNX pad:
+
+| pads | vendor 0x1080 |
+|---|---|
+| 0 | `00000000` |
+| 1 | `01010101` |
+| 2 | `02020202` |
+
+and the asymmetric pair says which half is which: `conv2d.onnx` (before 1, after
+2) gives `02020101`, the same geometry with symmetric pad 2 (before 2, after 1)
+gives `01010202`. The vendor's tiled depthwise gives `01000101` on the first row
+window and `01010100` on the last, which is the top pad only at the top and the
+bottom pad only at the bottom.
+
+```
+0x1080 = (pad_right << 24) | (pad_bottom << 16) | (pad_left << 8) | pad_top
+```
+
+**`0x02020101` is tflite SAME padding for a 5x5 stride-2 conv.** It is
+conv2d-cal's own padding, lifted from the capture the branch was fitted to. So
+a stride-1 conv was configured with no padding at all, and every other stride-2
+conv was configured with 5x5's. **That is the explanation for the whole table:
+one geometry computes because one geometry's padding is compiled in.**
+
+The fix needs no new arithmetic: `rkt_split_tasks` already computes
+`pad_top/bottom/left/right` per task, windowing included, and the RK3576 path
+simply never read them. It does now. `ROCKET_PAD_LADDER=1` restores the old
+constants, so the round carries its own A/B.
+
+⚠ conv2d-cal's derived value is `0x02020101`, identical to the constant, so the
+control is also a check that the change is a no-op where it was already right.
+
+⚠ **This does not fix the 1x1 convs.** Their padding is 0 either way, so
+`mn_pw2`, `mn_pw24` and `md003` should stay broken. Their bug is 0x1018 and
+0x1040, which a width sweep shows the vendor keys off whether the input fits the
+CBUF (`0404`/`10000000` up to 112x112x16, `0505`/`14000000` at 160x160 where the
+op tiles) while mesa keys them off the stride. That is the next thread.
+
 ## 2026-08-08 round 2 (Both hypotheses refuted by their own probes. ⚠ The headline is simpler and worse: conv2d-cal is the ONLY convolution geometry this driver has ever computed correctly.)
 
 Controls held at both ends of the round, 3/3 first and 2/2 last.
