@@ -1,46 +1,41 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 4. CNA 0x1080 is the PADDING register, and mesa hardcoded it.
+# 2026-08-08 round 5. The padding fix is confirmed and the set of geometries
+# that compute went from one to two:
 #
-# Round 3's diff of conv2d-cal (computes) against cal_s1 (same model, stride the
-# only change, does not compute) came out at 14 entries, ten of them plain
-# geometry. 0x1080 was not: mesa emits a captured 0x02020101 for any stride-2
-# conv and plain 0 for a stride-1 one.
+#   cal_s1, derived padding 0x02020202   3/3 OK, relu maxdiff 1, top1 exact
+#   cal_s1, ROCKET_PAD_LADDER=1 (old 0)  0/3 FAIL, round 3's numbers exactly
 #
-# Compiling vendor .rknn files at chosen geometries on the host and reading the
-# register back pins the encoding, with a direct test at k=5 stride 1 on 80x80:
+# Same boot, same model, same inputs, one register apart.
 #
-#   ONNX pad 0 -> 0x00000000   pad 1 -> 0x01010101   pad 2 -> 0x02020202
+# What is left splits three ways, and this round takes the first two.
 #
-# and the asymmetric pair says which half is which: before 1 / after 2 gives
-# 0x02020101, before 2 / after 1 gives 0x01010202. The vendor's tiled depthwise
-# gives 0x01000101 on the first row window and 0x01010100 on the last, which is
-# the top pad only at the top and the bottom pad only at the bottom.
+# 1x1 CONVS. mn_pw2, md003 and mn_pw24 have padding 0 either way and stayed
+# broken, as predicted. Both working geometries are 5x5, 16 in / 128 out, 80x80,
+# one task, so every failure still differs in several ways at once. md003_80 is
+# md003 resized to 80x80 (mutate_hw.py; a 1x1 kernel is valid at any size),
+# which drops the row-window split and leaves the kernel as nearly the only
+# difference from a model that computes.
 #
-#   0x1080 = (pad_right << 24) | (pad_bottom << 16) | (pad_left << 8) | pad_top
+# 0x1018 / 0x1040. The vendor does not key these off the stride. A width and
+# channel sweep flips both exactly where the op stops fitting one row window:
+# 16 channels at 128x128 reads 0x40000404 / 0x10000000, 144x144 splits and reads
+# 0x40000505 / 0x14000000, and holding 80x80 while raising input channels flips
+# at the same place. ROCKET_CBUF_DERIVE=1 keys them off mesa's own split instead.
 #
-# mesa's stride-2 constant 0x02020101 IS tflite SAME padding for a 5x5 stride-2
-# conv. That is conv2d-cal's own padding, taken from the capture it was fitted
-# to, which is why conv2d-cal is the only geometry that has ever computed here:
-# a stride-1 conv got no padding at all and every other stride-2 conv got 5x5's.
+# ⚠ That knob is NOT expected to fix anything on its own: cal_s1 computes with
+# the stride-keyed value where the vendor would use the other, so these two
+# tolerate being wrong at least there. It is here to be A/B'd, and mn_pw24 is
+# the case where the stride and the split disagree.
 #
-# rkt_split_tasks already computes pad_top/bottom/left/right per task, windowing
-# included; the RK3576 path just never read them. It does now.
-#
-# ROCKET_PAD_LADDER=1 restores the old constants, so every claim below has its
-# own A/B in one boot.
-#
-# ⚠ conv2d-cal's derived value is 0x02020101, identical to the constant, so step
-# 1 passing is a self-check that the change is a no-op where it was already
-# right. Steps 6 and 7 are k=1 convs whose padding is 0 either way; they are
-# expected to STAY broken, because their failure is a different bug (0x1018 and
-# 0x1040, which the vendor keys off the CBUF fit and mesa keys off the stride).
+# The third thread, mn_conv0, is not in this round: 3 input channels take
+# fill_regcmd_firstconv, a different function that the padding change never
+# touched. Its round 4 failure is unexplained by anything here.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-# $1 model, $2 runs, $3 marker, $4.. extra env
 run() {
 	m="$1"; n="$2"; mark="$3"; shift 3
 	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
@@ -62,53 +57,52 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal, derived padding ====="
-	log "  derived == 0x02020101 == the old constant, so this must stay 3/3"
-	run conv2d-cal.tflite 3 cal-derived
+	log "===== 1) CONTROL: conv2d-cal ====="
+	run conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) THE TEST: cal_s1, derived padding (0x02020202, was 0) ====="
-	log "  it computed nothing in round 3 with no padding at all"
+	log "===== 2) CONTROL: cal_s1, the geometry the padding fix won ====="
+	log "  must still be 3/3, or the round 4 result did not survive"
 	sleep 2
-	run cal_s1.tflite 3 s1-derived
+	run cal_s1.tflite 3 s1-keep
 
 	log ""
-	log "===== 3) A/B: the SAME cal_s1 with the old hardcoded ladder ====="
-	log "  must reproduce round 3's failure, or 2 proves nothing"
+	log "===== 3) md003_80: 1x1 conv at 80x80, ONE row window ====="
+	log "  md003 without the split. Nearly only the kernel differs from 2."
 	sleep 2
-	run cal_s1.tflite 3 s1-ladder ROCKET_PAD_LADDER=1
+	run md003_80.tflite 3 md003-80
 
 	log ""
-	log "===== 4) mn_conv0: MobileNet first conv, derived 0x01010000 ====="
-	log "  it was getting 5x5's padding on a 3x3 stride-2 conv"
+	log "===== 4) md003 at 160x160 for reference, still split ====="
 	sleep 2
-	run mn_conv0.tflite 3 conv0-derived
+	run md003.tflite 3 md003-160
 
 	log ""
-	log "===== 5) mn_dw1: MobileNet depthwise 3x3, derived padding ====="
+	log "===== 5) mn_pw24, stride-keyed 0x1018/0x1040 (today's default) ====="
 	sleep 2
-	run mn_dw1.tflite 3 dw1-derived
+	run mn_pw24.tflite 3 pw24-stride
 
 	log ""
-	log "===== 6) mn_pw2: 1x1, padding is 0 either way ====="
-	log "  EXPECTED STILL BROKEN. A pass here would mean I read this wrong."
+	log "===== 6) mn_pw24, ROCKET_CBUF_DERIVE=1, keyed off the split ====="
+	log "  the case where stride and split disagree. A/B against 5."
 	sleep 2
-	run mn_pw2.tflite 3 pw2-derived
+	run mn_pw24.tflite 3 pw24-derive ROCKET_CBUF_DERIVE=1
 
 	log ""
-	log "===== 7) md003: 1x1, padding is 0 either way ====="
+	log "===== 7) cal_s1 with ROCKET_CBUF_DERIVE=1 ====="
+	log "  the vendor value for it. Must NOT regress, it passes without it."
 	sleep 2
-	run md003.tflite 3 md003-derived
+	run cal_s1.tflite 2 s1-derive ROCKET_CBUF_DERIVE=1
 
 	log ""
-	log "===== 8) REPEAT CONTROL: conv2d-cal again ====="
+	log "===== 8) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 2 against 3 is the whole round. If cal_s1 computes with the  ====="
-	log "===== derived padding and fails with the ladder, 0x1080 is settled ====="
-	log "===== and 6 and 7 are the next bug, not this one.                  ====="
+	log "===== 3 is the one that matters: a 1x1 conv, one window, at the    ====="
+	log "===== size that works for 5x5. If it fails, the kernel is next.    ====="
+	log "===== 5 vs 6 says whether 0x1018/0x1040 are load bearing at all.   ====="
 	sync
 }
 

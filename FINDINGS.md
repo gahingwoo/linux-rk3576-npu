@@ -3,6 +3,54 @@
 
 
 
+## 2026-08-08 round 4 (CONFIRMED with an A/B in one boot: the padding fix makes a second geometry compute. Two now work, up from one.)
+
+| step | 0x1080 | result |
+|---|---|---|
+| `conv2d-cal`, derived (identical to the old constant) | `02020101` | 3/3 OK |
+| **`cal_s1`, derived** | **`02020202`** | **3/3 OK, relu maxdiff 1, top1 exact** |
+| **`cal_s1`, `ROCKET_PAD_LADDER=1`** | **`00000000`** | **0/3 FAIL, round 3's numbers exactly** |
+| `conv2d-cal` again | | 2/2 OK |
+
+Same boot, same model, same input generator, one register apart. `cal_s1` had
+never computed before. The control passing on both sides of the round and the
+old value reproducing the old failure is what makes it a result rather than a
+coincidence.
+
+**Predictions that held**: the 1x1 convs `mn_pw2` and `md003` have padding 0
+either way and stayed broken, exactly as stated before the run.
+
+**A prediction that did not**: `mn_conv0` was listed as fixed by the derived
+`0x01010000` and it still fails. 3 input channels take `fill_regcmd_firstconv`,
+a different function that this change never touched, and it emits no `OUT_CVT`
+line in the log for the same reason. Its failure is unexplained by anything
+here.
+
+**What is left, now that it splits cleanly:**
+
+| thread | models | state |
+|---|---|---|
+| 1x1 kernel | `mn_pw2`, `md003`, `mn_pw24` | padding is 0 for them, so this is a different bug |
+| row-window split | `mn_dw1`, `mn_pw2`, `md003` (task_count 2) | both working geometries are single-window |
+| first-conv path | `mn_conv0` | separate function, untouched |
+
+**0x1018 and 0x1040 are keyed off the stride and the vendor does not key them
+off the stride.** A width and channel sweep flips both exactly where the op
+stops fitting one row window: 16 channels at 128x128 is one window and reads
+`40000404` / `10000000`, 144x144 splits and reads `40000505` / `14000000`, and
+holding 80x80 while raising input channels flips at the same place (32 fits, 48
+splits).
+
+⚠ **But they tolerate being wrong.** `cal_s1` computes correctly with the
+stride-keyed value where the vendor would use the other one. So this is a knob
+to A/B (`ROCKET_CBUF_DERIVE=1`), not a fix to ship, and the honest expectation
+is that it changes nothing.
+
+Round 5 probes the 1x1 thread with `md003_80`, which is `md003` resized to 80x80
+(`mutate_hw.py`, new; a 1x1 kernel is valid at any spatial size). That drops the
+row-window split and leaves the kernel as nearly the only difference from a
+model that computes, so it separates the first two threads from each other.
+
 ## 2026-08-08 round 3 (⚠ SOLVED: CNA 0x1080 is the PADDING register and mesa hardcoded it. That is why exactly one geometry has ever computed.)
 
 Stride was refuted as a single variable (`cal_s1` failed as predicted, but
