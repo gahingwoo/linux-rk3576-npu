@@ -1,32 +1,48 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-07, after the TASK_CON fix. Is the depthwise datapath broken, or was
-# the probe in the wrong quantization regime?
+# 2026-08-08 round 2. The previous round refuted its own hypothesis and left a
+# much sharper table:
 #
-# dwconv.tflite was built in June to isolate the depthwise, and its own comment
-# says it uses "conv2d-cal's PROVEN regime", uint8 per-tensor. Reading the
-# flatbuffer says otherwise: it is THREE ops (QUANTIZE, DEPTHWISE_CONV_2D,
-# QUANTIZE) and the depthwise runs on int8 tensors with PER-AXIS weights and
-# bias. conv2x.tflite is the same, and its two ops are plain convs, not
-# depthwise. mobilenet_v1_1.0_224_quant.tflite, the model we actually want, is
-# uint8 per-tensor everywhere with not one per-axis tensor.
+#   model        ic  oc  in HxW   in_zp out_zp  tasks  result
+#   conv2d-cal   16 128   80x80    128    128     1    OK
+#   mn_pw2       32  64  112x112     0      0     2    FAIL, follows the input
+#   mn_conv0      3  32  224x224   128      0     ?    FAIL, follows the input
+#   mn_dw1       32  32  112x112     0      0     2    FAIL, constant
 #
-# So both small failing models test a regime nothing has verified, and mesa
-# handles per-axis weights by an approximation it documents in its own comment.
-# The mn_* models here are single layers cut straight out of MobileNet with
-# slice_tflite.py: real weights, real scales, uint8 per-tensor, no converter in
-# the loop. mn_dw1 is what dwconv.tflite was supposed to be.
+# So it is not int8, not per-axis, not depthwise and not chaining: a plain 1x1
+# uint8 per-tensor conv fails in one job. Two variables survive, and every
+# failing model changes BOTH at once:
 #
-# job_log=1 matters: a delegate that REFUSES an op runs it on the CPU and the
-# result comes back correct while the NPU did nothing. jobs=0 in a run line
-# means the answer below is about tflite, not about this driver.
+#   A) output zero point 0, where the only passing model has 128
+#   B) the job splits into 2 tasks, where the only passing model has 1
+#      (2 OUT_CVT lines and 2 regcmd dumps for the mn_* models, 1 for
+#      conv2d-cal, even though test_model.py counts jobs=1 for both)
+#
+# This round separates them. The mutated models change ONLY a zero point and
+# leave geometry, weights and scales alone, so they keep their task count; the
+# small MobileNet layers keep zero point 0 and drop the task count.
+#
+#   cal_ozp0   conv2d-cal, out_zp 128 -> 0.   A predicts FAIL, B predicts pass
+#   cal_izp0   conv2d-cal, in_zp 128 -> 0.    isolates the input zero point
+#   pw2_zp128  mn_pw2, both zp 0 -> 128.      A predicts PASS, B predicts fail
+#   mn_pw24    MobileNet op24, 7x7, zp 0.     B predicts PASS, A predicts fail
+#   mn_dw25    MobileNet op25 depthwise, 7x7
+#   md003      in_zp 0 but out_zp 127, already in the image
+#
+# A and B make OPPOSITE predictions on all four, so the round decides.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
+
+# Print the driver's own task_count for the job this model submitted. jobs= in
+# the run line counts SUBMITS; a job that splits into several tasks still
+# counts as one, and the split is the thing under test here.
 run() {
+	echo "SMARK-$1" > /dev/kmsg 2>/dev/null
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$1" "${2:-3}" > "$C" 2>&1
+	dmesg | sed -n "/SMARK-$1/,\$p" | grep -a "job: task_count=" | head -3 > "$C" 2>&1
 }
 
 start() {
@@ -43,59 +59,54 @@ start() {
 	    "job_log=$(cat /sys/module/rocket/parameters/job_log 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal, the model that is known correct ====="
-	log "  (anything below is meaningless unless this is 3/3)"
+	log "===== 1) CONTROL: conv2d-cal, the one configuration known correct ====="
+	log "  (must be 3/3 with task_count=1, or nothing below counts)"
 	run conv2d-cal.tflite 3
 
 	log ""
-	log "===== 2) CONTROL: mn_pw2, MobileNet 1x1 pointwise 32->64, uint8 ====="
-	log "  (a second regular conv, real MobileNet scales, different shape)"
+	log "===== 2) cal_ozp0: conv2d-cal with ONLY the output zero point 128->0 ====="
+	log "  A says FAIL, B says pass"
 	sleep 2
-	run mn_pw2.tflite 3
+	run cal_ozp0.tflite 3
 
 	log ""
-	log "===== 3) CONTROL: mn_conv0, MobileNet first conv 3x3 s2, 3 channels ====="
+	log "===== 3) cal_izp0: conv2d-cal with ONLY the input zero point 128->0 ====="
 	sleep 2
-	run mn_conv0.tflite 3
+	run cal_izp0.tflite 3
 
 	log ""
-	log "===== 4) TEST: mn_dw1, MobileNet depthwise, uint8 PER-TENSOR ====="
-	log "  (what dwconv.tflite was meant to be. Correct here means the"
-	log "   depthwise datapath is fine and the June result was the regime.)"
+	log "===== 4) pw2_zp128: mn_pw2 with both zero points 0->128 ====="
+	log "  A says PASS, B says fail. Same geometry that failed last round."
 	sleep 2
-	run mn_dw1.tflite 3
+	run pw2_zp128.tflite 3
 
 	log ""
-	log "===== 5) TEST: mn_conv0dw1, two chained ops, both uint8 per-tensor ====="
-	log "  (chaining without the per-axis confound conv2x.tflite carries)"
+	log "===== 5) mn_pw24: MobileNet op24, 1x1 conv on 7x7x512, zp 0 ====="
+	log "  small enough to be one task. B says PASS, A says fail."
 	sleep 2
-	run mn_conv0dw1.tflite 3
+	run mn_pw24.tflite 3
 
 	log ""
-	log "===== 6) CONTINUITY: dwconv.tflite, the int8 PER-AXIS model ====="
-	log "  (expected still wrong. If 4 passes and this fails, the regime is"
-	log "   the dividing line, not the depthwise.)"
+	log "===== 6) mn_dw25: MobileNet op25, depthwise on 7x7x1024, zp 0 ====="
 	sleep 2
-	run dwconv.tflite 3
-
-	# Where do the written bytes land? Under the wall the depthwise wrote ONE
-	# 256 byte run at offset 0 out of 51200 and stopped. Same question in the
-	# per-tensor regime, with the input BO as where.py's own passing control.
-	log ""
-	log "===== 7) SHAPE: which bytes of mn_dw1's output actually get written ====="
-	sleep 2
-	rm -rf /tmp/dump; mkdir -p /tmp/dump; cd /tmp/dump || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/mn_dw1.tflite" > "$C" 2>&1
-	log "  files: $(ls /tmp/dump 2>/dev/null | tr '\n' ' ')"
-	for f in /tmp/dump/mesa-input-*.bin /tmp/dump/mesa-output-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/where.py" "$f" > "$C" 2>&1
-	done
+	run mn_dw25.tflite 3
 
 	log ""
-	log "===== read 1 first. Then: does 4 pass? If yes the depthwise works  ====="
-	log "===== and the open bug is per-axis requant. If no, and 2 and 3     ====="
-	log "===== pass, the depthwise datapath is broken for real.             ====="
+	log "===== 7) md003: 1x1 conv, in_zp 0 but out_zp 127 ====="
+	log "  the mixed case. A says pass, since 127 is not 0."
+	sleep 2
+	run md003.tflite 3
+
+	log ""
+	log "===== 8) REPEAT CONTROL: conv2d-cal again, last ====="
+	log "  (proves the box did not degrade over the round)"
+	sleep 2
+	run conv2d-cal.tflite 2
+
+	log ""
+	log "===== read 1 and 8 first. Then 2 vs 4: if cal_ozp0 fails and       ====="
+	log "===== pw2_zp128 passes it is the OUTPUT ZERO POINT. If instead     ====="
+	log "===== mn_pw24 passes and pw2_zp128 fails it is the TASK SPLIT.     ====="
 	sync
 }
 

@@ -3,7 +3,66 @@
 
 
 
-## 2026-08-08 (⚠ The two small failing models are in a quantization regime the working one never touches. Read this before any more depthwise work.)
+## 2026-08-08 board round (⚠ My own regime hypothesis is REFUTED, and what replaces it is much narrower: a plain 1x1 uint8 conv fails in one job.)
+
+Control passed, hypothesis died, and the table got sharper.
+
+| model | ic | oc | in HxW | in_zp | out_zp | tasks | result |
+|---|---|---|---|---|---|---|---|
+| `conv2d-cal` | 16 | 128 | 80x80 | **128** | **128** | **1** | **3/3 OK** |
+| `mn_pw2` 1x1 | 32 | 64 | 112x112 | 0 | 0 | 2 | 0/3, output follows the input |
+| `mn_conv0` 3x3 s2 | 3 | 32 | 224x224 | **128** | 0 | ? | 0/3, output follows the input |
+| `mn_dw1` depthwise | 32 | 32 | 112x112 | 0 | 0 | 2 | 0/3, constant |
+| `mn_conv0dw1` | | | | | | 2 jobs | 0/3 |
+| `dwconv` int8 per-axis | 16 | 16 | 40x40 | -1 | -29 | 1 | 0/3 |
+
+**`mn_pw2` and `mn_conv0` are uint8 per-tensor plain convs and they fail**, so
+the int8/per-axis story from earlier today is not the explanation. It stands as
+a reason those two models were bad probes, and nothing more.
+
+What the round bought instead: **the minimal failing case is now a 1x1
+convolution, uint8 per-tensor, one job.** No depthwise, no chaining, no padding,
+no per-axis. And `mn_pw2`/`mn_conv0` produce output that changes with the input,
+so the block computes; it computes wrongly.
+
+It also corrects the "one 256-byte atom" shape. `mn_dw1`'s output BO is 802816
+bytes and `where.py` finds **one run of 401408 from offset 0**, exactly the
+tensor size, fully written. The surface is complete and constant, not truncated.
+The 256-of-51200 reading belongs to `dwconv` alone.
+
+**Two variables survive, and every failing model changes both at once:**
+
+- **A, the output zero point is 0** where the only passing model has 128.
+  MobileNet quantizes every activation at zp 0. Mesa carries
+  `unsigned offset = output_zero_point - 0x80` in `rkt_regcmd.c:715`, which for
+  zp 0 is `0xffffff80` rather than -128, and `input_zero_point == 0x0` already
+  has a special case at line 948.
+- **B, the job splits into 2 tasks.** `conv2d-cal` emits one `OUT_CVT` line and
+  one regcmd; `mn_pw2`, `mn_dw1` and `mn_conv0dw1` each emit two. `jobs=1` in
+  the run lines counts submits, not tasks, so this was invisible until the
+  regcmd dump showed `mesa-regcmd-000-000.bin` and `-001.bin`.
+
+Round 2 separates them, because A and B make opposite predictions on all four
+new probes. `mutate_zp.py` (new) rewrites activation zero points and leaves
+geometry, weights and scales alone, so the task count is preserved; the small
+MobileNet layers keep zp 0 and drop the task count:
+
+| probe | A predicts | B predicts |
+|---|---|---|
+| `cal_ozp0`, conv2d-cal with out_zp 128->0 | FAIL | pass |
+| `pw2_zp128`, mn_pw2 with both zp 0->128 | PASS | fail |
+| `mn_pw24`, MobileNet op24 1x1 on 7x7x512, zp 0 | fail | PASS |
+| `md003`, in_zp 0 but out_zp 127 | pass | - |
+
+The CPU reference is recomputed from the same mutated file, so each probe asks
+"does this configuration compute", not "does it match the original model".
+
+⚠ `STALE` on `mn_dw1` and `mn_dw25` is not the wall coming back: their output is
+a constant, so identical bytes across different inputs is what a constant looks
+like. `mn_pw2` and `mn_conv0` are not stale.
+
+
+## 2026-08-08 (The two small failing models are in a quantization regime the working one never touches. Correct as far as it goes, but see the board round above: it is not why they fail.)
 
 No board run. Reading the model files and the Mesa source.
 
