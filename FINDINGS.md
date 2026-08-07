@@ -3,7 +3,57 @@
 
 
 
-## 2026-08-08 board round (⚠ My own regime hypothesis is REFUTED, and what replaces it is much narrower: a plain 1x1 uint8 conv fails in one job.)
+## 2026-08-08 round 2 (Both hypotheses refuted by their own probes. ⚠ The headline is simpler and worse: conv2d-cal is the ONLY convolution geometry this driver has ever computed correctly.)
+
+Controls held at both ends of the round, 3/3 first and 2/2 last.
+
+| probe | what it changed | task_count | result |
+|---|---|---|---|
+| `conv2d-cal` control | - | 1 | 3/3 OK |
+| `cal_ozp0` | out_zp 128 -> **0** | 1 | **3/3 OK**, raw maxdiff 1 |
+| `cal_izp0` | in_zp 128 -> **0** | 1 | **3/3 OK** |
+| `pw2_zp128` | mn_pw2, both zp -> 128 | 2 | 0/3 |
+| `mn_pw24` | MobileNet op24, 1x1 on 7x7x512 | **1** | 0/3 |
+| `mn_dw25` | MobileNet op25 depthwise, 7x7 | **1** | 0/3 |
+| `md003` | 1x1, **16 in / 16 out ch**, out_zp 127 | 2 | 0/3 |
+| `conv2d-cal` again | - | 1 | 2/2 OK |
+
+**A is dead**: conv2d-cal computes with its output zero point forced to 0, and
+with its input zero point forced to 0. **B is dead**: `mn_pw24` and `mn_dw25`
+each submit a single task and still fail. `md003` kills the channel-count idea
+too, being 16 in and 16 out like the model that works.
+
+So four single variables are now refuted with their own controls: quantization
+regime, zero point, task split, channel count.
+
+**What the table actually says.** Only `conv2d-cal` and its twin `conv2d.tflite`
+have ever been correct, and they are the same geometry: 80x80x16 in, 5x5 kernel,
+**stride 2**, 128 output channels, one task. Every failing model is **stride 1**,
+except `mn_conv0`, which takes the separate first-conv path on 3 input channels.
+"Regular conv works" was always a claim about one configuration.
+
+Round 3 tests stride the same way, by changing only that (`mutate_stride.py`,
+new; SAME padding makes the output ceil(in/stride), which it resizes):
+
+| probe | stride predicts |
+|---|---|
+| `cal_s1`, conv2d-cal 5x5 stride 2 -> 1 | FAIL |
+| `md003_s2`, md003 1x1 stride 1 -> 2 | PASS |
+
+Both must flip. It also dumps and decodes the regcmd mesa emits for
+`conv2d-cal` and for `cal_s1`, which are one variable apart, so the round
+produces a readable register diff whatever the verdict. That is the input to the
+vendor comparison: the wall was broken by diffing an ordered register trace
+against the vendor's, not by guessing which knob mattered, and model-space
+bisection has now spent two rounds.
+
+⚠ Probe flaw to not repeat: both control steps ran the same model, so they wrote
+the same `/dev/kmsg` marker and the second one's dmesg slice replayed the first
+one's `task_count` lines. The run lines themselves were fine. Markers are now
+per step, not per model.
+
+
+## 2026-08-08 round 1 (⚠ My own regime hypothesis is REFUTED, and what replaces it is much narrower: a plain 1x1 uint8 conv fails in one job.)
 
 Control passed, hypothesis died, and the table got sharper.
 
