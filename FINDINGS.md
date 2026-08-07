@@ -3,6 +3,38 @@
 
 
 
+## 2026-08-08 round 9 (Control works this time, so round 8 stands: a 1x1 conv's output depends on nothing in any of its buffers.)
+
+| weight buffer | distinct | md5 | first bytes |
+|---|---|---|---|
+| plain | 125 | `c6cc3072` | `b7 b4 dc 06 ...` |
+| `ROCKET_PW_WTEST=1` | **1** | `ec80de13` | `7f 7f 7f 7f ...` |
+
+The knob fires. So the round 8 null result is trustworthy, and three separate
+things change nothing about the output of `md003_80`:
+
+| changed | output |
+|---|---|
+| every pointwise weight forced to 0x7f | byte identical |
+| `ROCKET_CBUF_DERIVE=1`, the vendor's 0x1018 and 0x1040 | byte identical |
+| `ROCKET_BIAS_NOSW=1`, drops -128*sum(w) from A | byte identical |
+
+The second closes the gap flagged in round 8: 0x1018 and 0x1040 are inert on the
+model they are actually wrong for, not just on `mn_pw24`. The third is not a
+small perturbation, since md003 has input zero point 0.
+
+**So a 1x1 conv's output depends on none of the weights, the input, or the bias
+and A term**, while every comparable register matches a vendor .rknn compiled at
+the same geometry and the weight layout matches the vendor's own compiled buffer.
+
+That is stronger than "the MAC is dead", and it changes the question. A fresh
+shmem BO is zeroed and teflon's readback adds 0x80, so **an output buffer that
+was never written comes back as a uniform 128 and is indistinguishable from a
+computed constant at the tflite level**. That trap has already cost this project
+one retraction, in the A to B wall. Round 10 reads the RAW buffer instead, with
+`conv2d-cal` as the positive control for what a buffer the hardware definitely
+wrote looks like.
+
 ## 2026-08-08 round 8 (The 1x1 conv ignores its weights and its A term. ⚠ But the control for that was worthless, so round 9 re-runs it with one that works.)
 
 Controls held. Three runs of `md003_80` gave **byte identical output**:

@@ -1,29 +1,35 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 9. Round 8's headline result is real but its control was not,
-# and there is a gap in the reasoning that led to it.
+# 2026-08-08 round 10. Round 9's control worked this time, so round 8 stands.
 #
-# ROUND 8: md003_80 plain, with every pointwise weight forced to 0x7f, and with
-# the input zero point term dropped from A, all three gave BYTE IDENTICAL output
-# (raw 116, relu 71, top1 0, stale). So the weights do not reach the MAC and the
-# A term is not what pins the output.
+#   weight buffer plain   distinct=125  md5 c6cc3072  first bytes b7 b4 dc 06
+#   weight buffer forced  distinct=1    md5 ec80de13  first bytes 7f 7f 7f 7f
 #
-# ⚠ BUT THE CONTROL WAS WORTHLESS. It used where.py, which counts NONZERO bytes.
-# 0x7f is nonzero and so is nearly every real weight, so a forced buffer and a
-# real one both read 100 percent. It could not tell whether the knob fired. That
-# is the exact failure this project has a rule against, and I wrote the rule
-# into the script and then broke it in the next line. bstat.py reports DISTINCT,
-# which does discriminate, and step 4 dumps the buffer BOTH ways.
+# The knob fires, and forcing every weight to 0x7f changes nothing. Neither does
+# ROCKET_CBUF_DERIVE=1 on this model, which closes 0x1018 and 0x1040 for the one
+# geometry they are actually wrong for. Neither does ROCKET_BIAS_NOSW=1, and
+# that one is not a small change: md003 has input zero point 0, so the term it
+# drops is -128*sum(w).
 #
-# ⚠ AND A GAP: 0x1018 and 0x1040 were called inert on the strength of mn_pw24,
-# which has 512 input channels and 7x7 spatial. md003_80 has never been run with
-# them at the vendor value at all, and for md003_80 mesa emits 0x40000505 and
-# 0x14000000 where the vendor .rknn at that geometry has 0x40000404 and
-# 0x10000000. It is one task, so ROCKET_CBUF_DERIVE=1 gives it the vendor pair.
-# Closing that on this model costs one step.
+# So a 1x1 conv's output depends on NONE of: the weights, the input, the bias
+# and A term. Every comparable register matches a vendor .rknn compiled at the
+# same geometry, and the weight layout matches the vendor's own compiled buffer.
+# The output is a fixed constant.
 #
-# So: step 3 closes the gap, step 4 makes the round 8 null result trustworthy or
-# throws it away.
+# That is stronger than "the MAC is dead" and it changes the question from what
+# is being computed to whether anything is being written at all. A fresh shmem
+# BO is zeroed and teflon's readback adds 0x80, so an output buffer that was
+# never touched comes back as a uniform 128 and looks exactly like a computed
+# constant from userspace. This round looks at the RAW buffer instead.
+#
+#   2  what IS the constant. test_dw.py prints distinct, min, max, mean.
+#   3  the raw output BO for md003_80, before teflon converts it.
+#   4  the same for conv2d-cal, which is the positive control: a buffer the
+#      hardware definitely wrote.
+#
+# All zero in 3 with 4 populated means the DPU never wrote for the 1x1 and the
+# whole job is a no-op. A written constant means the DPU ran and the CNA fed it
+# nothing.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -37,12 +43,16 @@ run() {
 	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
 }
 
-# Dump one model's buffers into a named directory.
+# $1 tag, $2 model
 dump() {
-	d="/tmp/$1"; shift
+	d="/tmp/$1"
 	rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos "$@" \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$2" > "$C" 2>&1
+	log "  raw buffers for $2:"
+	for f in "$d"/mesa-input-*.bin "$d"/mesa-output-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
 	cd / || return 0
 }
 
@@ -63,47 +73,33 @@ start() {
 	run conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) md003_80 plain, the reference numbers ====="
+	log "===== 2) md003_80: what IS the constant it returns ====="
 	sleep 2
-	run md003_80.tflite 3 md003-plain
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 3) md003_80 with ROCKET_CBUF_DERIVE=1 ====="
-	log "  gives it the vendor's 0x40000404 and 0x10000000. Never tried on"
-	log "  THIS model; the inert verdict came from a very different one."
+	log "===== 3) md003_80 RAW output BO, before teflon adds 0x80 ====="
+	log "  all zero means it was never written. 128 everywhere after"
+	log "  conversion is what an untouched buffer looks like."
 	sleep 2
-	run md003_80.tflite 3 md003-cbuf ROCKET_CBUF_DERIVE=1
+	dump omd003 md003_80.tflite
 
 	log ""
-	log "===== 4) DOES THE KNOB FIRE? weight buffer, plain vs forced ====="
-	log "  distinct must be many for plain and exactly 1 for forced."
-	log "  Round 8 used where.py here, which counts nonzero, and proved nothing."
+	log "===== 4) POSITIVE CONTROL: conv2d-cal RAW output BO ====="
+	log "  the hardware definitely wrote this one. If 3 and 4 look the"
+	log "  same kind of populated, the DPU ran for both."
 	sleep 2
-	dump wplain
-	dump wforce ROCKET_PW_WTEST=1
-	log "  plain:"
-	for f in /tmp/wplain/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
-	log "  forced 0x7f:"
-	for f in /tmp/wforce/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
+	dump ocal conv2d-cal.tflite
 
 	log ""
-	log "===== 5) md003_80 forced weights, both knobs on ====="
-	log "  if 3 changes anything, the weight test has to be redone on top of it"
-	sleep 2
-	run md003_80.tflite 3 md003-both ROCKET_CBUF_DERIVE=1 ROCKET_PW_WTEST=1
-
-	log ""
-	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 5) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== Read 4 FIRST. If forced is not distinct=1 the knob never fired ====="
-	log "===== and round 8's weight result is void. Then 2 against 3.        ====="
+	log "===== 3 against 4. Zero versus populated says whether the 1x1 job  ====="
+	log "===== writes anything at all.                                      ====="
 	sync
 }
 
