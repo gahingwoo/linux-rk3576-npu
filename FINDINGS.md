@@ -3,6 +3,61 @@
 
 
 
+## 2026-08-07 late (Depthwise reads NEITHER its weights NOR its input: the op does not run at all, so it is not a weight-layout problem. Plus the bandwidth-counter instrument failed its own control three times, and a June reading of the 0x2210/0x2410 writes was wrong.)
+
+**Depthwise ignores its weight buffer, with a passing positive control.** mesa's
+`ROCKET_DW_WTEST` fills the whole depthwise weight buffer with 0x7f. The control
+for whether the knob actually ran is mesa's own post-memset dump, enabled with
+`ROCKET_DEBUG=dump_bos`:
+
+| | first 32 bytes | distinct byte values |
+|---|---|---|
+| plain | `ff 9a 80 80  cc ff 80 80  dd 3f 80 80 ...` | 106 |
+| WTEST | `7f 7f 7f 7f ...` | **1** |
+
+The knob ran. The output md5 is `c5fe415451bf` **both times**. Note also that
+the plain dump matches the layout mesa documents, two channel bytes then two
+weight-zero-point pad bytes, so the weights are staged exactly as intended and
+simply not consumed.
+
+**Depthwise also ignores its input.** This was already in hand from the earlier
+`test_model.py` run: three runs with three DIFFERENT inputs, and runs 1 and 2
+flagged STALE, byte identical to run 0.
+
+**So the op is not running.** It is not "the weights land in lanes the CMAC
+ignores", which is what mesa's comment hypothesised. Nothing it reads changes
+anything it writes. The output is `distinct=2`, values 0 and the output zero
+point, regardless of both buffers, and with the poll disabled two of three runs
+time out, which is what an op that never finishes looks like. The next thing to
+look at is the CNA and CORE depthwise-mode configuration, before any buffer is
+read.
+
+⚠ **The bandwidth counters failed their own control three times. Do not reuse
+this instrument without fixing it first.** The plan was: a regular convolution
+computes correctly, so its `wt_rd` must be nonzero, and only then does a zero
+from depthwise mean anything.
+
+| attempt | result |
+|---|---|
+| readout in `rocket_job_handle_irq()` | logged one stray line: with the poll on, jobs retire through `rocket_poll_work_fn()` and that function is never called |
+| readout moved to the shared locked helper | separation now correct, but the control conv still reads `wt_rd=0` |
+| counters armed first, `0x80000101` then `0x00000101` on +0x210 and +0x410, as the June fork does | control conv still reads `wt_rd=0` |
+
+Only `core +0x438` moves at all: 72 for the convolution, 0 for the depthwise. So
+something is being read, but not the mapping the fork's format string claims.
+⚠ `dmesg -C` does not clear the buffer on this busybox, which made the first two
+attempts print the same line twice; use a marker written to `/dev/kmsg` and read
+what follows it.
+
+⚠ **Correction to a June reading.** The `0x2210` and `0x2410` writes
+(`0x80000101` then `0x00000101`) that FINDINGS recorded as "two extra unit-enable
+pulses rocket issues and the vendor does not, and rocket NEEDS them, drop them
+and units do not engage even on op0" are **the bandwidth counter clear pulses**.
+Offset 0x2210 from the NPU base is the stats page at 0x27702000 plus 0x210, not
+an NPU unit register. The vendor trace lacks them because the vendor was not
+counting. The claim that rocket needs an extra engage step rests on that
+misreading and has to be re-tested.
+
 ## 2026-08-07 (THE WALL IS BROKEN. Root cause: PC_TASK_CON field layout, RK3576 uses a 16-bit task number. Plus: the "completion interrupt never reaches the GIC" claim in v1 through v6 is WRONG, and what is left are two ordinary per-op bugs.)
 
 **Root cause.** `rocket_registers.h` is RK3588 derived and lays PC_TASK_CON out as

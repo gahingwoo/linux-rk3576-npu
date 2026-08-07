@@ -87,35 +87,58 @@ start() {
 			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
 
 	# ---------------------------------------------------------------------
-	# Single-op models are fixed by TASK_CON and complete on the real interrupt
-	# with the poll off. Multi-task graphs all timed out in that same regime,
-	# but no_poll=1 makes a timeout the only outcome for a job that does not
-	# raise the interrupt, so that run could not tell "computes wrong" from
-	# "computes fine but never signals". Run each model both ways, adjacent.
+	# TASK_CON fixed the wall. Regular int8 conv is correct; depthwise is not,
+	# and it is a SINGLE job, so no dispatch or chaining is involved.
+	#
+	# mesa carries ROCKET_DW_WTEST, which fills the whole depthwise weight
+	# buffer with 0x7f. It was written in June when only the first submit after
+	# a reset computed, so its result could not be trusted. Now it can:
+	#   outputs differ    -> the CMAC reads the buffer, the failure is layout
+	#   outputs identical -> the CMAC reads nothing from it
 	# ---------------------------------------------------------------------
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
+	echo 0 > /sys/module/rocket/parameters/no_poll 2>/dev/null
 	log ""
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
-	for m in conv2d-cal conv2x dwconv mobilenet_v1_1.0_224_quant; do
-		for np in 0 1; do
-			echo $np > /sys/module/rocket/parameters/no_poll 2>/dev/null
-			log ""
-			log "===== $m   no_poll=$np ($([ $np = 0 ] && echo 'poll on' || echo 'interrupt only')) ====="
-			dmesg -C 2>/dev/null
-			sleep 2
-			env TEFLON_LIB=/usr/lib/libteflon.so \
-				python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m.tflite" 3 > "$C" 2>&1
-			log "  jobs this model: $(dmesg | grep -ac 'job: task_count')  first: $(dmesg | grep -a 'job: task_count' | head -1 | sed 's/.*job: //')"
-			log "  timeouts: $(dmesg | grep -ac 'job timed out')"
-		done
-	done
+	log ""
+	log "===== regression: regular conv must still be correct ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 3 > "$C" 2>&1
+
+	# The weight buffer is provably ignored: 0x7f everywhere, confirmed by the
+	# post-memset dump, changes no output byte. So does the CNA weight DMA run
+	# at all? The vendor bandwidth counters answer that.
+	#
+	# Two fixes from the last attempt. The readout was in rocket_job_handle_irq,
+	# which the poll never calls, so it logged one stray line. It now sits in
+	# the shared locked helper both paths reach. And "dmesg -C" does not clear
+	# on this busybox, which is why both sections printed the same line, so use
+	# a marker written to /dev/kmsg and read only what follows it.
+	echo 1 > /sys/module/rocket/parameters/perf 2>/dev/null
+
+	perf_after() {   # $1 = marker
+		dmesg | sed -n "/$1/,\$p" | grep -a "perf: top" | tail -4
+	}
 
 	log ""
-	log "===== done. For each model compare the two rows. Same failure both ways ====="
-	log "===== means the compute is wrong; passes with poll on means the multi   ====="
-	log "===== task completion interrupt is what is missing.                     ====="
+	log "===== CONTROL: regular conv, which computes correctly ====="
+	echo "PERFMARK-CONV" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	perf_after PERFMARK-CONV > "$C" 2>&1
+
+	log ""
+	log "===== QUESTION: depthwise, which does not ====="
+	sleep 2
+	echo "PERFMARK-DW" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/dwconv.tflite" > "$C" 2>&1
+	perf_after PERFMARK-DW > "$C" 2>&1
+
+	log ""
+	log "===== The conv line is the control: if its wt_rd is 0 the counters are ====="
+	log "===== not being read correctly and the depthwise line means nothing.   ====="
 	sync
 }
 
