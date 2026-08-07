@@ -106,43 +106,36 @@ start() {
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 3 > "$C" 2>&1
 
-	# CNA 0x1080 byte 2 is refuted: forcing the vendor value 0x01000101, with the
-	# emitted regcmd confirming it, leaves the output byte identical. So the
-	# regcmd is not the difference; ours matches the vendor's on every mode
-	# register.
+	# The depthwise write is ONE contiguous 256 byte run at offset 0 and nothing
+	# after: a sequential stop, not a channel-bank truncation, and the one atom
+	# it does write holds a single repeated value. dwconv.tflite is confirmed to
+	# be one standalone DepthwiseConv2D, so this is the depthwise datapath
+	# itself, which is exactly what the model was built in June to isolate.
 	#
-	# Correcting my own reading: the output tensor is 0 and 99, and teflon adds
-	# 0x80 on readback, so the BO holds 0x80 and 0xe3. An untouched BO is 0x00
-	# and would read back as 128. The DPU therefore DOES write. The op runs and
-	# produces a constant, it does not fail to start. Dump the raw buffers and
-	# read the histograms rather than inferring them.
-	log ""
-	log "===== depthwise: raw buffer histograms, input, weights, output ====="
-	rm -rf /tmp/dwb; mkdir -p /tmp/dwb
-	cd /tmp/dwb && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/dwconv.tflite" > "$C" 2>&1
-	for f in mesa-input-000-000.bin mesa-weights-000-000.bin mesa-biases-000-000.bin mesa-output-000-000.bin; do
-		[ -e "/tmp/dwb/$f" ] || continue
-		log "  $f  $(wc -c < /tmp/dwb/$f) bytes, top byte values:"
-		od -An -tu1 -v "/tmp/dwb/$f" | tr ' ' '\n' | grep -v '^$' | sort -n | uniq -c | sort -rn | head -4 > "$C" 2>&1
-	done
-	cd /
+	# mesa's comment says the depthwise runs in the CORE unit and that a wrong
+	# weight layout "leaves the depthwise CORE unit unable to start (it never
+	# opens)". Read the unit status registers after each job and compare against
+	# the conv that computes correctly.
+	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
 
 	log ""
-	log "===== and the same for the conv that computes correctly, as reference ====="
-	rm -rf /tmp/cvb; mkdir -p /tmp/cvb
-	cd /tmp/cvb && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+	log "===== unit status after a conv that computes (reference) ====="
+	echo "SMARK-CONV" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	for f in mesa-input-000-000.bin mesa-weights-000-000.bin mesa-output-000-000.bin; do
-		[ -e "/tmp/cvb/$f" ] || continue
-		log "  $f  $(wc -c < /tmp/cvb/$f) bytes, top byte values:"
-		od -An -tu1 -v "/tmp/cvb/$f" | tr ' ' '\n' | grep -v '^$' | sort -n | uniq -c | sort -rn | head -4 > "$C" 2>&1
-	done
-	cd /
+	dmesg | sed -n '/SMARK-CONV/,$p' | grep -aE "job:|status:" | head -6 > "$C" 2>&1
 
 	log ""
-	log "===== an all-zero output buffer means the DPU never wrote. A buffer of ====="
-	log "===== one repeated nonzero value means it wrote a constant.            ====="
+	log "===== unit status after the depthwise that stops at one atom ====="
+	sleep 2
+	echo "SMARK-DW" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/dwconv.tflite" > "$C" 2>&1
+	dmesg | sed -n '/SMARK-DW/,$p' | grep -aE "job:|status:" | head -6 > "$C" 2>&1
+
+	log ""
+	log "===== compare cna and core status between the two. The conv line is  ====="
+	log "===== the reference for what a unit that ran to completion reads.    ====="
 	sync
 }
 

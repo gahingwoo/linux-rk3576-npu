@@ -3,6 +3,42 @@
 
 
 
+## 2026-08-07 last (Depthwise: the write is ONE contiguous 256-byte run at offset 0, and the units end in a different state than a conv that completes.)
+
+`where.py` on the dumped buffers, with the script's own control passing:
+
+| buffer | nonzero | structure |
+|---|---|---|
+| depthwise output | 256 of 51200 | **1 run, offset 0, length 256** |
+| depthwise input | 25498 of 51200 | 102 runs, stride 251 |
+| conv output, reference | 101946 of 409600 | 51864 runs, out to offset 204799 |
+
+So it is a **sequential stop**, not a channel-bank truncation: a banked
+truncation would be strided, the way the input is. The control matters here, the
+same script sees full writes on the other two buffers.
+
+`dwconv.tflite` is confirmed to be one standalone `DepthwiseConv2D`, 40x40x16,
+3x3 same, with bias (`vendor-capture/build_dw.py`). That model was built in June
+specifically to separate the depthwise datapath from the chained-input question,
+and its own comment says "if it ALSO zeros, the dw datapath itself is broken".
+It zeros, and now, with the wall gone, that reading is trustworthy.
+
+**Unit status at completion:**
+
+```
+conv, computes correctly    cna=0000000c  core=0000000c  raw=30000000
+depthwise, stops at 1 atom  cna=00000005  core=00000005  raw=30000000
+```
+
+⚠ Do not decode these with `rocket_registers.h`. That header is RK3588 derived
+and its field layout is already proven wrong for RK3576 on TASK_CON; it marks
+bits 2 to 15 of S_STATUS as reserved, and bits 2 and 3 are exactly where these
+two values differ. As speculation only: if RK3576 packs two bits per ping-pong
+group, the conv ends with group1 = 3 and the depthwise with both groups = 1,
+which would be stalled rather than done.
+
+**The narrow question is now: why does the write stop after one atom.**
+
 ## 2026-08-07 later (Depthwise: the regcmd matches the vendor on every mode register, and the DPU writes exactly 256 bytes of a 51200 byte output and stops. Two of my own readings of this corrected by finally dumping the buffers instead of inferring from them.)
 
 **The regcmd is not the difference.** Decoding our depthwise regcmd on the board
