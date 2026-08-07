@@ -3,6 +3,52 @@
 
 
 
+## 2026-08-08 round 6 (⚠ "It is the kernel" refuted by its own probes. The regcmd diff found the register instead: DPU 0x4050 depends on the output channel count.)
+
+| step | result |
+|---|---|
+| `conv2d-cal`, 5x5, 128 channels | 2/2 OK |
+| **`cal_oc16`, the SAME 5x5 conv cut to 16 channels** | **0/3 FAIL** |
+| **`md003_oc128`, the 1x1 grown to 128 channels** | **0/3 FAIL** |
+| `md003_80`, 1x1 with 16 channels | 0/3 FAIL |
+
+Both mutants fail, so neither the kernel nor the channel count explains it on
+its own, and the round 5 reading was too quick.
+
+**The regcmd dump is what paid.** Mesa's stream for `md003_80` against a vendor
+.rknn compiled at exactly that geometry, 143 entries against 139:
+
+| entry | mesa | vendor | |
+|---|---|---|---|
+| CNA 0x1018 | `40000505` | `40000404` | already shown not to matter |
+| CNA 0x1040 | `14000000` | `10000000` | already shown not to matter |
+| **DPU 0x4050** | **`80011111`** | **`80011011`** | |
+| DPU 0x40ac | `ffffffff` | `ffffffef` | requant offset, different quantization |
+| DPU 0x40b4 | `00000017` | `00000018` | requant shift, same |
+| 4 trailing op-enables | | | mesa's whole-graph trailer |
+
+The last two are not comparable: the vendor model carries the toolkit's own
+quantization, not md003's, so its offset and shift are for different scales.
+
+**0x4050 depends on the output channel count**, swept with everything else held
+fixed:
+
+| output channels | 0x4050 |
+|---|---|
+| 16, 48, 80, 112, 144 | `80011011` |
+| 32, 64, 96, 128, 160 | `80011111` |
+
+Ten out of ten. The bit says whether the last 32-channel group is only half
+full. Mesa emitted the 128-channel constant unconditionally, so it was right for
+`conv2d-cal` and wrong for every conv whose channel count is 16 more than a
+multiple of 32. `ROCKET_DPU4050_CONST=1` restores it.
+
+**Predictions for round 7, stated before the run:** `cal_oc16` computes with the
+derived value and fails with the constant; `md003_80` computes, because its diff
+contained nothing else; **`md003_oc128` still fails**, since 0x4050 was already
+correct for 128 channels. The last one is the useful one, isolating whatever is
+left to a case where this register is right, and its regcmd gets dumped.
+
 ## 2026-08-08 round 5 (Two threads closed: the row-window split is not the discriminator, and 0x1018 / 0x1040 are not load bearing. It is the kernel.)
 
 Controls held at both ends, and `cal_s1` kept its round 4 win across a reflash.

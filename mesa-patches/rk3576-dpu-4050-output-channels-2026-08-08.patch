@@ -1,0 +1,47 @@
+From 38353ea5ef95ad45ff73d4862c791f84bcaaff0f Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Fri, 7 Aug 2026 23:53:43 +1200
+Subject: [PATCH] rocket RK3576: derive DPU 0x4050 from the output channel
+ count
+
+Compiling vendor .rknn at ten output channel counts from 16 to 160 with
+everything else held fixed gives 0x80011111 for every multiple of 32 and
+0x80011011 for every count 16 more than one, which is the bit that says whether
+the last 32-channel group is half full.
+
+The constant this replaces was the 128-channel value, so it was right for
+conv2d-cal and wrong for every conv with 16, 48, 80, 112 or 144 output channels.
+ROCKET_DPU4050_CONST=1 restores it as a control.
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 184a636..d8bb8d6 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -580,7 +580,20 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_DPU(0x4044, dw ? 0x00000000 : 0x00000001);
+    R_DPU(0x4048, 0x80000000);
+    R_DPU(0x404c, 0x7fffffff);
+-   R_DPU(0x4050, dw ? 0x00013133 : 0x80011111);
++   /*
++    * 0x4050 depends on the output channel count. Compiling vendor .rknn at ten
++    * output channel counts from 16 to 160 with everything else held fixed
++    * (vendor-capture/gen_geom.py) gives 0x80011111 for every multiple of 32 and
++    * 0x80011011 for every count that is 16 more than one, 10 out of 10, which is
++    * the bit that says whether the last 32-channel group is only half full.
++    *
++    * The constant here was the 128-channel value, so it was right for
++    * conv2d-cal and wrong for every conv with 16, 48, 80, 112 or 144 output
++    * channels. ROCKET_DPU4050_CONST=1 restores it as a control.
++    */
++   R_DPU(0x4050, dw ? 0x00013133
++                    : (getenv("ROCKET_DPU4050_CONST") || (oc % 32) == 0
++                          ? 0x80011111 : 0x80011011));
+    /*
+     * BS_CFG (0x4040): the RK3576 emitter never set this, so BS_RELU_BYPASS (bit 6)
+     * defaults to 0 -> the BS stage applies a RELU, clamping the negative half of a
+-- 
+2.43.0
+
