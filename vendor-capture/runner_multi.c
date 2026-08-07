@@ -1,5 +1,25 @@
 /*
- * VENDOR two-submit control (2026-07-16). The missing symmetric half of the
+ * VENDOR two-submit control. Originally 2026-07-16, CORRECTED 2026-08-06.
+ *
+ * The 2026-07-16 version staged the input ONCE, before the loop, and then fired
+ * rknn_run() N times over it. All five runs came back byte-identical and that
+ * was read as "the vendor recomputes correctly on every submit". It does not
+ * show that. A buffer nothing has written since run 0 is byte-identical too,
+ * and on 2026-08-06 the open stack was measured doing exactly that: with one
+ * configuration and a DIFFERENT input, the second submit left the output buffer
+ * untouched (crc32 unchanged) and only a reset restored computation.
+ *
+ * So the control has to change the input per run. Same test, one line moved,
+ * and now it can fail:
+ *
+ *   outputs DIFFER per run  -> the vendor really does recompute warm, the
+ *                              asymmetry with rocket is real
+ *   outputs IDENTICAL       -> the vendor only computes once per reset as well,
+ *                              the wall is normal behaviour for this block and
+ *                              the question becomes what the vendor runtime
+ *                              does between inferences
+ *
+ * The missing symmetric half of the
  * rocket SPREAD-CONFIRM test: does the VENDOR stack re-arm on the SECOND (and
  * later) INDEPENDENT submit within ONE power session (no genpd power-cycle)?
  *
@@ -68,20 +88,28 @@ int main(int argc, char **argv)
 	printf("input size=%u\n", insz);
 
 	unsigned char *inbuf = malloc(insz);
-	for (unsigned i = 0; i < insz; i++)
-		inbuf[i] = (unsigned char)(i % 251);
 
-	rknn_input in; memset(&in, 0, sizeof(in));
-	in.index = 0;
-	in.type  = RKNN_TENSOR_UINT8;
-	in.size  = insz;
-	in.fmt   = RKNN_TENSOR_NHWC;
-	in.buf   = inbuf;
-	ret = rknn_inputs_set(ctx, 1, &in);
-	printf("inputs_set = %d\n", ret);
+	unsigned int sum0 = 0;
+	int differed = 0;
 
 	double t_prev = now_ms();
 	for (int run = 0; run < nruns; run++) {
+		/*
+		 * A different input every run. Offsetting the ramp by run*37 keeps
+		 * the data in the same range and the model out of saturation, so a
+		 * correct recomputation has to produce different output bytes.
+		 */
+		for (unsigned i = 0; i < insz; i++)
+			inbuf[i] = (unsigned char)((i + run * 37) % 251);
+
+		rknn_input in; memset(&in, 0, sizeof(in));
+		in.index = 0;
+		in.type  = RKNN_TENSOR_UINT8;
+		in.size  = insz;
+		in.fmt   = RKNN_TENSOR_NHWC;
+		in.buf   = inbuf;
+		ret = rknn_inputs_set(ctx, 1, &in);
+
 		double t0 = now_ms();
 		ret = rknn_run(ctx, NULL);
 		double t1 = now_ms();
@@ -100,15 +128,26 @@ int main(int argc, char **argv)
 				if (f[i] > mx) mx = f[i];
 				if (f[i] != f[0]) constant = 0;
 			}
+			unsigned int sum = 2166136261u;
+			for (unsigned i = 0; i < out.size; i++)
+				sum = (sum ^ ((const unsigned char *)out.buf)[i]) * 16777619u;
+			if (run == 0)
+				sum0 = sum;
+
 			char path[512];
 			snprintf(path, sizeof(path), "%s/out_run%d.bin", outdir, run);
 			FILE *of = fopen(path, "wb");
 			if (of) { fwrite(out.buf, 1, out.size, of); fclose(of); }
 
 			printf("RUN %d rknn_run=%d run_ms=%.1f gap_since_prev_ms=%.1f "
-			       "out_bytes=%u nfloat=%u min=%.4g max=%.4g %s -> %s\n",
-			       run, ret, t1 - t0, t0 - t_prev, out.size, n, mn, mx,
-			       constant ? "CONSTANT(empty-MAC?)" : "RICH(real-MAC)", path);
+			       "out_bytes=%u nfloat=%u min=%.4g max=%.4g fnv=%08x %s %s\n",
+			       run, ret, t1 - t0, t0 - t_prev, out.size, n, mn, mx, sum,
+			       constant ? "CONSTANT" : "RICH",
+			       run == 0 ? "(baseline)" :
+			       (sum == sum0 ? "SAME-AS-RUN0(did not recompute)"
+					    : "DIFFERS(recomputed)"));
+			if (run > 0 && sum != sum0)
+				differed++;
 		} else {
 			printf("RUN %d rknn_run=%d outputs_get=%d (no output)\n",
 			       run, ret, gret);
@@ -119,6 +158,18 @@ int main(int argc, char **argv)
 
 	rknn_destroy(ctx);
 	free(inbuf); free(mdata);
-	printf("DONE nruns=%d\n", nruns);
+	printf("DONE nruns=%d runs_that_differed_from_run0=%d\n", nruns, differed);
+	if (nruns > 1) {
+		if (differed == nruns - 1)
+			printf("VERDICT: vendor RECOMPUTES on every warm submit. The "
+			       "asymmetry with rocket is real.\n");
+		else if (differed == 0)
+			printf("VERDICT: vendor output never changed despite a different "
+			       "input every run. It does NOT recompute warm either, so the "
+			       "wall is normal behaviour for this block.\n");
+		else
+			printf("VERDICT: mixed (%d of %d differed). Read the per-run lines.\n",
+			       differed, nruns - 1);
+	}
 	return 0;
 }

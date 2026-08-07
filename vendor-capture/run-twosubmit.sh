@@ -1,35 +1,29 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# VENDOR two-submit control (2026-07-16). The missing symmetric half of the
-# rocket SPREAD-CONFIRM test.
+# VENDOR two-submit control. Originally 2026-07-16, CORRECTED 2026-08-06.
 #
-# QUESTION: does the WORKING vendor stack re-arm on the 2nd (and later)
-# INDEPENDENT submit within ONE power session (no genpd power-cycle)? Rocket
-# does NOT (only op0 MACs per session). If the vendor ALSO degrades on submit 2,
-# the walled state is NORMAL hardware behaviour (hypothesis CONFIRMED, per-op
-# dispatch is a dead end -> must chain). If the vendor stays correct, rocket is
-# missing a per-submit re-arm that is NOT a register write (already audited) =>
-# ordering/timing/fence in the submit path.
+# The original staged ONE input and fired rknn_run() five times over it, then
+# read "all five byte-identical" as "the vendor recomputes on every submit".
+# That does not follow. A buffer nothing has written since run 0 is byte
+# identical too, and on 2026-08-06 the open stack was caught doing exactly that:
+# same configuration, different input, second submit left the output buffer
+# untouched, and only a reset restored computation.
 #
-# Model: exp2_rk3576.rknn (single conv, calibrated NON-saturating -> correct
-# output is a RICH map, so an empty MAC = CONSTANT is unmistakable). Input is the
-# flat byte ramp i%251. On the vendor, run0 is a known-good baseline (the vendor
-# runs any model correctly); the decisive read is run1..run4.
+# runner_multi now stages a DIFFERENT input every run, so the test can fail:
 #
-# REGIME A: one context, rknn_run() x5 back-to-back (vendor's normal ctx reuse).
-#           All 5 submits share ONE powered session (gaps are ms, autosuspend is
-#           3s). run0 = known-good cold-start; run1..4 = the decisive read.
-# REGIME B (power-cycle control): idle >3.5s so genpd powers the NPU domain DOWN
-#           (rknpu power_put_delay = 3000ms), THEN one fresh submit = op0 of a
-#           NEW power session -- must come back RICH, proving the session
-#           boundary is what re-arms and the model itself is fine.
+#   outputs DIFFER per run  -> the vendor really does recompute warm. The
+#        asymmetry with rocket is real and worth chasing.
+#   outputs IDENTICAL       -> the vendor does not recompute warm either. The
+#        wall is normal behaviour for this block, and the question becomes what
+#        the vendor runtime does between inferences that we do not.
 #
-# VERDICT (printed to console):
-#   run0 RICH + run1..RICH + all md5 equal  => vendor RE-ARMS per submit  => the
-#        rocket gap is ordering/timing, not a writel. (refutes "wall is normal")
-#   run0 RICH + run1.. CONSTANT/min==max, and post-idle submit RICH again
-#        => only op0 per session MACs on the vendor too; the wall is NORMAL hw
-#        behaviour and a power-cycle is the re-arm. Chain, don't spread. (confirms)
+# Model: exp2_rk3576.rknn, a calibrated non-saturating single conv, so a real
+# recomputation on a changed input has to move the bytes.
+#
+# REGIME A: one context, five back-to-back runs, gaps in ms against a 3s
+#           autosuspend, so all five share one powered session.
+# REGIME B: idle past the autosuspend, then one fresh submit. Positive control:
+#           it must come back RICH.
 # ---------------------------------------------------------------------------
 CAPDIR=/opt/npu-cap
 MODEL="$CAPDIR/exp2_rk3576.rknn"
@@ -67,46 +61,45 @@ log "----- WRITEL TRACE: $(grep -ac 'rknpu wt' "$CAPDIR/vendor_wt.trace" 2>/dev/
 grep -a 'rknpu wt' "$CAPDIR/vendor_wt.trace" 2>/dev/null | awk '{c[$NF]++} END{for(k in c) printf "    %6d  %s\n", c[k], k}' > "$C" 2>&1
 log "    (full ordered trace saved to $CAPDIR/vendor_wt.trace -- pull it for submit#0-vs-#1 diff)"
 
-log "----- REGIME A md5 per run (equal across runs => identical output) -----"
+log "----- REGIME A md5 per run (different input each run, so EQUAL md5 means NOT recomputed) -----"
 for f in "$OUT"/out_run0.bin "$OUT"/out_run1.bin "$OUT"/out_run2.bin "$OUT"/out_run3.bin "$OUT"/out_run4.bin; do
 	[ -e "$f" ] && md5sum "$f" > "$C" 2>&1
 done
 
 log ""
-log "----- REGIME B: power-cycle control -- idle 4s (let genpd power OFF), then 1 fresh submit -----"
+log "----- REGIME B: positive control, idle 4s so the domain powers off, then one fresh submit -----"
 sleep 4
 "$BIN" "$MODEL" 1 "$OUT/pc" 2>&1 | tee "$OUT/B.log" > "$C"
-log "----- REGIME B: post-idle submit should be RICH again (new session op0 re-arms) -----"
 
-# ---- compute the VERDICT on-board (no host scoring needed) ----
 m0=$(md5sum "$OUT/out_run0.bin" 2>/dev/null | cut -d' ' -f1)
-all_equal=1; got=0
+differed=0; got=0
 for i in 1 2 3 4; do
 	mi=$(md5sum "$OUT/out_run$i.bin" 2>/dev/null | cut -d' ' -f1)
-	[ -n "$mi" ] && got=1
-	[ "$mi" = "$m0" ] || all_equal=0
+	[ -n "$mi" ] && got=$((got + 1))
+	[ -n "$mi" ] && [ "$mi" != "$m0" ] && differed=$((differed + 1))
 done
 run0_rich=0; grep -q "RUN 0 .*RICH" "$OUT/A.log" && run0_rich=1
-later_all_const=1
-for i in 1 2 3 4; do grep -q "RUN $i .*RICH" "$OUT/A.log" && later_all_const=0; done
-pc_rich=0; grep -q "RUN 0 .*RICH" "$OUT/B.log" && pc_rich=1
+pc_rich=0;   grep -q "RUN 0 .*RICH" "$OUT/B.log" && pc_rich=1
 
 log ""
 log "=========================== VERDICT ==========================="
-if [ "$run0_rich" = 1 ] && [ "$all_equal" = 1 ] && [ "$got" = 1 ]; then
-	log " VERDICT: vendor RE-ARMS per submit (run0..4 all RICH + byte-identical)."
-	log "  => rocket's gap is TIMING/ORDERING, not a register (writel-audit already clean)."
-	log "  => the walled state is NOT normal hw behaviour. Next: trace-diff a known-good"
-	log "     2nd independent vendor submit vs rocket's failing one on this exact model."
-elif [ "$run0_rich" = 1 ] && [ "$later_all_const" = 1 ]; then
-	log " VERDICT: vendor ALSO WALLS on submit>=2 (run0 RICH, run1..4 CONSTANT/empty-MAC)."
-	[ "$pc_rich" = 1 ] && log "  power-cycle control RICH => a genpd cycle re-arms; the model is fine."
-	log "  => HYPOTHESIS CONFIRMED: only op0 per power session does real MACs on the vendor too."
-	log "  => the wall is NORMAL hw behaviour. Per-op/SPREAD dispatch is a dead end -- CHAIN"
-	log "     into one HW-iterated job (RK3588 next-pointer style), don't spread submits."
+log " run0 RICH=$run0_rich   later runs captured=$got   differing from run0=$differed"
+log " power-cycle control RICH=$pc_rich"
+if [ "$run0_rich" != 1 ]; then
+	log " VERDICT: run0 was not RICH. The model or the stack is wrong, nothing else counts."
+elif [ "$got" = 0 ]; then
+	log " VERDICT: no later runs captured. The test did not execute."
+elif [ "$differed" = "$got" ]; then
+	log " VERDICT: the vendor RECOMPUTES on every warm submit. A different input"
+	log "  gives different output with no reset in between, which is exactly what"
+	log "  rocket fails to do. The asymmetry is REAL."
+elif [ "$differed" = 0 ]; then
+	log " VERDICT: the vendor output NEVER CHANGED despite a different input every"
+	log "  run. It does not recompute warm either, so this is normal behaviour for"
+	log "  this block, and the 2026-07-16 conclusion was an artefact of feeding the"
+	log "  same input five times. Look at what the runtime does between inferences."
 else
-	log " VERDICT: MIXED/partial -- run0_rich=$run0_rich all_equal=$all_equal later_all_const=$later_all_const pc_rich=$pc_rich."
-	log "  Inspect the per-RUN lines above (min/max + RICH/CONSTANT) and the md5s."
+	log " VERDICT: mixed, $differed of $got differed. Read the per-RUN lines."
 fi
 log "==============================================================="
 # persist outputs on the SD so they can be pulled and scored vs golden.npy offline
