@@ -3,6 +3,42 @@
 
 
 
+## 2026-08-08 round 10 (The DPU does run for a 1x1 conv. It writes the whole surface, and what it writes is exactly out_offset.)
+
+| raw BO, before teflon adds 0x80 | size | distinct | first bytes |
+|---|---|---|---|
+| `md003_80` output | 204800 | **2** | `ff ff ff ff ...` |
+| `conv2d-cal` output, positive control | 409600 | 128 | `00 10 0e 00 ...` |
+| both inputs | 204800 | 251 | `80 87 8e 95 ...` |
+
+Not zero, so this is not the untouched-buffer trap. `0xff` is -1 signed, teflon
+adds 0x80 and gets 127, and 127 is exactly the `out_zp` the test reports:
+
+```
+md003_80: distinct=1 mean=127.00 min=127 max=127   (zp=127)
+```
+
+**The DPU ran, wrote every byte of the output surface, and what it wrote is
+`out_offset`.** So `MAC + A` arrived as exactly 0.
+
+That is sharper than it looks, because A is not supposed to be 0. md003 has
+input zero point 0, so A carries `-128*sum(w)`, and round 9 showed that dropping
+that term changes nothing either. Either the DPU never reads the coefficient
+buffer, or it does and A genuinely arrives as 0.
+
+Round 11 forces A directly with `ROCKET_ATEST=<value>`, at two values so a
+coincidence at one is visible. `requant(0 + A)` with a large A has to saturate
+the output away from `out_zp`:
+
+| result | meaning |
+|---|---|
+| output moves off 127 | the DPU reads the coefficients and the write path is alive, and the dead stage is specifically the CNA feeding the CMAC |
+| output stays at 127 | the coefficient buffer is not read either, and the problem is upstream of the whole DPU input side |
+
+⚠ The control is `conv2d-cal` with the same knob. It computes correctly, so
+forcing A there **must** wreck its output. Round 8 shipped a control that could
+not fail and cost a round; this one can.
+
 ## 2026-08-08 round 9 (Control works this time, so round 8 stands: a 1x1 conv's output depends on nothing in any of its buffers.)
 
 | weight buffer | distinct | md5 | first bytes |

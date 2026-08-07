@@ -1,0 +1,41 @@
+From f2d696c15bf5a171340c97ce71c9178e9d7dc663 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 8 Aug 2026 09:43:26 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_ATEST, force the BS add operand on any
+ op
+
+A 1x1 conv writes a full surface of exactly out_offset, so MAC + A arrives as 0,
+and its output is unmoved by the weights, by the input, and by dropping
+-128*sum(w) from A. Forcing A to a value that must saturate the requant says
+whether the DPU reads the coefficient buffer at all. ROCKET_DW_ATEST already did
+this for depthwise only.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 73e52a7..1e244d8 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -529,6 +529,18 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+              * A flows through -> the dw zero is the MAC (CMAC operands not read from CBUF).
+              * If output stays 0x00 even with huge A -> the dw DPU/output path itself is dead.
+              */
++            /*
++             * ROCKET_ATEST: the same probe, for any op rather than depthwise only.
++             * A 1x1 conv writes a full surface of exactly out_offset, meaning
++             * MAC + A came out as 0, and its output is unmoved by the weights, by
++             * the input, and by dropping -128*sum(w) from A. If forcing A to a
++             * value that must saturate the requant still leaves the output at
++             * out_offset, the DPU is not reading the coefficient buffer either
++             * and the dead stage is upstream of everything. If the output does
++             * move, the DPU reads A fine and only the CNA to CMAC path is dead.
++             */
++            if (getenv("ROCKET_ATEST"))
++               *A = (int32_t)strtoul(getenv("ROCKET_ATEST"), NULL, 0);
+             if (getenv("ROCKET_DW_ATEST") && rkt_is_depthwise(poperation)) {
+                /* MODERATE A: big enough that requant(0+A) clearly saturates the
+                 * output (~255) but small enough to NOT overflow (A*cvt_scale). For
+-- 
+2.43.0
+
