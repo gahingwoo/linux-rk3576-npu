@@ -1,32 +1,38 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 7. Round 6 refuted "it is the kernel" and found the register.
+# 2026-08-08 round 8. Round 7 landed the 0x4050 fix and isolated the 1x1 conv.
 #
-#   cal_oc16, the SAME 5x5 conv cut to 16 output channels   0/3 FAIL
-#   md003_oc128, the 1x1 grown to 128 output channels       0/3 FAIL
+#   cal_oc16, derived 0x4050 = 0x80011011   3/3 OK, relu maxdiff 0
+#   cal_oc16, ROCKET_DPU4050_CONST=1        0/3 FAIL, round 6's numbers
 #
-# Both fail, so neither the kernel nor the channel count explains it alone. But
-# the regcmd dump did: mesa's stream for md003_80 differs from the vendor .rknn
-# compiled at that exact geometry in only FIVE values, two of which were already
-# shown not to matter (0x1018, 0x1040) and two of which are requant fields that
-# are not comparable across differently quantized models (0x40ac, 0x40b4).
+# Three geometries compute now. ⚠ One prediction missed: md003_80 was called
+# fixed and is not. Its numbers moved (raw 117/relu 70 to 116/71), so 0x4050 did
+# reach it, and something else is also wrong.
 #
-# The fifth is DPU 0x4050, and it depends on the OUTPUT CHANNEL COUNT:
+# With the channel-count bug gone the split is clean: every 5x5 conv computes,
+# every 1x1 conv fails. So it IS the kernel, which round 6 could not show
+# because two bugs were on top of each other.
 #
-#   16 48 80 112 144 -> 0x80011011      32 64 96 128 160 -> 0x80011111
+# The 1x1 case is now cornered:
+#   its regcmd matches the vendor .rknn compiled at the same geometry, apart
+#   from 0x1018 and 0x1040 (shown inert) and 0x40ac and 0x40b4 (requant, not
+#   comparable across differently quantized models)
+#   its weight layout is confirmed against the vendor's own compiled buffer: a
+#   position-encoded 1x1 built on the host reads back oc-major, ic contiguous,
+#   which is exactly what mesa writes
+#   and its output is CONSTANT across different inputs
 #
-# ten out of ten across a sweep with everything else held fixed. mesa emitted
-# the 128-channel constant for everything, so it was right for conv2d-cal and
-# wrong for every conv whose channel count is 16 more than a multiple of 32.
+# A constant output is not something a wrong weight value or a wrong requant can
+# produce. It means the input is not reaching the MAC. So stop looking at values
+# and ask what the block is reading.
 #
-# PREDICTIONS, stated before the run:
-#   2 cal_oc16 with the derived value    computes
-#   3 the same with the old constant     fails, reproducing round 6
-#   4 md003_80, 16 channels              computes, its diff had nothing else
-#   5 md003_oc128, 128 channels          STILL FAILS, 0x4050 was already right
-#
-# 5 failing is not a disappointment, it is the point: it isolates whatever is
-# left to a case where this register is correct. Step 6 dumps its regcmd.
+#   4  ROCKET_PW_WTEST=1 fills the whole pointwise weight buffer with 0x7f.
+#      Output unchanged means the CMAC never reads it.
+#   5  ROCKET_BIAS_NOSW=1 drops the input zero point correction from the BS add
+#      operand A. md003 has input zp 0, so that correction is -128*sum(w) and
+#      large; conv2d-cal has zp 128 and never exercises it. If A is saturating
+#      the requant, the output is constant for that reason.
+#   6  verifies the knob in 4 actually fired, by dumping the weight buffer.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,60 +59,51 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal, 128 channels, 0x4050 unchanged ====="
+	log "===== 1) CONTROL: conv2d-cal, 5x5 ====="
 	run conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) cal_oc16, derived 0x4050 = 0x80011011 ====="
-	log "  PREDICTED TO COMPUTE. It failed in round 6 with 0x80011111."
+	log "===== 2) CONTROL: cal_oc16, the geometry 0x4050 won ====="
 	sleep 2
-	run cal_oc16.tflite 3 oc16-derived
+	run cal_oc16.tflite 2 oc16-keep
 
 	log ""
-	log "===== 3) A/B: cal_oc16 with ROCKET_DPU4050_CONST=1 ====="
-	log "  must reproduce round 6's failure, or 2 proves nothing"
+	log "===== 3) md003_80 plain, for the numbers to compare against ====="
 	sleep 2
-	run cal_oc16.tflite 3 oc16-const ROCKET_DPU4050_CONST=1
+	run md003_80.tflite 3 md003-plain
 
 	log ""
-	log "===== 4) md003_80, 1x1 with 16 channels, derived 0x4050 ====="
-	log "  PREDICTED TO COMPUTE: its regcmd diff had nothing else in it."
+	log "===== 4) md003_80 with EVERY pointwise weight forced to 0x7f ====="
+	log "  identical output to 3 means the CMAC never reads the weights"
 	sleep 2
-	run md003_80.tflite 3 md003-80
+	run md003_80.tflite 3 md003-wtest ROCKET_PW_WTEST=1
 
 	log ""
-	log "===== 5) md003_oc128, 1x1 with 128 channels ====="
-	log "  PREDICTED TO STILL FAIL. 0x4050 was already correct for it."
+	log "===== 5) md003_80 without the input zero point correction in A ====="
+	log "  md003 has input zp 0, conv2d-cal has 128 and never exercises it"
 	sleep 2
-	run md003_oc128.tflite 3 md003-oc128
+	run md003_80.tflite 3 md003-nosw ROCKET_BIAS_NOSW=1
 
 	log ""
-	log "===== 6) cal_s1, still 3/3? the padding fix must survive ====="
-	sleep 2
-	run cal_s1.tflite 2 s1-keep
-
-	log ""
-	log "===== 7) REGCMD: everything mesa emits for md003_oc128 ====="
-	log "  the case where 0x4050 is right and it still fails"
+	log "===== 6) did the knob in 4 actually fire? dump the weight buffer ====="
+	log "  distinct must be 1 for the forced run, or 4 measured nothing"
 	sleep 2
 	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_oc128.tflite" > /dev/null 2>&1
-	for f in /tmp/rc/mesa-regcmd-*.bin; do
-		[ -f "$f" ] || continue
-		log "--- md003_oc128 $(basename "$f") ---"
-		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_PW_WTEST=1 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
+	for f in /tmp/rc/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/where.py" "$f" > "$C" 2>&1
 	done
 	cd / || return 0
 
 	log ""
-	log "===== 8) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 7) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 2 against 3 is the A/B. 4 says the 1x1 with 16 channels was  ====="
-	log "===== the same bug. 5 is expected to fail and 7 is why it is here. ====="
+	log "===== 3 against 4 is the round: does a 1x1 conv read its weights   ====="
+	log "===== at all. Read 6 before believing 4.                           ====="
 	sync
 }
 

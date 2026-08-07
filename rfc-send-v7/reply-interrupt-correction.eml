@@ -1,0 +1,69 @@
+Subject: Re: [RFC PATCH v6 7/9] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <fb94bd28-fdbf-4f99-a6ff-b5ab18c64345@arm.com>
+
+On 07/08/2026 1:56 pm, Robin Murphy wrote:
+> If the interrupt never fires at all then possibly the signal depends on
+> some additional clock or power domain in order to propagate, or it's
+> just described incorrectly; or if other interrupt sources within the
+> NPU/IOMMU do still work then maybe there's some additional masking
+> control that's been overlooked, or perhaps it it just terminally broken.
+
+Robin, Diederik, I owe you both a correction before you spend any more
+time on this. The premise is wrong. The interrupt is fine, and the
+polling in patch 7 should not exist.
+
+The completion interrupt does reach the GIC on RK3576. With the fix
+below and the hrtimer disabled, so that only a real interrupt can retire
+a job, a single int8 convolution runs correctly three times out of three
+on three different inputs with zero timeouts and /proc/interrupts
+counting up. No extra clock, no extra power domain, no extra mask.
+
+What was actually wrong is one register write. PC_TASK_CON packs the
+task number, and rocket_registers.h is derived from RK3588, where that
+field is 12 bits wide with TASK_PP_EN, TASK_COUNT_CLEAR and RESERVED_0
+above it at bits 12, 13 and 14. RK3576 uses a 16 bit task number, so
+those three controls sit at bits 16, 17 and 18 instead:
+
+  rocket, v1 through v6:  TASK_CON = 0x00007001
+  vendor driver, RK3576:  TASK_CON = 0x00070001
+
+So the PC read our word as task_number = 0x7001, that is 28673 tasks,
+with the count clear landing on nothing. It never signalled completion
+because by its own count it was never finished, and only a full reset
+ever cleared the counter. That also explains the other symptom in the
+cover letter, that only the first job after a reset computed anything.
+
+  rocket_pc_writel(core, TASK_CON, (0x7u << 16) | task_count);
+
+I found it by taking an ordered trace of every register write our driver
+makes during one submit and diffing it against the same trace from the
+vendor driver on the same board. Exactly one value differed. I should
+have done that before writing a workaround, and before describing a
+hardware limitation I had not established.
+
+Two guesses I made the same night, a per job IOMMU teardown and the
+vendor's post completion sequence, were both wrong, which is the other
+half of the lesson.
+
+So for v7: patch 7 loses the polling and the "the interrupt does not
+arrive" text. I would rather not carry a bounded poll at all. Jobs that
+compute incorrectly do still time out, but that is a driver bug on my
+side rather than something the hardware needs help with, and the
+scheduler timeout already covers it. Diederik, this is what you warned
+me about off list, that a poll reads as a workaround for an
+undetermined problem. You were right and the problem is now determined.
+
+The rest of v7 follows what you both asked for: the job_lock fix becomes
+its own patch with a Fixes tag and leaves the RFC series, the
+rk3588_soc_data change is separated from adding rk3576_soc_data,
+refactoring comes before the new support rather than inside it, and I
+will stop editing a comment in the patch after the one that added it.
+
+On the GIC question, for the record, so the thread has it in one place:
+RK3576 is GICv2, gic-400 in the upstream DT, not GICv3. It made no
+difference here, as you said it would not.
+
+Thanks for digging into this, and sorry for pointing you at a fault that
+was mine.
+
+Jiaxing

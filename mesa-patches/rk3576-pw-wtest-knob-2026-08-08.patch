@@ -1,0 +1,43 @@
+From f76604fbd3853320f17dcfd84117505eac11b6d4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 8 Aug 2026 09:11:10 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_PW_WTEST, does a 1x1 conv read its
+ weights
+
+A pointwise conv's regcmd now matches the vendor at the same geometry apart from
+two registers shown inert and two requant fields that are not comparable, and
+the weight layout is confirmed against the vendor's own compiled buffer. Yet the
+output is constant across different inputs, which no weight value can cause.
+Filling the buffer with one value answers whether the CMAC reads it at all.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index abeb57f..73e52a7 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -259,6 +259,20 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+          for (unsigned ic = 0; ic < ic_n; ic++)
+             weights_out[oc * ic_n + ic] = weights_in[oc][0][0][ic] - 0x80;
+ 
++      /*
++       * ROCKET_PW_WTEST: overwrite the whole pointwise weight buffer with one
++       * value. A 1x1 conv's regcmd now matches the vendor byte for byte apart
++       * from two registers shown inert and two requant fields that are not
++       * comparable across differently quantized models, and this layout is
++       * confirmed against the vendor's own compiled buffer (a position-encoded
++       * 1x1 compiled on the host reads back oc-major with ic contiguous). Yet
++       * the output is constant across different inputs, which no weight value
++       * can cause. If the output does not move when every weight becomes 0x7f,
++       * the CMAC is not reading this buffer at all.
++       */
++      if (getenv("ROCKET_PW_WTEST"))
++         memset(weights_out, 0x7f, weights_size);
++
+       if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+          static int task = 0;
+          rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
+-- 
+2.43.0
+

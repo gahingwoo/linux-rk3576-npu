@@ -3,6 +3,52 @@
 
 
 
+## 2026-08-08 round 7 (DPU 0x4050 confirmed with an A/B. Three geometries compute. And with the channel-count bug gone, the 1x1 conv is properly isolated.)
+
+| step | result |
+|---|---|
+| `conv2d-cal` | 2/2 OK |
+| **`cal_oc16`, derived `0x80011011`** | **3/3 OK, relu maxdiff 0, top1 exact** |
+| **`cal_oc16`, `ROCKET_DPU4050_CONST=1`** | **0/3 FAIL, round 6's numbers exactly** |
+| `md003_80`, 1x1 with 16 channels | 0/3 FAIL |
+| `md003_oc128`, 1x1 with 128 channels | 0/3 FAIL |
+| `cal_s1` | 2/2 OK, the padding fix holds |
+
+⚠ **A prediction missed**: `md003_80` was called fixed and is not. Its numbers
+did move (raw 117 / relu 70 to 116 / 71), so 0x4050 reached it and something
+else is wrong too.
+
+**Two bugs were superimposed, which is why round 6 could not read the kernel.**
+With the channel-count bug gone the split is clean: every 5x5 conv computes,
+every 1x1 conv fails. It was the kernel after all, and `cal_oc16` failing in
+round 6 was the other bug.
+
+**The 1x1 case is cornered.** Its regcmd, against a vendor .rknn compiled at the
+same geometry, now differs only in 0x1018 and 0x1040 (both shown inert by their
+own A/B) and 0x40ac and 0x40b4 (requant offset and shift, not comparable across
+differently quantized models).
+
+**And the weight layout is confirmed correct**, which had never been checked
+against anything but a board capture taken while the wall was still up.
+`posprobe_pw.py` (new) compiles a 1x1 conv whose every (oc, ic) pair carries a
+distinct weight, finds the weight blob in the .rknn and reads back the order. It
+is oc-major with ic contiguous, exactly what `rkt_coefs.c` writes.
+
+So for a 1x1 conv the registers are right and the weights are right, and **the
+output is constant across different inputs**. No weight value and no requant
+error produces a constant. The input is not reaching the MAC.
+
+Round 8 stops looking at values and asks what the block reads:
+
+| probe | what a null result means |
+|---|---|
+| `ROCKET_PW_WTEST=1`, every pointwise weight forced to 0x7f | output unchanged means the CMAC never reads the weight buffer |
+| `ROCKET_BIAS_NOSW=1`, drop the input zero point term from A | md003 has input zp 0 so that term is -128*sum(w); conv2d-cal has 128 and never exercises it |
+
+with a step that dumps the weight buffer to confirm the first knob fired,
+because a null result from a knob that did not fire has cost this project runs
+before.
+
 ## 2026-08-08 round 6 (⚠ "It is the kernel" refuted by its own probes. The regcmd diff found the register instead: DPU 0x4050 depends on the output channel count.)
 
 | step | result |
