@@ -3,6 +3,36 @@
 
 
 
+## 2026-08-08 round 8 (The 1x1 conv ignores its weights and its A term. ⚠ But the control for that was worthless, so round 9 re-runs it with one that works.)
+
+Controls held. Three runs of `md003_80` gave **byte identical output**:
+
+| step | output |
+|---|---|
+| plain | raw 116, relu 71, top1 0, stale |
+| every pointwise weight forced to 0x7f | **identical** |
+| input zero point term dropped from A | **identical** |
+
+Taken at face value: the CMAC does not read the weight buffer, and the A term is
+not what pins the output to a constant.
+
+⚠ **The control did not work.** It used `where.py`, which counts NONZERO bytes.
+0x7f is nonzero and so is nearly every real weight, so a forced buffer and a real
+one both read 100 percent, and the step could not tell whether the knob fired.
+This project has a written rule against exactly that, the rule is quoted in the
+same script, and the next line broke it. `bstat.py` (new) reports DISTINCT, which
+discriminates, and round 9 dumps the buffer both ways.
+
+⚠ **And a gap in the reasoning that got here.** 0x1018 and 0x1040 were called
+inert on the strength of `mn_pw24`, which has 512 input channels at 7x7.
+`md003_80` has never been run with them at the vendor value: mesa gives it
+`40000505` and `14000000` where the vendor .rknn at that geometry has `40000404`
+and `10000000`. It is a single task, so `ROCKET_CBUF_DERIVE=1` hands it the
+vendor pair, and closing that on this model costs one step.
+
+Round 9 is those two things: make the null result trustworthy or throw it away,
+and close 0x1018 / 0x1040 on the model they are actually wrong for.
+
 ## 2026-08-08 round 7 (DPU 0x4050 confirmed with an A/B. Three geometries compute. And with the channel-count bug gone, the 1x1 conv is properly isolated.)
 
 | step | result |

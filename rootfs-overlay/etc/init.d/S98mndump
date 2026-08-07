@@ -1,38 +1,29 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 8. Round 7 landed the 0x4050 fix and isolated the 1x1 conv.
+# 2026-08-08 round 9. Round 8's headline result is real but its control was not,
+# and there is a gap in the reasoning that led to it.
 #
-#   cal_oc16, derived 0x4050 = 0x80011011   3/3 OK, relu maxdiff 0
-#   cal_oc16, ROCKET_DPU4050_CONST=1        0/3 FAIL, round 6's numbers
+# ROUND 8: md003_80 plain, with every pointwise weight forced to 0x7f, and with
+# the input zero point term dropped from A, all three gave BYTE IDENTICAL output
+# (raw 116, relu 71, top1 0, stale). So the weights do not reach the MAC and the
+# A term is not what pins the output.
 #
-# Three geometries compute now. ⚠ One prediction missed: md003_80 was called
-# fixed and is not. Its numbers moved (raw 117/relu 70 to 116/71), so 0x4050 did
-# reach it, and something else is also wrong.
+# ⚠ BUT THE CONTROL WAS WORTHLESS. It used where.py, which counts NONZERO bytes.
+# 0x7f is nonzero and so is nearly every real weight, so a forced buffer and a
+# real one both read 100 percent. It could not tell whether the knob fired. That
+# is the exact failure this project has a rule against, and I wrote the rule
+# into the script and then broke it in the next line. bstat.py reports DISTINCT,
+# which does discriminate, and step 4 dumps the buffer BOTH ways.
 #
-# With the channel-count bug gone the split is clean: every 5x5 conv computes,
-# every 1x1 conv fails. So it IS the kernel, which round 6 could not show
-# because two bugs were on top of each other.
+# ⚠ AND A GAP: 0x1018 and 0x1040 were called inert on the strength of mn_pw24,
+# which has 512 input channels and 7x7 spatial. md003_80 has never been run with
+# them at the vendor value at all, and for md003_80 mesa emits 0x40000505 and
+# 0x14000000 where the vendor .rknn at that geometry has 0x40000404 and
+# 0x10000000. It is one task, so ROCKET_CBUF_DERIVE=1 gives it the vendor pair.
+# Closing that on this model costs one step.
 #
-# The 1x1 case is now cornered:
-#   its regcmd matches the vendor .rknn compiled at the same geometry, apart
-#   from 0x1018 and 0x1040 (shown inert) and 0x40ac and 0x40b4 (requant, not
-#   comparable across differently quantized models)
-#   its weight layout is confirmed against the vendor's own compiled buffer: a
-#   position-encoded 1x1 built on the host reads back oc-major, ic contiguous,
-#   which is exactly what mesa writes
-#   and its output is CONSTANT across different inputs
-#
-# A constant output is not something a wrong weight value or a wrong requant can
-# produce. It means the input is not reaching the MAC. So stop looking at values
-# and ask what the block is reading.
-#
-#   4  ROCKET_PW_WTEST=1 fills the whole pointwise weight buffer with 0x7f.
-#      Output unchanged means the CMAC never reads it.
-#   5  ROCKET_BIAS_NOSW=1 drops the input zero point correction from the BS add
-#      operand A. md003 has input zp 0, so that correction is -128*sum(w) and
-#      large; conv2d-cal has zp 128 and never exercises it. If A is saturating
-#      the requant, the output is constant for that reason.
-#   6  verifies the knob in 4 actually fired, by dumping the weight buffer.
+# So: step 3 closes the gap, step 4 makes the round 8 null result trustworthy or
+# throws it away.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -44,6 +35,15 @@ run() {
 	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
 	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
+}
+
+# Dump one model's buffers into a named directory.
+dump() {
+	d="/tmp/$1"; shift
+	rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos "$@" \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
+	cd / || return 0
 }
 
 start() {
@@ -59,51 +59,51 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal, 5x5 ====="
+	log "===== 1) CONTROL: conv2d-cal ====="
 	run conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) CONTROL: cal_oc16, the geometry 0x4050 won ====="
-	sleep 2
-	run cal_oc16.tflite 2 oc16-keep
-
-	log ""
-	log "===== 3) md003_80 plain, for the numbers to compare against ====="
+	log "===== 2) md003_80 plain, the reference numbers ====="
 	sleep 2
 	run md003_80.tflite 3 md003-plain
 
 	log ""
-	log "===== 4) md003_80 with EVERY pointwise weight forced to 0x7f ====="
-	log "  identical output to 3 means the CMAC never reads the weights"
+	log "===== 3) md003_80 with ROCKET_CBUF_DERIVE=1 ====="
+	log "  gives it the vendor's 0x40000404 and 0x10000000. Never tried on"
+	log "  THIS model; the inert verdict came from a very different one."
 	sleep 2
-	run md003_80.tflite 3 md003-wtest ROCKET_PW_WTEST=1
+	run md003_80.tflite 3 md003-cbuf ROCKET_CBUF_DERIVE=1
 
 	log ""
-	log "===== 5) md003_80 without the input zero point correction in A ====="
-	log "  md003 has input zp 0, conv2d-cal has 128 and never exercises it"
+	log "===== 4) DOES THE KNOB FIRE? weight buffer, plain vs forced ====="
+	log "  distinct must be many for plain and exactly 1 for forced."
+	log "  Round 8 used where.py here, which counts nonzero, and proved nothing."
 	sleep 2
-	run md003_80.tflite 3 md003-nosw ROCKET_BIAS_NOSW=1
-
-	log ""
-	log "===== 6) did the knob in 4 actually fire? dump the weight buffer ====="
-	log "  distinct must be 1 for the forced run, or 4 measured nothing"
-	sleep 2
-	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_PW_WTEST=1 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
-	for f in /tmp/rc/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/where.py" "$f" > "$C" 2>&1
+	dump wplain
+	dump wforce ROCKET_PW_WTEST=1
+	log "  plain:"
+	for f in /tmp/wplain/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
 	done
-	cd / || return 0
+	log "  forced 0x7f:"
+	for f in /tmp/wforce/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 7) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 5) md003_80 forced weights, both knobs on ====="
+	log "  if 3 changes anything, the weight test has to be redone on top of it"
+	sleep 2
+	run md003_80.tflite 3 md003-both ROCKET_CBUF_DERIVE=1 ROCKET_PW_WTEST=1
+
+	log ""
+	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 3 against 4 is the round: does a 1x1 conv read its weights   ====="
-	log "===== at all. Read 6 before believing 4.                           ====="
+	log "===== Read 4 FIRST. If forced is not distinct=1 the knob never fired ====="
+	log "===== and round 8's weight result is void. Then 2 against 3.        ====="
 	sync
 }
 
