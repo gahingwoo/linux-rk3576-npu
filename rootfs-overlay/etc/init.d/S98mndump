@@ -1,21 +1,33 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Two runs in one image (2026-08-05).
+# 2026-08-07, after the TASK_CON fix. Is the depthwise datapath broken, or was
+# the probe in the wrong quantization regime?
 #
-# Steps 1-4 are the v5 verification. Igor Paunovic refused the Tested-by on v4
-# because patch 4 shipped the ping-pong experiment by mistake, including a
-# state_init call that fires on RK3588 too. v5 trims it back to the two real
-# fixes. These four steps are the evidence that the trim did not break anything
-# here, with every debug knob left off.
+# dwconv.tflite was built in June to isolate the depthwise, and its own comment
+# says it uses "conv2d-cal's PROVEN regime", uint8 per-tensor. Reading the
+# flatbuffer says otherwise: it is THREE ops (QUANTIZE, DEPTHWISE_CONV_2D,
+# QUANTIZE) and the depthwise runs on int8 tensors with PER-AXIS weights and
+# bias. conv2x.tflite is the same, and its two ops are plain convs, not
+# depthwise. mobilenet_v1_1.0_224_quant.tflite, the model we actually want, is
+# uint8 per-tensor everywhere with not one per-axis tensor.
 #
-# Step 5 is his question: on the submits that compute nothing, is the regcmd
-# read at all? See test_probe.py. It runs last because a poisoned submit fails
-# and gets recovered by a reset, and a reset re-arms the pipeline, which would
-# contaminate anything measured after it.
+# So both small failing models test a regime nothing has verified, and mesa
+# handles per-axis weights by an approximation it documents in its own comment.
+# The mn_* models here are single layers cut straight out of MobileNet with
+# slice_tflite.py: real weights, real scales, uint8 per-tensor, no converter in
+# the loop. mn_dw1 is what dwconv.tflite was supposed to be.
+#
+# job_log=1 matters: a delegate that REFUSES an op runs it on the CPU and the
+# result comes back correct while the NPU did nothing. jobs=0 in a run line
+# means the answer below is about tflite, not about this driver.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
+run() {
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$1" "${2:-3}" > "$C" 2>&1
+}
 
 start() {
 	i=0
@@ -24,118 +36,66 @@ start() {
 	# -n 8 floods the serial console and wedges the box. Learned the hard way.
 	dmesg -n 4 2>/dev/null
 
-	log ""
-	log "===== 1) does the NPU come up at all ====="
-	log "  accel node: $(ls /dev/accel/ 2>/dev/null)"
-	dmesg | grep -iE "rknn|rocket|failed to attach" | head -6 > "$C" 2>&1
-
-	log ""
-	log "===== 2) known good single conv, six times, must stay byte exact ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_twice.py" "$NPU_DIR/conv2d-cal.tflite" 6 > "$C" 2>&1
-
-	log ""
-	log "===== 3) A -> B -> A, unchanged behaviour expected ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_aba.py" "$NPU_DIR/conv2d-cal.tflite" "$NPU_DIR/conv2d.tflite" > "$C" 2>&1
-
-	log ""
-	log "===== 4) teardown: unbind and rebind, then run again ====="
-	echo 27700000.npu > /sys/bus/platform/drivers/rocket/unbind 2>/dev/null
-	sleep 1
-	echo 27700000.npu > /sys/bus/platform/drivers/rocket/bind 2>/dev/null
-	sleep 2
-	log "  accel node after rebind: $(ls /dev/accel/ 2>/dev/null)"
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_twice.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-	log "--- any oops or warning from the teardown? ---"
-	dmesg | grep -iE "Unable to handle|Internal error|WARNING|use-after" | head -4 > "$C" 2>&1
-
-	log ""
-	log "===== v5 verdict: 1 shows accel0 and no attach failure, 2 six OKs, ====="
-	log "===== 3 A ok B wrong A ok, 4 rebinds clean. Anything else blocks v5. ====="
-
-	log ""
-	log "===== 5) CONTROL: scribble the regcmd before the FIRST submit ====="
-	log "  (nothing can be resident yet, so this one must come back WRONG)"
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_scribble.py" "$NPU_DIR/conv2d-cal.tflite" control > "$C" 2>&1
-
-	log ""
-	log "===== 6) QUESTION: scribble the regcmd of a REPEAT submit ====="
-	sleep 3
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_scribble.py" "$NPU_DIR/conv2d-cal.tflite" question > "$C" 2>&1
-
-	# Round 3 compared B's output with and without a corrupted regcmd. B writes a
-	# flat zero point surface either way, so two constant buffers always compared
-	# identical and the test could not fail. Replaced with one that can: mark the
-	# output buffer and see whether anything overwrites the mark.
-
-	log ""
-	log "===== 7) CONTROL: prefill the output of a submit that DOES compute ====="
-	log "  (the marker must be gone, or nothing below counts)"
-	sleep 3
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_written.py" "$NPU_DIR/conv2d-cal.tflite" control > "$C" 2>&1
-
-	log ""
-	log "===== 8) THE WALL: prefill the output of B's submit, the one that walls ====="
-	sleep 3
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_written.py" "$NPU_DIR/conv2d-cal.tflite" test \
-			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
-
-	# ---------------------------------------------------------------------
-	# TASK_CON fixed the wall. Regular int8 conv is correct; depthwise is not,
-	# and it is a SINGLE job, so no dispatch or chaining is involved.
-	#
-	# mesa carries ROCKET_DW_WTEST, which fills the whole depthwise weight
-	# buffer with 0x7f. It was written in June when only the first submit after
-	# a reset computed, so its result could not be trusted. Now it can:
-	#   outputs differ    -> the CMAC reads the buffer, the failure is layout
-	#   outputs identical -> the CMAC reads nothing from it
-	# ---------------------------------------------------------------------
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
-	echo 0 > /sys/module/rocket/parameters/no_poll 2>/dev/null
-	log ""
-	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
-
-	log ""
-	log "===== regression: regular conv must still be correct ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 3 > "$C" 2>&1
-
-	# The depthwise write is ONE contiguous 256 byte run at offset 0 and nothing
-	# after: a sequential stop, not a channel-bank truncation, and the one atom
-	# it does write holds a single repeated value. dwconv.tflite is confirmed to
-	# be one standalone DepthwiseConv2D, so this is the depthwise datapath
-	# itself, which is exactly what the model was built in June to isolate.
-	#
-	# mesa's comment says the depthwise runs in the CORE unit and that a wrong
-	# weight layout "leaves the depthwise CORE unit unable to start (it never
-	# opens)". Read the unit status registers after each job and compare against
-	# the conv that computes correctly.
 	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
+	log ""
+	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)" \
+	    "job_log=$(cat /sys/module/rocket/parameters/job_log 2>/dev/null)"
 
 	log ""
-	log "===== unit status after a conv that computes (reference) ====="
-	echo "SMARK-CONV" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	dmesg | sed -n '/SMARK-CONV/,$p' | grep -aE "job:|status:" | head -6 > "$C" 2>&1
+	log "===== 1) CONTROL: conv2d-cal, the model that is known correct ====="
+	log "  (anything below is meaningless unless this is 3/3)"
+	run conv2d-cal.tflite 3
 
 	log ""
-	log "===== unit status after the depthwise that stops at one atom ====="
+	log "===== 2) CONTROL: mn_pw2, MobileNet 1x1 pointwise 32->64, uint8 ====="
+	log "  (a second regular conv, real MobileNet scales, different shape)"
 	sleep 2
-	echo "SMARK-DW" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/dwconv.tflite" > "$C" 2>&1
-	dmesg | sed -n '/SMARK-DW/,$p' | grep -aE "job:|status:" | head -6 > "$C" 2>&1
+	run mn_pw2.tflite 3
 
 	log ""
-	log "===== compare cna and core status between the two. The conv line is  ====="
-	log "===== the reference for what a unit that ran to completion reads.    ====="
+	log "===== 3) CONTROL: mn_conv0, MobileNet first conv 3x3 s2, 3 channels ====="
+	sleep 2
+	run mn_conv0.tflite 3
+
+	log ""
+	log "===== 4) TEST: mn_dw1, MobileNet depthwise, uint8 PER-TENSOR ====="
+	log "  (what dwconv.tflite was meant to be. Correct here means the"
+	log "   depthwise datapath is fine and the June result was the regime.)"
+	sleep 2
+	run mn_dw1.tflite 3
+
+	log ""
+	log "===== 5) TEST: mn_conv0dw1, two chained ops, both uint8 per-tensor ====="
+	log "  (chaining without the per-axis confound conv2x.tflite carries)"
+	sleep 2
+	run mn_conv0dw1.tflite 3
+
+	log ""
+	log "===== 6) CONTINUITY: dwconv.tflite, the int8 PER-AXIS model ====="
+	log "  (expected still wrong. If 4 passes and this fails, the regime is"
+	log "   the dividing line, not the depthwise.)"
+	sleep 2
+	run dwconv.tflite 3
+
+	# Where do the written bytes land? Under the wall the depthwise wrote ONE
+	# 256 byte run at offset 0 out of 51200 and stopped. Same question in the
+	# per-tensor regime, with the input BO as where.py's own passing control.
+	log ""
+	log "===== 7) SHAPE: which bytes of mn_dw1's output actually get written ====="
+	sleep 2
+	rm -rf /tmp/dump; mkdir -p /tmp/dump; cd /tmp/dump || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/mn_dw1.tflite" > "$C" 2>&1
+	log "  files: $(ls /tmp/dump 2>/dev/null | tr '\n' ' ')"
+	for f in /tmp/dump/mesa-input-*.bin /tmp/dump/mesa-output-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/where.py" "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== read 1 first. Then: does 4 pass? If yes the depthwise works  ====="
+	log "===== and the open bug is per-axis requant. If no, and 2 and 3     ====="
+	log "===== pass, the depthwise datapath is broken for real.             ====="
 	sync
 }
 

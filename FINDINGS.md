@@ -3,6 +3,71 @@
 
 
 
+## 2026-08-08 (⚠ The two small failing models are in a quantization regime the working one never touches. Read this before any more depthwise work.)
+
+No board run. Reading the model files and the Mesa source.
+
+**`dwconv.tflite` is not what it says it is.** Its build script comment claims
+"uint8 I/O (conv2d-cal's PROVEN regime)", and the entry below records it as one
+standalone `DepthwiseConv2D`. Parsing the flatbuffer (`vendor-capture/tfl_ops.py`,
+new) says otherwise:
+
+| model | ops | the conv's tensors | weights |
+|---|---|---|---|
+| `conv2d-cal.tflite`, **correct on hw** | 1 CONV_2D | **u8**, zp 128 / 128 | **per-tensor**, zp 133 |
+| `dwconv.tflite`, wrong | **3**: QUANTIZE, DEPTHWISE_CONV_2D, QUANTIZE | **i8**, zp -1 -> -29 | **per-axis**, 16 scales |
+| `conv2x.tflite`, wrong | **4**: QUANTIZE, CONV_2D, CONV_2D, QUANTIZE | **i8**, zp -1 -> 4 | **per-axis**, 16 scales |
+| `mobilenet_v1_1.0_224_quant.tflite`, wrong | 28 | **u8** | **per-tensor, zero per-axis tensors** |
+
+TFLite's converter wrapped the model in QUANTIZE ops and made the interior int8
+per-axis; `inference_input_type=uint8` only sets the boundary. So both small
+failing models differ from the working one in **two** ways that have nothing to
+do with depthwise or with chaining, and `conv2x`'s two ops are plain convs, not
+depthwise at all.
+
+**Mesa's int8 handling is wrong in two places, both visible in the source:**
+
+1. `rkt_ml.c` writes `map[n++] = input_in[...] - 0x80` and pads with
+   `zero_point - 0x80` unconditionally. `is_signed` is plumbed all the way from
+   `tfl_device.c` and then never consulted here. An int8 tensor is already in
+   the signed domain, so it gets shifted a second time.
+2. `pipe_tensor::zero_point` is `int` and legitimately negative for int8; the
+   Rocket driver copies it into `unsigned` (`rkt_operation`) and `uint8_t`
+   (`rkt_task`). dwconv's input zp -1 becomes 255 where the hardware wants 127,
+   and its output zp -29 becomes 227 where it wants 99. 99 is exactly the zp
+   TFLite gives the same tensor in its u8 view, which confirms the +128 mapping.
+   Everything downstream inherits it: the CNA pad value, `out_offset`, and
+   `DPU_BS_OW_OP(0x80 - weights_zero_point)`.
+
+Per-axis itself is handled, and deliberately: `rkt_coefs.c` emits the relative
+per-channel `C[oc] = round(2^14 * wt_sc[oc] / max(wt_sc))` and `rkt_ml.c`
+collapses the scales to their mean for the global OUT_CVT. For a per-tensor conv
+every scale is equal, so `C = 0x4000` everywhere and the mean is exact. **That is
+why `conv2d-cal` passing says nothing about the per-axis path.**
+
+**Consequence.** "The depthwise datapath is broken" and "chained ops fail on
+op2" were both read off models that also change regime. The June intent behind
+`dwconv.tflite`, isolating the depthwise, was never actually achieved.
+
+**What replaces them.** `vendor-capture/slice_tflite.py` (new) cuts a run of
+operators out of a model into a standalone one, so single MobileNet layers can
+run in their real regime with the real weights and no converter in the loop:
+
+| new model | what it is |
+|---|---|
+| `mn_conv0` | MobileNet op0, CONV_2D 3x3 s2, 3 channels, u8 per-tensor |
+| `mn_pw2` | MobileNet op2, CONV_2D 1x1 32->64, u8 per-tensor |
+| **`mn_dw1`** | **MobileNet op1, DEPTHWISE_CONV_2D 3x3 on 112x112x32, u8 per-tensor** |
+| `mn_conv0dw1` | ops 0 and 1 chained, both u8 per-tensor |
+
+All four validated against the CPU interpreter on the host (`mn_dw1` distinct=256,
+mean 99.96, so the reference is not degenerate). `mn_dw1` is what `dwconv.tflite`
+was meant to be. The board round queues them behind `conv2d-cal` as the control
+and keeps `dwconv.tflite` last for continuity, with `job_log=1` throughout so a
+run the delegate quietly handed back to the CPU shows up as `jobs=0` instead of
+passing.
+
+
 ## 2026-08-07 last (Depthwise: the write is ONE contiguous 256-byte run at offset 0, and the units end in a different state than a conv that completes.)
 
 `where.py` on the dumped buffers, with the script's own control passing:
