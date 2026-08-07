@@ -3,6 +3,50 @@
 
 
 
+## 2026-08-08 round 5 (Two threads closed: the row-window split is not the discriminator, and 0x1018 / 0x1040 are not load bearing. It is the kernel.)
+
+Controls held at both ends, and `cal_s1` kept its round 4 win across a reflash.
+
+| step | result |
+|---|---|
+| `conv2d-cal` | 2/2 OK |
+| `cal_s1` | 3/3 OK, the padding fix survives |
+| **`md003_80`, 1x1 at 80x80, ONE row window** | **0/3 FAIL** |
+| `md003` at 160x160, two windows | 0/3 FAIL, byte identical numbers |
+| `mn_pw24`, stride-keyed 0x1018 / 0x1040 | 0/3 FAIL |
+| `mn_pw24`, `ROCKET_CBUF_DERIVE=1` | 0/3 FAIL, **identical output** |
+| `cal_s1` with `ROCKET_CBUF_DERIVE=1` | 2/2 OK, no regression |
+
+**The row-window split is out.** `md003_80` runs as a single window at the same
+size and input channel count where a 5x5 conv computes, and fails with the same
+numbers as the split version.
+
+**0x1018 and 0x1040 are out.** Turning the knob changed nothing on the one model
+where the stride and the split disagree, and did not disturb the model that
+computes. That was the stated expectation before the run, which is the only
+reason to have shipped it as a knob rather than a fix.
+
+**So it is the kernel.** With one loose end: `md003_80` and `cal_s1` also differ
+in output channels, 16 against 128. `mutate_oc.py` (new) truncates or repeats the
+filters, which per-tensor quantization makes safe, giving `cal_oc16` (the 5x5
+conv cut to 16 output channels) and `md003_oc128` (the 1x1 grown to 128). Those
+two separate it.
+
+⚠ **The register set is probably not where the 1x1 bug lives.** The vendor .rknn
+compiled at exactly this geometry, 1x1 with 16 in and 16 out at 80x80, differs
+from the 5x5 one only in fields mesa already computes:
+
+| reg | vendor 1x1 | vendor 5x5 | what it is |
+|---|---|---|---|
+| 0x1024 | `0000000f` | `0404007f` | kernel word, output channels - 1 |
+| 0x1030 | `0020004f` | `0320004f` | weight bytes per kernel |
+| 0x1080 | `00000000` | `02020202` | padding, correct on both sides now |
+
+Everything else in the watched set is identical. So round 6 also dumps the whole
+regcmd mesa emits for `md003_80`, to diff against the vendor's on the host. If
+they match, the bug is in the weight or coefficient buffer rather than in a
+register, which is a different kind of search.
+
 ## 2026-08-08 round 4 (CONFIRMED with an A/B in one boot: the padding fix makes a second geometry compute. Two now work, up from one.)
 
 | step | 0x1080 | result |

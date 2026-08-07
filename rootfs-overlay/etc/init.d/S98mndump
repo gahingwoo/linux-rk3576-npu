@@ -1,36 +1,31 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 5. The padding fix is confirmed and the set of geometries
-# that compute went from one to two:
+# 2026-08-08 round 6. Round 5 settled two things and left one.
 #
-#   cal_s1, derived padding 0x02020202   3/3 OK, relu maxdiff 1, top1 exact
-#   cal_s1, ROCKET_PAD_LADDER=1 (old 0)  0/3 FAIL, round 3's numbers exactly
+#   md003_80, a 1x1 conv at 80x80 with ONE row window, failed with byte
+#   identical numbers to md003 at 160x160 which splits into two. So the row
+#   window split is NOT the discriminator, and the KERNEL is.
 #
-# Same boot, same model, same inputs, one register apart.
+#   mn_pw24 with and without ROCKET_CBUF_DERIVE=1 gave identical output, and
+#   cal_s1 kept computing with the knob on. 0x1018 and 0x1040 are not load
+#   bearing. That was the stated expectation, and it held.
 #
-# What is left splits three ways, and this round takes the first two.
+# The loose end is that md003_80 and cal_s1 differ in output channels too, 16
+# against 128, which has never been tested on its own. mutate_oc.py truncates or
+# repeats the filters, which per-tensor quantization makes safe:
 #
-# 1x1 CONVS. mn_pw2, md003 and mn_pw24 have padding 0 either way and stayed
-# broken, as predicted. Both working geometries are 5x5, 16 in / 128 out, 80x80,
-# one task, so every failure still differs in several ways at once. md003_80 is
-# md003 resized to 80x80 (mutate_hw.py; a 1x1 kernel is valid at any size),
-# which drops the row-window split and leaves the kernel as nearly the only
-# difference from a model that computes.
+#   cal_oc16     conv2d-cal cut to 16 output channels, still 5x5
+#   md003_oc128  md003_80 grown to 128 output channels, still 1x1
 #
-# 0x1018 / 0x1040. The vendor does not key these off the stride. A width and
-# channel sweep flips both exactly where the op stops fitting one row window:
-# 16 channels at 128x128 reads 0x40000404 / 0x10000000, 144x144 splits and reads
-# 0x40000505 / 0x14000000, and holding 80x80 while raising input channels flips
-# at the same place. ROCKET_CBUF_DERIVE=1 keys them off mesa's own split instead.
+# cal_oc16 computing and md003_oc128 failing pins it on the kernel.
 #
-# ⚠ That knob is NOT expected to fix anything on its own: cal_s1 computes with
-# the stride-keyed value where the vendor would use the other, so these two
-# tolerate being wrong at least there. It is here to be A/B'd, and mn_pw24 is
-# the case where the stride and the split disagree.
-#
-# The third thread, mn_conv0, is not in this round: 3 input channels take
-# fill_regcmd_firstconv, a different function that the padding change never
-# touched. Its round 4 failure is unexplained by anything here.
+# ⚠ And the register set is probably NOT where the 1x1 bug is. The vendor .rknn
+# for this exact geometry (1x1, 16 in, 16 out, 80x80) differs from the 5x5 one
+# only in fields mesa already computes: the kernel word and output channels in
+# 0x1024, the weight bytes per kernel in 0x1030, and the padding in 0x1080. So
+# step 5 dumps the whole regcmd mesa emits for md003_80, to diff against the
+# vendor's on the host. If those match, the bug is in the weight or coefficient
+# buffer, not in a register.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -57,52 +52,49 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal ====="
+	log "===== 1) CONTROL: conv2d-cal, 5x5, 128 out channels ====="
 	run conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) CONTROL: cal_s1, the geometry the padding fix won ====="
-	log "  must still be 3/3, or the round 4 result did not survive"
+	log "===== 2) cal_oc16: the SAME 5x5 conv cut to 16 out channels ====="
+	log "  if this computes, the output channel count is not the variable"
 	sleep 2
-	run cal_s1.tflite 3 s1-keep
+	run cal_oc16.tflite 3 cal-oc16
 
 	log ""
-	log "===== 3) md003_80: 1x1 conv at 80x80, ONE row window ====="
-	log "  md003 without the split. Nearly only the kernel differs from 2."
+	log "===== 3) md003_oc128: the 1x1 conv grown to 128 out channels ====="
+	log "  if this fails, it is the kernel. 2 and 3 are the whole round."
+	sleep 2
+	run md003_oc128.tflite 3 md003-oc128
+
+	log ""
+	log "===== 4) md003_80 for reference, 1x1 with 16 out channels ====="
 	sleep 2
 	run md003_80.tflite 3 md003-80
 
 	log ""
-	log "===== 4) md003 at 160x160 for reference, still split ====="
+	log "===== 5) REGCMD: everything mesa emits for md003_80 ====="
+	log "  to diff on the host against the vendor .rknn at this exact geometry"
 	sleep 2
-	run md003.tflite 3 md003-160
+	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
+	log "  files: $(ls /tmp/rc 2>/dev/null | tr '\n' ' ')"
+	for f in /tmp/rc/mesa-regcmd-*.bin; do
+		[ -f "$f" ] || continue
+		log "--- md003_80 $(basename "$f") ---"
+		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
+	done
+	cd / || return 0
 
 	log ""
-	log "===== 5) mn_pw24, stride-keyed 0x1018/0x1040 (today's default) ====="
-	sleep 2
-	run mn_pw24.tflite 3 pw24-stride
-
-	log ""
-	log "===== 6) mn_pw24, ROCKET_CBUF_DERIVE=1, keyed off the split ====="
-	log "  the case where stride and split disagree. A/B against 5."
-	sleep 2
-	run mn_pw24.tflite 3 pw24-derive ROCKET_CBUF_DERIVE=1
-
-	log ""
-	log "===== 7) cal_s1 with ROCKET_CBUF_DERIVE=1 ====="
-	log "  the vendor value for it. Must NOT regress, it passes without it."
-	sleep 2
-	run cal_s1.tflite 2 s1-derive ROCKET_CBUF_DERIVE=1
-
-	log ""
-	log "===== 8) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	run conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 3 is the one that matters: a 1x1 conv, one window, at the    ====="
-	log "===== size that works for 5x5. If it fails, the kernel is next.    ====="
-	log "===== 5 vs 6 says whether 0x1018/0x1040 are load bearing at all.   ====="
+	log "===== 2 and 3 separate the kernel from the output channels. 5 says  ====="
+	log "===== whether the 1x1 bug is a register at all.                     ====="
 	sync
 }
 
