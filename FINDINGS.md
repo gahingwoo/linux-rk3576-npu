@@ -3,6 +3,68 @@
 
 
 
+## 2026-08-07 later (Depthwise: the regcmd matches the vendor on every mode register, and the DPU writes exactly 256 bytes of a 51200 byte output and stops. Two of my own readings of this corrected by finally dumping the buffers instead of inferring from them.)
+
+**The regcmd is not the difference.** Decoding our depthwise regcmd on the board
+with mesa's own dump and comparing it three ways, our conv (which computes
+correctly) against our depthwise against the vendor's depthwise capture:
+
+Every depthwise mode register in ours matches the vendor's and differs from our
+conv: `CNA/100c=1`, `1014`, `1018`, `1024`, `1040`, `CORE/3018`, `DPU/400c`,
+`4038`, `4044`, `4050`, `RDMA/501c`, `5044`. The depthwise branch is configuring
+the block the way the vendor does.
+
+⚠ **Do not read the vendor capture's zeros as differences.**
+`vendor-capture/vendor_dw_regcmd.txt` was extracted from a **static .rknn file**,
+where address registers are unpatched placeholders. That accounts for all of
+`CNA/1088`, `CNA/1110`, `DPU/4018`, `RDMA/5020` and `RDMA/5024` reading 0 on the
+vendor side. Read as differences they would have suggested the vendor's depthwise
+does not use the weight DMA at all, which is false.
+
+After removing geometry (our model is 40x40x16, the capture is 112x112x32) and
+those addresses, **exactly one difference remained**:
+
+```
+CNA 0x1080    our conv 02020101    our dw 01010101    vendor dw 01000101
+```
+
+mesa's own comment calls `0x01010101` "a mesa invention the vendor NEVER emits"
+and ships `ROCKET_DW_SURF0` to force the vendor value. **Refuted with a passing
+control**: the emitted regcmd confirms `01010101` -> `01000101`, and the output
+md5 is `c5fe415451bf` both ways. That byte does not gate the compute.
+
+**What the buffers actually contain**, from mesa's dumps rather than from
+inference:
+
+| buffer | size | contents |
+|---|---|---|
+| input | 51200 | 25702 zeros plus a spread, same shape as the working conv's |
+| weights | 576 | filled as documented; the tail is unused and that is correct |
+| biases | 33152 | mostly zeros plus a spread |
+| **output** | **51200** | **50944 zeros and 256 bytes of one value** |
+| conv output, for reference | 409600 | 307654 zeros and a real distribution |
+
+**So the DPU writes exactly 256 bytes and stops.** 256 is one output atom on this
+block. The depthwise op starts, emits a single atom, and goes no further.
+
+⚠ **I got this wrong twice before dumping.** First I concluded "the op does not
+run at all", from the fact that neither the weights nor the input change the
+output. Then I corrected that to "the DPU does write", from the output tensor
+holding 0 and the zero point rather than 128. Both were inferences from the
+readback. The buffer dump settles it: 256 bytes of 51200. Dump the buffer, do
+not reason about what the readback implies about it.
+
+⚠ The weight buffer being 576 bytes with 288 of them zero is **not** a bug. mesa
+documents block = DIV_ROUND_UP(channels, 2) * 4, which is 64 bytes for the
+32-channel layers in the comment and 32 bytes for our 16-channel model, so 9
+blocks is 288 bytes. The BO is allocated at 576 and `CNA/0x101c`, the weight
+length, is programmed to `0x120` = 288. Consistent.
+
+**Next question, and it is a narrow one**: why does the depthwise write stop after
+one output atom. This has the same shape as the June "channel-bank truncation"
+note about conv0, which was recorded when the wall made every such reading
+unreliable and is worth re-testing now that it is not.
+
 ## 2026-08-07 late (Depthwise reads NEITHER its weights NOR its input: the op does not run at all, so it is not a weight-layout problem. Plus the bandwidth-counter instrument failed its own control three times, and a June reading of the 0x2210/0x2410 writes was wrong.)
 
 **Depthwise ignores its weight buffer, with a passing positive control.** mesa's

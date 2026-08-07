@@ -106,39 +106,43 @@ start() {
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 3 > "$C" 2>&1
 
-	# The weight buffer is provably ignored: 0x7f everywhere, confirmed by the
-	# post-memset dump, changes no output byte. So does the CNA weight DMA run
-	# at all? The vendor bandwidth counters answer that.
+	# CNA 0x1080 byte 2 is refuted: forcing the vendor value 0x01000101, with the
+	# emitted regcmd confirming it, leaves the output byte identical. So the
+	# regcmd is not the difference; ours matches the vendor's on every mode
+	# register.
 	#
-	# Two fixes from the last attempt. The readout was in rocket_job_handle_irq,
-	# which the poll never calls, so it logged one stray line. It now sits in
-	# the shared locked helper both paths reach. And "dmesg -C" does not clear
-	# on this busybox, which is why both sections printed the same line, so use
-	# a marker written to /dev/kmsg and read only what follows it.
-	echo 1 > /sys/module/rocket/parameters/perf 2>/dev/null
-
-	perf_after() {   # $1 = marker
-		dmesg | sed -n "/$1/,\$p" | grep -a "perf: top" | tail -4
-	}
-
+	# Correcting my own reading: the output tensor is 0 and 99, and teflon adds
+	# 0x80 on readback, so the BO holds 0x80 and 0xe3. An untouched BO is 0x00
+	# and would read back as 128. The DPU therefore DOES write. The op runs and
+	# produces a constant, it does not fail to start. Dump the raw buffers and
+	# read the histograms rather than inferring them.
 	log ""
-	log "===== CONTROL: regular conv, which computes correctly ====="
-	echo "PERFMARK-CONV" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	perf_after PERFMARK-CONV > "$C" 2>&1
-
-	log ""
-	log "===== QUESTION: depthwise, which does not ====="
-	sleep 2
-	echo "PERFMARK-DW" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so \
+	log "===== depthwise: raw buffer histograms, input, weights, output ====="
+	rm -rf /tmp/dwb; mkdir -p /tmp/dwb
+	cd /tmp/dwb && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
 		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/dwconv.tflite" > "$C" 2>&1
-	perf_after PERFMARK-DW > "$C" 2>&1
+	for f in mesa-input-000-000.bin mesa-weights-000-000.bin mesa-biases-000-000.bin mesa-output-000-000.bin; do
+		[ -e "/tmp/dwb/$f" ] || continue
+		log "  $f  $(wc -c < /tmp/dwb/$f) bytes, top byte values:"
+		od -An -tu1 -v "/tmp/dwb/$f" | tr ' ' '\n' | grep -v '^$' | sort -n | uniq -c | sort -rn | head -4 > "$C" 2>&1
+	done
+	cd /
 
 	log ""
-	log "===== The conv line is the control: if its wt_rd is 0 the counters are ====="
-	log "===== not being read correctly and the depthwise line means nothing.   ====="
+	log "===== and the same for the conv that computes correctly, as reference ====="
+	rm -rf /tmp/cvb; mkdir -p /tmp/cvb
+	cd /tmp/cvb && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	for f in mesa-input-000-000.bin mesa-weights-000-000.bin mesa-output-000-000.bin; do
+		[ -e "/tmp/cvb/$f" ] || continue
+		log "  $f  $(wc -c < /tmp/cvb/$f) bytes, top byte values:"
+		od -An -tu1 -v "/tmp/cvb/$f" | tr ' ' '\n' | grep -v '^$' | sort -n | uniq -c | sort -rn | head -4 > "$C" 2>&1
+	done
+	cd /
+
+	log ""
+	log "===== an all-zero output buffer means the DPU never wrote. A buffer of ====="
+	log "===== one repeated nonzero value means it wrote a constant.            ====="
 	sync
 }
 
