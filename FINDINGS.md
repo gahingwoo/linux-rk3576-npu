@@ -3,6 +3,109 @@
 
 
 
+## 2026-08-07 (THE WALL IS BROKEN. Root cause: PC_TASK_CON field layout, RK3576 uses a 16-bit task number. Plus: the "completion interrupt never reaches the GIC" claim in v1 through v6 is WRONG, and what is left are two ordinary per-op bugs.)
+
+**Root cause.** `rocket_registers.h` is RK3588 derived and lays PC_TASK_CON out as
+TASK_NUMBER bits 0..11, TASK_PP_EN 12, TASK_COUNT_CLEAR 13, RESERVED_0 14.
+**RK3576 uses a 16-bit task number**, so those three controls sit at bits 16, 17
+and 18.
+
+| | value written to 0x0030 |
+|---|---|
+| rocket, v1 through v6 | `0x00007001` |
+| vendor on RK3576 | `0x00070001` |
+
+RK3576's PC therefore read rocket's word as **task_number = 0x7001, 28673 tasks**,
+with TASK_COUNT_CLEAR landing on nothing. A count clear that never lands is
+exactly "one task per reset": only a reset ever cleared the counter.
+
+Fix: `rocket_pc_writel(core, TASK_CON, (0x7u << 16) | 1);`
+
+**Board proof, one boot, control first** (`rocket.task_con16`):
+
+| | 2nd submit, new input |
+|---|---|
+| task_con16=0, control | WRONG, crc unchanged `20a556ae` |
+| task_con16=1 | **OK, maxdiff 1, crc moves to `dda67317`** |
+
+and A -> B -> A' with B a genuinely different configuration:
+**A ok, B ok `maxdiff=0 exact=100.0%`, A' ok.** First time since June.
+
+**How it was found.** An ordered writel trace of the CURRENT rocket, in the same
+format as the vendor's `rknpu.wtrace` (the register defines are already absolute
+offsets so the two align without translation), diffed against
+`dirty/vendor_wt.trace`. **Exactly one value differed in the whole submit.** Not a
+guess: two guessed hypotheses the same evening, per-job IOMMU teardown and the
+vendor post-completion sequence, were both refuted first.
+
+⚠ **The fix already existed.** `kernel/0012` in the June fork carries it with a
+full explanation. It was never carried into the upstream RFC series, so v1
+through v6 all shipped `0x7001`. Diff the fork patches against the series before
+concluding that anything is unexplained.
+
+⚠ **Igor Paunovic named the mechanism** on the v5 thread: "a counter that still
+reads non-zero on the walling submit would say the TASK_COUNT_CLEAR pulse that
+hw_submit issues on every submit is not landing on RK3576". Right mechanism; the
+register-level reason is the bit positions.
+
+---
+
+### The completion interrupt works. The claim in v1 through v6 is wrong.
+
+With the TASK_CON fix and the poll disabled at runtime (`rocket.no_poll=1`), so
+that only a real interrupt can retire a job:
+
+  conv2d-cal, 3 runs, a different input each: **3/3 correct, 0 timeouts**,
+  `/proc/interrupts` counting up on the NPU line.
+
+So "the DPU completion interrupt is armed exactly as on RK3588 but never reaches
+the GIC" is false. It reaches the GIC. It did not fire before because the PC
+believed it had 28672 tasks left and never finished the sequence.
+
+⚠ What DOES still time out is jobs that compute wrongly, which is coherent: the
+completion fires when the DPU finishes writing, and a misconfigured op never
+finishes. So a bounded poll is still worth having as a fallback, but the
+justification has to change from "the interrupt does not arrive" to "a job that
+fails to complete would otherwise sit until the 500 ms scheduler timeout".
+Diederik de Haas privately warned that the poll reads as a workaround for an
+undetermined problem and could significantly delay mainline. He was right, and
+the underlying problem is now determined.
+
+---
+
+### What is left: two ordinary per-op bugs, and the dividing line is NOT the job count
+
+| model | jobs per invoke | poll on | poll off | result |
+|---|---|---|---|---|
+| conv2d-cal | 1 | 0 timeouts | 0 timeouts | **3/3 correct** |
+| conv2x, two chained convs | 2 | 0 | 3 | 0/3, STALE |
+| **dwconv, depthwise** | **1** | 0 | 2 | 0/3, STALE |
+| mobilenet_v1_224_quant | 28 | 0 | 12 | 0/3, STALE |
+
+**dwconv is a single job and it fails**, so the split is not "one job works, many
+jobs do not". It is:
+
+- **regular int8 convolution: correct** (this is what the 2026-06-27 requant work
+  fixed, and it survives the TASK_CON change);
+- **depthwise convolution: wrong**, with no dispatch or chaining involved;
+- **chained ops: the second op fails**;
+- MobileNet has both, so it cannot work until both are fixed.
+
+STALE on runs 1 and 2 of every failing model means the output buffer is not
+rewritten across runs, which is what a job that never completes looks like.
+
+⚠ **Oracle bug in this run's first pass, third of its kind:** `test_model.py`
+compared against the raw CPU output and reported conv2d-cal as failing at maxdiff
+128, when `test_once.py` had it byte exact. The hardware applies a ReLU at the
+output zero point, so the reference is `max(cpu, zp)`. The script now prints both
+and judges on the smaller. Copy the reference from a test that already passes
+rather than writing a new one.
+
+**Everything above this entry, from June onward, was chasing a symptom.** The
+excluded results (writel values, register order, regcmd payload, power and reset
+teardown, IOMMU churn, ping-pong) were all true and all irrelevant: they compared
+against a driver that was asking the hardware for 28673 tasks.
+
 ## 2026-08-07 (Vendor control REDONE and it holds: the vendor really does recompute on every warm submit. Two rocket-side hypotheses tested and both REFUTED, controls clean. Plus: the vendor two-submit test had the same flawed oracle we retracted, and one of tonight's "new" ideas had already been run in June.)
 
 **The vendor control was re-run with a different input per run, and the July
