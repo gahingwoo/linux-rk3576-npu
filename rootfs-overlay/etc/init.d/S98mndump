@@ -87,22 +87,25 @@ start() {
 			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 9) ONE CONFIG, TWO INPUTS: does the second submit compute at all? ====="
-	log "  (round 6 found A with a different input returns a byte identical buffer)"
+	log "===== 9) CONTROL: stock behaviour, must reproduce the wall ====="
+	echo 0 > /sys/module/rocket/parameters/vendor_post 2>/dev/null
+	log "  vendor_post=$(cat /sys/module/rocket/parameters/vendor_post 2>/dev/null)"
 	sleep 3
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_once.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 10) THE WALL, with the buffer latched this time ====="
+	log "===== 10) THE QUESTION: replay the vendor's post-completion sequence ====="
+	log "  (0x0024=0x30000000 clears PC_DONE, then S_POINTER 0x1000e/0x1000f/0x1000f)"
+	echo 1 > /sys/module/rocket/parameters/vendor_post 2>/dev/null
+	log "  vendor_post=$(cat /sys/module/rocket/parameters/vendor_post 2>/dev/null)"
 	sleep 3
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_hash.py" "$NPU_DIR/conv2d-cal.tflite" \
-			"$NPU_DIR/conv2d.tflite" > "$C" 2>&1
+		python3 "$NPU_DIR/test_once.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== done. 9 decides whether every 'byte exact re-run' since June was ====="
-	log "===== a stale buffer. Read it before anything else.                    ====="
+	log "===== done. 9 must reproduce the wall. If 10's second submit moves the ====="
+	log "===== checksum, the missing re-arm is the post-completion sequence.     ====="
 	sync
 }
 

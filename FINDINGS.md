@@ -3,6 +3,93 @@
 
 
 
+## 2026-08-07 (Vendor control REDONE and it holds: the vendor really does recompute on every warm submit. Two rocket-side hypotheses tested and both REFUTED, controls clean. Plus: the vendor two-submit test had the same flawed oracle we retracted, and one of tonight's "new" ideas had already been run in June.)
+
+**The vendor control was re-run with a different input per run, and the July
+conclusion survives.** `runner_multi.c` staged the input ONCE before the loop and
+fired `rknn_run()` five times over it, so "all five byte identical" could not
+distinguish a recomputation from an untouched buffer. That is the same
+non-discriminating test retracted for the open stack on 2026-08-06. Moving
+`rknn_inputs_set()` into the loop with a per-run offset:
+
+| run | crc (FNV) | |
+|---|---|---|
+| 0 | `01595b9e` | baseline, matches the simulator golden |
+| 1 | `eca7ae23` | DIFFERS |
+| 2 | `fdd239af` | DIFFERS |
+| 3 | `ee6b0ec5` | DIFFERS |
+| 4 | `06796b51` | DIFFERS |
+
+Gaps 443/68/68/68 ms against a 3 s autosuspend, so one power session. The
+post-idle control repeated run 0's input and reproduced `01595b9e` exactly.
+
+**So the asymmetry is real: the vendor recomputes on every warm submit, rocket
+computes once per reset.** The wall is rocket specific, not normal behaviour for
+this block. ⚠ Note the verdict logic in `run-twosubmit.sh` had to be rewritten
+too: with a varying input `all_equal` means the OPPOSITE of what it meant before,
+and left alone the script would have printed a confident wrong conclusion.
+
+⚠ **Infrastructure trap that cost a boot:** the vendor 6.1 kernel needs the
+Rockchip BL31 with OP-TEE, which serves the SCMI clock, power and reset
+protocols. The board boots from **SPI**, and with the mainline U-Boot there
+(TF-A v2.14.0, no OP-TEE) the vendor kernel gets `SCMI protocol 17 not active`,
+`protocol 22 not active` and then `-71` on `clk_prepare` for rk-crypto and RKNPU
+alike. The SD card's `rock4d-sd-uboot-vendor.img` is never used, SPI wins. Flash
+`rock4d-spi-uboot-vendor.img` for vendor runs and `rock4d-spi-uboot.img` back for
+rocket runs.
+
+**Hypothesis 1, per-job IOMMU teardown: REFUTED.** rocket calls
+`iommu_attach_group()` in `rocket_job_run()` and `iommu_detach_group()` when the
+job retires, so it rebuilds the domain between every submit. The vendor's writel
+trace shows no IOMMU touch between warm submits. `keep_domain=1` attaches only
+when the domain changes and never detaches on completion, which makes
+consecutive submits from one fd look like the vendor's. Result: identical to the
+control, `20a556ae` / `20a556ae` / `dda67317` both ways. Not the wall.
+
+⚠ This also corrects a claim in the July PINNED-SPREAD record, which said pinning
+power removed the "IOMMU re-attach". It did not. Those two calls are in the JOB
+path, not the runtime PM path, and ran regardless.
+
+Worth keeping anyway: it removes a real per-job teardown and fixes a reference
+leak, since the old detach passed `iommu_group_get(core->dev)` and never put it.
+
+**Hypothesis 2, the vendor's post-completion sequence: REFUTED, AND IT HAD
+ALREADY BEEN RUN.** The vendor trace (`dirty/vendor_wt.trace`, seq 17-22) does
+this after every completion:
+
+```
+0x0024 = 0x0001ffff   irq handler
+0x0008 = 0x00000000   OPERATION_ENABLE off
+0x0024 = 0x30000000   clears PC_DONE, bits 28 and 29
+0x1004 = 0x0001000e   CNA S_POINTER
+0x1004 = 0x0001000f
+0x1004 = 0x0001000f
+```
+
+rocket clears `0x1ffff` only, which does not reach bits 28 and 29, and never
+touches S_POINTER after a job. Replayed verbatim as `vendor_post=1`, with the
+parameter read back to confirm it applied: identical to the control.
+
+⚠ **`dirty/rocket_wt.trace` already shows the June fork issuing
+`0x1004 = 0x1000e / 0x1000f / 0x1000f` post-completion**, plus the DPU-side
+`0x4004` equivalents, and FINDINGS already recorded `pp_alt` as a true negative.
+The file was in the tree the whole time. This was proposed as unexplored without
+checking it, and it cost a build and a flash. Read `dirty/*.trace` before
+proposing anything that touches the per-submit register stream.
+
+**Where this leaves the wall.** Excluded so far: register values (writel audit),
+register order (ordered trace), regcmd payload (Kiln replay of the vendor's exact
+bytes), power and reset teardown (pinned spread), per-job IOMMU domain churn, and
+the post-completion PC_DONE clear plus S_POINTER re-arm. The only known lever is
+still a core reset, which re-arms, while the vendor never resets and re-arms
+anyway.
+
+**Next, and it needs no board time:** capture a fresh ordered writel trace from
+the CURRENT rocket, and align it against the vendor's second submit line by line.
+The rocket trace we have is from a June fork with several experiments layered on
+top, so it cannot be diffed directly. That enumerates what is left instead of
+guessing at it one register at a time.
+
 ## 2026-08-06 (THE WALL IS POSITIONAL AFTER ALL: only the FIRST submit after a reset computes. Every "same op re-runs byte exact" result since June was a stale output buffer. Control passed in both directions.)
 
 One config, two inputs, one latched output BO, checksummed read-only:
