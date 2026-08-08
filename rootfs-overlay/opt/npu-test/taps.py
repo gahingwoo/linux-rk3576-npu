@@ -49,6 +49,18 @@ zp = int(co["quantization"][1])
 ref = np.maximum(ref, zp)
 taps = K * K
 print(f"  {os.path.basename(model)} out{got.shape} zp={zp}, {taps} live taps", flush=True)
+print(f"  npu distinct={len(np.unique(got))} min={got.min()} max={got.max()}   "
+      f"cpu distinct={len(np.unique(ref))} min={ref.min()} max={ref.max()}", flush=True)
+
+# ⚠ A flat NPU surface makes every "best match" meaningless: a constant equal to
+# the zero point agrees with the reference wherever the reference is below it,
+# which reads as a high percentage for whichever channel is most often low. The
+# first version of this probe did exactly that, and its control caught it.
+if len(np.unique(got)) <= 2:
+    print("  VOID: the NPU output is flat, no mapping can be read from it",
+          flush=True)
+    sys.stdout.flush()
+    os._exit(0)
 
 for c in range(min(taps, got.shape[2])):
     scores = []

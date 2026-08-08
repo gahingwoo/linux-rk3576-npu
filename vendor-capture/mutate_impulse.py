@@ -59,6 +59,23 @@ def main():
     print("  output channel -> live tap (ky, kx):",
           ", ".join(f"{o}->({y},{x})" for o, y, x in used))
 
+    # ⚠ Rescale the output. One live tap carries about 1/(k*k*ic) of the
+    # dynamic range the original kernel had, and leaving the output scale alone
+    # makes the result underflow the requant to the zero point: the first
+    # version of this probe returned a flat out_zp for BOTH kernel sizes, which
+    # is why its control failed. Set the output scale from the largest product a
+    # single tap can produce so the answer uses the byte range.
+    it = sg.tensors[op.inputs[0]]
+    ot = sg.tensors[op.outputs[0]]
+    in_s = float(it.quantization.scale[0])
+    in_zp = int(it.quantization.zeroPoint[0])
+    wt_s = float(w.quantization.scale[0])
+    peak = max(255 - in_zp, in_zp) * in_s * abs(live - zp) * wt_s
+    old_os = float(ot.quantization.scale[0])
+    ot.quantization.scale = [peak / 120.0]
+    print(f"  output scale {old_os:g} -> {peak / 120.0:g} "
+          f"(single tap peak {peak:g})")
+
     b = flatbuffers.Builder(1024)
     b.Finish(model.Pack(b), file_identifier=b"TFL3")
     open(dst, "wb").write(bytes(b.Output()))

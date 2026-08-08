@@ -1,35 +1,33 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 18. Round 17 had both controls working and gave a clear
-# answer, and it also exposed a weak probe of mine.
+# 2026-08-08 round 19. ⚠ ROUND 18 IS VOID and its control is why.
 #
-#   knob fired            weights distinct 224 -> 1, first bytes 7f
-#   control that failed   conv2d-cal with forced weights, md5 80e64aab ->
-#                         07852cc6, relu maxdiff 1 -> 127
-#   cal_k3 + A forced     md5 2cae07f3 -> f9a4969a, mean 128.32 -> 135.82
-#   cal_k3 + weights forced  md5 changed, mean 128.32 -> 128.04
+# The k=5 impulse model, which MUST work because that kernel size computes
+# correctly, came back distinct=1 mean=128 min=128 max=128, and with the SAME
+# md5 66a83b6c3142 as the k=3 one. Both impulse models returned a flat zero
+# point surface, so the "best match cpu ch16 at 71.6%" in step 2 was a constant
+# 128 agreeing with the reference wherever the reference sits below the zero
+# point. No mapping could be read from either.
 #
-# So for k=3 the DPU DOES read the coefficient buffer, unlike the md003 family
-# where forcing A changed nothing, and the CMAC DOES read the weights. Every
-# stage is alive and the answer is still out_zp plus a couple of counts.
+# The fault was mine, in the model rather than the hardware: one live tap out of
+# 400 carries about 1/400 of the dynamic range the full kernel had, and I left
+# the output scale at the original 32, so the result underflowed the requant to
+# out_zp. mutate_impulse.py now sets the output scale from the largest product a
+# single tap can produce, 32 -> 4.34 here, and on the CPU both models now span
+# the full byte range with 200 or more distinct values per channel.
 #
-# ⚠ But forcing every weight to one value makes a box filter, and a box filter
-# on a smooth ramp input gives a nearly constant output anyway. The md5 change
-# proves the buffer is read; the small magnitude proves nothing. That probe
-# could not have shown a large effect even if everything worked.
+# taps.py also refuses to report a mapping when the NPU surface is flat, so this
+# particular trap cannot be walked into silently a second time.
 #
-# An impulse kernel can. mutate_impulse.py gives output channel c a single live
-# tap at (c/k, c%k) and the weight zero point everywhere else, on input channel
-# 0 only, so a correct convolution makes channel c a copy of the input shifted
-# by that tap. If the hardware pairs a tap with the wrong input pixel, NPU
-# channel c matches the CPU's channel c' instead, and taps.py recovers that
-# mapping. A wrong pairing is exactly what would make 144 products cancel to
-# zero while every buffer is read correctly.
+# The question is unchanged. For k=3 every buffer and every register is verified
+# against the vendor, the CMAC reads the weights and the DPU reads the
+# coefficients, and the answer is still out_zp plus a couple of counts. A tap
+# paired with the wrong input pixel is what makes 144 products cancel while
+# everything is read correctly, and an impulse kernel names that pairing.
 #
-#   2  k=3 impulse. Identity mapping means the pairing is right.
-#   3  ⚠ k=5 impulse, THE CONTROL: this kernel size computes correctly, so its
-#      mapping MUST come back as identity. If it does not, taps.py is wrong and
-#      step 2 means nothing.
+#   2  k=5 impulse, THE CONTROL: this kernel size computes, so the mapping MUST
+#      come back identity at a high percentage. Anything else voids step 3 too.
+#   3  k=3 impulse: which input pixel each tap actually got.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console

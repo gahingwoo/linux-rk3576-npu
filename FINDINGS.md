@@ -3,6 +3,41 @@
 
 
 
+## 2026-08-08 round 18 (⚠ VOID, and its control is what caught it. Both impulse models returned a flat out_zp.)
+
+Step 2 was the control: the k=5 impulse, whose kernel size computes correctly,
+had to come back as an identity mapping. It did not. Every channel reported
+"best match cpu ch16 at 71.6%".
+
+Step 5 says why:
+
+| model | NPU result |
+|---|---|
+| `cal_k5_imp` | `distinct=1 mean=128 min=128 max=128` md5 `66a83b6c3142` |
+| `cal_k3_imp` | `distinct=1 mean=128 min=128 max=128` md5 **`66a83b6c3142`** |
+
+Both return a flat zero-point surface, with the same md5. The "71.6% best match"
+was a constant 128 agreeing with the reference wherever the reference sits below
+the zero point, which favours whichever channel is most often low. **No mapping
+could be read from either, so step 3 says nothing about tap pairing.**
+
+**The fault is in my model, not the hardware.** One live tap out of 400 carries
+about 1/400 of the dynamic range the full kernel had, and I left the output scale
+at the original 32, so the product underflowed the requant to `out_zp`. The
+probe could not have worked on any hardware.
+
+Fixed two ways. `mutate_impulse.py` now sets the output scale from the largest
+product a single tap can produce, 32 to 4.34 here, and on the CPU both models
+span the full byte range with 200 or more distinct values per channel. And
+`taps.py` refuses to report a mapping when the NPU surface is flat, so this trap
+cannot be walked into silently again.
+
+⚠ That is the **third** control-design failure today, after the nonzero-versus-
+distinct count in round 8 and the cannot-fail control in round 12. The
+difference here is that the control was built to fail and did, before anything
+was concluded. The rule that keeps holding: **state what the control's failing
+value looks like, and make sure the probe could produce a large effect at all.**
+
 ## 2026-08-08 round 17 (Both controls worked. For k=3 the DPU reads the coefficients AND the CMAC reads the weights. Every stage is alive and the answer is still zero.)
 
 Read in the stated order, the controls first:
