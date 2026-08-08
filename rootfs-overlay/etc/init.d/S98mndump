@@ -1,48 +1,53 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 21. Round 20's probe finally worked, and it killed the tap
-# pairing theory while handing over a much simpler failing case.
+# 2026-08-08 round 22. Round 21's control worked and refuted B.
 #
-# The input impulse lands in exactly the right place for every kernel size:
-#   k=5 impulse at (20,20) -> rows 9..10 cols 9..10 on both cpu and npu
-#   k=5 impulse at (30,14) -> rows 14..15 cols 6..7 on both
-#   k=3                    -> rows 9..10 cols 9..10 on both
-#   k=1                    -> row 10 col 10 on both
-# So the spatial mapping is right and nothing is paired with the wrong pixel.
-# What is wrong is the GAIN: against the cpu the k=3 response is about 80x too
-# small and the k=1 response about 3.5x too large.
+#   control: conv2d-cal with B forced to 0, real input -> relu maxdiff 1 to 14,
+#            FAIL. So the knob reaches the hardware and B does matter.
+#   but the constant input baselines were BYTE IDENTICAL with B and without it,
+#            for all three kernel sizes. With a constant input the input sum
+#            that B multiplies is zero, so B cannot be the k-dependent term.
 #
-# ⚠ And the baselines say it more simply than the impulses do. The baseline is a
-# constant input at exactly in_zp, where (in - 0x80) is zero, so the MAC is zero
-# by construction and the answer must be requant(bias). cal_k3 and cal_k1 are
-# conv2d-cal with the kernel cropped, so all three carry the SAME bias and the
-# SAME requant, and every log line confirms shift=25 scale=0x7d34. The answer
-# still comes out different:
+# What the baselines actually show, on a constant input at in_zp where the MAC
+# is zero by construction and the answer must be requant(bias):
 #
-#   k=5  baseline distinct=12      k=1  distinct=45      k=3  distinct=1, flat
+#   k=5  matches the cpu exactly wherever the cpu is at or above 128, and sits
+#        at 128 below that. That is the ReLU at out_zp, so k=5 is CORRECT.
+#   k=3  128 everywhere. requant(bias) clamped away entirely.
+#   k=1  goes BELOW the zero point, down to 0. Which the same ReLU should
+#        forbid, and does forbid at k=5.
 #
-# Something k-dependent is being added to a MAC that should be exactly zero.
-# The only k-dependent term in that path is B, the weight zero point correction:
-# the MAC computes sum((in - 0x80)(w - 0x80)) while the true conv wants
-# sum((in - in_zp)(w - wt_zp)), and B carries the difference, which scales with
-# the tap count, 400 against 144 against 16.
+# mesa's A cannot explain it: calculate_bias_correction and calculate_weight_sum
+# are both multiplied by (input_zero_point - 0x80), which is zero here, so A is
+# just the bias and the three models share one bias tensor. C is 0x4000 for a
+# per-tensor conv. B is refuted above.
 #
-#   2,3,4  the constant input on all three kernel sizes. No input data, no
-#          spatial mapping: just bias through the requant.
-#   5,6    the same with B forced to 0. If the three baselines converge, B is
-#          the k-dependent term that does not belong.
-#   7      ⚠ THE CONTROL: conv2d-cal with B forced to 0. It computes correctly
-#          today, so removing a correction it needs MUST break it. If it does
-#          not, the knob is not reaching the hardware.
+# So dump the coefficient buffer for all three and compare it byte for byte.
+#
+#   identical -> identical coefficients, identical requant and a MAC of zero
+#                produce three different answers, and the k dependence is below
+#                everything the driver writes
+#   different -> mesa is emitting different coefficients after all, and the
+#                difference is the bug, visible here without any hardware
+#
+# ⚠ The three buffers are also compared against their own sizes: A is 4 bytes
+# per output channel inside a 64 byte group of 8, so a size change alone would
+# say the layout moved.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-flat() {
-	m="$1"; shift
-	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-		python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1
+# $1 tag, $2 model
+coefs() {
+	d="/tmp/$1"; rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$2" > /dev/null 2>&1
+	log "  $2:"
+	for f in "$d"/mesa-biases-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
+	cd / || return 0
 }
 
 start() {
@@ -62,44 +67,38 @@ start() {
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 2,3,4) CONSTANT INPUT AT in_zp: must be identical for all k ====="
-	log "  same bias, same requant, MAC zero by construction"
+	log "===== 2) COEFFICIENT BUFFERS: same md5 across the three kernels? ====="
+	log "  same bias tensor, A = bias since (in_zp - 0x80) is zero, C = 0x4000"
 	sleep 2
-	flat conv2d-cal.tflite
-	flat cal_k3.tflite
-	flat cal_k1.tflite
+	coefs cf5 conv2d-cal.tflite
+	coefs cf3 cal_k3.tflite
+	coefs cf1 cal_k1.tflite
 
 	log ""
-	log "===== 5,6) the same three with B forced to 0 ====="
-	log "  if the three converge, B is the k-dependent term that misbehaves"
+	log "===== 3) and the weight buffers, for the sizes ====="
 	sleep 2
-	flat conv2d-cal.tflite ROCKET_B_VALUE=0
-	flat cal_k3.tflite ROCKET_B_VALUE=0
-	flat cal_k1.tflite ROCKET_B_VALUE=0
+	for t in cf5 cf3 cf1; do
+		for f in /tmp/$t/mesa-weights-*.bin; do
+			[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+		done
+	done
 
 	log ""
-	log "===== 7) THE CONTROL: conv2d-cal with B forced to 0, real input ====="
-	log "  it computes correctly today, so removing a correction it needs"
-	log "  MUST break it. Unchanged means the knob never reached the hardware."
+	log "===== 4) the constant input again, as the thing being explained ====="
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_B_VALUE=0 \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/cal_k3.tflite" > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/cal_k1.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 8) k=3 with B forced to 0, real input ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_B_VALUE=0 \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/cal_k3.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== 9) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 5) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read 7 first: it must break, or 5 and 6 mean nothing. Then    ====="
-	log "===== compare the three baselines in 2,3,4 against those in 5,6.    ====="
+	log "===== 2 is the round: three md5s. Identical means the k dependence   ====="
+	log "===== is below everything the driver writes.                         ====="
 	sync
 }
 

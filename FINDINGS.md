@@ -3,6 +3,43 @@
 
 
 
+## 2026-08-08 round 21 (B refuted with a working control. And the constant-input baselines say k=5 is exactly right, k=3 is clamped away, k=1 goes below the zero point.)
+
+The control worked: `conv2d-cal` with `ROCKET_B_VALUE=0` on a real input went
+from relu maxdiff 1 to 14 and failed. So the knob reaches the hardware and B does
+matter. But the constant-input baselines came back **byte identical with B and
+without it**, for all three kernel sizes, which is what should happen: with a
+constant input the input sum that B multiplies is zero. **B is not the
+k-dependent term.**
+
+The baselines themselves are the result. Constant input at `in_zp`, so the MAC is
+zero by construction and the answer must be `requant(bias)`:
+
+| | first 12 channels |
+|---|---|
+| cpu, all three | `128 131 138 127 128 127 126 132 132 141 122 127` |
+| **k=5** | `128 131 138 128 128 128 128 132 132 141 128 128` |
+| **k=3** | `128` everywhere |
+| **k=1** | `127 128 128 112 123 117 94 128 128 128 26 113`, min 0 |
+
+**k=5 is exactly correct**: it matches the CPU wherever the CPU is at or above
+128 and sits at 128 below, which is the hardware ReLU at `out_zp`. **k=3 is
+clamped away entirely.** **k=1 goes below the zero point**, which the same ReLU
+forbids at k=5, so even the clamping behaviour depends on the kernel.
+
+And mesa's coefficients cannot explain it. `calculate_bias_correction` and
+`calculate_weight_sum` are both multiplied by `(input_zero_point - 0x80)`, which
+is zero at `in_zp` 128, so A is just the bias, and the three models share one
+bias tensor because `mutate_k.py` crops only the weights. C is `0x4000` for a
+per-tensor conv. B is refuted above.
+
+So round 22 dumps the coefficient buffer for all three and compares it byte for
+byte. Identical md5s would mean identical coefficients, identical requant and a
+MAC of zero produce three different answers, putting the k-dependence below
+everything the driver writes. Different md5s would mean mesa is emitting
+different coefficients after all, and that difference is visible without any
+hardware at all.
+
 ## 2026-08-08 round 20 (The probe finally works. ⚠ The spatial mapping is CORRECT at every kernel size, so the tap pairing theory is dead. What is wrong is the gain, and the baselines say it more simply.)
 
 An input impulse with the real kernel, so nothing has to cancel:
