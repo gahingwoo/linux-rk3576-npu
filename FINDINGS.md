@@ -3,6 +3,47 @@
 
 
 
+## 2026-08-08 round 12 (⚠ UNINTERPRETABLE. The control I wrote cannot tell "the rewrite did not help" from "the rewrite never ran".)
+
+| step | result |
+|---|---|
+| `conv2d-cal` untouched | 2/2 OK |
+| `conv2d-cal` with `ROCKET_PW_AS_3X3=1` | md5 `80e64aab2f96`, unchanged |
+| `md003_80` untouched | uniform 127 |
+| `md003_80` with the knob | **byte identical**, `task_count=1` |
+| `md003_oc128` with the knob | byte identical |
+| `mn_pw2` with the knob | unchanged, still `task_count=2`, still 2 OUT_CVT lines |
+
+The stated control was that a 5x5 must be untouched, and it was. **That control
+is worthless here**, because "unchanged on a 5x5" is also exactly what "never
+fires anywhere" looks like.
+
+And nothing moved on the models it should have transformed. A 3x3 kernel costs
+nine times the weight bytes and nine times the CBUF, so `mn_pw2` holding at
+exactly two tasks with two OUT_CVT lines, and `md003_80` at one, is what a knob
+that did not fire looks like. The code placement is right, the env plumbing in
+the script is right, and neither of those is evidence.
+
+⚠ This is the round 8 failure again: a control that cannot fail. Caught before
+drawing a conclusion this time, which is the only difference.
+
+The check is a size, not a value:
+
+| path | weight buffer |
+|---|---|
+| 1x1 | `ic*oc` = 256 bytes |
+| 3x3 rewrite | `9 * oc * ALIGN(ic, atom) * 2`, thousands |
+
+Round 13 dumps it both ways. If the size does not move, round 12 measured
+nothing. If it does move, then a genuine 3x3 conv with 16 in and 16 out at 80x80
+**also fails**, which is a bigger fact than the one being tested: it would put
+the failure on kernel size, with 5x5 working at both strides and 3x3 not, and
+1x1 encoding would have nothing to do with it.
+
+Round 13 also prints the regcmd under the knob, because a vendor .rknn compiled
+on the host at exactly that geometry (16 in, 16 out, 80x80, 3x3, stride 1)
+already exists to diff it against.
+
 ## 2026-08-08 round 11 (The DPU does not read the coefficient buffer either. For a 1x1 conv every payload and every comparable register is now accounted for, and it still emits only out_offset.)
 
 The control could fail, and it moved:

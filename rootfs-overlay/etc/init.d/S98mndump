@@ -1,44 +1,47 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 12. Round 11's control worked and could have failed:
+# 2026-08-08 round 13. ⚠ Round 12 is UNINTERPRETABLE and this round fixes that.
 #
-#   conv2d-cal untouched          mean 145.72  md5 80e64aab  relu maxdiff 1
-#   conv2d-cal, A forced 0x2000   mean 149.45  md5 cb4a71b8  relu maxdiff 17
+# conv2d-cal with the knob came back md5 80e64aab2f96, identical to untouched,
+# which is the control I wrote: the rewrite must not touch a 5x5. Good.
 #
-# So ROCKET_ATEST reaches the hardware. And md003_80 at A=0x2000 and A=0x40000
-# returned md5 f999f370e8b4 both times, identical to untouched, still a uniform
-# 127. So the DPU does not read the coefficient buffer for a 1x1 conv either.
+# But md003_80 with the knob came back byte identical to md003_80 without it,
+# and its task_count did not move, and mn_pw2 still split into exactly 2 tasks
+# with 2 OUT_CVT lines. A 3x3 kernel costs nine times the weight bytes and nine
+# times the CBUF. Nothing moved at all, which is what "the knob never fired"
+# looks like, and "unchanged on a 5x5" is ALSO what "never fires anywhere" looks
+# like. So round 12's control could not tell the two apart. Same mistake as
+# round 8, and this time I caught it before drawing the conclusion.
 #
-# The state for a 1x1 conv is now: the regcmd matches a vendor .rknn compiled at
-# the same geometry, the weight layout matches the vendor's own compiled buffer,
-# and the DPU runs, writes every byte of the output, and emits exactly
-# out_offset while ignoring the weights, the input AND the A operand. Every
-# payload and every comparable register is accounted for.
+# The check is trivial and it is a size, not a value:
 #
-# So stop hunting and route around it. A 1x1 conv is exactly a 3x3 conv whose
-# outer ring sits at the weight zero point: the MAC computes
-# sum((in - 0x80) * (w - wt_zp)), so a tap with w == wt_zp contributes nothing,
-# and that holds for the SAME padding taps at the border too. ROCKET_PW_AS_3X3
-# synthesises that kernel and widens the geometry, so the op goes down the 3x3
-# path that demonstrably works and every derived register follows.
+#   1x1 path        weight buffer = ic*oc                 = 256 bytes
+#   3x3 rewrite     weight buffer = 9 * oc * ALIGN(ic,A) * 2, thousands
 #
-#   md003_80 computes  -> the answer is right, most of MobileNet is pointwise,
-#                         and the 1x1 path is narrowed to something specific
-#   md003_80 still 127 -> even the working shape cannot carry these values, and
-#                         the problem is not the kernel encoding at all
+# Steps 2 and 3 dump it both ways. If the size does not change, the knob is not
+# firing and round 12 measured nothing. If it does change, then a real 3x3 conv
+# with 16 in and 16 out at 80x80 also fails, which is a much bigger fact: it
+# would put the failure on the KERNEL SIZE rather than on 1x1 encoding, with
+# 5x5 working at both strides and 3x3 not.
 #
-# ⚠ Step 2 is the control that can fail: conv2d-cal is 5x5, so the knob must not
-# touch it. If its md5 moves, the rewrite is firing where it should not.
+# Step 4 prints the regcmd under the knob. There is a vendor .rknn compiled on
+# the host at exactly that geometry (16 in, 16 out, 80x80, 3x3, stride 1), so
+# whatever it says can be diffed against a known good reference.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-one() {
-	m="$1"; mark="$2"; shift 2
-	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > "$C" 2>&1
+# $1 tag, $2 model, $3.. env
+dump() {
+	d="/tmp/$1"; m="$2"; shift 2
+	rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos "$@" \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > /dev/null 2>&1
+	for f in "$d"/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
+	cd / || return 0
 }
 
 many() {
@@ -62,44 +65,47 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal untouched ====="
+	log "===== 1) CONTROL: conv2d-cal ====="
 	many conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) CONTROL THAT CAN FAIL: conv2d-cal WITH the knob ====="
-	log "  it is 5x5, so the rewrite must not touch it. md5 must not move."
+	log "===== 2) md003_80 weight buffer WITHOUT the knob: expect 256 bytes ====="
 	sleep 2
-	one conv2d-cal.tflite cal-knob ROCKET_PW_AS_3X3=1
+	dump wpw md003_80.tflite
 
 	log ""
-	log "===== 3) md003_80 untouched: the uniform 127 reference ====="
+	log "===== 3) md003_80 weight buffer WITH the knob ====="
+	log "  still 256 means it never fired and round 12 measured nothing."
+	log "  thousands of bytes means a real 3x3 conv also fails."
 	sleep 2
-	one md003_80.tflite md003-plain
+	dump w3x3 md003_80.tflite ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 4) THE TEST: md003_80 as a 3x3 with a zero point ring ====="
+	log "===== 4) regcmd under the knob: did the geometry actually widen ====="
+	log "  watch 1024 (kernel word), 101c and 1020 (weight DMA), 1030, 1080"
+	sleep 2
+	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_PW_AS_3X3=1 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
+	for f in /tmp/rc/mesa-regcmd-*.bin; do
+		[ -f "$f" ] || continue
+		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
+	done
+	cd / || return 0
+
+	log ""
+	log "===== 5) md003_80 under the knob, the actual test again ====="
 	sleep 2
 	many md003_80.tflite 3 md003-3x3 ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 5) md003_oc128 as a 3x3, 128 output channels ====="
-	sleep 2
-	many md003_oc128.tflite 3 oc128-3x3 ROCKET_PW_AS_3X3=1
-
-	log ""
-	log "===== 6) mn_pw2, a real MobileNet pointwise layer, as a 3x3 ====="
-	sleep 2
-	many mn_pw2.tflite 3 pw2-3x3 ROCKET_PW_AS_3X3=1
-
-	log ""
-	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	many conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== Read 2 first: conv2d-cal must be unchanged by the knob.      ====="
-	log "===== Then 4 against 3. jobs= and task_count matter here, the 3x3  ====="
-	log "===== costs 9x the CBUF and may split where the 1x1 did not.       ====="
+	log "===== 2 against 3 decides whether round 12 meant anything. Read it ====="
+	log "===== before reading 5.                                            ====="
 	sync
 }
 
