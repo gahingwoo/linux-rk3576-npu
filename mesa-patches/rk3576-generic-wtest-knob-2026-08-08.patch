@@ -1,0 +1,45 @@
+From ba53e4cced402368ec7df6d9291a4a1e96e33b1e Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 8 Aug 2026 22:59:02 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_WTEST on the generic weight path
+
+The pointwise path has had this since round 8. The generic path needs it because
+a 3x3 conv cropped from the model that computes returns out_zp plus 0 to 2,
+which is requant(bias) with a MAC of exactly zero, and its regcmd and weight
+layout are both now verified against the vendor. Forcing every weight to one
+value says whether the CMAC reads the buffer at all, with the same knob on the
+5x5 that computes as the control that must fail.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index bd5a2b4..6840a6d 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -347,6 +347,22 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       }
+    }
+ 
++   /*
++    * ROCKET_WTEST: overwrite the whole generic weight buffer with one value.
++    * The pointwise path has had this since round 8; the generic path needs it
++    * now because a 3x3 conv cropped from the model that computes returns
++    * out_zp plus 0 to 2, which is what requant(bias) with a MAC of exactly zero
++    * would give, and its regcmd and weight layout are both verified against the
++    * vendor. If the output does not move when every weight becomes 0x7f, the
++    * CMAC is not reading this buffer for k=3 either.
++    *
++    * ⚠ The control is the SAME knob on conv2d-cal, which computes correctly, so
++    * forcing its weights MUST wreck it. A knob that changes nothing anywhere
++    * proves nothing, which has cost this project two rounds already.
++    */
++   if (getenv("ROCKET_WTEST"))
++      memset(weights_out, 0x7f, weights_size);
++
+    if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+       static int task = 0;
+       rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
+-- 
+2.43.0
+

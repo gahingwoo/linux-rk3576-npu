@@ -3,6 +3,51 @@
 
 
 
+## 2026-08-08 (continued, host-side: mesa vs vendor at k=3 in ABSOLUTE terms, and the weight layout closed including the 32-channel grouping.)
+
+**The absolute diff, which round 16 never actually did** (it compared deltas):
+
+| reg | k=3, FAILS | k=5, WORKS |
+|---|---|---|
+| CNA 0x1080 | `01010000` vs `00000101` | `02020101` vs `01010202` |
+| CNA 0x1084 | `00000000` vs `ffffff80` | same difference |
+| DPU 0x40ac | `00000000` vs `fffffffc` | same difference |
+| DPU 0x40b4 | `00000019` vs `0000001a` | same difference |
+
+**The same four registers differ at k=3 as at k=5**, and all four are the two
+model families' own conventions: padding, the pad value `in_zp - 0x80` (0 for the
+tflite family, `-128` for the ONNX one), and the two requant fields. Since k=5
+computes correctly with exactly these four differences, none of them can be why
+k=3 does not. **The regcmd is cleared in absolute terms, not just in its delta.**
+
+**And the weight layout is now closed, including the case `cal_k3` actually
+exercises.** The oc=16 probes could not see the output-channel grouping, because
+mesa packs `[oc/32][ic/32][kx][ky][oc%32][ic%32]` and 16 channels are a single
+group. At OC=64, IC=16, K=3 the vendor stores:
+
+| observed | |
+|---|---|
+| plane order | `0..8` then `0..8` again |
+| run length | **512 bytes** = 32 oc x 16 ic |
+
+which is exactly mesa's nesting: output channels in groups of 32, the spatial
+planes inside each group, and within a plane oc-major with ic contiguous. Sizes
+agree too: for oc=ic=16 at k=3 the vendor's buffer is 2304 contiguous bytes and
+mesa writes 2304, matching the DMA count in 0x101c, with mesa's allocation being
+four times larger and the excess simply unread.
+
+So **for a 3x3 convolution every byte and every register the driver produces is
+now verified against the vendor**, and the MAC still comes out zero.
+
+`cal_k3` carries conv2d-cal's own bias tensor, since `mutate_k.py` crops only the
+weights, so its `out_zp + 0..2` is what `requant(bias)` with a MAC of exactly
+zero gives, not a MAC that nearly cancels. Round 17 asks the two remaining
+questions directly: `ROCKET_ATEST` says whether the DPU reads the coefficient
+buffer for k=3, which would separate it from the md003 family where A is ignored,
+and `ROCKET_WTEST`, now available on the generic path, says whether the CMAC
+reads the weights at all. The control that must fail is the same weight knob on
+`conv2d-cal`, which computes correctly.
+
 ## 2026-08-08 (host-side, no board: the weight layout is FULLY verified against the vendor, for k=3 as well as k=5. It is correct.)
 
 The plane probe was redesigned after the first attempt was recorded as unsafe.

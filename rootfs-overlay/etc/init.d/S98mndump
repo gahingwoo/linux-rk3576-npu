@@ -1,58 +1,50 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 16. Round 15 excluded the requant and gave the failure shapes.
+# 2026-08-08 round 17. Everything the driver PRODUCES for a 3x3 conv is now
+# verified against the vendor, so ask what the block READS.
 #
-#   md003_80 with OUT_CVT shift 23 -> 21, and 23 -> 17 (both confirmed emitted
-#   in the log): output BYTE IDENTICAL both times. A 64x change in the requant
-#   scale moves nothing, which is only possible if MAC + A is exactly 0.
-#   REQUANT EXCLUDED for that family.
+# Settled since round 16, all host side and free:
+#   mesa vs vendor at k=3 differs in the same FOUR registers as at k=5, and all
+#   four are the two model families' own conventions: 0x1080 padding, 0x1084
+#   pad value (in_zp - 0x80, 0 for the tflite family and 0xffffff80 for the
+#   ONNX one), and the two requant fields. The regcmd is cleared.
+#   The weight buffer layout is verified for k=3 AND k=5: plane order kh-major
+#   0..k*k-1 at 256 bytes each, and within a plane oc-major with ic contiguous.
+#   The probe reproduces mesa's own nesting on the 5x5 that works, which is why
+#   its k=3 answer counts.
 #
-# And the first 64 outputs say the three cases fail in three different ways:
+# cal_k3 carries conv2d-cal's OWN bias tensor, because mutate_k.py crops only
+# the weights. So its output of out_zp + 0 to 2 is exactly what requant(bias)
+# with a MAC of precisely zero would produce, rather than a MAC that nearly
+# cancels. That is a testable difference from the md003 family, where forcing A
+# changed nothing at all.
 #
-#   k=5  npu == cpu wherever cpu > out_zp, npu == out_zp below it. That is the
-#        hardware ReLU at out_zp, and it is correct.
-#   k=3  npu = out_zp + 0..2 everywhere. The MAC is near zero with a residue.
-#   k=1  wild, saturating to 0 and to 128. Large amplitude and wrong.
-#
-# So k=3 is the informative one: not dead like md003, not correct like k=5, but
-# a MAC that almost cancels. This round gets its regcmd, because there is now a
-# vendor .rknn compiled at exactly cal_k3's geometry to diff it against, and
-# that diff is the method that found both 0x1080 and 0x4050.
-#
-# ⚠ One thing to check in the diff, spotted in the vendor builds: the vendor
-# stages a KERNEL DEPENDENT number of input rows. At 80x80 stride 2 it uses 79
-# rows for a 1x1 and 80 for a 3x3 and a 5x5 (0x1028 high = surf * rows, 0x102c
-# low = rows - 1). mesa always uses the full input height whatever the kernel.
-#
-# ⚠ job_log was left off in round 15, which is why every jobs= read 0. It is
-# back on here. That column meant nothing last round; do not read it as "no job
-# was submitted".
+#   3  ROCKET_ATEST forces A. If cal_k3 MOVES, the DPU is reading the
+#      coefficient buffer and only the CNA to CMAC path is dead for k=3, which
+#      is a different fault from md003 where A is ignored too.
+#   4  ROCKET_WTEST forces every weight to 0x7f, now available on the generic
+#      path. If cal_k3 does not move, the CMAC is not reading the weights.
+#   5  ⚠ THE CONTROL THAT MUST FAIL: the same knob on conv2d-cal, which
+#      computes correctly. Forcing its weights has to wreck it. Round 8 and
+#      round 12 both shipped controls that could not fail and cost a round each.
+#   6  proves the knob fired, by distinct count, not by nonzero count.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
+
+one() {
+	m="$1"; mark="$2"; shift 2
+	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > "$C" 2>&1
+}
 
 many() {
 	m="$1"; n="$2"; mark="$3"; shift 3
 	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
 	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
-	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
-}
-
-regcmd() {
-	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$1" > /dev/null 2>&1
-	for f in /tmp/rc/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
-	for f in /tmp/rc/mesa-regcmd-*.bin; do
-		[ -f "$f" ] || continue
-		log "--- $1 $(basename "$f") ---"
-		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
-	done
-	cd / || return 0
 }
 
 start() {
@@ -65,40 +57,64 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
 	log ""
-	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)" \
-	    "job_log=$(cat /sys/module/rocket/parameters/job_log 2>/dev/null)"
+	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
 	log "===== 1) CONTROL: conv2d-cal ====="
 	many conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) REGCMD: cal_k3, the near cancelling MAC ====="
-	log "  to diff on the host against a vendor build at 16 in, 128 out,"
-	log "  80x80, 3x3, stride 2, which is exactly this geometry"
+	log "===== 2) cal_k3 untouched, the reference numbers ====="
 	sleep 2
-	regcmd cal_k3.tflite
+	one cal_k3.tflite k3-plain
 
 	log ""
-	log "===== 3) REGCMD: conv2d-cal, the same model at 5x5, as the pair ====="
-	log "  mesa against mesa, one variable apart, alongside vendor against"
-	log "  vendor at the same two kernels. Four streams, two contrasts."
+	log "===== 3) cal_k3 with A forced to 0x40000 ====="
+	log "  moves -> the DPU reads the coefficients and only CNA/CMAC is dead"
+	log "  does not move -> A is ignored here too, like md003"
 	sleep 2
-	regcmd conv2d-cal.tflite
+	one cal_k3.tflite k3-atest ROCKET_ATEST=0x40000
 
 	log ""
-	log "===== 4) cal_k3 again for the verdict line ====="
+	log "===== 4) cal_k3 with EVERY weight forced to 0x7f ====="
+	log "  does not move -> the CMAC never reads the weight buffer for k=3"
 	sleep 2
-	many cal_k3.tflite 2 cal-k3
+	one cal_k3.tflite k3-wtest ROCKET_WTEST=1
 
 	log ""
-	log "===== 5) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 5) THE CONTROL THAT MUST FAIL: conv2d-cal, same weight knob ====="
+	log "  it computes correctly, so forcing its weights has to wreck it."
+	log "  If it is unchanged, step 4 measured nothing."
+	sleep 2
+	one conv2d-cal.tflite cal-wtest ROCKET_WTEST=1
+
+	log ""
+	log "===== 6) conv2d-cal untouched, to compare against 5 ====="
+	sleep 2
+	one conv2d-cal.tflite cal-plain
+
+	log ""
+	log "===== 7) did the knob fire? weight buffer, plain vs forced ====="
+	log "  distinct must be many, then exactly 1"
+	sleep 2
+	rm -rf /tmp/a /tmp/b; mkdir -p /tmp/a /tmp/b
+	cd /tmp/a && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
+	cd /tmp/b && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_WTEST=1 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
+	cd /
+	for f in /tmp/a/mesa-weights-*.bin /tmp/b/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 8) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	many conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 2 and 3 are the payload. The verdicts are already known; the ====="
-	log "===== register streams are what this round is for.                  ====="
+	log "===== Read 5 and 7 first. 5 must differ from 6 and 7 must show      ====="
+	log "===== distinct 1, or 3 and 4 mean nothing.                          ====="
 	sync
 }
 
