@@ -3,6 +3,47 @@
 
 
 
+## 2026-08-08 round 14 (⚠ It IS the kernel size, proven on the model that works. And the failures split into two different modes, which nothing had noticed.)
+
+`mutate_k.py` crops conv2d-cal's own kernel. Same file, same scales, same
+shapes, only the kernel. Controls passed at both ends.
+
+| model | kernel | result |
+|---|---|---|
+| `conv2d-cal` | 5x5 | 2/2 OK |
+| **`cal_k3`** | **3x3, centre taps** | **0/3 FAIL** |
+| **`cal_k1`** | **1x1, centre tap** | **0/3 FAIL** |
+| `cal_k1` with the 3x3 rewrite | 3x3 | 0/3 FAIL |
+
+So the kernel and the model are no longer confounded: **5x5 works, 3x3 and 1x1
+do not, on one and the same model.**
+
+⚠ **And the two families fail differently:**
+
+| model | top1 across three inputs | stale |
+|---|---|---|
+| `cal_k3` | 109, 93, 349 | no |
+| `cal_k1` | 1, 2, 0 | no |
+| `md003_80` | 0, 0, 0, flat out_zp | **yes** |
+
+`cal_k3` and `cal_k1` **vary with the input**. That is a computed answer that is
+wrong, not a dead datapath. The md003 family returns a constant. And
+`md003_oc128` is the same geometry as `cal_k1`, 1x1 with 16 in and 128 out, yet
+one varies and the other is flat, **so geometry does not decide which mode, the
+model does**. What differs there is the quantization: md003 has input zero point
+0, output scale 0.317 and OUT_CVT shift 23, against 128, 32 and 25 for the
+conv2d-cal family.
+
+A flat out_zp is exactly what a requant that underflows to zero produces, which
+would make the md003 family a requant bug with nothing to do with the kernel.
+Round 15 tests that with `ROCKET_OUT_SHIFT_ADD`, and prints the first 64 outputs
+of `cal_k3` and `cal_k1` so the wrong-but-varying answers can drive an offline
+search over candidate weight orderings.
+
+⚠ **The kh/kw transpose is excluded without a board run**: conv2d-cal's 5x5
+kernel is not transpose symmetric, 40568 of 51200 bytes differ under it, and the
+model computes byte exact. Mesa's kernel ordering is right at 5x5.
+
 ## 2026-08-08 round 13 (The knob DID fire, so round 12 stands: a genuine 3x3 conv fails too, with a regcmd that matches the vendor at that geometry.)
 
 The control was a size, and the size moved:
