@@ -3,6 +3,47 @@
 
 
 
+## 2026-08-08 round 16 (Mesa's register response to the kernel is EXACTLY the vendor's. The regcmd is not where the k=3 failure lives.)
+
+The same model one kernel apart, on both sides:
+
+| reg | mesa 5x5 -> 3x3 | vendor 5x5 -> 3x3 |
+|---|---|---|
+| CNA 0x101c | `0000c800` -> `00004800` | identical |
+| CNA 0x1020 | `00000190` -> `00000090` | identical |
+| CNA 0x1024 | `0404007f` -> `0202007f` | identical |
+| CNA 0x1030 | `03200027` -> `01200027` | identical |
+| CNA 0x1080 | `02020101` -> `01010000` | `01010202` -> `00000101` |
+
+Every entry moves the same way. 0x1080 differs in absolute value only because
+the two model families carry different padding, tflite SAME against a symmetric
+ONNX pad, and **the delta is self consistent on each side**. Weight buffer sizes
+are right too: 73728 bytes for the 3x3 and 204800 for the 5x5, both matching
+`k*k*oc*ALIGN(ic,32)*2`, with the DMA count in 0x101c matching the bytes
+actually written in each case.
+
+So for k=3 the registers are right, the buffer size is right, and the MAC very
+nearly cancels. The remaining payload surface is the **order of bytes inside**
+the weight buffer, which has only ever been verified for 1x1.
+
+⚠ **The probe for that is not trustworthy yet, and I am not reporting its output
+as a finding.** `posprobe_k.py` gives every weight a value depending only on
+(ky, kx) so each spatial plane becomes one repeated byte. It reports the first
+five 256 byte blocks holding planes 0, 2, 4, 6, 8, and the odd planes appearing
+nowhere in the file. That reproduces with weight compression disabled and a
+kernel that is not rank one, so it is not a compression artifact, but two things
+make it unsafe to build on:
+
+- a kernel constant across `ic` and `oc` is a degenerate tensor and the toolkit
+  is free to restructure it
+- the block identifier samples a single byte per 256, which stops meaning
+  anything as soon as the weights carry any jitter
+
+**Next**: redesign it so each plane is identifiable without being constant, for
+instance a distinct value range per plane with per (oc, ic) variation inside the
+range, and confirm the recovered order against the 5x5 case that is known to
+work before trusting anything it says about 3x3.
+
 ## 2026-08-08 round 15 (Requant EXCLUDED for the flat family, and the three cases fail in three different ways.)
 
 **The md003 family is not a requant bug.** `ROCKET_OUT_SHIFT_ADD` moved the
