@@ -3,6 +3,57 @@
 
 
 
+## 2026-08-08 round 11 (The DPU does not read the coefficient buffer either. For a 1x1 conv every payload and every comparable register is now accounted for, and it still emits only out_offset.)
+
+The control could fail, and it moved:
+
+| | mean | md5 | relu maxdiff |
+|---|---|---|---|
+| `conv2d-cal` untouched | 145.72 | `80e64aab` | 1 |
+| `conv2d-cal`, A forced to 0x2000 | 149.45 | `cb4a71b8` | 17 |
+
+So `ROCKET_ATEST` reaches the hardware. And `md003_80`:
+
+| | result |
+|---|---|
+| untouched | distinct=1, uniform 127, md5 `f999f370e8b4` |
+| A forced to 0x2000 | **identical md5** |
+| A forced to 0x40000 | **identical md5** |
+
+**So the DPU does not read the coefficient buffer for a 1x1 conv.** Put together
+with the earlier rounds, a 1x1 conv is now fully accounted for and still broken:
+
+| surface | state |
+|---|---|
+| regcmd | matches a vendor .rknn compiled at the same geometry |
+| weight layout | matches the vendor's own compiled buffer (`posprobe_pw.py`) |
+| weight contents | not read (`ROCKET_PW_WTEST`, control verified) |
+| input | not reflected in the output, and the same input BO drives a 5x5 that computes |
+| coefficient buffer / A | not read (`ROCKET_ATEST`, control that moved the working model) |
+| 0x1018, 0x1040 | inert on this model, not just on `mn_pw24` |
+| output BO | fully written by the DPU, with exactly `out_offset` |
+
+Everything the driver produces is right and the block emits only the OUT_CVT
+offset.
+
+**So route around it instead of hunting further.** A 1x1 conv is exactly a 3x3
+conv whose outer ring sits at the weight zero point: the MAC computes
+`sum((in - 0x80) * (w - wt_zp))`, so a tap with `w == wt_zp` contributes nothing,
+and that holds for the SAME padding taps at the border too, which makes the
+rewrite exact rather than approximate. `ROCKET_PW_AS_3X3` synthesises that kernel
+in `rkt_coefs.c` and widens the geometry in `rkt_ml.c`, so the op takes the 3x3
+path that demonstrably works and every derived register follows.
+
+| outcome | meaning |
+|---|---|
+| `md003_80` computes | the answer is right, and most of MobileNet is pointwise |
+| `md003_80` stays at 127 | not the kernel encoding at all, and the 3x3 path cannot carry these values either |
+
+⚠ The control that can fail is `conv2d-cal` with the knob on: it is 5x5, so the
+rewrite must leave it untouched. And `jobs=` and `task_count` matter in this
+round, because a 3x3 costs nine times the CBUF and may split where the 1x1 did
+not.
+
 ## 2026-08-08 round 10 (The DPU does run for a 1x1 conv. It writes the whole surface, and what it writes is exactly out_offset.)
 
 | raw BO, before teflon adds 0x80 | size | distinct | first bytes |

@@ -1,0 +1,120 @@
+From ca8b04e00d1c525a17bb5efd36d688e59274c547 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 8 Aug 2026 21:27:36 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_PW_AS_3X3, run a 1x1 conv as a 3x3
+
+A 1x1 conv is the only non-depthwise shape left that fails, and nothing the
+driver produces explains it: the regcmd matches a vendor .rknn compiled at the
+same geometry, the weight layout matches the vendor's own compiled buffer, and
+the DPU runs and writes the whole output surface with exactly out_offset while
+ignoring the weights, the input and the A operand, the last of those verified
+with a control that visibly moves the model which computes.
+
+A 1x1 conv is exactly a 3x3 whose outer ring sits at the weight zero point,
+since the MAC computes sum((in - 0x80) * (w - wt_zp)) and a tap with w == wt_zp
+contributes nothing, including the SAME padding taps. Synthesise that kernel and
+widen the geometry so every derived register follows, which sends the op down
+the path that works.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 37 +++++++++++++++++++++-----
+ src/gallium/drivers/rocket/rkt_ml.c    | 15 +++++++++++
+ 2 files changed, 46 insertions(+), 6 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 1e244d8..bd5a2b4 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -110,7 +110,29 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+     * oc*ALIGN(ic,32)*2 packing (2x too big + wrong order). Captured from the
+     * board's working weight buffer.
+     */
+-   bool is_rk3576_pointwise = soc == RKT_SOC_RK3576 &&
++   /*
++    * ROCKET_PW_AS_3X3: run a 1x1 conv as a 3x3 whose outer ring is the weight
++    * zero point. That is mathematically the same convolution, because the MAC
++    * computes sum((in - 0x80) * (w - wt_zp)) and a tap with w == wt_zp
++    * contributes nothing, including the SAME padding taps at the border.
++    *
++    * The point is that a 1x1 conv is the only non-depthwise shape left that
++    * fails, and it fails in a way no register or buffer explains: its regcmd
++    * matches a vendor .rknn compiled at the same geometry, its weight layout
++    * matches the vendor's own compiled buffer, and the DPU runs and writes the
++    * whole surface with exactly out_offset while ignoring the weights, the
++    * input, and the A operand even when A is forced to a value that visibly
++    * moves the model that computes. Rewriting it as a 3x3 sends it down the
++    * path that does work, which either produces the right answer or narrows
++    * this to something specific about 1x1 in the hardware.
++    */
++   bool pw3 = getenv("ROCKET_PW_AS_3X3") && soc == RKT_SOC_RK3576 &&
++              !rkt_is_depthwise(poperation) && input_channels_real > 4 &&
++              weights_width == 1 && weights_height == 1;
++   unsigned ww = pw3 ? 3 : weights_width;
++   unsigned wh = pw3 ? 3 : weights_height;
++
++   bool is_rk3576_pointwise = soc == RKT_SOC_RK3576 && !pw3 &&
+                               !rkt_is_depthwise(poperation) &&
+                               input_channels_real > 4 &&
+                               weights_width == 1 && weights_height == 1;
+@@ -120,7 +142,7 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    else if (is_rk3576_pointwise)
+       weights_size = input_channels_real * output_channels_real;
+    else
+-      weights_size = weights_width * weights_height * output_channels *
++      weights_size = ww * wh * output_channels *
+                      ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
+ 
+    rsc =
+@@ -295,8 +317,8 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    for (int oc1 = 0; oc1 < DIV_ROUND_UP(output_channels, WEIGHT_ATOMIC_SIZE);
+         oc1++) {
+       for (int ic1 = 0; ic1 < input_channels_1; ic1++) {
+-         for (int x = 0; x < weights_width; x++) {
+-            for (int y = 0; y < weights_height; y++) {
++         for (int x = 0; x < ww; x++) {
++            for (int y = 0; y < wh; y++) {
+                for (int oc2 = 0; oc2 < MIN2(output_channels, WEIGHT_ATOMIC_SIZE);
+                     oc2++) {
+                   for (int ic2 = 0; ic2 < input_channels_2; ic2++) {
+@@ -312,8 +334,11 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+                         if (ic2 < 16 || (input_channels_real % 32) > 16)
+                            weights_out[n++] =
+                               (uint8_t)(zero_point - pad_sub); /* neutral lane (0) only with ROCKET_WT_ZP_PAD */
+-                     } else
+-                        weights_out[n++] = weights_in[oc][x][y][ic] -
++                     } else if (pw3 && (x != 1 || y != 1))
++                        /* ring tap: w == wt_zp contributes nothing to the MAC */
++                        weights_out[n++] = (uint8_t)(zero_point - wt_sub);
++                     else
++                        weights_out[n++] = weights_in[oc][pw3 ? 0 : x][pw3 ? 0 : y][ic] -
+                                            wt_sub; /* w - wt_zp (or legacy w - 0x80) */
+                   }
+                }
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index 7d13531..31c1db9 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -400,6 +400,21 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+ 
+    operation->weights_width = poperation->conv.weight_tensor->dims[1];
+    operation->weights_height = poperation->conv.weight_tensor->dims[2];
++   /*
++    * ROCKET_PW_AS_3X3: rkt_fill_weights synthesises a 3x3 kernel for a 1x1
++    * conv, with the outer ring at the weight zero point so it contributes
++    * nothing to the MAC. Widen the geometry here too so every derived value
++    * follows: the weight DMA counts, the CBUF weight bytes per kernel, the
++    * kernel word in 0x1024, and the SAME padding, which becomes 1 on each side
++    * and cancels against the ring.
++    */
++   if (getenv("ROCKET_PW_AS_3X3") && !operation->depthwise &&
++       operation->input_channels > 4 &&
++       operation->weights_width == 1 && operation->weights_height == 1) {
++      operation->weights_width = 3;
++      operation->weights_height = 3;
++      operation->padding_same = true;
++   }
+    operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
+    /*
+     * MobileNet conv/depthwise weights are PER-AXIS quantized: the real scales
+-- 
+2.43.0
+

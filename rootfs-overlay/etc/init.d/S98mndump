@@ -1,43 +1,52 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 11. Round 10 answered the "was anything written" question.
+# 2026-08-08 round 12. Round 11's control worked and could have failed:
 #
-#   md003_80  raw output BO  204800 bytes  distinct=2  first bytes ff ff ff ff
-#   conv2d-cal raw output BO 409600 bytes  distinct=128 first bytes 00 10 0e 00
+#   conv2d-cal untouched          mean 145.72  md5 80e64aab  relu maxdiff 1
+#   conv2d-cal, A forced 0x2000   mean 149.45  md5 cb4a71b8  relu maxdiff 17
 #
-# So the DPU DID run and DID write the whole surface. 0xff is -1 signed, and
-# teflon adds 0x80 to get 127, which is exactly the out_zp the test reports. The
-# DPU wrote out_offset everywhere, so MAC + A came out as exactly 0.
+# So ROCKET_ATEST reaches the hardware. And md003_80 at A=0x2000 and A=0x40000
+# returned md5 f999f370e8b4 both times, identical to untouched, still a uniform
+# 127. So the DPU does not read the coefficient buffer for a 1x1 conv either.
 #
-# Which is a sharp fact, because A is not supposed to be 0. md003 has input zero
-# point 0, so A carries -128*sum(w), and dropping that term in round 9 changed
-# nothing either. Either the DPU is not reading the coefficient buffer at all,
-# or it is and A really does arrive as 0.
+# The state for a 1x1 conv is now: the regcmd matches a vendor .rknn compiled at
+# the same geometry, the weight layout matches the vendor's own compiled buffer,
+# and the DPU runs, writes every byte of the output, and emits exactly
+# out_offset while ignoring the weights, the input AND the A operand. Every
+# payload and every comparable register is accounted for.
 #
-# ROCKET_ATEST=<value> forces A directly, for any op rather than depthwise only.
-# requant(0 + A) with a large A must saturate the output away from out_zp.
+# So stop hunting and route around it. A 1x1 conv is exactly a 3x3 conv whose
+# outer ring sits at the weight zero point: the MAC computes
+# sum((in - 0x80) * (w - wt_zp)), so a tap with w == wt_zp contributes nothing,
+# and that holds for the SAME padding taps at the border too. ROCKET_PW_AS_3X3
+# synthesises that kernel and widens the geometry, so the op goes down the 3x3
+# path that demonstrably works and every derived register follows.
 #
-#   output MOVES off 127  -> the DPU reads the coefficient buffer, the requant
-#                            and the write path are alive, and the dead stage is
-#                            specifically CNA feeding the CMAC
-#   output STAYS at 127   -> the coefficient buffer is not read either, and the
-#                            problem is upstream of the whole DPU input side
+#   md003_80 computes  -> the answer is right, most of MobileNet is pointwise,
+#                         and the 1x1 path is narrowed to something specific
+#   md003_80 still 127 -> even the working shape cannot carry these values, and
+#                         the problem is not the kernel encoding at all
 #
-# ⚠ conv2d-cal gets the same knob in step 5. It computes correctly, so forcing A
-# there MUST wreck its output. If it does not, the knob is not reaching the
-# hardware and the null result in 3 means nothing. Round 8 shipped a control
-# that could not fail and cost a round; this one can.
+# ⚠ Step 2 is the control that can fail: conv2d-cal is 5x5, so the knob must not
+# touch it. If its md5 moves, the rewrite is firing where it should not.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-# $1 model, $2 marker, $3.. env
 one() {
 	m="$1"; mark="$2"; shift 2
 	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
 	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > "$C" 2>&1
+}
+
+many() {
+	m="$1"; n="$2"; mark="$3"; shift 3
+	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
+	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
+	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
 }
 
 start() {
@@ -54,42 +63,43 @@ start() {
 
 	log ""
 	log "===== 1) CONTROL: conv2d-cal untouched ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+	many conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) md003_80 untouched: distinct=1 mean=127, the reference ====="
+	log "===== 2) CONTROL THAT CAN FAIL: conv2d-cal WITH the knob ====="
+	log "  it is 5x5, so the rewrite must not touch it. md5 must not move."
+	sleep 2
+	one conv2d-cal.tflite cal-knob ROCKET_PW_AS_3X3=1
+
+	log ""
+	log "===== 3) md003_80 untouched: the uniform 127 reference ====="
 	sleep 2
 	one md003_80.tflite md003-plain
 
 	log ""
-	log "===== 3) md003_80 with A forced to 0x2000 ====="
-	log "  moves off 127 -> the DPU reads the coefficients, only CNA is dead"
-	log "  stays at 127  -> the coefficient buffer is not read either"
+	log "===== 4) THE TEST: md003_80 as a 3x3 with a zero point ring ====="
 	sleep 2
-	one md003_80.tflite md003-a2000 ROCKET_ATEST=0x2000
+	many md003_80.tflite 3 md003-3x3 ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 4) md003_80 with A forced to 0x40000, a second value ====="
-	log "  two values so a coincidence at one of them is visible"
+	log "===== 5) md003_oc128 as a 3x3, 128 output channels ====="
 	sleep 2
-	one md003_80.tflite md003-a40000 ROCKET_ATEST=0x40000
+	many md003_oc128.tflite 3 oc128-3x3 ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 5) THE CONTROL THAT CAN FAIL: conv2d-cal with A forced ====="
-	log "  this model computes correctly. Forcing A MUST wreck it."
-	log "  If its output is unchanged, the knob never reached the hardware"
-	log "  and step 3 measured nothing."
+	log "===== 6) mn_pw2, a real MobileNet pointwise layer, as a 3x3 ====="
 	sleep 2
-	one conv2d-cal.tflite cal-a2000 ROCKET_ATEST=0x2000
+	many mn_pw2.tflite 3 pw2-3x3 ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 6) conv2d-cal untouched again ====="
+	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
-	one conv2d-cal.tflite cal-plain
+	many conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== Read 5 FIRST: it must differ from 6. Then 3 and 4 against 2. ====="
+	log "===== Read 2 first: conv2d-cal must be unchanged by the knob.      ====="
+	log "===== Then 4 against 3. jobs= and task_count matter here, the 3x3  ====="
+	log "===== costs 9x the CBUF and may split where the 1x1 did not.       ====="
 	sync
 }
 
