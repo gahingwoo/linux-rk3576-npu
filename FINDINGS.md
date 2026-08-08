@@ -3,6 +3,51 @@
 
 
 
+## 2026-08-08 round 17 (Both controls worked. For k=3 the DPU reads the coefficients AND the CMAC reads the weights. Every stage is alive and the answer is still zero.)
+
+Read in the stated order, the controls first:
+
+| | result |
+|---|---|
+| knob fired? | weights `distinct 224` -> `distinct 1`, first bytes `7f` |
+| control that must fail: `conv2d-cal` + forced weights | md5 `80e64aab` -> `07852cc6`, relu maxdiff 1 -> 127, **wrecked** |
+
+So the results count:
+
+| `cal_k3` | md5 | mean | min..max |
+|---|---|---|---|
+| plain | `2cae07f3` | 128.32 | 128..131 |
+| **A forced to 0x40000** | `f9a4969a` | **135.82** | **133..139** |
+| **every weight forced to 0x7f** | `4a574bef` | 128.04 | 128..131 |
+
+**The DPU reads the coefficient buffer for k=3**, which separates it from the
+md003 family where forcing A at two values changed nothing at all. **And the
+CMAC reads the weight buffer**, since forcing it changed the output md5.
+
+So for a 3x3 conv: the regcmd is verified against the vendor in absolute terms,
+the weight layout is verified including the 32-channel grouping, the weights are
+read, the coefficients are read, and the result is still `out_zp` plus a couple
+of counts.
+
+⚠ **The weight probe was weak and I am not reading magnitude into it.** Forcing
+every weight to one value makes a box filter, and a box filter on a smooth ramp
+input produces a nearly constant output whether or not anything is wrong. The
+md5 change establishes the buffer is read; the small change in mean establishes
+nothing. That probe could not have shown a large effect even in a working
+driver.
+
+**An impulse kernel can.** `mutate_impulse.py` (new) gives output channel c a
+single live tap at `(c/k, c%k)`, weight zero point everywhere else, live on input
+channel 0 only. A correct convolution then makes channel c a copy of the input
+shifted by that tap. If the hardware pairs a tap with the wrong input pixel, NPU
+channel c matches the CPU's channel c' instead, and `taps.py` (new) recovers that
+mapping. **A wrong pairing is exactly what makes 144 products cancel toward zero
+while every buffer is read correctly**, which is the state we are in.
+
+⚠ The control is the same probe at k=5, which computes correctly and therefore
+must come back as an identity mapping. If it does not, `taps.py` is wrong and the
+k=3 answer means nothing.
+
 ## 2026-08-08 (continued, host-side: mesa vs vendor at k=3 in ABSOLUTE terms, and the weight layout closed including the 32-channel grouping.)
 
 **The absolute diff, which round 16 never actually did** (it compared deltas):

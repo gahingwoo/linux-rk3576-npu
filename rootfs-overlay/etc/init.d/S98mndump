@@ -1,51 +1,39 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 17. Everything the driver PRODUCES for a 3x3 conv is now
-# verified against the vendor, so ask what the block READS.
+# 2026-08-08 round 18. Round 17 had both controls working and gave a clear
+# answer, and it also exposed a weak probe of mine.
 #
-# Settled since round 16, all host side and free:
-#   mesa vs vendor at k=3 differs in the same FOUR registers as at k=5, and all
-#   four are the two model families' own conventions: 0x1080 padding, 0x1084
-#   pad value (in_zp - 0x80, 0 for the tflite family and 0xffffff80 for the
-#   ONNX one), and the two requant fields. The regcmd is cleared.
-#   The weight buffer layout is verified for k=3 AND k=5: plane order kh-major
-#   0..k*k-1 at 256 bytes each, and within a plane oc-major with ic contiguous.
-#   The probe reproduces mesa's own nesting on the 5x5 that works, which is why
-#   its k=3 answer counts.
+#   knob fired            weights distinct 224 -> 1, first bytes 7f
+#   control that failed   conv2d-cal with forced weights, md5 80e64aab ->
+#                         07852cc6, relu maxdiff 1 -> 127
+#   cal_k3 + A forced     md5 2cae07f3 -> f9a4969a, mean 128.32 -> 135.82
+#   cal_k3 + weights forced  md5 changed, mean 128.32 -> 128.04
 #
-# cal_k3 carries conv2d-cal's OWN bias tensor, because mutate_k.py crops only
-# the weights. So its output of out_zp + 0 to 2 is exactly what requant(bias)
-# with a MAC of precisely zero would produce, rather than a MAC that nearly
-# cancels. That is a testable difference from the md003 family, where forcing A
-# changed nothing at all.
+# So for k=3 the DPU DOES read the coefficient buffer, unlike the md003 family
+# where forcing A changed nothing, and the CMAC DOES read the weights. Every
+# stage is alive and the answer is still out_zp plus a couple of counts.
 #
-#   3  ROCKET_ATEST forces A. If cal_k3 MOVES, the DPU is reading the
-#      coefficient buffer and only the CNA to CMAC path is dead for k=3, which
-#      is a different fault from md003 where A is ignored too.
-#   4  ROCKET_WTEST forces every weight to 0x7f, now available on the generic
-#      path. If cal_k3 does not move, the CMAC is not reading the weights.
-#   5  ⚠ THE CONTROL THAT MUST FAIL: the same knob on conv2d-cal, which
-#      computes correctly. Forcing its weights has to wreck it. Round 8 and
-#      round 12 both shipped controls that could not fail and cost a round each.
-#   6  proves the knob fired, by distinct count, not by nonzero count.
+# ⚠ But forcing every weight to one value makes a box filter, and a box filter
+# on a smooth ramp input gives a nearly constant output anyway. The md5 change
+# proves the buffer is read; the small magnitude proves nothing. That probe
+# could not have shown a large effect even if everything worked.
+#
+# An impulse kernel can. mutate_impulse.py gives output channel c a single live
+# tap at (c/k, c%k) and the weight zero point everywhere else, on input channel
+# 0 only, so a correct convolution makes channel c a copy of the input shifted
+# by that tap. If the hardware pairs a tap with the wrong input pixel, NPU
+# channel c matches the CPU's channel c' instead, and taps.py recovers that
+# mapping. A wrong pairing is exactly what would make 144 products cancel to
+# zero while every buffer is read correctly.
+#
+#   2  k=3 impulse. Identity mapping means the pairing is right.
+#   3  ⚠ k=5 impulse, THE CONTROL: this kernel size computes correctly, so its
+#      mapping MUST come back as identity. If it does not, taps.py is wrong and
+#      step 2 means nothing.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-
-one() {
-	m="$1"; mark="$2"; shift 2
-	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > "$C" 2>&1
-}
-
-many() {
-	m="$1"; n="$2"; mark="$3"; shift 3
-	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
-	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
-}
 
 start() {
 	i=0
@@ -55,66 +43,49 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
 	log ""
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal ====="
-	many conv2d-cal.tflite 2 cal-first
+	log "===== 1) CONTROL: conv2d-cal computes ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 2) cal_k3 untouched, the reference numbers ====="
+	log "===== 2) k=5 IMPULSE, THE CONTROL: mapping MUST be identity ====="
+	log "  5x5 computes correctly, so every channel must match its own tap."
+	log "  If it does not, taps.py is broken and step 3 means nothing."
 	sleep 2
-	one cal_k3.tflite k3-plain
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/taps.py" "$NPU_DIR/cal_k5_imp.tflite" 5 > "$C" 2>&1
 
 	log ""
-	log "===== 3) cal_k3 with A forced to 0x40000 ====="
-	log "  moves -> the DPU reads the coefficients and only CNA/CMAC is dead"
-	log "  does not move -> A is ignored here too, like md003"
+	log "===== 3) k=3 IMPULSE: which input pixel did each tap get ====="
 	sleep 2
-	one cal_k3.tflite k3-atest ROCKET_ATEST=0x40000
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/taps.py" "$NPU_DIR/cal_k3_imp.tflite" 3 > "$C" 2>&1
 
 	log ""
-	log "===== 4) cal_k3 with EVERY weight forced to 0x7f ====="
-	log "  does not move -> the CMAC never reads the weight buffer for k=3"
+	log "===== 4) k=3 impulse, plain stats, to see if it is even structured ====="
 	sleep 2
-	one cal_k3.tflite k3-wtest ROCKET_WTEST=1
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3_imp.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 5) THE CONTROL THAT MUST FAIL: conv2d-cal, same weight knob ====="
-	log "  it computes correctly, so forcing its weights has to wreck it."
-	log "  If it is unchanged, step 4 measured nothing."
+	log "===== 5) k=5 impulse, plain stats, for comparison ====="
 	sleep 2
-	one conv2d-cal.tflite cal-wtest ROCKET_WTEST=1
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k5_imp.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 6) conv2d-cal untouched, to compare against 5 ====="
+	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
-	one conv2d-cal.tflite cal-plain
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 7) did the knob fire? weight buffer, plain vs forced ====="
-	log "  distinct must be many, then exactly 1"
-	sleep 2
-	rm -rf /tmp/a /tmp/b; mkdir -p /tmp/a /tmp/b
-	cd /tmp/a && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
-	cd /tmp/b && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_WTEST=1 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
-	cd /
-	for f in /tmp/a/mesa-weights-*.bin /tmp/b/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 8) REPEAT CONTROL: conv2d-cal ====="
-	sleep 2
-	many conv2d-cal.tflite 2 cal-last
-
-	log ""
-	log "===== Read 5 and 7 first. 5 must differ from 6 and 7 must show      ====="
-	log "===== distinct 1, or 3 and 4 mean nothing.                          ====="
+	log "===== Read 2 FIRST. It must be an identity mapping at high percent, ====="
+	log "===== or step 3 is meaningless.                                      ====="
 	sync
 }
 
