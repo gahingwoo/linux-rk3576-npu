@@ -3,6 +3,56 @@
 
 
 
+## 2026-08-08 (host-side, no board: the weight layout is FULLY verified against the vendor, for k=3 as well as k=5. It is correct.)
+
+The plane probe was redesigned after the first attempt was recorded as unsafe.
+Plane p now gets a value BAND, wide enough that per (oc, ic) variation inside it
+cannot be mistaken for a neighbour, so the tensor is ordinary rather than rank
+one; and a plane is identified by a run of exactly `oc*ic` bytes rather than by
+sampling one byte.
+
+**Validated on the kernel size that works before being trusted on the one that
+does not:**
+
+| k | runs of exactly 256 bytes | stride | plane order as stored | matches mesa |
+|---|---|---|---|---|
+| **5, known good** | 25 | 256 | `0..24` | **yes** |
+| **3, fails** | 9 | 256 | `0..8` | **yes** |
+
+The probe reproduces mesa's own `[kx][ky]` nesting on the 5x5 that computes
+correctly, so its answer for 3x3 counts, and that answer is that the plane order
+is right too.
+
+**And the order within a plane**, from two more probes read structurally with no
+assumption about the byte values:
+
+| weights vary with | 256-byte block structure | conclusion |
+|---|---|---|
+| `ic` only | period 16: `80 91 a2 b3 ... 7f` then repeats | ic is contiguous |
+| `oc` only | runs of 16: `80` x16, `91` x16, ... | oc changes every 16 bytes |
+
+That is `[oc][ic]`, oc-major with ic contiguous, which is exactly what
+`rkt_coefs.c` writes, and the same answer the pointwise probe gave.
+
+**So the whole weight buffer is verified correct against the vendor for k=3:**
+plane order, within-plane lane order, buffer size (73728 bytes =
+`k*k*oc*ALIGN(ic,32)*2`), and the DMA count in 0x101c matching the bytes
+actually written. Together with round 16, where mesa's register delta across the
+kernel change is identical to the vendor's, **everything the driver produces for
+a 3x3 conv is now verified, and the MAC still nearly cancels.**
+
+⚠ Two probe-design faults on the way here, both caught before they became
+findings: a filter that accepted 0 as an encoded value matched a block of zeros
+in both lane probes, and predicting the exact quantized bytes failed because the
+toolkit's weight quantization is not the symmetric max/127 rule assumed. Reading
+the block *structure* rather than its values avoids both.
+
+**What is left for the k=3 case**, now that the regcmd and the weights are
+excluded: the bias and coefficient buffer contents, the address registers, which
+cannot be diffed against a static .rknn because they are unpatched placeholders
+there, and the input staging, which is shared with the 5x5 that works and drives
+it from a byte-identical input BO.
+
 ## 2026-08-08 round 16 (Mesa's register response to the kernel is EXACTLY the vendor's. The regcmd is not where the k=3 failure lives.)
 
 The same model one kernel apart, on both sides:
