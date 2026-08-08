@@ -3,6 +3,52 @@
 
 
 
+## 2026-08-08 round 20 (The probe finally works. ⚠ The spatial mapping is CORRECT at every kernel size, so the tap pairing theory is dead. What is wrong is the gain, and the baselines say it more simply.)
+
+An input impulse with the real kernel, so nothing has to cancel:
+
+| model | CPU footprint | NPU footprint | magnitudes |
+|---|---|---|---|
+| k=5, control, impulse at (20,20) | rows 9..10, cols 9..10 | **same** | cpu 1510..1880, npu 747..1039 |
+| k=5, impulse at (30,14) | rows 14..15, cols 6..7 | **same** | same ratio |
+| **k=3** | rows 9..10, cols 9..10 | **same** | cpu 1510..1880, npu **19..28** |
+| **k=1** | row 10, col 10 | **same** | cpu 1585, npu **5477** |
+
+**Every kernel size puts the response in exactly the right place**, and moving
+the impulse moves it correctly. So no tap is paired with the wrong input pixel,
+and the idea that 144 products cancel because of a mis-pairing is refuted. The
+fault is in the **gain**: against the CPU, k=3 is about 80x too small and k=1
+about 3.5x too large.
+
+⚠ **And the baselines are a much simpler failing case than the impulses.** The
+baseline is a constant input at exactly `in_zp`, so `(in - 0x80)` is zero, the
+MAC is zero by construction, and the answer must be `requant(bias)`. `cal_k3`
+and `cal_k1` are conv2d-cal with only the kernel cropped, so all three carry the
+same bias and the same requant, which every log line confirms as `shift=25
+scale=0x7d34`. The answer is still different:
+
+| k | baseline distinct values |
+|---|---|
+| 5 | 12 |
+| **3** | **1, flat at the zero point** |
+| 1 | 45 |
+
+**Three different answers to a computation whose every input is identical.**
+No input data, no spatial mapping, no meaningful weight contribution: just bias
+through the requant, and it depends on the kernel size.
+
+The only k-dependent term in that path is **B, the weight zero point
+correction**. The MAC computes `sum((in - 0x80)(w - 0x80))` while the true
+convolution wants `sum((in - in_zp)(w - wt_zp))`, and B carries the difference,
+which is proportional to the input sum over the kernel window and therefore to
+the tap count: 400 against 144 against 16.
+
+Round 21 runs the constant input on all three kernel sizes with B as it is and
+with `ROCKET_B_VALUE=0`. If the three baselines converge with B removed, B is
+the term that does not belong. ⚠ The control is `conv2d-cal` with B forced to 0
+on a real input: it computes correctly today, so removing a correction it needs
+must break it, and if it does not the knob never reached the hardware.
+
 ## 2026-08-08 round 19 (⚠ VOID again, and the rescale was not the real fault. The impulse KERNEL is badly conditioned and fails at k=5 too.)
 
 | | NPU | CPU |

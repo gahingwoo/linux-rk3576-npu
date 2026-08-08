@@ -1,0 +1,54 @@
+From c5143238b49d8ba9c60ae32f553eb3ffca3f870d Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sat, 8 Aug 2026 23:24:54 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_B_VALUE to force the weight zero point
+ correction
+
+A constant input at exactly in_zp makes every MAC product zero, so the output
+must be requant(bias), and cropping conv2d-cal's kernel leaves its bias and its
+requant untouched. On hardware the answer still depends on the kernel size: 12
+distinct values at 5x5, 45 at 1x1, and a flat zero point at 3x3.
+
+B is the only k-dependent term in that path. It carries the difference between
+the MAC's sum((in - 0x80)(w - 0x80)) and the true sum((in - in_zp)(w - wt_zp)),
+which is proportional to the input sum over the kernel window and so to the tap
+count.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 6840a6d..4ccd001 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -590,7 +590,26 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                uint32_t av = (uint32_t)strtoul(getenv("ROCKET_DW_ATEST"), NULL, 0);
+                *A = (av > 1) ? (int32_t)av : 0x2000;
+             }
+-            *B = (int16_t)(0x80 - (int)wt_zp);
++            /*
++             * ROCKET_B_VALUE: force the wt_zp correction operand. The hardware
++             * MAC computes sum((in - 0x80) * (w - 0x80)) while the true conv is
++             * sum((in - in_zp) * (w - wt_zp)), and B carries the difference,
++             * which is proportional to the input sum over the kernel window and
++             * therefore to the TAP COUNT: 400 taps at 5x5, 144 at 3x3, 16 at
++             * 1x1.
++             *
++             * That matters because a constant input at exactly in_zp makes
++             * (in - 0x80) zero, so the MAC is zero by construction and the
++             * output has to be requant(bias), identical for every kernel size,
++             * since cropping conv2d-cal's kernel leaves its bias and its
++             * requant untouched. On hardware it is not identical: the baseline
++             * comes back with 12 distinct values at 5x5, 45 at 1x1, and a flat
++             * zero point at 3x3. Something k-dependent is being added to a MAC
++             * that should be zero, and B is the only k-dependent term.
++             */
++            *B = getenv("ROCKET_B_VALUE")
++                    ? (int16_t)strtol(getenv("ROCKET_B_VALUE"), NULL, 0)
++                    : (int16_t)(0x80 - (int)wt_zp);
+             /*
+              * C is a Q14 per-channel scale ratio (=0x4000 for the max-scale channel).
+              * If the HW does NOT apply a built-in >>14 after the BS C-multiply, this
+-- 
+2.43.0
+

@@ -1,39 +1,49 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 20. Round 19 was VOID again and the guard caught it cleanly.
+# 2026-08-08 round 21. Round 20's probe finally worked, and it killed the tap
+# pairing theory while handing over a much simpler failing case.
 #
-#   k=5 impulse   npu distinct=1 min=128 max=128   cpu distinct=128 128..255
-#   k=3 impulse   npu distinct=1 min=128 max=128   cpu distinct=128 128..255
+# The input impulse lands in exactly the right place for every kernel size:
+#   k=5 impulse at (20,20) -> rows 9..10 cols 9..10 on both cpu and npu
+#   k=5 impulse at (30,14) -> rows 14..15 cols 6..7 on both
+#   k=3                    -> rows 9..10 cols 9..10 on both
+#   k=1                    -> row 10 col 10 on both
+# So the spatial mapping is right and nothing is paired with the wrong pixel.
+# What is wrong is the GAIN: against the cpu the k=3 response is about 80x too
+# small and the k=1 response about 3.5x too large.
 #
-# The rescale worked on the CPU side and mesa recomputed the requant, shift 25
-# to 22, and the NPU still returned exactly 128. So the output scale was not the
-# real problem: the impulse KERNEL is badly conditioned. It needs 399 taps
-# sitting exactly at the weight zero point to cancel against one live tap, and
-# mesa stores weights as w - 0x80 with the B operand doing that correction, so
-# the signal is a four hundredth of a large cancellation. It fails at k=5 too,
-# which is the kernel size that computes correctly, so it was never going to
-# measure anything.
+# ⚠ And the baselines say it more simply than the impulses do. The baseline is a
+# constant input at exactly in_zp, where (in - 0x80) is zero, so the MAC is zero
+# by construction and the answer must be requant(bias). cal_k3 and cal_k1 are
+# conv2d-cal with the kernel cropped, so all three carry the SAME bias and the
+# SAME requant, and every log line confirms shift=25 scale=0x7d34. The answer
+# still comes out different:
 #
-# Put the impulse in the INPUT instead and keep the real kernel. Nothing has to
-# cancel, the model is the one that already computes, and the response to a
-# single raised input pixel IS the kernel footprint. Where that footprint lands
-# says which output pixels an input pixel reached:
+#   k=5  baseline distinct=12      k=1  distinct=45      k=3  distinct=1, flat
 #
-#   out[y][x] responds iff  stride*y + ky - pad_top == y0  for some tap ky
+# Something k-dependent is being added to a MAC that should be exactly zero.
+# The only k-dependent term in that path is B, the weight zero point correction:
+# the MAC computes sum((in - 0x80)(w - 0x80)) while the true conv wants
+# sum((in - in_zp)(w - wt_zp)), and B carries the difference, which scales with
+# the tap count, 400 against 144 against 16.
 #
-#   2  k=5, THE CONTROL: this computes, so its footprint is the reference for
-#      what a correct one looks like, and the CPU footprint in the same run is
-#      a second reference.
-#   3  k=3: same measurement. A footprint in the wrong place or of the wrong
-#      extent names the mis-pairing; no response at all says the input never
-#      reaches the MAC for k=3.
-#
-# ⚠ Both steps print the CPU footprint alongside, so a step that shows nothing
-# on both sides is a broken probe rather than a hardware fact.
+#   2,3,4  the constant input on all three kernel sizes. No input data, no
+#          spatial mapping: just bias through the requant.
+#   5,6    the same with B forced to 0. If the three baselines converge, B is
+#          the k-dependent term that does not belong.
+#   7      ⚠ THE CONTROL: conv2d-cal with B forced to 0. It computes correctly
+#          today, so removing a correction it needs MUST break it. If it does
+#          not, the knob is not reaching the hardware.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
+
+flat() {
+	m="$1"; shift
+	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+		python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1
+}
 
 start() {
 	i=0
@@ -52,40 +62,44 @@ start() {
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 2) k=5 INPUT IMPULSE, THE CONTROL: the reference footprint ====="
-	log "  real kernel, nothing has to cancel. cpu and npu must agree here."
+	log "===== 2,3,4) CONSTANT INPUT AT in_zp: must be identical for all k ====="
+	log "  same bias, same requant, MAC zero by construction"
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/conv2d-cal.tflite" 20 20 > "$C" 2>&1
+	flat conv2d-cal.tflite
+	flat cal_k3.tflite
+	flat cal_k1.tflite
 
 	log ""
-	log "===== 3) k=3 INPUT IMPULSE: where does the response land ====="
-	log "  wrong place or wrong extent names the mis-pairing;"
-	log "  no response at all means the input never reaches the MAC"
+	log "===== 5,6) the same three with B forced to 0 ====="
+	log "  if the three converge, B is the k-dependent term that misbehaves"
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/cal_k3.tflite" 20 20 > "$C" 2>&1
+	flat conv2d-cal.tflite ROCKET_B_VALUE=0
+	flat cal_k3.tflite ROCKET_B_VALUE=0
+	flat cal_k1.tflite ROCKET_B_VALUE=0
 
 	log ""
-	log "===== 4) k=1 INPUT IMPULSE, for the third kernel size ====="
+	log "===== 7) THE CONTROL: conv2d-cal with B forced to 0, real input ====="
+	log "  it computes correctly today, so removing a correction it needs"
+	log "  MUST break it. Unchanged means the knob never reached the hardware."
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/cal_k1.tflite" 20 20 > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_B_VALUE=0 \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 5) k=5 again at a different impulse position, as a sanity check ====="
+	log "===== 8) k=3 with B forced to 0, real input ====="
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/conv2d-cal.tflite" 30 14 > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_B_VALUE=0 \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/cal_k3.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 9) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read 2 first: cpu and npu footprints must agree there. Then 3. ====="
+	log "===== Read 7 first: it must break, or 5 and 6 mean nothing. Then    ====="
+	log "===== compare the three baselines in 2,3,4 against those in 5,6.    ====="
 	sync
 }
 
