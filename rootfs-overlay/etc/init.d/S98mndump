@@ -1,33 +1,35 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 19. ⚠ ROUND 18 IS VOID and its control is why.
+# 2026-08-08 round 20. Round 19 was VOID again and the guard caught it cleanly.
 #
-# The k=5 impulse model, which MUST work because that kernel size computes
-# correctly, came back distinct=1 mean=128 min=128 max=128, and with the SAME
-# md5 66a83b6c3142 as the k=3 one. Both impulse models returned a flat zero
-# point surface, so the "best match cpu ch16 at 71.6%" in step 2 was a constant
-# 128 agreeing with the reference wherever the reference sits below the zero
-# point. No mapping could be read from either.
+#   k=5 impulse   npu distinct=1 min=128 max=128   cpu distinct=128 128..255
+#   k=3 impulse   npu distinct=1 min=128 max=128   cpu distinct=128 128..255
 #
-# The fault was mine, in the model rather than the hardware: one live tap out of
-# 400 carries about 1/400 of the dynamic range the full kernel had, and I left
-# the output scale at the original 32, so the result underflowed the requant to
-# out_zp. mutate_impulse.py now sets the output scale from the largest product a
-# single tap can produce, 32 -> 4.34 here, and on the CPU both models now span
-# the full byte range with 200 or more distinct values per channel.
+# The rescale worked on the CPU side and mesa recomputed the requant, shift 25
+# to 22, and the NPU still returned exactly 128. So the output scale was not the
+# real problem: the impulse KERNEL is badly conditioned. It needs 399 taps
+# sitting exactly at the weight zero point to cancel against one live tap, and
+# mesa stores weights as w - 0x80 with the B operand doing that correction, so
+# the signal is a four hundredth of a large cancellation. It fails at k=5 too,
+# which is the kernel size that computes correctly, so it was never going to
+# measure anything.
 #
-# taps.py also refuses to report a mapping when the NPU surface is flat, so this
-# particular trap cannot be walked into silently a second time.
+# Put the impulse in the INPUT instead and keep the real kernel. Nothing has to
+# cancel, the model is the one that already computes, and the response to a
+# single raised input pixel IS the kernel footprint. Where that footprint lands
+# says which output pixels an input pixel reached:
 #
-# The question is unchanged. For k=3 every buffer and every register is verified
-# against the vendor, the CMAC reads the weights and the DPU reads the
-# coefficients, and the answer is still out_zp plus a couple of counts. A tap
-# paired with the wrong input pixel is what makes 144 products cancel while
-# everything is read correctly, and an impulse kernel names that pairing.
+#   out[y][x] responds iff  stride*y + ky - pad_top == y0  for some tap ky
 #
-#   2  k=5 impulse, THE CONTROL: this kernel size computes, so the mapping MUST
-#      come back identity at a high percentage. Anything else voids step 3 too.
-#   3  k=3 impulse: which input pixel each tap actually got.
+#   2  k=5, THE CONTROL: this computes, so its footprint is the reference for
+#      what a correct one looks like, and the CPU footprint in the same run is
+#      a second reference.
+#   3  k=3: same measurement. A footprint in the wrong place or of the wrong
+#      extent names the mis-pairing; no response at all says the input never
+#      reaches the MAC for k=3.
+#
+# ⚠ Both steps print the CPU footprint alongside, so a step that shows nothing
+# on both sides is a broken probe rather than a hardware fact.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -50,30 +52,31 @@ start() {
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 2) k=5 IMPULSE, THE CONTROL: mapping MUST be identity ====="
-	log "  5x5 computes correctly, so every channel must match its own tap."
-	log "  If it does not, taps.py is broken and step 3 means nothing."
+	log "===== 2) k=5 INPUT IMPULSE, THE CONTROL: the reference footprint ====="
+	log "  real kernel, nothing has to cancel. cpu and npu must agree here."
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/taps.py" "$NPU_DIR/cal_k5_imp.tflite" 5 > "$C" 2>&1
+		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/conv2d-cal.tflite" 20 20 > "$C" 2>&1
 
 	log ""
-	log "===== 3) k=3 IMPULSE: which input pixel did each tap get ====="
+	log "===== 3) k=3 INPUT IMPULSE: where does the response land ====="
+	log "  wrong place or wrong extent names the mis-pairing;"
+	log "  no response at all means the input never reaches the MAC"
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/taps.py" "$NPU_DIR/cal_k3_imp.tflite" 3 > "$C" 2>&1
+		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/cal_k3.tflite" 20 20 > "$C" 2>&1
 
 	log ""
-	log "===== 4) k=3 impulse, plain stats, to see if it is even structured ====="
+	log "===== 4) k=1 INPUT IMPULSE, for the third kernel size ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3_imp.tflite" > "$C" 2>&1
+		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/cal_k1.tflite" 20 20 > "$C" 2>&1
 
 	log ""
-	log "===== 5) k=5 impulse, plain stats, for comparison ====="
+	log "===== 5) k=5 again at a different impulse position, as a sanity check ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k5_imp.tflite" > "$C" 2>&1
+		python3 "$NPU_DIR/impulse_in.py" "$NPU_DIR/conv2d-cal.tflite" 30 14 > "$C" 2>&1
 
 	log ""
 	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
@@ -82,8 +85,7 @@ start() {
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read 2 FIRST. It must be an identity mapping at high percent, ====="
-	log "===== or step 3 is meaningless.                                      ====="
+	log "===== Read 2 first: cpu and npu footprints must agree there. Then 3. ====="
 	sync
 }
 

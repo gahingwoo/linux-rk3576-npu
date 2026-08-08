@@ -3,6 +3,38 @@
 
 
 
+## 2026-08-08 round 19 (⚠ VOID again, and the rescale was not the real fault. The impulse KERNEL is badly conditioned and fails at k=5 too.)
+
+| | NPU | CPU |
+|---|---|---|
+| k=5 impulse, the control | `distinct=1`, 128..128 | `distinct=128`, 128..255 |
+| k=3 impulse | `distinct=1`, 128..128 | `distinct=128`, 128..255 |
+
+The rescale worked, on the CPU side the models now span the full byte range, and
+mesa recomputed the requant from the new scale, shift 25 to 22. The NPU still
+returns exactly 128. **So the output scale was not why round 18 failed.**
+
+The impulse kernel needs 399 taps sitting exactly at the weight zero point to
+cancel against one live tap, and mesa stores weights as `w - 0x80` with the `B`
+operand doing that correction, so the signal is a four hundredth of a large
+cancellation. **It fails at k=5, the kernel size that computes correctly**, which
+means it was never capable of measuring anything. The `VOID` guard added after
+round 18 reported it plainly instead of letting the percentages be read.
+
+**Put the impulse in the input instead.** The kernel stays the real, well
+conditioned one from a model that computes; only the input changes. Feed the
+input zero point everywhere, feed it again with one pixel raised, subtract. The
+response is the kernel footprint, and where it lands names the mapping:
+
+```
+out[y][x] responds iff  stride*y + ky - pad_top == y0  for some tap ky
+```
+
+Nothing has to cancel, and `impulse_in.py` prints the CPU footprint alongside the
+NPU one in the same run, so a step that shows nothing on both sides is a broken
+probe rather than a hardware fact. Round 20 measures k=5 as the reference
+footprint, then k=3 and k=1.
+
 ## 2026-08-08 round 18 (⚠ VOID, and its control is what caught it. Both impulse models returned a flat out_zp.)
 
 Step 2 was the control: the k=5 impulse, whose kernel size computes correctly,
