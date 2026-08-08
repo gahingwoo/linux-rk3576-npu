@@ -3,6 +3,53 @@
 
 
 
+## 2026-08-08 round 15 (Requant EXCLUDED for the flat family, and the three cases fail in three different ways.)
+
+**The md003 family is not a requant bug.** `ROCKET_OUT_SHIFT_ADD` moved the
+OUT_CVT shift from 23 to 21 and then to 17, both confirmed emitted in the log,
+and the output was byte identical both times. A 64x change in the requant scale
+moves nothing, which is only possible if `MAC + A` is exactly 0.
+
+**The first 64 outputs, against the CPU on the same generated input:**
+
+| model | shape of the answer |
+|---|---|
+| `conv2d-cal`, 5x5 | `npu == cpu` wherever `cpu > out_zp`, `npu == out_zp` below it |
+| `cal_k3`, 3x3 | `out_zp + 0..2` everywhere |
+| `cal_k1`, 1x1 | wild, saturating to 0 and to 128 |
+| `md003_80` | flat `out_zp` |
+
+The first line is worth stating plainly because it is the first direct look at
+what "correct" means here: **the hardware applies a ReLU at the output zero
+point**, and above it the NPU agrees with the CPU exactly. That is why
+`test_model.py` compares against `max(cpu, zp)`.
+
+⚠ **This corrects round 14.** I described `cal_k3` and `cal_k1` as "computing a
+wrong answer" because their output varied with the input. `cal_k3` varies by 0
+to 2 counts above the zero point, which is a MAC that very nearly cancels, not a
+wrong convolution. `cal_k1` is the only one producing large wrong amplitudes.
+
+⚠ `job_log` was left out of round 15's script, so every `jobs=` column read 0.
+That meant nothing; it is back on in round 16.
+
+Round 16 dumps the regcmd for `cal_k3` and, as the pair, for `conv2d-cal`, which
+is the same model one kernel apart. There are now vendor .rknn builds at exactly
+both geometries (`g_cal_k3`, `g_cal`), so the round yields mesa against vendor at
+k=3, and mesa against mesa across the kernel change, which is the method that
+found both 0x1080 and 0x4050.
+
+⚠ Spotted in the vendor builds and worth checking in that diff: the vendor stages
+a **kernel dependent number of input rows**. At 80x80 stride 2 it uses 79 rows
+for a 1x1 and 80 for a 3x3 and a 5x5 (`0x1028` high is `surf * rows`, `0x102c`
+low is `rows - 1`). Mesa always uses the full input height whatever the kernel.
+
+⚠ And a near miss to record: the vendor's `0x1080` for `g_cal_k3` reads
+`00000101`, which looks wrong against mesa's `01010000` until you notice the
+vendor model is an ONNX with symmetric pad 1, giving before 1 and after 0, while
+tflite SAME at k=3 stride 2 on 80 gives a total of 1, so before 0 and after 1.
+Both are right for their own model. **Check a vendor register against that
+model's own padding, not against the tflite one.**
+
 ## 2026-08-08 round 14 (⚠ It IS the kernel size, proven on the model that works. And the failures split into two different modes, which nothing had noticed.)
 
 `mutate_k.py` crops conv2d-cal's own kernel. Same file, same scales, same

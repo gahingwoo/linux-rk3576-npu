@@ -1,39 +1,32 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 15. Round 14 settled the confound and split the problem in two.
+# 2026-08-08 round 16. Round 15 excluded the requant and gave the failure shapes.
 #
-# cal_k3 and cal_k1 are conv2d-cal with its own kernel cropped to the centre 3x3
-# and 1x1. Same file, same scales, same shapes, only the kernel. Both FAIL while
-# the uncropped 5x5 passes at both ends of the round. So it IS the kernel size,
-# and the model is no longer confounded with it.
+#   md003_80 with OUT_CVT shift 23 -> 21, and 23 -> 17 (both confirmed emitted
+#   in the log): output BYTE IDENTICAL both times. A 64x change in the requant
+#   scale moves nothing, which is only possible if MAC + A is exactly 0.
+#   REQUANT EXCLUDED for that family.
 #
-# ⚠ But the two families fail DIFFERENTLY, which nothing so far had noticed:
+# And the first 64 outputs say the three cases fail in three different ways:
 #
-#   cal_k3   top1 npu 109, 93, 349 across three inputs, no STALE
-#   cal_k1   top1 npu 1, 2, 0                          no STALE
-#   md003_80 top1 npu 0, 0, 0, flat out_zp             STALE
+#   k=5  npu == cpu wherever cpu > out_zp, npu == out_zp below it. That is the
+#        hardware ReLU at out_zp, and it is correct.
+#   k=3  npu = out_zp + 0..2 everywhere. The MAC is near zero with a residue.
+#   k=1  wild, saturating to 0 and to 128. Large amplitude and wrong.
 #
-# cal_k3 and cal_k1 VARY with the input. That is a computed answer that is
-# wrong, not a dead datapath. md003 returns a constant. And md003_oc128 is the
-# same geometry as cal_k1, 1x1 with 16 in and 128 out, yet one varies and the
-# other is constant, so geometry does not decide which mode. The models do, and
-# what differs between them is the quantization: md003 has input zero point 0,
-# out scale 0.317, OUT_CVT shift 23; the conv2d-cal family has 128, 32 and 25.
+# So k=3 is the informative one: not dead like md003, not correct like k=5, but
+# a MAC that almost cancels. This round gets its regcmd, because there is now a
+# vendor .rknn compiled at exactly cal_k3's geometry to diff it against, and
+# that diff is the method that found both 0x1080 and 0x4050.
 #
-# A flat out_zp is exactly what a requant that underflows to zero produces. So:
+# ⚠ One thing to check in the diff, spotted in the vendor builds: the vendor
+# stages a KERNEL DEPENDENT number of input rows. At 80x80 stride 2 it uses 79
+# rows for a 1x1 and 80 for a 3x3 and a 5x5 (0x1028 high = surf * rows, 0x102c
+# low = rows - 1). mesa always uses the full input height whatever the kernel.
 #
-#   2, 3  ROCKET_OUT_SHIFT_ADD moves the OUT_CVT shift. If md003_80 comes off
-#         its flat 127 when the shift is reduced, that family is a requant bug
-#         and has nothing to do with the kernel.
-#   4, 5  cal_k3 and cal_k1 print their first 64 output values. The input is
-#         generated deterministically, so those numbers are enough to search
-#         candidate weight orderings offline on the host and find which one the
-#         hardware actually used. A wrong but varying answer carries information
-#         that a flat one does not.
-#
-# ⚠ The kh/kw transpose is already excluded without a board run: conv2d-cal's
-# 5x5 kernel is not transpose symmetric, 40568 of 51200 bytes differ, and it
-# computes byte exact. So mesa's kernel ordering is right at 5x5.
+# ⚠ job_log was left off in round 15, which is why every jobs= read 0. It is
+# back on here. That column meant nothing last round; do not read it as "no job
+# was submitted".
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -44,6 +37,22 @@ many() {
 	echo "SMARK-$mark" > /dev/kmsg 2>/dev/null
 	env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1
+	dmesg | sed -n "/SMARK-$mark/,\$p" | grep -a "job: task_count=" | head -2 > "$C" 2>&1
+}
+
+regcmd() {
+	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$1" > /dev/null 2>&1
+	for f in /tmp/rc/mesa-weights-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	done
+	for f in /tmp/rc/mesa-regcmd-*.bin; do
+		[ -f "$f" ] || continue
+		log "--- $1 $(basename "$f") ---"
+		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
+	done
+	cd / || return 0
 }
 
 start() {
@@ -54,53 +63,42 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
+	echo 1 > /sys/module/rocket/parameters/job_log 2>/dev/null
 	log ""
-	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
+	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)" \
+	    "job_log=$(cat /sys/module/rocket/parameters/job_log 2>/dev/null)"
 
 	log ""
 	log "===== 1) CONTROL: conv2d-cal ====="
 	many conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) md003_80 with the OUT_CVT shift reduced by 2 ====="
-	log "  a flat out_zp is what a requant underflowing to zero looks like"
+	log "===== 2) REGCMD: cal_k3, the near cancelling MAC ====="
+	log "  to diff on the host against a vendor build at 16 in, 128 out,"
+	log "  80x80, 3x3, stride 2, which is exactly this geometry"
 	sleep 2
-	many md003_80.tflite 2 md003-s2 ROCKET_OUT_SHIFT_ADD=-2
+	regcmd cal_k3.tflite
 
 	log ""
-	log "===== 3) md003_80 with the shift reduced by 6 ====="
-	log "  if it never leaves 127 at any shift, the requant is not it"
+	log "===== 3) REGCMD: conv2d-cal, the same model at 5x5, as the pair ====="
+	log "  mesa against mesa, one variable apart, alongside vendor against"
+	log "  vendor at the same two kernels. Four streams, two contrasts."
 	sleep 2
-	many md003_80.tflite 2 md003-s6 ROCKET_OUT_SHIFT_ADD=-6
+	regcmd conv2d-cal.tflite
 
 	log ""
-	log "===== 4) cal_k3 first 64 outputs, NPU against CPU ====="
-	log "  wrong but varying, so the numbers carry information"
+	log "===== 4) cal_k3 again for the verdict line ====="
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/head.py" "$NPU_DIR/cal_k3.tflite" 64 > "$C" 2>&1
+	many cal_k3.tflite 2 cal-k3
 
 	log ""
-	log "===== 5) cal_k1 first 64 outputs, NPU against CPU ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/head.py" "$NPU_DIR/cal_k1.tflite" 64 > "$C" 2>&1
-
-	log ""
-	log "===== 6) conv2d-cal first 64 outputs, the one that is correct ====="
-	log "  the reference for what agreement looks like in this format"
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/head.py" "$NPU_DIR/conv2d-cal.tflite" 64 > "$C" 2>&1
-
-	log ""
-	log "===== 7) REPEAT CONTROL: conv2d-cal ====="
+	log "===== 5) REPEAT CONTROL: conv2d-cal ====="
 	sleep 2
 	many conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 2 and 3 test the md003 family as a requant bug. 4 and 5 are  ====="
-	log "===== raw material for an offline search over weight orderings.    ====="
+	log "===== 2 and 3 are the payload. The verdicts are already known; the ====="
+	log "===== register streams are what this round is for.                  ====="
 	sync
 }
 
