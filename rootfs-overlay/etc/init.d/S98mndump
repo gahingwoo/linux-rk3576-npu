@@ -1,48 +1,38 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 13. ⚠ Round 12 is UNINTERPRETABLE and this round fixes that.
+# 2026-08-08 round 14. Round 13's control settled round 12: the knob DID fire.
 #
-# conv2d-cal with the knob came back md5 80e64aab2f96, identical to untouched,
-# which is the control I wrote: the rewrite must not touch a 5x5. Good.
+#   weight buffer without it   256 bytes  md5 c6cc3072  b7 b4 dc 06
+#   weight buffer with it     9216 bytes  md5 799b978e  fe fe fe fe
 #
-# But md003_80 with the knob came back byte identical to md003_80 without it,
-# and its task_count did not move, and mn_pw2 still split into exactly 2 tasks
-# with 2 OUT_CVT lines. A 3x3 kernel costs nine times the weight bytes and nine
-# times the CBUF. Nothing moved at all, which is what "the knob never fired"
-# looks like, and "unchanged on a 5x5" is ALSO what "never fires anywhere" looks
-# like. So round 12's control could not tell the two apart. Same mistake as
-# round 8, and this time I caught it before drawing the conclusion.
+# 0xfe is wt_zp - 0x80, the ring taps, exactly as designed. And the resulting
+# regcmd matches a vendor .rknn compiled at that same 3x3 geometry on everything
+# except the two registers already shown inert and the two requant fields that
+# are not comparable. It still returns a uniform out_zp.
 #
-# The check is trivial and it is a size, not a value:
+# So it is NOT 1x1 encoding. What the table says now:
 #
-#   1x1 path        weight buffer = ic*oc                 = 256 bytes
-#   3x3 rewrite     weight buffer = 9 * oc * ALIGN(ic,A) * 2, thousands
+#   5x5 stride 2, 128 out   OK        3x3 stride 1, 16 out    FAIL
+#   5x5 stride 1, 128 out   OK        1x1 stride 1, 16 out    FAIL
+#   5x5 stride 2,  16 out   OK        1x1 stride 1, 128 out   FAIL
 #
-# Steps 2 and 3 dump it both ways. If the size does not change, the knob is not
-# firing and round 12 measured nothing. If it does change, then a real 3x3 conv
-# with 16 in and 16 out at 80x80 also fails, which is a much bigger fact: it
-# would put the failure on the KERNEL SIZE rather than on 1x1 encoding, with
-# 5x5 working at both strides and 3x3 not.
+# But every failing model so far came from somewhere other than conv2d.tflite,
+# so "the kernel" and "the model" are still confounded. This round cuts that.
+# mutate_k.py crops conv2d-cal's OWN kernel to the centre 3x3 and 1x1, which per
+# tensor quantization makes safe, and SAME padding keeps the output shape at
+# 40x40x128 either way. One variable, off the model that works, exactly the
+# mutation that produced the padding result.
 #
-# Step 4 prints the regcmd under the knob. There is a vendor .rknn compiled on
-# the host at exactly that geometry (16 in, 16 out, 80x80, 3x3, stride 1), so
-# whatever it says can be diffed against a known good reference.
+#   cal_k3 and cal_k1 FAIL -> it is the kernel size, full stop
+#   cal_k3 and cal_k1 PASS -> it is not the kernel, it is something about the
+#                             models themselves, and conv2d.tflite is special
+#
+# The second outcome would be the more useful one, and it is the one nothing so
+# far has tested.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-
-# $1 tag, $2 model, $3.. env
-dump() {
-	d="/tmp/$1"; m="$2"; shift 2
-	rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos "$@" \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$m" > /dev/null 2>&1
-	for f in "$d"/mesa-weights-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
-	cd / || return 0
-}
 
 many() {
 	m="$1"; n="$2"; mark="$3"; shift 3
@@ -65,38 +55,31 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal ====="
+	log "===== 1) CONTROL: conv2d-cal, the 5x5 it all comes from ====="
 	many conv2d-cal.tflite 2 cal-first
 
 	log ""
-	log "===== 2) md003_80 weight buffer WITHOUT the knob: expect 256 bytes ====="
+	log "===== 2) cal_k3: the SAME model, kernel cropped to the centre 3x3 ====="
+	log "  one variable off a model that works"
 	sleep 2
-	dump wpw md003_80.tflite
+	many cal_k3.tflite 3 cal-k3
 
 	log ""
-	log "===== 3) md003_80 weight buffer WITH the knob ====="
-	log "  still 256 means it never fired and round 12 measured nothing."
-	log "  thousands of bytes means a real 3x3 conv also fails."
+	log "===== 3) cal_k1: the SAME model, kernel cropped to the centre 1x1 ====="
 	sleep 2
-	dump w3x3 md003_80.tflite ROCKET_PW_AS_3X3=1
+	many cal_k1.tflite 3 cal-k1
 
 	log ""
-	log "===== 4) regcmd under the knob: did the geometry actually widen ====="
-	log "  watch 1024 (kernel word), 101c and 1020 (weight DMA), 1030, 1080"
+	log "===== 4) cal_k1 with the 3x3 rewrite on top ====="
+	log "  a 1x1 from a model that works, run as a 3x3. If 3 fails and this"
+	log "  passes, the rewrite is a usable workaround after all."
 	sleep 2
-	rm -rf /tmp/rc; mkdir -p /tmp/rc; cd /tmp/rc || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_PW_AS_3X3=1 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/md003_80.tflite" > /dev/null 2>&1
-	for f in /tmp/rc/mesa-regcmd-*.bin; do
-		[ -f "$f" ] || continue
-		python3 "$NPU_DIR/extract_regcmd.py" "$f" 8 > "$C" 2>&1
-	done
-	cd / || return 0
+	many cal_k1.tflite 3 cal-k1-3x3 ROCKET_PW_AS_3X3=1
 
 	log ""
-	log "===== 5) md003_80 under the knob, the actual test again ====="
+	log "===== 5) md003_80 for continuity ====="
 	sleep 2
-	many md003_80.tflite 3 md003-3x3 ROCKET_PW_AS_3X3=1
+	many md003_80.tflite 2 md003-80
 
 	log ""
 	log "===== 6) REPEAT CONTROL: conv2d-cal ====="
@@ -104,8 +87,9 @@ start() {
 	many conv2d-cal.tflite 2 cal-last
 
 	log ""
-	log "===== 2 against 3 decides whether round 12 meant anything. Read it ====="
-	log "===== before reading 5.                                            ====="
+	log "===== 2 and 3 are the round. Same file, same scales, same shapes,  ====="
+	log "===== only the kernel. Whichever way they go, the kernel and the   ====="
+	log "===== model stop being confounded.                                 ====="
 	sync
 }
 

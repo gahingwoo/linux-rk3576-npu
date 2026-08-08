@@ -3,6 +3,55 @@
 
 
 
+## 2026-08-08 round 13 (The knob DID fire, so round 12 stands: a genuine 3x3 conv fails too, with a regcmd that matches the vendor at that geometry.)
+
+The control was a size, and the size moved:
+
+| md003_80 weight buffer | bytes | md5 | first bytes |
+|---|---|---|---|
+| without the knob | 256 | `c6cc3072` | `b7 b4 dc 06 ...` |
+| **with `ROCKET_PW_AS_3X3=1`** | **9216** | `799b978e` | **`fe fe fe fe ...`** |
+
+`0xfe` is `wt_zp - 0x80`, the ring taps, exactly as designed. And the regcmd it
+produces, against a vendor .rknn compiled at that same 3x3 geometry (16 in, 16
+out, 80x80, stride 1):
+
+| entry | mesa | vendor |
+|---|---|---|
+| CNA 0x1018 | `40000505` | `40000404` |
+| CNA 0x1040 | `14000000` | `10000000` |
+| DPU 0x40ac | `ffffffff` | `00000003` |
+| DPU 0x40b4 | `00000017` | `00000019` |
+
+The first two are the pair already shown inert on this very model, the last two
+are requant fields for different scales. **A real 3x3 convolution, configured the
+way the vendor configures one, returns a uniform out_zp.**
+
+So it is not 1x1 encoding, and the rewrite is not a workaround. The table:
+
+| | result |
+|---|---|
+| 5x5 stride 2, 128 out | OK |
+| 5x5 stride 1, 128 out | OK |
+| 5x5 stride 2, 16 out | OK |
+| 3x3 stride 1, 16 out | FAIL |
+| 1x1 stride 1, 16 and 128 out | FAIL |
+
+⚠ **But the kernel and the model are still confounded**, because every failing
+model came from somewhere other than `conv2d.tflite`. `mutate_k.py` (new) crops
+conv2d-cal's own kernel to the centre 3x3 and 1x1, which per-tensor quantization
+makes safe, and SAME padding holds the output at 40x40x128 either way. One
+variable, off the model that works, the same shape of mutation that produced the
+padding result.
+
+| outcome | meaning |
+|---|---|
+| `cal_k3` and `cal_k1` fail | it is the kernel size, full stop |
+| they pass | it is not the kernel, it is the models, and `conv2d.tflite` is special in a way nothing has tested |
+
+The second would be the more useful answer and it is the one that has never been
+checked.
+
 ## 2026-08-08 round 12 (⚠ UNINTERPRETABLE. The control I wrote cannot tell "the rewrite did not help" from "the rewrite never ran".)
 
 | step | result |
