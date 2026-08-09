@@ -88,6 +88,44 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-09 offline depthwise pair (Round 42's hypothesis is dead, killed without the board. And the registers are not the depthwise bug either.)
+
+Round 42 was built on `g_dw1` against `g_k3s1`, which differ in channels and
+spatial size as well as in being depthwise. 41 registers differed and nothing
+said which of them were about depthwise. Compiling a proper pair with
+`sv_pairs.py dw`, ic = oc = 32, 112x112, k=3, s=1, one calibration set, moving
+only `groups`, leaves **15**:
+
+```
+0x100c 0x101c 0x1024 0x1030 0x3018 0x400c 0x4030 0x4038 0x4044
+0x4050 0x40b0 0x40b4 0x40b8 0x501c 0x5044
+```
+
+⚠ **`0x1018` and `0x1040` are not in that list.** They differed on geometry
+alone, so `ROCKET_DW_SPLITVALS` tests nothing and **round 42 should not be
+flashed**. The single-variable discipline paid for itself again.
+
+And every one of the 15 that is a mode bit already matches mesa:
+
+| register | mesa | vendor depthwise / regular |
+|---|---|---|
+| `0x100c` | `dw ? 1 : 0` | `0x1` / `0x0` |
+| `0x101c` | `dw ? oc*k*k*2 : ic*oc*k*k` | `0x240` / `0x2400` |
+| `0x1024` | `dw ? 1 : oc-1` | `0x02020001` / `0x0202001f` |
+| `0x1030` | `wbpk = dw ? k*k*ic/8 : ic*k*k*2` | `0x24` / `0x240` |
+| `0x3018` `0x400c` `0x4030` `0x4038` `0x4044` `0x4050` `0x501c` `0x5044` | all `dw ?` branches | all match |
+| `0x40b0` `0x40b4` `0x40b8` | OUT_CVT | must differ, the pair has different weights |
+
+**So the registers are not the depthwise bug, exactly as the coefficient region
+turned out not to be.** Two hypotheses closed offline in one sitting, one of
+them a round that was already built.
+
+**Round 43** asks what the depthwise output actually looks like instead.
+`perch.py` now also reports the distinct count and how many channels are pinned
+at the output zero point, which separates "the MAC never fired" from "the MAC
+fired on the wrong operands". Those need completely different next steps and a
+maxdiff cannot tell them apart. Built, not flashed.
+
 ## 2026-08-09 round 41 (The region is closed. It is not copies of the word, filling it is harmless, and it is not the cause of anything that remains.)
 
 Both baselines 128/128.

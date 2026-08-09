@@ -2,45 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 42. The coefficient region is closed. Go at depthwise, with
-# a difference found offline.
+# 2026-08-09 round 43. Round 42 was never worth flashing. Registers are ruled
+# out for depthwise, offline. Ask what the hardware is actually producing.
 #
-# Round 41 closed the region. mn_pw24 is 297 of 1024 for EVERY fill count, 1, 2,
-# 8, 32, 128, 512, 1024 and the whole region, so the region is not copies of the
-# word and the constant cannot be pushed further there. Filling is harmless:
-# conv2d-cal 128/128, cal_k3 128/128, mn_pw2 64/64 with the whole thing filled.
-# And dwconv and conv2x are unmoved by any of it, as in round 40.
+# ⚠ ROUND 42's HYPOTHESIS IS DEAD AND WAS KILLED WITHOUT THE BOARD. It came
+# from diffing vendor g_dw1 against g_k3s1, which differ in channels and spatial
+# size as well as in being depthwise, so 41 registers differed and there was no
+# way to tell which were about depthwise. Compiling a proper pair, ic = oc = 32,
+# 112x112, k=3, s=1, same calibration, moving ONLY `groups`, leaves 15:
 #
-# So the region is characterised, fixed, and is not the cause of what remains.
+#   0x100c 0x101c 0x1024 0x1030 0x3018 0x400c 0x4030 0x4038 0x4044
+#   0x4050 0x40b0 0x40b4 0x40b8 0x501c 0x5044
 #
-# Depthwise next, and the first concrete lead came for free on the host.
-# Comparing a vendor .rknn compiled depthwise against one compiled as a regular
-# conv, 41 registers differ, most of them geometry. Two are not:
+# 0x1018 and 0x1040 are NOT in that list. They differed on geometry alone.
 #
-#   0x1018   vendor depthwise 0x40000505     regular 0x40000404
-#   0x1040   vendor depthwise 0x14000000     regular 0x10000000
+# And every one of those 15 that is a MODE bit already matches mesa:
+#   0x100c  dw ? 1 : 0                     matches
+#   0x101c  dw ? oc*k*k*2 : ic*oc*k*k      0x240 / 0x2400, matches
+#   0x1024  dw ? 1 : oc-1                  matches
+#   0x1030  wbpk = dw ? k*k*ic/8 : ...     0x24 / 0x240, matches
+#   0x3018 0x400c 0x4030 0x4038 0x4044 0x4050 0x501c 0x5044   all match
+#   0x40b0 0x40b4 0x40b8   OUT_CVT, and the pair necessarily has different
+#                          weights, so these must differ
 #
-# and those are exactly the values rkt_regcmd.c selects on `split`. A depthwise
-# layer that is not split gets the regular values from mesa and the split ones
-# from the vendor. ROCKET_DW_SPLITVALS makes depthwise take them.
+# So the registers are not the depthwise bug, exactly as the coefficient region
+# turned out not to be. Two hypotheses closed offline in one sitting.
+#
+# What has never been asked is what the depthwise output actually LOOKS like. A
+# maxdiff cannot tell "the MAC never fired" from "the MAC fired on the wrong
+# operands", and those need completely different next steps. perch.py now
+# reports the distinct count and how many channels are pinned at the output zero
+# point.
 #
 # DECISION RULE, written before the run:
-#   dwconv moves off 0/16       the lead is real; then find whether it is one
-#                               register or both, steps 4 and 5 say which
-#   dwconv unchanged            these two registers are not it, and the offline
-#                               diff has 39 more rows to work through
-#   mn_dw1 improves but dwconv
-#     does not                  the two depthwise models differ in something
-#                               else and that difference is the next question
-#   a regular conv regresses    the knob is leaking outside depthwise, which
-#                               would be a bug in the knob, not a finding
-#   step 1 or 8 not 128/128     the build is wrong, stop
+#   dwconv pinned at out_zp everywhere   an EMPTY convolution: the MAC never
+#                                        fires, so look at the weight DMA and
+#                                        the CBUF, not at arithmetic
+#   dwconv varying but wrong             the MAC fires on wrong operands, so
+#                                        look at the weight LAYOUT
+#   some channels empty, some varying    it is per channel, and the split says
+#                                        which
+#   mn_dw1's 3 correct channels are
+#     the non-empty ones                 the layout is right for a few channels
+#                                        and wrong for the rest, which names it
+#   step 1 or 9 not 128/128              the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-p() { log ""; log "  -- $1   $2"; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
+p() { log ""; log "  -- $1"; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
@@ -51,35 +62,39 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) BASELINE: conv2d-cal, must be 128/128 ====="
-	p conv2d-cal.tflite ""
+	log "===== 1) BASELINE: a conv that works, for the new fields ====="
+	log "  128/128, and it should report 0 constant channels"
+	p conv2d-cal.tflite
 
 	log ""
-	log "===== 2..3) depthwise as it is now ====="
-	p dwconv.tflite ""
-	p mn_dw1.tflite ""
+	log "===== 2..3) DEPTHWISE: empty, or wrong? ====="
+	p dwconv.tflite
+	p mn_dw1.tflite
 
 	log ""
-	log "===== 4..5) THE TEST: depthwise takes the split values ====="
-	p dwconv.tflite ROCKET_DW_SPLITVALS=1
-	p mn_dw1.tflite ROCKET_DW_SPLITVALS=1
+	log "===== 4) the first conv, which also fails ====="
+	p mn_conv0.tflite
 
 	log ""
-	log "===== 6) and the chained model that contains a depthwise ====="
-	p mn_conv0dw1.tflite ROCKET_DW_SPLITVALS=1
+	log "===== 5..6) CHAINED ====="
+	p conv2x.tflite
+	p mn_conv0dw1.tflite
 
 	log ""
-	log "===== 7) the knob must NOT touch a regular conv ====="
-	p conv2d-cal.tflite ROCKET_DW_SPLITVALS=1
-	p cal_k3.tflite ROCKET_DW_SPLITVALS=1
+	log "===== 7) the partial one, 297 of 1024 ====="
+	p mn_pw24.tflite
 
 	log ""
-	log "===== 8) CONTROL that can fail: conv2d-cal plain again ====="
-	p conv2d-cal.tflite ""
+	log "===== 8) a pointwise that works, for contrast ====="
+	p mn_pw2.tflite
 
 	log ""
-	log "===== Read 1 and 8 first. Then 2 against 4: does dwconv move at   ====="
-	log "===== all? Anything other than 0/16 is the first movement there.  ====="
+	log "===== 9) CONTROL that can fail: conv2d-cal again ====="
+	p conv2d-cal.tflite
+
+	log ""
+	log "===== Read 1 and 9 first. Then 2: 'EMPTY conv' means the MAC never  ====="
+	log "===== fired and the next step is the weight DMA, not arithmetic.    ====="
 	sync
 }
 case "$1" in

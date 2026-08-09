@@ -138,6 +138,72 @@ def pair_oc():
 
 PAIRS = {"null": pair_null, "wt": pair_wt, "k": pair_k, "oc": pair_oc}
 
+
+
+def pair_dw():
+    """Depthwise against a regular conv at IDENTICAL geometry.
+
+    g_dw1 and g_k3s1 differ in channels, spatial size AND in being depthwise,
+    so 41 of their registers differ and there is no way to tell which of those
+    is about depthwise. This holds ic, oc, spatial size, kernel, stride and the
+    calibration set fixed, and moves only `groups`, which is the whole
+    definition of depthwise.
+
+    ic == oc == 32 so that both are legal: a depthwise conv needs one filter
+    per input channel, and a regular conv with the same shape is an ordinary
+    32 to 32 layer.
+    """
+    global HW
+    old_hw = HW
+    HW = 112                      # MobileNet op1's size, where mn_dw1 lives
+    rng = np.random.RandomState(7)
+    b = (rng.randn(32) * 0.05).astype(np.float32)
+    # depthwise in ONNX is groups == in_channels, so the weight is (32, 1, k, k)
+    wdw = (rng.randn(32, 1, 3, 3) * 0.08).astype(np.float32)
+    wrg = (rng.randn(32, 32, 3, 3) * 0.08).astype(np.float32)
+    compile_grouped("sv_dw", wdw, b, groups=32, stride=1)
+    compile_grouped("sv_rg", wrg, b, groups=1, stride=1)
+    HW = old_hw
+
+
+def compile_grouped(name, w, bias, groups, stride):
+    """compile() assumes groups=1; depthwise needs it passed through."""
+    from rknn.api import RKNN
+
+    os.makedirs(OUT, exist_ok=True)
+    oc, icg, k, _ = w.shape
+    ic = icg * groups
+    onnx = f"{OUT}/{name}.onnx"
+    rknn_path = f"{OUT}/{name}_rk3576.rknn"
+
+    m = nn.Conv2d(ic, oc, k, stride=stride, padding=k // 2, groups=groups,
+                  bias=True)
+    with torch.no_grad():
+        m.weight.copy_(torch.from_numpy(w))
+        m.bias.copy_(torch.from_numpy(bias))
+    m.eval()
+    torch.onnx.export(m, torch.randn(1, ic, HW, HW), onnx,
+                      input_names=["input"], output_names=["output"],
+                      opset_version=12)
+
+    calib = f"{OUT}/{name}_c.npy"
+    np.save(calib, (np.arange(ic * HW * HW).reshape(1, ic, HW, HW)
+                    % 251).astype(np.uint8))
+    ds = f"{OUT}/{name}_d.txt"
+    open(ds, "w").write(os.path.abspath(calib) + "\n")
+
+    r = RKNN(verbose=False)
+    r.config(target_platform="rk3576")
+    assert r.load_onnx(model=onnx) == 0, f"{name}: load_onnx"
+    assert r.build(do_quantization=True, dataset=ds) == 0, f"{name}: build"
+    assert r.export_rknn(rknn_path) == 0, f"{name}: export"
+    r.release()
+    print(f"OK {name}: ic={ic} oc={oc} k={k} groups={groups} -> {rknn_path}",
+          flush=True)
+
+
+PAIRS["dw"] = pair_dw
+
 if __name__ == "__main__":
     for p in (sys.argv[1:] or list(PAIRS)):
         PAIRS[p]()

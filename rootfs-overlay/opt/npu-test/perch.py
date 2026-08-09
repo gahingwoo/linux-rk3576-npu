@@ -62,8 +62,22 @@ for c in range(oc):
     if d > 1:
         bad.append(c)
 
+# Distinguish "the MAC never fired" from "the MAC fired with wrong operands".
+# A surface pinned at the output zero point is an empty convolution; a varying
+# surface that disagrees with the reference is a wrong one. Those need
+# completely different next steps, and a maxdiff cannot tell them apart.
+ozp = int(co["quantization"][1])
+flat_ch = sum(1 for c in range(got.shape[2])
+              if len(np.unique(got[:, :, c])) == 1)
+at_zp = sum(1 for c in range(got.shape[2])
+            if len(np.unique(got[:, :, c])) == 1 and got[0, 0, c] == ozp)
 print(f"  {os.path.basename(model)} out{got.shape}: {oc - len(bad)}/{oc} "
       f"channels match (maxdiff <= 1)", flush=True)
+print(f"    npu distinct={len(np.unique(got))} min={got.min()} max={got.max()} "
+      f"| cpu distinct={len(np.unique(ref))} | out_zp={ozp}", flush=True)
+print(f"    channels that are CONSTANT: {flat_ch}/{oc}, "
+      f"of which pinned at out_zp: {at_zp}  "
+      f"({'EMPTY conv' if at_zp == oc else 'not empty'})", flush=True)
 if not bad:
     print("    every channel correct", flush=True)
 else:
