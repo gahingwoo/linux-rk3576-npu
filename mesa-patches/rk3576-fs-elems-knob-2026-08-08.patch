@@ -1,0 +1,54 @@
+From 48d6ae14489f03d780a0b4e3bf7ae2e404bea4f0 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 9 Aug 2026 19:10:35 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_ELEMS to override the float surface
+ element count
+
+The coefficient buffer is an A/B/C table followed by a float surface region
+sized as MAX2(ic*oc*k*k, 8192) floats, so its size depends on the kernel: 206080
+bytes at 5x5, 75008 at 3x3, 34048 at 1x1 for the same model with only the kernel
+cropped. That is the only k-dependent thing left, with the regcmd, the weight
+layout, the bias, the requant and A, B and C all verified.
+
+The size is a guess by mesa's own comment, added to stop the DPU RDMA reading
+past the end of the BO, with the content zeroed and filling it a TODO. This knob
+makes the buffer identical across kernel sizes so the kernel is the only
+difference left.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 4ccd001..8b8e3dc 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -489,6 +489,26 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       /* The vendor float surface is ~5192 floats regardless of conv size, so for
+        * small (e.g. 1x1) convs wt_elems alone under-allocates and the SDP reads
+        * past the BO -> stall. Floor the float region generously. */
++      /*
++       * ROCKET_FS_ELEMS: override the float region's element count.
++       *
++       * This is the one thing left in the coefficient buffer that depends on the
++       * kernel size, and the kernel size is the dividing line: 5x5 computes and
++       * 3x3 and 1x1 do not, on the same model with only the kernel cropped. The
++       * buffer comes out 206080, 75008 and 34048 bytes for k=5, 3 and 1, because
++       * wt_elems is ic*oc*k*k. Everything else about those three models is
++       * verified identical or verified correct against the vendor: the regcmd,
++       * the weight layout including the 32-channel grouping, the bias tensor,
++       * the requant, A, B and C.
++       *
++       * On a constant input at in_zp the MAC is zero by construction, so all
++       * three must return requant(bias). They do not: k=5 is exactly right, k=3
++       * is clamped to the zero point everywhere, and k=1 goes below it. Forcing
++       * this count equal across the three makes the coefficient buffer identical
++       * and leaves the kernel as the only difference, which is the experiment.
++       */
++      if (getenv("ROCKET_FS_ELEMS"))
++         wt_elems = (unsigned)strtoul(getenv("ROCKET_FS_ELEMS"), NULL, 0);
+       unsigned bufsize = groups * 64 + MAX2(wt_elems, 8192) * sizeof(float) + 0x100;
+       uint8_t *b8;
+ 
+-- 
+2.43.0
+

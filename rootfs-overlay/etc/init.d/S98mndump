@@ -1,54 +1,45 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 22. Round 21's control worked and refuted B.
+# 2026-08-08 round 23. Round 22 found the last k-dependent thing.
 #
-#   control: conv2d-cal with B forced to 0, real input -> relu maxdiff 1 to 14,
-#            FAIL. So the knob reaches the hardware and B does matter.
-#   but the constant input baselines were BYTE IDENTICAL with B and without it,
-#            for all three kernel sizes. With a constant input the input sum
-#            that B multiplies is zero, so B cannot be the k-dependent term.
+# The coefficient buffer sizes came back 206080, 75008 and 34048 bytes for k=5,
+# 3 and 1, and mesa's own expression reproduces all three exactly:
 #
-# What the baselines actually show, on a constant input at in_zp where the MAC
-# is zero by construction and the answer must be requant(bias):
+#   bufsize = groups*64 + MAX2(wt_elems, 8192)*4 + 0x100,  wt_elems = ic*oc*k*k
 #
-#   k=5  matches the cpu exactly wherever the cpu is at or above 128, and sits
-#        at 128 below that. That is the ReLU at out_zp, so k=5 is CORRECT.
-#   k=3  128 everywhere. requant(bias) clamped away entirely.
-#   k=1  goes BELOW the zero point, down to 0. Which the same ReLU should
-#        forbid, and does forbid at k=5.
+# So that buffer is an A/B/C table of groups*64 = 1024 bytes followed by a FLOAT
+# SURFACE region whose size is derived from the weight count, and therefore from
+# the kernel. Its first 12 bytes are identical across all three, which is the
+# A values, as expected from a shared bias tensor.
 #
-# mesa's A cannot explain it: calculate_bias_correction and calculate_weight_sum
-# are both multiplied by (input_zero_point - 0x80), which is zero here, so A is
-# just the bias and the three models share one bias tensor. C is 0x4000 for a
-# per-tensor conv. B is refuted above.
+# That region is the only k-dependent thing left. Everything else about these
+# three models is either verified identical or verified correct against a vendor
+# .rknn compiled at the same geometry: the regcmd in absolute terms, the weight
+# layout including the 32-channel grouping, the bias tensor, the requant, and A,
+# B and C. And mesa's comment says the size is a guess, "a float region bounded
+# by the full weight count", with the content left zeroed and the real content a
+# TODO.
 #
-# So dump the coefficient buffer for all three and compare it byte for byte.
+# ROCKET_FS_ELEMS overrides that element count, so the three models can be given
+# a byte-identical coefficient buffer with only the kernel differing.
 #
-#   identical -> identical coefficients, identical requant and a MAC of zero
-#                produce three different answers, and the k dependence is below
-#                everything the driver writes
-#   different -> mesa is emitting different coefficients after all, and the
-#                difference is the bug, visible here without any hardware
-#
-# ⚠ The three buffers are also compared against their own sizes: A is 4 bytes
-# per output channel inside a 64 byte group of 8, so a size change alone would
-# say the layout moved.
+#   2  the three constant-input baselines with FS_ELEMS forced to 51200, which
+#      is the k=5 value. If k=3 and k=1 start behaving like k=5, the float
+#      surface region is the k dependence.
+#   3  the same on real inputs.
+#   4  ⚠ THE CONTROL: conv2d-cal with FS_ELEMS forced SMALL, 8192. It computes
+#      correctly today, so shrinking a region the hardware reads should change
+#      something. If nothing changes anywhere in this round, the knob is not
+#      load bearing and the answer is elsewhere.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-# $1 tag, $2 model
-coefs() {
-	d="/tmp/$1"; rm -rf "$d"; mkdir -p "$d"; cd "$d" || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/$2" > /dev/null 2>&1
-	log "  $2:"
-	for f in "$d"/mesa-biases-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-	done
-	cd / || return 0
-}
+flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
+many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -63,42 +54,48 @@ start() {
 
 	log ""
 	log "===== 1) CONTROL: conv2d-cal computes ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 2) COEFFICIENT BUFFERS: same md5 across the three kernels? ====="
-	log "  same bias tensor, A = bias since (in_zp - 0x80) is zero, C = 0x4000"
+	log "===== 2) constant input, all three with FS_ELEMS = 51200 (the k=5 value) ====="
+	log "  makes the coefficient buffer identical; only the kernel differs"
 	sleep 2
-	coefs cf5 conv2d-cal.tflite
-	coefs cf3 cal_k3.tflite
-	coefs cf1 cal_k1.tflite
+	flat conv2d-cal.tflite ROCKET_FS_ELEMS=51200
+	flat cal_k3.tflite     ROCKET_FS_ELEMS=51200
+	flat cal_k1.tflite     ROCKET_FS_ELEMS=51200
 
 	log ""
-	log "===== 3) and the weight buffers, for the sizes ====="
+	log "===== 3) real input, k=3 and k=1 with FS_ELEMS = 51200 ====="
 	sleep 2
-	for t in cf5 cf3 cf1; do
-		for f in /tmp/$t/mesa-weights-*.bin; do
-			[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
-		done
+	many cal_k3.tflite 2 ROCKET_FS_ELEMS=51200
+	many cal_k1.tflite 2 ROCKET_FS_ELEMS=51200
+
+	log ""
+	log "===== 4) THE CONTROL: conv2d-cal with FS_ELEMS forced SMALL (8192) ====="
+	log "  it computes today, so shrinking a region the hardware reads should"
+	log "  change something. Nothing changing anywhere means the knob is inert."
+	sleep 2
+	many conv2d-cal.tflite 2 ROCKET_FS_ELEMS=8192
+
+	log ""
+	log "===== 5) buffer sizes with the knob, to prove it fired ====="
+	sleep 2
+	rm -rf /tmp/fs; mkdir -p /tmp/fs; cd /tmp/fs || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_ELEMS=51200 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
+	for f in /tmp/fs/mesa-biases-*.bin; do
+		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
 	done
+	log "  (k=3 was 75008 bytes without the knob; 206080 means it fired)"
+	cd / || return 0
 
 	log ""
-	log "===== 4) the constant input again, as the thing being explained ====="
+	log "===== 6) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
-	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/cal_k3.tflite" > "$C" 2>&1
-	env TEFLON_LIB=/usr/lib/libteflon.so python3 "$NPU_DIR/flatin.py" "$NPU_DIR/cal_k1.tflite" > "$C" 2>&1
+	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 5) REPEAT CONTROL: conv2d-cal ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== 2 is the round: three md5s. Identical means the k dependence   ====="
-	log "===== is below everything the driver writes.                         ====="
+	log "===== Read 5 first for whether the knob fired, then 2.              ====="
 	sync
 }
 

@@ -3,6 +3,46 @@
 
 
 
+## 2026-08-08 round 22 (Found the last k-dependent thing: the coefficient buffer carries a FLOAT SURFACE region whose size mesa derives from the weight count.)
+
+| model | biases buffer | weights buffer | first 12 bytes |
+|---|---|---|---|
+| k=5 | 206080 | 204800 | `ca ff ff ff 95 0c 00 00 7b 27 00 00` |
+| k=3 | 75008 | 73728 | **identical** |
+| k=1 | 34048 | 2048 | **identical** |
+
+The A values match across all three, as a shared bias tensor requires. The sizes
+do not, and mesa's own expression reproduces every one of them exactly:
+
+```c
+bufsize = groups * 64 + MAX2(wt_elems, 8192) * sizeof(float) + 0x100;
+wt_elems = ic * oc * k * k;
+```
+
+k=5 gives `1024 + 204800 + 256`, k=3 `1024 + 73728 + 256`, k=1
+`1024 + 32768 + 256` with the 8192 floor doing the work. So that buffer is an
+A/B/C table of `groups*64` bytes followed by a **float surface region sized from
+the weight count, and therefore from the kernel**.
+
+mesa's comment is explicit that this is a guess: the region exists because the
+DPU RDMA was reading past the end of the BO and stalling, it is "bounded by the
+full weight count" because "the float surface can hold no more floats than there
+are weights", its content is left zeroed, and filling it properly is a TODO.
+`FINDINGS-FLOATSURFACE.md` records the surface as load-bearing and
+value-dependent.
+
+**This is the only k-dependent thing left.** Everything else about these three
+models is verified identical or verified correct against a vendor .rknn compiled
+at the same geometry: the regcmd in absolute terms, the weight layout including
+the 32-channel grouping, the bias tensor, the requant, and A, B and C.
+
+Round 23 adds `ROCKET_FS_ELEMS` to override that element count, so the three
+models can be given a byte-identical coefficient buffer with only the kernel
+differing, and runs the constant input and a real input that way. ⚠ The control
+is `conv2d-cal` with the count forced small: it computes today, so shrinking a
+region the hardware reads should change something, and if nothing moves anywhere
+in the round the knob is inert and the answer is elsewhere.
+
 ## 2026-08-08 round 21 (B refuted with a working control. And the constant-input baselines say k=5 is exactly right, k=3 is clamped away, k=1 goes below the zero point.)
 
 The control worked: `conv2d-cal` with `ROCKET_B_VALUE=0` on a real input went
