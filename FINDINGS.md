@@ -88,6 +88,48 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 43 (What the failures actually look like. Depthwise fires and saturates; the chain writes one constant. And the metric has a caveat that a passing model exposed.)
+
+Both baselines 128/128 with 0 constant channels.
+
+| model | distinct | constant channels | reading |
+|---|---|---|---|
+| conv2d-cal, works | 128 | 0 of 128 | |
+| **dwconv** | **6**, cpu 101, min 0 max 128, zp 99 | 0 of 16 | **fires, then saturates to the rails** |
+| **conv2x**, chain | **1**, every pixel 127, zp **132** | 16 of 16 | one constant that is **not** the zero point |
+| mn_conv0 | 60, all within 126..185 | 10 of 32, none at zp | narrow band around 128 |
+| mn_dw1 | 124 | 19 of 32, 8 at zp | mixed, per channel |
+| mn_conv0dw1 | 22 | 22 of 32, 9 at zp | |
+| mn_pw24 | 256 | 358 of 1024, 354 at zp | |
+| **mn_pw2, works** | 256 | **8 of 64, all at zp** | |
+
+⚠ **The last row is a caveat on the metric itself.** `mn_pw2` is correct on
+every channel and still has 8 channels pinned at the output zero point, because
+with ReLU and `out_zp = 0` a channel whose output is everywhere non-positive is
+legitimately constant. So "pinned at the zero point" is **not** evidence of a
+dead channel in these models, and the round 43 decision rule's first branch has
+to be read with that in mind. It was written before this was known.
+
+**What does read cleanly:**
+
+`dwconv` is not an empty convolution. It produces 6 distinct values spanning 0
+to 128 against a reference with 101, so the MAC fires and the result collapses
+onto the rails. That is a requant signature, not a weight DMA one, which is the
+opposite of what the decision rule expected to find.
+
+`conv2x` writes a single value, 127, across the whole surface, and 127 is not
+its zero point of 132. A chain whose output is one non-zero-point constant is a
+different failure again from either of those.
+
+**Checked and cleared since**: `calculate_weight_sum`'s depthwise branch indexes
+`weights[0][x][y][oc]`, which is right for a `[1][kh][kw][channels]` tensor, so
+the A term's weight sum is not the cause.
+
+**No image was built for this.** The signature narrows depthwise to the requant
+path, but there is no specific enough hypothesis yet to be worth a flash, and
+the next step is to work out which of A, B, C and the OUT_CVT shift is wrong for
+depthwise, offline, the way the register question was settled.
+
 ## ⚠ 2026-08-09 offline depthwise pair (Round 42's hypothesis is dead, killed without the board. And the registers are not the depthwise bug either.)
 
 Round 42 was built on `g_dw1` against `g_k3s1`, which differ in channels and
