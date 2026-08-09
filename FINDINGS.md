@@ -88,6 +88,48 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 offline register audit (The register hypothesis from round 29 is dead. mesa's configuration matches the vendor at this geometry, DPU_RDMA included.)
+
+Round 29 concluded the format of the surface at `groups*64` must come from a
+register, since mesa and the vendor put different things at the same address and
+both compute. That is checkable without a board, because mesa's regcmd is mostly
+literals and simple expressions and the vendor's stream is in the `.rknn`
+(`reg_audit.py`, decoding with `extract_regcmd.py`).
+
+Against `g_cal`, compiled at conv2d-cal's exact geometry:
+
+| | mesa | vendor |
+|---|---|---|
+| `0x501c` BRDMA cfg | `0x0710` | `0x0710` |
+| `0x5034` | `0x41` | `0x41` |
+| `0x5044` | `0x40000010` | `0x40000010` |
+| `0x500c` `ow-1` | `0x27` | `0x27` |
+| `0x5014` `oc-1` | `0x7f` | `0x7f` |
+| `0x101c` `ic*oc*k*k` | `0xc800` | `0xc800` |
+| `0x1020` | `0x190` | `0x190` |
+| `0x1080` padding | `0x01010202` | `0x01010202` |
+| `0x4030` | `0x007f0710` | `0x007f0710` |
+| `0x4050` | `0x80011111` | `0x80011111` |
+| `0x4100..0x4154` | all zero | all zero |
+
+The last two are this project's own fixes, and they land on the vendor's values.
+**So the configuration is not where the two differ**, and the round 29
+explanation has to be withdrawn as a hypothesis rather than carried forward.
+
+⚠ The audit's raw "38 different" line is an artifact and must not be quoted: for
+many registers mesa has a literal in the first-conv path and a computed
+expression in the general one, and the script reports the first literal it
+finds. `0x500c` shows this exactly, literal `0x6f` from the first-conv ladder
+against the general path's `ow-1 = 0x27`, which is the vendor's value.
+
+**What has never been asked is granularity.** 256 bytes over 128 output channels
+is 2 bytes each, over 64 channels 4 bytes each. Round 30 reports per output
+channel (`perch.py`) instead of one number for the model, so the damage pattern
+names the element size. If only channels 0..63 break, mesa's float32 surface is
+a per-channel table of 128 floats, 512 bytes rather than 200 KB, and the fp16
+attempt failed for being the wrong element size rather than the wrong idea.
+Built, not flashed.
+
 ## 2026-08-09 round 29 (Those 256 bytes must hold mesa's own floats. Nothing else works there, including the vendor's own kind of content. So mesa and the vendor are reading that region under different formats, and the difference is a register.)
 
 Round 28 could not decide because it moved two things at once. This moved one.
