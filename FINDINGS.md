@@ -88,6 +88,52 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-09 offline depthwise, second oracle (A per-channel coefficient table is absent from the vendor's depthwise model under two independent tests, one of which has a working positive control.)
+
+The first oracle (C peaking at `0x4000`) only covered one grouping, so here is a
+second one built on ground truth. `sv_dw` and `sv_rg` were generated here, so
+their weights and biases are known exactly.
+
+**Calibrating it first**, on the known-good table in `sv_rg` at `0x9080`:
+
+```
+A column vs the known per-channel WEIGHT SUM : corr +0.9972
+A column vs the known BIAS                   : corr -0.3608
+```
+
+So the probe is the weight sum, not the bias, which is what
+`A[oc] = bias - (in_zp - 0x80) * sw` predicts when the weights are random: the
+`sw` term dominates. ⚠ A first attempt correlated against the bias and found
+nothing anywhere, including in the model where the table is known to exist. A
+second attempt used a flat stride and also found nothing, for the same reason:
+the layout is **blocked**, channel `i` at `(i//8)*64 + (i%8)*4`, which no
+constant stride reaches. Both were oracle bugs, caught by the positive control.
+
+**With the blocked scan over every vector, every block size, group, element
+size and base offset:**
+
+```
+sv_rg:  0x009080 len 256  block 64 group 8 elem 4 base +0   corr +0.9972
+sv_dw:  NONE
+```
+
+Exactly one hit in the regular model, at mesa's own layout, and nothing anywhere
+in the depthwise one. **Two independent structural oracles now agree that the
+vendor emits no per-channel coefficient table for a depthwise layer**, and mesa
+writes one regardless. That is round 43's `dwconv` signature from the other
+side: the MAC fires and the requant it is handed is meaningless, so the output
+collapses to 6 distinct values against a 101-value reference.
+
+**Where the per-channel bias goes instead is still open.** The 576-byte
+depthwise weight buffer is the natural suspect, since 576 is `oc*k*k*2`, two
+bytes per tap for int8 weights. Correlating it against the known weights gives
+nothing, but that is expected because correlation is order-sensitive and the
+depthwise tap order is permuted. An order-insensitive multiset check gives 28.5%
+overlap, which looks like a miss but ⚠ **cannot conclude anything**: rknn picks
+its own quantisation scale, measured earlier at about 7% below `max/127`, so a
+different scale changes the multiset even if the weights are present. That test
+needs the toolkit's actual scale before it means anything.
+
 ## 🔑 2026-08-09 offline depthwise coefficients (The vendor emits no A/B/C table for a depthwise layer, and mesa writes one anyway. That is the requant signature round 43 measured.)
 
 Using the single-variable pair from `sv_pairs.py dw`, ic = oc = 32 at 112x112,
