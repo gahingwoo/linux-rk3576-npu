@@ -2,42 +2,46 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 32. The slice is at most 256 bytes. Bisect inside it.
+# 2026-08-09 round 33. It is ONE float32. Find out what "the right one" means.
 #
-# Round 31, both baselines 128/128:
-#   KEEP 1936, 1600, 1024, 512, 256   all 128/128
+# Round 32, both baselines 128/128:
+#   KEEP 256, 128, 64, 32, 16, 8, 4   all 128/128
 #   KEEP 0                            0/128
-# and round 30 showed zeroing those same first 256 bytes fails. So everything
-# from 0x500 to 0x0b90 is IRRELEVANT and the load bearing part is at most the
-# first 256 bytes. Against mesa's 197888 byte float surface, and against the
-# 1936 bytes rounds 26 and 27 believed in.
+# So the whole 197888 byte float surface comes down to the FIRST FOUR BYTES.
+# Everything else in it can be zero and conv2d-cal is still byte correct.
 #
-# Computed on the host, those 256 bytes are 64 float32, and they are output
-# channel 0's first 64 taps, 4 spatial positions by 16 input channels, values
-# from -344.30 to 328.65 with one exact zero. Not a table of anything obvious.
+# And it is not merely "nonzero": round 30 put 0x43d343d3 there, about 423.3,
+# and every channel died. The value mesa happens to write is
+#   fs[0] = wt_sc * (w[0][0][0][0] - wt_zp) = -109.55 = 0xc2db199a
 #
-# Landmarks worth landing on, at ic=16 k=5:
-#     4 = 1 float, a single scalar the whole layer needs
-#    64 = 16 floats = ic, one spatial position across the input channels
-#   128 = 32 floats
+# One scalar decides the whole layer. ROCKET_FS_F0 sets exactly that word, as a
+# float or as a raw hex pattern, since it is not established that the hardware
+# reads it as a float at all. Everything runs with KEEP=4 so the word under test
+# is the only live byte in the region.
+#
+# Note the two known points differ in SIGN as well as magnitude:
+#   works  -109.55  0xc2db199a   high byte 0xc2
+#   fails   423.3   0x43d3a666   high byte 0x43
 #
 # DECISION RULE, written before the run:
-#   smallest passing n is 4     one float. Then it is a scalar, and the reason
-#                               every substitution failed is that a scalar has
-#                               to be the RIGHT number
-#   is 64                       ic floats, one spatial position: the hardware
-#                               primes something per input channel from here
-#   is 128 or 256               report it; 256 means the whole 64 floats matter
-#                               and the unit is channel 0's tap block
-#   nothing between 0 and 256   the boundary is not a prefix at all, so the
-#                               next probe has to zero the MIDDLE, not a tail
-#   step 1 or 10 not 128/128    the build is wrong, stop and check the image
+#   every negative passes, every positive fails   it is the SIGN, and mesa is
+#       right by luck; the fix is to write any negative constant, not a weight
+#   only -109.55 passes                           it is the exact dequantised
+#       weight, so the hardware really does read channel 0 tap 0 from here
+#   a magnitude band passes                       report the band
+#   the hex probes pass or fail against the float ordering  it is a BIT PATTERN
+#       and not a float, which changes what to write entirely
+#   step 1 or 12 not 128/128                      the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-perch() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$m" > "$C" 2>&1; }
+one() { v="$1"; log ""; log "===== FS_F0 = $v ====="; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+	ROCKET_FS_KEEP=4 ROCKET_FS_F0="$v" \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
+base() { env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -49,25 +53,36 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) BASELINE, untouched float surface: must be 128/128 ====="
-	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
-
-	for n in 256 128 64 32 16 8 4 0; do
-		log ""
-		log "===== KEEP $n bytes ($((n / 4)) floats), zero the rest ====="
-		sleep 2
-		perch conv2d-cal.tflite ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=$n
-	done
+	log "===== 1) BASELINE, untouched surface: must be 128/128 ====="
+	base
 
 	log ""
-	log "===== 10) CONTROL that can fail: baseline again ====="
-	log "  not 128/128 here and the sweep above says nothing"
+	log "===== 2) KEEP=4 with mesa's own word, must be 128/128 ====="
 	sleep 2
-	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=4 \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+
+	# 0 must fail, and 423.3 is the value already known to fail.
+	one 0
+	one -109.55
+	one 109.55
+	one -1.0
+	one 1.0
+	one -1000000.0
+	one -0.000001
+	one 0x43d3a666
+	one 0xc2db199a
 
 	log ""
-	log "===== Read 1 and 10 first. KEEP 256 must pass, KEEP 0 must fail.  ====="
-	log "===== The smallest passing n, in floats, is the answer.           ====="
+	log "===== 12) CONTROL that can fail: baseline again ====="
+	sleep 2
+	base
+
+	log ""
+	log "===== Read 1 and 12 first. Then: does every NEGATIVE pass?        ====="
+	log "===== If so it is the sign, not the weight, and the fix is one    ====="
+	log "===== constant. -109.55 and 0xc2db199a are the same word, so they ====="
+	log "===== must agree; if they do not, the parser is wrong.            ====="
 	sync
 }
 case "$1" in

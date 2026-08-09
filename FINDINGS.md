@@ -88,6 +88,37 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 32 (It is ONE float32. The whole 197888 byte float surface comes down to the first four bytes.)
+
+Both baselines 128/128.
+
+| `ROCKET_FS_KEEP` | channels matching |
+|---|---|
+| 256, 128, 64, 32, 16, 8, **4** | **128/128, all of them** |
+| **0** | **0/128** |
+
+**Keeping four bytes is enough.** Everything else in the region can be zero and
+conv2d-cal is still byte correct on every output channel.
+
+And it is not simply "must be nonzero": round 30 put `0x43d343d3` there, about
+423.3, and every channel died. The word mesa happens to write is
+
+```
+fs[0] = wt_sc * (w[0][0][0][0] - wt_zp) = -109.55 = 0xc2db199a
+```
+
+So one scalar decides the whole layer, and it has to be the right one. The two
+known points differ in sign as well as magnitude, `0xc2` against `0x43` in the
+high byte.
+
+**Round 33** sweeps exactly that word with `ROCKET_FS_F0`, everything else
+zeroed, taking a float or a raw hex pattern since it is not established that the
+hardware reads it as a float at all: 0, -109.55, +109.55, -1.0, +1.0, -1e6,
+-1e-6, and the two known words by hex. If every negative passes it is the sign,
+mesa is right by luck, and the fix is a single constant instead of a 200 KB
+surface. `-109.55` and `0xc2db199a` are the same word and must agree, which is
+the parser's own control. Built, not flashed.
+
 ## 2026-08-09 round 31 (Measured at last: the load bearing slice is at most 256 bytes, against the 197888 mesa writes and the 1936 rounds 26 and 27 believed in.)
 
 Both baselines 128/128, so the sweep counts.

@@ -1,0 +1,66 @@
+From f5ca422abfc51d6cb8e9e04f39c67990ed2216a4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 14:29:58 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_F0, to sweep the one word that
+ matters
+
+Round 32 bisected the float surface down to its first four bytes: keeping 4
+bytes leaves all 128 output channels correct and keeping 0 leaves none, so the
+other 197884 bytes can be zero. It is not merely a nonzero requirement either,
+since 0x43d343d3 there kills every channel while the word mesa happens to
+write, -109.55 or 0xc2db199a, works.
+
+ROCKET_FS_F0 overwrites exactly that word and nothing else, accepting a decimal
+float or a raw hex pattern, because it is not established that the hardware
+reads it as a float at all.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 667f67c..800e03a 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -842,6 +842,21 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+        *   1600 = 400 floats = ic*k*k, one output channel's worth of weights
+        *   1936 = the whole slice, which must pass, and 0 must fail
+        */
++      /*
++       * ROCKET_FS_F0=<value>: overwrite the FIRST float of the surface, and
++       * nothing else. Accepts a decimal float or a 0x raw word, because it is
++       * not yet established that the hardware reads it as a float at all.
++       *
++       * Round 32 bisected the slice down to this one word: keeping 4 bytes
++       * leaves all 128 output channels correct and keeping 0 leaves none. A
++       * different nonzero value there fails too, 0x43d343d3 which is about
++       * 423.3, while the value mesa happens to write, -109.55, works. So one
++       * scalar decides the whole layer and it has to be the right one, and the
++       * question is what "right" means: the exact dequantised weight, a sign, a
++       * magnitude, or a bit pattern that is not a float at all.
++       */
++      const char *f0 = getenv("ROCKET_FS_F0");
++
+       const char *keep = getenv("ROCKET_FS_KEEP");
+       if (keep && bufsize > 0x0b90) {
+          unsigned n = strtoul(keep, NULL, 0);
+@@ -849,6 +864,17 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+             memset(b8 + 0x400 + n, 0, (0x0b90 - 0x400) - n);
+       }
+ 
++      if (f0) {
++         uint32_t w;
++         if (f0[0] == '0' && (f0[1] == 'x' || f0[1] == 'X')) {
++            w = strtoul(f0, NULL, 16);
++         } else {
++            float v = strtof(f0, NULL);
++            memcpy(&w, &v, sizeof(w));
++         }
++         memcpy(b8 + 0x400, &w, sizeof(w));
++      }
++
+       /*
+        * ROCKET_FS_TABLE_OVER / ROCKET_FS_HOLE: separate the two things round 28
+        * changed together.
+-- 
+2.43.0
+
