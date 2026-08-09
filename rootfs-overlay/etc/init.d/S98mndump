@@ -2,44 +2,54 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 36. Map the remaining bits of the word at groups*64.
+# 2026-08-09 round 37. Test the RULE as a prediction, then test whether it is
+# a constant across models.
 #
-# Round 35 separated cleanly. Writing the low 16 bits as hh ll:
+# Round 36 mapped the word at groups*64. Twenty data points, and one rule fits
+# every one of them:
 #
-#   0x1a44 PASS   0xff44 PASS   0x1a04 PASS      bit0=0, bit2=1, hh nonzero
-#   0x0044 FAIL   hh = 0
-#   0x1a40 FAIL   bit2 = 0        0x1a00 FAIL   bit2 = 0
-#   0x1a45 FAIL   bit0 = 1        0x1aff FAIL   bit0 = 1
+#     (w & 0x3f) == 0x04    AND    (w & 0x3000) != 0
 #
-# and 0xffffff44, 0xc2801a44 and 0x005b1a44 all pass, so bits 16 to 31 are
-# don't care entirely. Every pass has bit0 clear, bit2 set and a nonzero high
-# byte; every failure breaks exactly one of those three. That is a bitfield in
-# the low 16 bits of a word this driver fills with a dequantised weight.
+# that is, the low six bits are exactly 000100, and at least one of bits 12 and
+# 13 is set. Bits 6, 7, 8, 9, 10, 11, 14, 15 and everything above are free.
 #
-# Two things are still unknown: WHICH bits of 8..15 have to be set, and whether
-# bits 1, 3, 4, 5, 6, 7 are free. This maps both. Everything is written with
-# bits 16..31 zero, since they are known not to matter, so each word is only the
-# field under test.
+#   passes  0x1a44 0x1a04 0x1a84 0x1044 0x2044 0xff44
+#   fails   0x1a45 0x1a06 0x1a0c 0x1a14 0x1a40 0x1a00 0x1aff
+#           0x0044 0x0144 0x0244 0x0444 0x0844 0x4044 0x8044
+#
+# The rule was fitted to those, so repeating them proves nothing. What tests it
+# is a word it has never seen: 0x1004 is the SMALLEST word the rule allows and
+# has never been run, and 0x3fc4 sets every free bit at once. Both must pass,
+# and the two near misses beside them must fail.
+#
+# ⚠ FIXED THIS ROUND: the knobs wrote at a hardcoded 0x400, which is groups*64
+# only because oc=128 in every model probed so far. With oc=16 it is 0x80, so
+# on cal_oc16 they were writing into the A/B/C table. They now use groups*64,
+# which is why the other models can be tried at all.
 #
 # DECISION RULE, written before the run:
-#   one single bit in 8..15 passes alone   that bit plus bit2 is the whole
-#                                          requirement, and mesa can write one
-#                                          constant instead of 197888 bytes
-#   several pass alone                     any of them will do; report the set
-#   none passes alone but 0x1a44 does      it needs a combination, report which
-#   the free-bit probes all pass           bits 1 and 3..7 are genuinely free
-#   a free-bit probe fails                 that bit matters too, add it
-#   step 1 or 2 not 128/128                the build is wrong, stop
+#   0x1004 and 0x3fc4 pass, the two near misses fail
+#       the rule holds on words it was not fitted to, and mesa can write one
+#       constant and delete the 197888 byte surface
+#   0x1004 fails
+#       the rule is wrong or incomplete; the bits it calls free are not
+#   the same constant works on cal_s1 and cal_oc16
+#       it is a constant, not a function of the geometry
+#   it works on cal_oc16 only with a different word
+#       it scales with something, and oc is the first suspect
+#   cal_k3 changes behaviour at all
+#       unexpected, and worth far more than the rest of this round
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-base() { env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
-one() { log ""; log "===== FS_F0 = $2   ($1) ====="; sleep 2; \
+run() { log ""; log "===== $1: $2  FS_F0=$3 ====="; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
-	ROCKET_FS_KEEP=4 ROCKET_FS_F0="$2" \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
+	ROCKET_FS_KEEP=4 ROCKET_FS_F0="$3" \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$2" > "$C" 2>&1; }
+base() { log ""; log "===== $1: baseline $2 ====="; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$2" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -48,43 +58,36 @@ start() {
 	dmesg -n 4 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
-	log ""
-	log "===== 1) BASELINE: must be 128/128 ====="
-	base
+	base 1 conv2d-cal.tflite
 
 	log ""
-	log "===== 2) the known good word with the upper half zeroed ====="
-	log "  bits 16..31 are don't care, so this must still be 128/128"
-	one "low 16 only, known good" 0x00001a44
+	log "===== THE PREDICTION: words the rule allows but has never seen ====="
+	run 2 conv2d-cal.tflite 0x1004
+	run 3 conv2d-cal.tflite 0x3fc4
+	log "  and the two near misses, which must FAIL"
+	run 4 conv2d-cal.tflite 0x1005
+	run 5 conv2d-cal.tflite 0x0fc4
 
 	log ""
-	log "===== which single bit of 8..15 is enough, with bit2 set ====="
-	one "hh=0x01" 0x00000144
-	one "hh=0x02" 0x00000244
-	one "hh=0x04" 0x00000444
-	one "hh=0x08" 0x00000844
-	one "hh=0x10" 0x00001044
-	one "hh=0x20" 0x00002044
-	one "hh=0x40" 0x00004044
-	one "hh=0x80" 0x00008044
+	log "===== is it the SAME constant on other geometries ====="
+	base 6 cal_s1.tflite
+	run  7 cal_s1.tflite 0x1004
+	base 8 cal_oc16.tflite
+	run  9 cal_oc16.tflite 0x1004
+	log "  (the knobs now use groups*64, so oc=16 lands in the right place)"
 
 	log ""
-	log "===== are bits 1 and 3..7 free, holding hh=0x1a and bit2 set ====="
-	one "bit2 only"      0x00001a04
-	one "bit2+bit1"      0x00001a06
-	one "bit2+bit3"      0x00001a0c
-	one "bit2+bit4"      0x00001a14
-	one "bit2+bit7"      0x00001a84
-	one "bit0 set, must FAIL" 0x00001a05
+	log "===== and the kernel size that has never worked ====="
+	base 10 cal_k3.tflite
+	run  11 cal_k3.tflite 0x1004
 
 	log ""
-	log "===== 18) CONTROL that can fail: baseline again ====="
-	sleep 2
-	base
+	log "===== 12) CONTROL that can fail: the first baseline again ====="
+	base 12 conv2d-cal.tflite
 
 	log ""
-	log "===== Read 1, 2 and 18 first. Then the smallest passing word is  ====="
-	log "===== what mesa should write, and the surface can go.            ====="
+	log "===== Read 1 and 12 first. Then 2 and 3: a rule that predicts    ====="
+	log "===== words it was never fitted to is worth keeping.             ====="
 	sync
 }
 case "$1" in

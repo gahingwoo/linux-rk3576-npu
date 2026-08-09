@@ -1,0 +1,51 @@
+From f022e2e4e294d317c7e3aaec061dbe7b7b8fddbf Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 15:04:58 +1200
+Subject: [PATCH] rocket RK3576: write the coefficient knobs at groups*64, not
+ a hardcoded 0x400
+
+The float surface starts at groups*64, which is 0x400 only because every model
+probed so far has 128 output channels. With 16 it is 0x80, so ROCKET_FS_KEEP and
+ROCKET_FS_F0 were writing into the A/B/C table on those models and any result
+from them would have been meaningless. No change at oc=128.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 800e03a..9a4a42b 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -857,11 +857,18 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+        */
+       const char *f0 = getenv("ROCKET_FS_F0");
+ 
++      /*
++       * ⚠ The surface starts at groups*64, which is 0x400 only because oc=128
++       * in every model probed so far. With oc=16 it is 0x80, and the knobs
++       * below would have written into the A/B/C table instead of the surface,
++       * making any result on such a model meaningless.
++       */
++      unsigned fs_off = groups * 64;
+       const char *keep = getenv("ROCKET_FS_KEEP");
+       if (keep && bufsize > 0x0b90) {
+          unsigned n = strtoul(keep, NULL, 0);
+-         if (n < 0x0b90 - 0x400)
+-            memset(b8 + 0x400 + n, 0, (0x0b90 - 0x400) - n);
++         if (fs_off + n < 0x0b90)
++            memset(b8 + fs_off + n, 0, 0x0b90 - fs_off - n);
+       }
+ 
+       if (f0) {
+@@ -872,7 +879,7 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+             float v = strtof(f0, NULL);
+             memcpy(&w, &v, sizeof(w));
+          }
+-         memcpy(b8 + 0x400, &w, sizeof(w));
++         memcpy(b8 + fs_off, &w, sizeof(w));
+       }
+ 
+       /*
+-- 
+2.43.0
+

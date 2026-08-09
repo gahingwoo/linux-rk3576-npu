@@ -88,6 +88,45 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 36 (The word decoded. One rule fits all twenty data points: the low six bits are 000100 and at least one of bits 12 and 13 is set.)
+
+Baselines and the upper-half-zeroed control all 128/128.
+
+| word (low 16) | bits 15..0 | channels |
+|---|---|---|
+| `0x1a44` | `0001101001000100` | **128/128** |
+| `0x1a04` | `0001101000000100` | **128/128** |
+| `0x1a84` | `0001101010000100` | **128/128** |
+| `0x1044` | `0001000001000100` | **128/128** |
+| `0x2044` | `0010000001000100` | **128/128** |
+| `0xff44` | `1111111101000100` | **128/128** |
+| `0x0044` `0x0144` `0x0244` `0x0444` `0x0844` `0x4044` `0x8044` | bits 12 and 13 both clear | 0/128 |
+| `0x1a45` `0x1a06` `0x1a0c` `0x1a14` `0x1a40` `0x1a00` `0x1aff` | low six bits not `000100` | 0/128 |
+
+```
+(w & 0x3f) == 0x04    and    (w & 0x3000) != 0
+```
+
+fits every pass and every failure. Bits 6, 7, 8, 9, 10, 11, 14, 15 and
+everything above bit 15 are free.
+
+**This is a bitfield, and `rkt_coefs.c` is filling it with a dequantised float
+weight.** The driver works today because that particular weight happens to carry
+`000100` in its low six bits and a set bit at 12 or 13, which is luck.
+
+**Round 37 tests it as a prediction rather than refitting it.** `0x1004` is the
+smallest word the rule allows and has never been run, `0x3fc4` sets every free
+bit at once, and `0x1005` and `0x0fc4` are the near misses beside them that must
+fail. Then the same constant on `cal_s1`, `cal_oc16` and `cal_k3`, to see
+whether it is a constant or a function of the geometry.
+
+⚠ Fixed in the same build: the knobs wrote at a hardcoded `0x400`, which equals
+`groups*64` only because every model probed so far has oc=128. On `cal_oc16` it
+is `0x80`, so they would have been writing into the A/B/C table. They now use
+`groups*64`, which is what makes the other models testable at all.
+
+Built, not flashed.
+
 ## 2026-08-09 round 35 (It is a bitfield in the low 16 bits. bit0 clear, bit2 set, high byte nonzero, and bits 16 to 31 don't care.)
 
 Both baselines and the round trip clean.
