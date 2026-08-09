@@ -88,6 +88,33 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 31 (Measured at last: the load bearing slice is at most 256 bytes, against the 197888 mesa writes and the 1936 rounds 26 and 27 believed in.)
+
+Both baselines 128/128, so the sweep counts.
+
+| `ROCKET_FS_KEEP` | channels matching |
+|---|---|
+| 1936, 1600, 1024, 512, **256** | **128/128, all of them** |
+| **0** | **0/128** |
+
+Round 30 showed zeroing those same first 256 bytes fails, so the two bracket it
+from both sides. **Everything from `0x500` to `0x0b90` is irrelevant, and the
+load bearing part is at most the first 256 bytes**, which is 64 float32.
+
+Computed on the host, those 64 floats are output channel 0's first 64 taps, 4
+spatial positions across 16 input channels, running from -344.30 to 328.65 with
+one exact zero. Nothing about that looks like a table of scales.
+
+**This is the second big size result and it is a measurement, not a reading.**
+`rkt_coefs.c` sizes this region as `MAX2(ic*oc*k*k, 8192)` floats, 197888 bytes
+for conv2d-cal, and at most 256 of them are doing anything.
+
+**Round 32** bisects inside the 256: 256, 128, 64, 32, 16, 8, 4, 0, with the
+baseline at both ends. 4 would be a single scalar, which would also explain why
+every substitution failed, since a scalar has to be the right number. 64 would
+be `ic` floats, one spatial position across the input channels. Built, not
+flashed.
+
 ## 2026-08-09 round 30 (Not a per-channel table. Changing those 256 bytes destroys all 128 output channels, not the 64 a per-channel layout would touch.)
 
 Both baselines clean, so the run counts.

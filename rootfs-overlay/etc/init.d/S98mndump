@@ -2,39 +2,36 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 31. Measure how BIG the load bearing slice is, having run out
-# of ways to guess what it MEANS.
+# 2026-08-09 round 32. The slice is at most 256 bytes. Bisect inside it.
 #
-# Round 30, with both baselines clean at 128/128:
-#   the 256 bytes zeroed        0/128 channels, maxdiff 128 on every one
-#   the 256 bytes as fp16       0/128 channels
-# All 128 channels, not the 64 a 4-byte-per-channel layout would touch. So this
-# is not a per-channel table in mesa's hands, and a plausible large float fails
-# exactly like a zero does. Three rounds of substituting a meaning have all
-# failed the same way, so stop.
+# Round 31, both baselines 128/128:
+#   KEEP 1936, 1600, 1024, 512, 256   all 128/128
+#   KEEP 0                            0/128
+# and round 30 showed zeroing those same first 256 bytes fails. So everything
+# from 0x500 to 0x0b90 is IRRELEVANT and the load bearing part is at most the
+# first 256 bytes. Against mesa's 197888 byte float surface, and against the
+# 1936 bytes rounds 26 and 27 believed in.
 #
-# What was never measured is the SIZE. 0x0b90 is where the VENDOR's constant
-# tail starts, which says nothing about this driver. All that is known is that
-# keeping 0x400..0x0b90 works and zeroing all of it fails, so the boundary is
-# somewhere inside those 1936 bytes. ROCKET_FS_KEEP=<n> keeps the first n and
-# zeroes the rest of the slice, so a sweep finds it.
+# Computed on the host, those 256 bytes are 64 float32, and they are output
+# channel 0's first 64 taps, 4 spatial positions by 16 input channels, values
+# from -344.30 to 328.65 with one exact zero. Not a table of anything obvious.
 #
-# Sizes that would mean something, at ic=16 oc=128 k=5:
-#    512 = 128 floats = one per output channel
-#   1600 = 400 floats = ic*k*k, exactly one output channel's weights
+# Landmarks worth landing on, at ic=16 k=5:
+#     4 = 1 float, a single scalar the whole layer needs
+#    64 = 16 floats = ic, one spatial position across the input channels
+#   128 = 32 floats
 #
 # DECISION RULE, written before the run:
-#   the boundary lands on 512    one float per output channel: the surface is
-#                                512 bytes, not 200 KB, and the fp16 attempt
-#                                failed on ELEMENT SIZE alone
-#   lands on 1600                one output channel's worth of weights, which
-#                                says the hardware reads channel 0's weights
-#                                from here and the rest from the weight buffer
-#   lands somewhere else         report the number, it is the measurement
-#   no boundary, only 1936 works every byte matters and the slice is opaque;
-#                                then the next move is the vendor's own value
-#                                at each offset, not mesa's
-#   step 1 or 8 not 128/128      the build is wrong, stop and check the image
+#   smallest passing n is 4     one float. Then it is a scalar, and the reason
+#                               every substitution failed is that a scalar has
+#                               to be the RIGHT number
+#   is 64                       ic floats, one spatial position: the hardware
+#                               primes something per input channel from here
+#   is 128 or 256               report it; 256 means the whole 64 floats matter
+#                               and the unit is channel 0's tap block
+#   nothing between 0 and 256   the boundary is not a prefix at all, so the
+#                               next probe has to zero the MIDDLE, not a tail
+#   step 1 or 10 not 128/128    the build is wrong, stop and check the image
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -55,22 +52,22 @@ start() {
 	log "===== 1) BASELINE, untouched float surface: must be 128/128 ====="
 	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
 
-	for n in 1936 1600 1024 512 256 0; do
+	for n in 256 128 64 32 16 8 4 0; do
 		log ""
-		log "===== KEEP $n bytes of the slice, zero the rest to 0x0b90 ====="
+		log "===== KEEP $n bytes ($((n / 4)) floats), zero the rest ====="
 		sleep 2
 		perch conv2d-cal.tflite ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=$n
 	done
 
 	log ""
-	log "===== 8) CONTROL that can fail: baseline again ====="
+	log "===== 10) CONTROL that can fail: baseline again ====="
 	log "  not 128/128 here and the sweep above says nothing"
 	sleep 2
 	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
 
 	log ""
-	log "===== Read 1 and 8 first. KEEP 1936 must pass and KEEP 0 must     ====="
-	log "===== fail; the smallest passing n is the answer.                 ====="
+	log "===== Read 1 and 10 first. KEEP 256 must pass, KEEP 0 must fail.  ====="
+	log "===== The smallest passing n, in floats, is the answer.           ====="
 	sync
 }
 case "$1" in
