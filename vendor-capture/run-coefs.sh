@@ -43,14 +43,26 @@ while [ ! -e /dev/dri/renderD129 ] && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i + 1)
 sleep 2
 dmesg -n 7 2>/dev/null
 
+# ⚠ Check the driver is actually there before running anything. The first
+# attempt at this capture produced only "rknn_init = -1" with no reason, because
+# the vendor NPU driver had failed to probe: with mainline TF-A in SPI the
+# Rockchip SCMI power domain and reset protocols are missing, so enabling the
+# NPU clock returns -71. Flash rock4d-spi-uboot-vendor.img to SPI first.
+if [ ! -e /dev/dri/renderD129 ]; then
+	echo "!!! /dev/dri/renderD129 missing. The vendor NPU driver did not probe."
+	dmesg | grep -aiE "RKNPU|SCMI protocol .* not active" | tail -6
+	echo "!!! Flash binaries/rock4d-spi-uboot-vendor.img to SPI and retry."
+	exit 1
+fi
+
 echo "===== VENDOR coefficient buffer capture: 5x5 then 3x3 ====="
 echo ""
 echo "----- 1) k=5, the geometry the open driver computes correctly -----"
-"$CAPDIR/runner" "$CAPDIR/g_cal_rk3576.rknn" ramp 2>&1 | grep -aE "rknn_|DONE|Top"
+"$CAPDIR/runner" "$CAPDIR/g_cal_rk3576.rknn" ramp 2>&1 | grep -aE "rknn_|DONE|Top|E RKNN|W RKNN|error|fail"
 sleep 1
 echo ""
 echo "----- 2) k=3, the geometry it does not -----"
-"$CAPDIR/runner" "$CAPDIR/g_cal_k3_rk3576.rknn" ramp 2>&1 | grep -aE "rknn_|DONE|Top"
+"$CAPDIR/runner" "$CAPDIR/g_cal_k3_rk3576.rknn" ramp 2>&1 | grep -aE "rknn_|DONE|Top|E RKNN|W RKNN|error|fail"
 sleep 1
 
 echo ""
