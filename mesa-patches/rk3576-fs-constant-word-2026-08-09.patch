@@ -1,0 +1,125 @@
+From dff6b3e445dad57c69381960659e0d7f393d9403 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 15:18:29 +1200
+Subject: [PATCH] rocket RK3576: write one constant at groups*64 instead of a
+ per-weight float surface
+
+Measured on hardware per output channel, keeping 4 bytes of that surface and
+zeroing the rest leaves every channel correct, and keeping 0 leaves none. So
+only the first word ever did anything. Varying it showed it is not read as a
+float: flipping the sign changes nothing, doubling changes nothing, and clearing
+its low byte destroys every channel. Twenty four words later the requirement is
+(w & 0x3f) == 0x04 and ((w >> 6) & 0xff) >= T for some T in (0x21, 0x3f].
+
+0x1004 satisfies it, and with it conv2d-cal, cal_s1, cal_oc16 and cal_k3 are all
+correct on every output channel.
+
+That last one is the point. The 3x3 kernel has never worked on this driver. The
+old code filled the word with a dequantised weight, so whether a model computed
+came down to whether its first weight happened to carry the right bits.
+conv2d-cal's did and cal_k3's did not, and the kernel size was never the
+dividing line at all.
+
+The buffer size is left alone here so that content is the only change.
+ROCKET_FS_FLOATS restores the old surface and ROCKET_FS_F0 overrides the word.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 76 +++++++++-----------------
+ 1 file changed, 27 insertions(+), 49 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 9a4a42b..50a93a3 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -686,62 +686,40 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                     !getenv("ROCKET_FS_TABLE_OVER") &&
+                     !getenv("ROCKET_FS_HOLE")) {
+             /*
+-             * One fp16 per OUTPUT CHANNEL, the per-channel weight scale.
++             * ONE CONSTANT WORD at groups*64, and nothing else in the region.
+              *
+-             * Not a per-weight float surface. Compiling vendor .rknn files on
+-             * the host and pulling this region straight out of the container
+-             * says so directly:
++             * What used to be here was a float32 array with one entry per
++             * weight, MAX2(ic*oc*k*k, 8192) of them, 197888 bytes for
++             * conv2d-cal. Measured on hardware, per output channel:
+              *
+-             *  - compiling ONE identical model twice gives a byte identical
+-             *    A/B/C table and a byte identical region here, so both are
+-             *    reproducible and can be compared across models;
+-             *  - dropping a model from 128 to 64 output channels leaves the
+-             *    first 64 entries byte identical, so entry i belongs to
+-             *    channel i;
+-             *  - multiplying channel 7's weights by 2 and channel 11's by 1/2
+-             *    moves exactly those two entries, by exactly 2.0 and 0.5, and
+-             *    leaves the other 126 alone.
++             *   keep 1936, 1600, 1024, 512, 256, 128, 64, 32, 16, 8, 4 bytes
++             *       of it and zero the rest        every channel still correct
++             *   keep 0                             no channel correct
+              *
+-             * Read as fp16 the entries are the channel's weight scale. That
+-             * also explains why zeroing this region breaks conv2d-cal while
+-             * the float surface is otherwise unnecessary: the float32 weights
+-             * that used to land here were being read as fp16 pairs and
+-             * happened to be nonzero, and zero here scales every channel to
+-             * nothing.
++             * so only the first four bytes were ever doing anything. Varying
++             * that word then showed it is not read as a float at all: flipping
++             * its sign changes nothing, doubling it changes nothing, and
++             * clearing its low byte, worth 0.0005 as a float, destroys every
++             * output channel. Twenty four words later the requirement is
+              *
+-             * ⚠ ON THE BOARD (round 28) THIS TABLE ALONE DOES NOT COMPUTE.
+-             * conv2d-cal is 2/2 with the old float surface and 0/2 with this,
+-             * and so is the relative variant. The zeroed-table control did
+-             * fail, so the region IS read; the offline reading of WHICH bytes
+-             * mean what is not in question. What round 28 could not tell is
+-             * WHY, because it moved two things at once: it put the table at
+-             * 0x400 AND left everything after it zero, and round 27 had zeroed
+-             * both as well.
++             *   (w & 0x3f) == 0x04   and   ((w >> 6) & 0xff) >= T
+              *
+-             * ROCKET_FS_TABLE_OVER splits them. It writes the float surface
+-             * exactly as the working configuration does and then overwrites
+-             * only the table's own bytes, so the table is the only difference.
+-             * Its complement is ROCKET_FS_HOLE, the float surface with just
+-             * those bytes zeroed. Together they say whether 0x400..0x400+2*oc
+-             * needs mesa's floats or whether the breakage lives after it.
++             * with T somewhere in (0x21, 0x3f]; bits 14, 15 and everything
++             * above them are free. 0x1004 satisfies it and is used here.
+              *
+-             * ROCKET_FS_FLOATS restores the old per-weight float surface,
+-             * ROCKET_FS_REL writes the scale relative to the largest channel
+-             * the way the A/B/C table's C term is written.
++             * ⚠ This is why the 3x3 kernel never worked. The old code filled
++             * that word with a dequantised weight, so whether a model computed
++             * came down to whether its FIRST WEIGHT happened to carry the right
++             * bits. conv2d-cal's did and cal_k3's did not, and every attempt to
++             * explain the difference in terms of kernel size was chasing that
++             * coincidence. With the constant, conv2d-cal, cal_s1, cal_oc16 and
++             * cal_k3 are all correct on every output channel.
++             *
++             * ROCKET_FS_FLOATS restores the old surface, ROCKET_FS_F0 sets this
++             * word to something else.
+              */
+-            const float *wsc = poperation->conv.weight_tensor->scales;
+-            float wt_sc = poperation->conv.weight_tensor->scale;
+-            float norm = 1.0f;
+-            if (getenv("ROCKET_FS_REL")) {
+-               norm = wsc ? wsc[0] : wt_sc;
+-               if (wsc)
+-                  for (unsigned oc = 1; oc < output_channels; oc++)
+-                     if (wsc[oc] > norm)
+-                        norm = wsc[oc];
+-            }
+-            uint16_t *fs16 = (uint16_t *)(b8 + groups * 64);
+-            for (unsigned oc = 0; oc < output_channels; oc++)
+-               fs16[oc] = _mesa_float_to_half((wsc ? wsc[oc] : wt_sc) / norm);
++            uint32_t *fs32 = (uint32_t *)(b8 + groups * 64);
++            fs32[0] = 0x1004;
+          } else if (getenv("ROCKET_FS_FLOATS") ||
+                     getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
+             const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
+-- 
+2.43.0
+

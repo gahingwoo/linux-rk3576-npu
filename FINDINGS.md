@@ -88,6 +88,48 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-09 round 37 (THE 3x3 KERNEL COMPUTES. The kernel size was never the dividing line, it was one weight-derived word landing in a bitfield.)
+
+Both baselines 128/128.
+
+| step | model | word | channels |
+|---|---|---|---|
+| 2 | conv2d-cal | `0x1004`, smallest the rule allows, never run before | **128/128** |
+| 3 | conv2d-cal | `0x3fc4`, every free bit set | **128/128** |
+| 4 | conv2d-cal | `0x1005`, near miss | 0/128 |
+| 5 | conv2d-cal | `0x0fc4`, near miss | **128/128** ⚠ predicted to fail |
+| 7 | cal_s1 | `0x1004` | **128/128** |
+| 9 | cal_oc16, oc=16 | `0x1004` | **16/16** |
+| **10** | **cal_k3** | baseline, mesa's own word | **0/128** |
+| **11** | **cal_k3** | **`0x1004`** | **128/128, every channel** |
+
+**The 3x3 kernel computes on every output channel.** One constant, `0x1004`,
+makes conv2d-cal, cal_s1, cal_oc16 and cal_k3 all correct.
+
+**So the kernel size was never the dividing line.** `rkt_coefs.c` filled that
+word with a dequantised weight, which meant whether a model computed came down
+to whether its FIRST WEIGHT happened to carry the right bits. conv2d-cal's did,
+cal_k3's did not. Every round that tried to explain 5x5 against 3x3, on this
+project going back months, was chasing that coincidence. It also explains the
+offline result that the vendor's coefficient buffer carries no kernel size
+dependence: there was never any to find.
+
+⚠ **The rule from round 36 was partly wrong and is refitted.** `0x0fc4` has bits
+12 and 13 clear and was predicted to fail; it passes. Against all 24 words:
+
+```
+(w & 0x3f) == 0x04    and    ((w >> 6) & 0xff) >= T,   0x21 < T <= 0x3f
+```
+
+every failure has `(w>>6)&0xff` at most `0x21` and every pass at least `0x3f`,
+so the exact threshold sits in a gap nothing has probed yet. Bits 14, 15 and
+everything above are free.
+
+**mesa now writes `0x1004` there by default**, and nothing else in the region.
+The buffer size is deliberately unchanged this round so that content is the only
+variable. Round 38 runs the default against everything that has never worked:
+`cal_k1`, depthwise, the chain, and the whole-model numbers. Built, not flashed.
+
 ## 2026-08-09 round 36 (The word decoded. One rule fits all twenty data points: the low six bits are 000100 and at least one of bits 12 and 13 is set.)
 
 Baselines and the upper-half-zeroed control all 128/128.
