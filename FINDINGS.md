@@ -3,6 +3,42 @@
 
 
 
+## 2026-08-09 round 23 (The float surface size is inert. Refuted by a control that could fail, and it was the last k-dependent thing in any buffer.)
+
+The knob fired: `cal_k3`'s coefficient buffer went from 75008 to 206080 bytes,
+md5 `8aeb5d4b`.
+
+| step | result |
+|---|---|
+| constant input, all three with `ROCKET_FS_ELEMS=51200` | **byte identical to without it**, still 12 / 1 / 45 distinct |
+| real inputs, k=3 and k=1 with the count equalised | fail identically |
+| **control: `conv2d-cal` with the count forced small, 8192** | **2/2 OK, unchanged** |
+
+The control is what settles it. Shrinking the region from 206080 to 34048 bytes
+on the model that computes correctly changes nothing at all, so the hardware is
+not sensitive to that size in either direction. **The float surface size is not
+the k dependence**, and the oversizing mesa added to stop an out of bounds read
+is not doing what its comment claims either.
+
+That was the last k-dependent thing in any buffer. So, for one model with only
+the kernel cropped:
+
+| surface | state at k=3 |
+|---|---|
+| regcmd | verified against a vendor build at the same geometry, in absolute terms |
+| weight layout | verified, plane order, lane order and the 32-channel grouping |
+| weight contents | read by the CMAC, confirmed by forcing them |
+| bias tensor | shared with the model that computes |
+| requant | identical, `shift=25 scale=0x7d34` in every log line |
+| A, B, C | A is the bias since `(in_zp - 0x80)` is zero, B refuted, C is `0x4000` |
+| coefficient buffer size | equalised, no effect |
+| spatial mapping | correct, an input impulse lands in the right output pixels |
+
+**Everything the driver produces is verified, and a constant input at the input
+zero point still returns three different answers depending on the kernel size**,
+for a computation whose every MAC product is zero by construction. The k
+dependence is below everything the driver writes.
+
 ## 2026-08-08 round 22 (Found the last k-dependent thing: the coefficient buffer carries a FLOAT SURFACE region whose size mesa derives from the weight count.)
 
 | model | biases buffer | weights buffer | first 12 bytes |

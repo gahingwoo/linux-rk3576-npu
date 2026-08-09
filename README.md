@@ -25,50 +25,87 @@ side. Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Alexey Charkov, Heiko
 Stuebner, Tomeu Vizoso, Philipp Zabel, Diederik de Haas and Igor Paunovic, who
 provides the RK3588 coverage this project cannot produce.
 
+Since v6 the interrupt claim in every cover letter has been
+[corrected on the list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/):
+the completion interrupt works, and the polling in patch 7 should not exist. v7
+drops it, splits the `job_lock` fix into its own patch with a Fixes tag,
+separates the `rk3588_soc_data` change from adding `rk3576_soc_data`, and puts
+the refactoring before the new support rather than inside it.
+
 Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
-## ⚠ Inference is not correct yet
+## ⚠ Inference is correct for one convolution shape, not yet in general
 
 Bring-up works: the NPU probes, powers up and down through runtime PM, and runs
-jobs to completion. A convolution submitted right after a resume is byte exact
-against the CPU reference.
+jobs to completion. Submits recompute, and the completion interrupt arrives.
 
-**Only the first submit after a reset computes.** Every submit after it is a no
-op: it does not write its output buffer at all, so what userspace reads back is
-whatever was in that buffer already. Measured on 2026-08-06 with one
-configuration and two different inputs, checksumming one latched output BO:
+**Fixed since 2026-08-07.** The block used to accept exactly one task per reset,
+which made every later submit a no op that never wrote its output, so userspace
+read back whatever was in the buffer already. The cause was one register write.
+`PC_TASK_CON` packs the task number, and `rocket_registers.h` is derived from
+RK3588 where that field is 12 bits wide, with `TASK_PP_EN`, `TASK_COUNT_CLEAR`
+and `RESERVED_0` above it. RK3576 uses a **16 bit** task number, so those three
+controls sit at bits 16, 17 and 18:
 
-| step | result | crc32 |
-|---|---|---|
-| A(input X), first submit of the session | correct | `20a556ae` |
-| A(input Y), no reset in between | wrong | `20a556ae` (unchanged) |
-| A(input Y), after a runtime resume | correct | `dda67317` |
+| | value written to `0x0030` |
+|---|---|
+| rocket, v1 through v6 | `0x00007001` |
+| vendor driver on RK3576 | `0x00070001` |
 
-The third row moves the checksum, so it does see the block's writes. The second
-does not, with the same configuration loaded and only the input data different.
+The PC read our word as `task_number = 0x7001`, that is 28673 tasks, with the
+count clear landing on nothing, so only a reset ever cleared the counter. Found
+by taking an ordered trace of every register write during one submit and diffing
+it against the same trace from the vendor driver on the same board: exactly one
+value differed.
 
-This corrects a long run of earlier writeups here, including three cover letters
-on the list. "Re-running the same convolution is byte exact six for six" was
-real as an observation and worthless as evidence: every one of those runs fed
-the same input, and a stale buffer is indistinguishable from a correct
-recomputation under that test. They were stale. So "A works, B fails, A works
-again" never needed a story about configurations: A computes, B is a no op and
-its freshly zeroed buffer reads back as the zero point, and A again is a no op
-returning A's old result.
+**That also corrects a claim carried in all six cover letters.** The completion
+interrupt does reach the GIC on RK3576. It never fired because the PC believed
+it had 28672 tasks left. With the fix and the poll disabled, so only a real
+interrupt can retire a job, a convolution runs three times out of three with
+zero timeouts. [Correction sent to the
+list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/);
+v7 drops the poll.
 
-Two leads are retired by that. Tomeu Vizoso's ping-pong register bank, where the
-pointer really is stuck but nothing the driver does moves it and the vendor does
-not switch banks per submit either; and Igor Paunovic's alternative that the
-block keeps running the resident configuration and writes the previous task's
-addresses, which the same run refutes, because the resident buffer is unchanged
-across the failing submit.
+**What computes today**, each confirmed with an A/B control in a single boot and
+a control model passing at both ends of the run:
 
-The open question is now narrower: why does the block accept exactly one task
-per reset. Nothing measured so far says anything about the multiply accumulate,
-and the userspace side was never involved.
+| convolution | |
+|---|---|
+| 5x5 stride 2, 16 in, 128 out | correct, byte exact against the CPU above the output zero point |
+| 5x5 stride 1, 16 in, 128 out | correct |
+| 5x5 stride 2, 16 in, 16 out | correct |
+
+The last two are new, from two Mesa fixes where a register had been filled from
+a constant fitted to a capture rather than derived:
+
+- `CNA 0x1080` is the **padding** register,
+  `(pad_right << 24) | (pad_bottom << 16) | (pad_left << 8) | pad_top`. The
+  constant it replaced, `0x02020101`, is exactly SAME padding for a 5x5 stride 2
+  convolution, so every other geometry was configured with the wrong padding or
+  with none.
+- `DPU 0x4050` depends on the **output channel count**: `0x80011111` for a
+  multiple of 32 and `0x80011011` otherwise, ten for ten across a sweep.
+
+Both were found by compiling vendor `.rknn` files on the host at chosen
+geometries and reading the registers back, which the RKNN toolkit supports from
+ONNX on arm64. That turns "what does the vendor put here" into a question
+answerable without the board.
+
+**What does not compute: anything with a kernel smaller than 5x5.** Cropping the
+working model's own kernel to its centre 3x3 or 1x1, which leaves the bias, the
+scales and the output shape untouched, breaks it. For those the driver's output
+has been verified against a vendor build at the same geometry and matches: the
+register stream in absolute terms, the weight buffer layout including the
+32-channel grouping, the bias, the requant, and the A, B and C coefficients. An
+input impulse lands in exactly the right output pixels, so no tap is paired with
+the wrong input. The simplest failing case is a constant input at the input zero
+point, where every MAC product is zero by construction and the answer must be
+`requant(bias)`: 5x5 returns exactly that, 3x3 returns the zero point
+everywhere, and 1x1 returns values below the zero point that the same clamp
+forbids at 5x5.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
 retractions.
@@ -93,8 +130,10 @@ NPU probe verified on hardware (2026-06-07):
 
 ## Patches
 
-2-patch series in `kernel/`, against linux-next-20260527.
-Driver and binding changes are already merged upstream (linux 6.18).
+The upstream series is the lore link above. `kernel/` additionally carries the
+working tree this project tests with, which is ahead of what has been posted:
+the `PC_TASK_CON` fix lives there, and the Mesa register fixes are in
+`mesa-patches/`.
 
 ```
 0001  arm64: dts: rockchip: rk3576: add RKNN NPU subsystem
