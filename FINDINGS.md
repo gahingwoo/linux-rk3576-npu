@@ -3,6 +3,46 @@
 
 
 
+## 2026-08-09 full vendor coefficient dump (The buffer is ~8 KB with a model-independent tail, against mesa's 206 KB of per-weight floats. Structure below, blobs saved.)
+
+`hexlen` raised to 8192 so the whole dumped region prints. Two models, same
+geometry apart from the kernel, 128 output channels:
+
+| region | content | model dependent |
+|---|---|---|
+| `0x000..0x400` | the A/B/C table | yes |
+| `0x400..0x500` | 128 uint16, one per output channel | yes |
+| `0x500..0x0b90` | weight related | yes |
+| **`0x0b90..~0x0e46`** | **a 13-byte pattern `ff ff 00 fc ff 03 f0 ff 0f c0 ff 3f 00` repeated 54 times** | **no** |
+| `~0x0e46..0x1200` | more constant content | no |
+| `0x1200..0x1600` | zeros | no |
+| **`0x1600..0x2000`** | **1280 uint16, every one `0x3c00`, which is fp16 1.0** | **no** |
+
+**The two buffers are byte identical from `0x0b90` to the end of the dump**,
+across different weights and different kernel sizes. That is 5232 bytes of
+constant, ending in a table of fp16 ones.
+
+Saved so this does not have to be re-captured:
+
+```
+vendor-capture/vendor-coefbuf-k5.bin        8192 bytes, the 5x5 capture
+vendor-capture/vendor-coefbuf-k3.bin        8192 bytes, the 3x3 capture
+vendor-capture/vendor-coef-tail-0x0b90.bin  5232 bytes, the constant tail
+```
+
+**What this says about mesa.** `rkt_coefs.c` writes, at `groups*64`, a float32
+array with one entry per weight, sized `MAX2(ic*oc*k*k, 8192)` floats, which for
+conv2d-cal is 204800 bytes. The vendor's whole buffer is around 8 KB and most of
+it is a constant that does not depend on the model at all. The float framing is
+not a detail that is unfilled, it is the wrong shape for the region.
+
+⚠ **Not claimed**: that writing the vendor's tail fixes anything. conv2d-cal
+computes today *with* mesa's float surface, and zeroing that surface breaks it,
+so mesa's floats are doing something real for that model. The next experiment is
+to keep mesa's A/B/C and overlay the constant tail, with conv2d-cal as the
+control that must survive; `ROCKET_BIAS_FILE` already exists and loads a whole
+buffer from a file, so the mechanism is there.
+
 ## 2026-08-09 round 25 (⚠ The sweep found nothing, and it exposes two errors of mine in round 24. Read this before acting on that entry.)
 
 Twelve values from `0x0010` to `0x4000`, plus `0x2000`, all on `conv2d-cal` with
