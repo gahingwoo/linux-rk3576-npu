@@ -88,6 +88,37 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-09 round 33 (WITHDRAWN. The sweep swept the wrong values, and its own internal check is what caught it.)
+
+| step | channels |
+|---|---|
+| 1) baseline | 128/128 |
+| **2) `KEEP=4`, mesa's own word untouched** | **128/128** |
+| **`FS_F0=0xc2db199a`, `KEEP=4`** | **0/128** |
+| `FS_F0` = 0, -109.55, +109.55, -1.0, +1.0, -1e6, -1e-6, `0x43d3a666` | all 0/128 |
+| 12) baseline | 128/128 |
+
+`0xc2db199a` is supposed to be the word mesa itself writes. `ROCKET_FS_F0`
+writes four bytes exactly where `ROCKET_FS_KEEP=4` preserves four bytes, so if
+the value matched, those two runs would be byte identical. They are not.
+
+The pair `-109.55` and `0xc2db199a` agreed with each other, which was the
+control for the parser, so the knob reads its argument correctly. **What is
+wrong is my host computation of `fs[0]`**, which means every value in that
+sweep was a wrong value and the sweep says nothing about sign or magnitude.
+⚠ Do not cite round 33 for anything except this.
+
+What still stands is round 32, which never depended on knowing the value: four
+bytes kept is enough, zero bytes is not.
+
+**Round 34 reads the word off the board instead of computing it** and derives
+its probes from what it dumped, so it cannot repeat this. Step 4 is a round
+trip, writing back exactly the dumped word, which must reproduce the baseline;
+if it does not, the knob is broken and every `FS_F0` result is void. The probes
+after it are that same word with the sign flipped, the exponent raised by one,
+the mantissa cleared, and the low byte cleared, which separate "specific value"
+from "magnitude class" from "bit pattern". Built, not flashed.
+
 ## 2026-08-09 round 32 (It is ONE float32. The whole 197888 byte float surface comes down to the first four bytes.)
 
 Both baselines 128/128.

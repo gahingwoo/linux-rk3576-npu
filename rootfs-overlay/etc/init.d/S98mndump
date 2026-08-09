@@ -2,45 +2,43 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 33. It is ONE float32. Find out what "the right one" means.
+# 2026-08-09 round 34. Read the word instead of computing it, then vary it.
 #
-# Round 32, both baselines 128/128:
-#   KEEP 256, 128, 64, 32, 16, 8, 4   all 128/128
-#   KEEP 0                            0/128
-# So the whole 197888 byte float surface comes down to the FIRST FOUR BYTES.
-# Everything else in it can be zero and conv2d-cal is still byte correct.
+# Round 33 produced one fact that overrides everything else in it:
+#   KEEP=4, mesa's own word left alone      128/128
+#   FS_F0=0xc2db199a, KEEP=4                  0/128
+# and those are supposed to be the SAME WORD. The script's own control held,
+# -109.55 and 0xc2db199a agreed with each other, so the knob parses correctly.
+# It writes four bytes exactly where KEEP=4 preserves four bytes, so if the
+# value matched, the two runs would be identical. They are not.
 #
-# And it is not merely "nonzero": round 30 put 0x43d343d3 there, about 423.3,
-# and every channel died. The value mesa happens to write is
-#   fs[0] = wt_sc * (w[0][0][0][0] - wt_zp) = -109.55 = 0xc2db199a
+# ⚠ So my host computation of mesa's first float was WRONG, and all nine values
+# swept in round 33 were wrong values. Nothing in that sweep says anything about
+# sign or magnitude. It is withdrawn.
 #
-# One scalar decides the whole layer. ROCKET_FS_F0 sets exactly that word, as a
-# float or as a raw hex pattern, since it is not established that the hardware
-# reads it as a float at all. Everything runs with KEEP=4 so the word under test
-# is the only live byte in the region.
-#
-# Note the two known points differ in SIGN as well as magnitude:
-#   works  -109.55  0xc2db199a   high byte 0xc2
-#   fails   423.3   0x43d3a666   high byte 0x43
+# This round reads the word off the board and derives its probes from it, so it
+# cannot repeat that mistake. Step 4 is the round trip: writing back exactly
+# what was dumped MUST reproduce the baseline, and if it does not then the knob
+# is broken and every FS_F0 result ever recorded is void.
 #
 # DECISION RULE, written before the run:
-#   every negative passes, every positive fails   it is the SIGN, and mesa is
-#       right by luck; the fix is to write any negative constant, not a weight
-#   only -109.55 passes                           it is the exact dequantised
-#       weight, so the hardware really does read channel 0 tap 0 from here
-#   a magnitude band passes                       report the band
-#   the hex probes pass or fail against the float ordering  it is a BIT PATTERN
-#       and not a float, which changes what to write entirely
-#   step 1 or 12 not 128/128                      the build is wrong, stop
+#   4 fails                    the knob is broken, stop, nothing else counts
+#   only the exact word passes  the hardware reads that specific value, so it
+#                               is genuinely data and not a flag
+#   sign flip passes            magnitude only
+#   x2 passes                   the exponent does not matter, look at the low
+#                               bits, which would point at a bit pattern
+#   mantissa cleared passes     it is the exponent, i.e. a magnitude class
+#   any of those pass           the fix is a constant, not a 200 KB surface
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-one() { v="$1"; log ""; log "===== FS_F0 = $v ====="; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
-	ROCKET_FS_KEEP=4 ROCKET_FS_F0="$v" \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
 base() { env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
+one() { log ""; log "===== FS_F0 = $2   ($1) ====="; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+	ROCKET_FS_KEEP=4 ROCKET_FS_F0="$2" \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1; }
 
 start() {
@@ -49,40 +47,62 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
-	log ""
-	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) BASELINE, untouched surface: must be 128/128 ====="
+	log "===== 1) BASELINE: must be 128/128 ====="
 	base
 
 	log ""
-	log "===== 2) KEEP=4 with mesa's own word, must be 128/128 ====="
+	log "===== 2) KEEP=4, mesa's own word: must be 128/128 ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=4 \
 		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
-	# 0 must fail, and 423.3 is the value already known to fail.
-	one 0
-	one -109.55
-	one 109.55
-	one -1.0
-	one 1.0
-	one -1000000.0
-	one -0.000001
-	one 0x43d3a666
-	one 0xc2db199a
+	log ""
+	log "===== 3) DUMP what mesa actually writes at 0x400 ====="
+	rm -rf /tmp/m1; mkdir -p /tmp/m1; cd /tmp/m1 || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_FLOATS=1 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
+	B=$(ls /tmp/m1/mesa-biases-*.bin 2>/dev/null | head -1)
+	cd / || return 0
+	[ -n "$B" ] || { log "  NO DUMP, cannot continue"; return 0; }
+	python3 - "$B" > /tmp/words.txt 2>&1 <<'PY'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+w = struct.unpack_from('<I', d, 0x400)[0]
+f = struct.unpack_from('<f', d, 0x400)[0]
+print(f"WORD 0x{w:08x}   as float {f!r}")
+print("    first 16 bytes: " + " ".join(f"{x:02x}" for x in d[0x400:0x410]))
+print(f"    next 3 floats:  {struct.unpack_from('<3f', d, 0x404)}")
+# probes derived FROM the real word, so they cannot be wrong about it
+print(f"PROBE exact       0x{w:08x}")
+print(f"PROBE signflip    0x{w ^ 0x80000000:08x}")
+print(f"PROBE times2      0x{w + (1 << 23):08x}")
+print(f"PROBE mantissa0   0x{w & 0xff800000:08x}")
+print(f"PROBE lowbyte0    0x{w & 0xffffff00:08x}")
+PY
+	cat /tmp/words.txt > "$C"
+
+	W=$(grep "^PROBE exact" /tmp/words.txt | awk '{print $3}')
+	log ""
+	log "===== 4) ROUND TRIP: write back exactly that word ====="
+	log "  MUST be 128/128. If not, the knob is broken and FS_F0 means nothing."
+	one "the dumped word" "$W"
+
+	for p in signflip times2 mantissa0 lowbyte0; do
+		V=$(grep "^PROBE $p" /tmp/words.txt | awk '{print $3}')
+		[ -n "$V" ] && one "$p" "$V"
+	done
+	one "zero" 0
 
 	log ""
-	log "===== 12) CONTROL that can fail: baseline again ====="
+	log "===== 10) CONTROL that can fail: baseline again ====="
 	sleep 2
 	base
 
 	log ""
-	log "===== Read 1 and 12 first. Then: does every NEGATIVE pass?        ====="
-	log "===== If so it is the sign, not the weight, and the fix is one    ====="
-	log "===== constant. -109.55 and 0xc2db199a are the same word, so they ====="
-	log "===== must agree; if they do not, the parser is wrong.            ====="
+	log "===== Read 4 FIRST. If the round trip fails, everything FS_F0 has ====="
+	log "===== ever reported is void, including round 33.                  ====="
 	sync
 }
 case "$1" in
