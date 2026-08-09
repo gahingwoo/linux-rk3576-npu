@@ -88,6 +88,40 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 34 (The round trip holds, so the knob is sound. And the word is not being read as a float: sign and exponent are don't care, the low byte is not.)
+
+mesa's actual word, dumped rather than computed:
+
+```
+WORD 0xc2db1a44   as float -109.55130004882812
+first 16 bytes: 44 1a db c2  7a 80 9c 41  b6 c0 6a c3  29 67 7a c0
+```
+
+That also settles round 33: the string `-109.55` parses to a different low
+mantissa than the exact product does, so every value in that sweep missed the
+low bits.
+
+| probe | word | channels |
+|---|---|---|
+| exact, the round trip | `0xc2db1a44` | **128/128** |
+| **sign flipped** | `0x42db1a44` | **128/128** |
+| **exponent + 1, so twice the value** | `0xc35b1a44` | **128/128** |
+| mantissa cleared | `0xc2800000` | 0/128 |
+| **low byte cleared** | `0xc2db1a00` | **0/128** |
+| zero | `0x00000000` | 0/128 |
+| baselines either side | | 128/128 |
+
+**Negating the number and doubling it change nothing, and clearing the low byte,
+worth 0.0005 as a float, destroys all 128 channels.** Nothing reads a float that
+way. The sign and exponent behave as don't care and the low bits behave as a
+field, which means the four bytes mesa fills with a dequantised weight are being
+consumed as something else entirely, and that it works at all is luck.
+
+**Round 35** takes the word apart: the low byte alone, the low byte under all
+ones, each upper field cleared in turn, and the low byte moved while everything
+above it is held. If `0x00000044` alone computes, this whole 197888 byte surface
+is one byte. Built, not flashed.
+
 ## ⚠ 2026-08-09 round 33 (WITHDRAWN. The sweep swept the wrong values, and its own internal check is what caught it.)
 
 | step | channels |

@@ -2,34 +2,39 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 34. Read the word instead of computing it, then vary it.
+# 2026-08-09 round 35. It is not a float. Find which BITS of that word matter.
 #
-# Round 33 produced one fact that overrides everything else in it:
-#   KEEP=4, mesa's own word left alone      128/128
-#   FS_F0=0xc2db199a, KEEP=4                  0/128
-# and those are supposed to be the SAME WORD. The script's own control held,
-# -109.55 and 0xc2db199a agreed with each other, so the knob parses correctly.
-# It writes four bytes exactly where KEEP=4 preserves four bytes, so if the
-# value matched, the two runs would be identical. They are not.
+# Round 34's round trip passed, so the knob is sound, and it also explains why
+# round 33 failed: the real word is 0xc2db1a44 and the string "-109.55" parses
+# to a different low mantissa. Every value swept in round 33 missed the low bits.
 #
-# ⚠ So my host computation of mesa's first float was WRONG, and all nine values
-# swept in round 33 were wrong values. Nothing in that sweep says anything about
-# sign or magnitude. It is withdrawn.
+# The probes derived from the real word:
+#   exact             0xc2db1a44   128/128
+#   sign flipped      0x42db1a44   128/128
+#   exponent + 1      0xc35b1a44   128/128
+#   mantissa cleared  0xc2800000     0/128
+#   LOW BYTE cleared  0xc2db1a00     0/128
+#   zero              0x00000000     0/128
 #
-# This round reads the word off the board and derives its probes from it, so it
-# cannot repeat that mistake. Step 4 is the round trip: writing back exactly
-# what was dumped MUST reproduce the baseline, and if it does not then the knob
-# is broken and every FS_F0 result ever recorded is void.
+# Flipping the sign and doubling the value change nothing, and clearing the low
+# byte, worth 0.0005 as a float, destroys every channel. No float is read that
+# way. The upper bits look like don't care and the low bits look like a field.
+#
+# So take the word apart. Every probe keeps the low byte 0x44 or moves exactly
+# one field, so each result names a bit range.
 #
 # DECISION RULE, written before the run:
-#   4 fails                    the knob is broken, stop, nothing else counts
-#   only the exact word passes  the hardware reads that specific value, so it
-#                               is genuinely data and not a flag
-#   sign flip passes            magnitude only
-#   x2 passes                   the exponent does not matter, look at the low
-#                               bits, which would point at a bit pattern
-#   mantissa cleared passes     it is the exponent, i.e. a magnitude class
-#   any of those pass           the fix is a constant, not a 200 KB surface
+#   0x00000044 passes            ONE BYTE is the whole thing, and the fix is to
+#                                write a single known byte, not a float surface
+#   0x00000044 fails but
+#     0xffffff44 passes          the low byte matters and the upper bits must be
+#                                nonzero but not any particular value
+#   bits8_15 / bits16_22 fail    those fields matter too; the passing set is the
+#                                answer, read it off the table
+#   only the exact word passes   every low bit matters, so it is data after all
+#                                and the next step is what mesa computes into it
+#   step 1 or the exact-word
+#     round trip fails           the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,56 +58,30 @@ start() {
 	base
 
 	log ""
-	log "===== 2) KEEP=4, mesa's own word: must be 128/128 ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=4 \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "===== 2) the real word again, the round trip that must hold ====="
+	one "exact, known good" 0xc2db1a44
+
+	# Strip the upper bits away, a field at a time.
+	one "low byte only"        0x00000044
+	one "upper bits all ones"  0xffffff44
+	one "clear bits 8..15"     0xc2db0044
+	one "clear bits 16..22"    0xc2801a44
+	one "clear sign+exponent"  0x005b1a44
+
+	# Move the low byte itself, keeping everything above it.
+	one "low byte 0x45"        0xc2db1a45
+	one "low byte 0x04"        0xc2db1a04
+	one "low byte 0x40"        0xc2db1a40
+	one "low byte 0xff"        0xc2db1aff
 
 	log ""
-	log "===== 3) DUMP what mesa actually writes at 0x400 ====="
-	rm -rf /tmp/m1; mkdir -p /tmp/m1; cd /tmp/m1 || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_FLOATS=1 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
-	B=$(ls /tmp/m1/mesa-biases-*.bin 2>/dev/null | head -1)
-	cd / || return 0
-	[ -n "$B" ] || { log "  NO DUMP, cannot continue"; return 0; }
-	python3 - "$B" > /tmp/words.txt 2>&1 <<'PY'
-import struct, sys
-d = open(sys.argv[1], 'rb').read()
-w = struct.unpack_from('<I', d, 0x400)[0]
-f = struct.unpack_from('<f', d, 0x400)[0]
-print(f"WORD 0x{w:08x}   as float {f!r}")
-print("    first 16 bytes: " + " ".join(f"{x:02x}" for x in d[0x400:0x410]))
-print(f"    next 3 floats:  {struct.unpack_from('<3f', d, 0x404)}")
-# probes derived FROM the real word, so they cannot be wrong about it
-print(f"PROBE exact       0x{w:08x}")
-print(f"PROBE signflip    0x{w ^ 0x80000000:08x}")
-print(f"PROBE times2      0x{w + (1 << 23):08x}")
-print(f"PROBE mantissa0   0x{w & 0xff800000:08x}")
-print(f"PROBE lowbyte0    0x{w & 0xffffff00:08x}")
-PY
-	cat /tmp/words.txt > "$C"
-
-	W=$(grep "^PROBE exact" /tmp/words.txt | awk '{print $3}')
-	log ""
-	log "===== 4) ROUND TRIP: write back exactly that word ====="
-	log "  MUST be 128/128. If not, the knob is broken and FS_F0 means nothing."
-	one "the dumped word" "$W"
-
-	for p in signflip times2 mantissa0 lowbyte0; do
-		V=$(grep "^PROBE $p" /tmp/words.txt | awk '{print $3}')
-		[ -n "$V" ] && one "$p" "$V"
-	done
-	one "zero" 0
-
-	log ""
-	log "===== 10) CONTROL that can fail: baseline again ====="
+	log "===== 12) CONTROL that can fail: baseline again ====="
 	sleep 2
 	base
 
 	log ""
-	log "===== Read 4 FIRST. If the round trip fails, everything FS_F0 has ====="
-	log "===== ever reported is void, including round 33.                  ====="
+	log "===== Read step 2 first, it must pass. Then: does 0x00000044     ====="
+	log "===== alone work? That would make this one byte, not a surface.  ====="
 	sync
 }
 case "$1" in
