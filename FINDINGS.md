@@ -3,6 +3,52 @@
 
 
 
+## 2026-08-09 round 27 (The k-dependence is localised to 1936 bytes, and it is load bearing. From 200 KB down to that.)
+
+Knob confirmed: `0x400..0x0b90` zeroed, `0x1600` reads `00 3c`, nothing past
+`0x2000`.
+
+| step | result |
+|---|---|
+| `conv2d-cal` untouched | 2/2 OK |
+| `conv2d-cal` + vendor tail (round 26) | 2/2 OK |
+| **`conv2d-cal` + tail + `0x400..0x0b90` zeroed** | **0/2 FAIL** |
+| `cal_k3` + tail + the same slice zeroed | 0/2 FAIL |
+| constant input, both, tail + midzero | **byte identical**, distinct 91, `127 177 255 112 ...` |
+
+So that slice is load bearing, and the last line is the point: **once the whole
+coefficient buffer is made k-independent, the two kernel sizes behave
+identically.** In round 26, with only the tail grafted, the buffer still differed
+between them in exactly this slice, and they behaved differently. **The
+k-dependence is in `0x400..0x0b90`, 1936 bytes.**
+
+That is the search space down from 204800 bytes to 1936, and the two captured
+vendor buffers are on disk to compare against.
+
+**What the slice looks like**, per 64-byte block, in the two captures:
+
+| region | k=5 nonzero | k=3 nonzero | bytes differing |
+|---|---|---|---|
+| `0x400..0x700` | full, 64 of 64 | full, 64 of 64 | most |
+| `0x700..0x0b00` | **sparse, 0 to 37** | **dense, 55 to 64** | nearly all |
+| `0x0b00..0x0b80` | 45 to 54 | 45 to 54 | **none** |
+
+So the constant region really begins around `0x0b00`, and in the middle the 5x5
+capture is sparse where the 3x3 one is dense, which is the opposite of what a
+per-weight table would do.
+
+⚠ **1682 of the 1936 bytes differ between the two captures, and those two models
+also differ in their weights**, because `gen_geom.py` gives each geometry its own
+random tensor. So nothing here separates "varies with the kernel" from "varies
+with the weights", and guessing at the format from two confounded samples is how
+today's retracted claims happened.
+
+**The next capture has to be designed rather than repeated**: models that differ
+in exactly one thing. Same weights with a cropped kernel, the way `mutate_k.py`
+already does for tflite, so the shared taps are identical; and same kernel with
+different output channel counts. That is offline work on the model generator
+before any board time.
+
 ## 2026-08-09 round 26 (⚠ mesa's 200 KB float surface is NOT NEEDED: a 5232-byte model-independent constant does the same job. And that refutes round 24's reading.)
 
 Knob confirmed fired: `0x1600` reads `00 3c 00 3c ...`, `0x2000` onward is zero,
