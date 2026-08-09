@@ -88,6 +88,48 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 offline depthwise, weight buffer (Where the per-channel data goes is still open. Three readings of the 576-byte buffer fail, and weight compression is not the explanation.)
+
+The 576-byte depthwise buffer is `oc*k*k*2`, two bytes per tap for int8 weights,
+so it was the natural place for the missing per-channel data. Three readings,
+each with a control:
+
+| reading | result |
+|---|---|
+| int8 under a fitted scale, sweeping `\|w\|max/k` for k in 60..260 | **64.6%** best overlap |
+| the same on the REGULAR model's 9216-byte buffer, as a positive control | **92.1%**, so the method does find weights |
+| fp16, 288 halves | 31 nan/inf, values to 53216, not weights |
+| per-channel 18-byte blocks, channel c's 9 weights in block c | **14.2%**, against a **mispaired control of 13.9%** |
+
+The last line is the important one: pairing block `c` with channel `c` is no
+better than pairing it with channel `c+7`, so that test carries no signal at all.
+
+**Weight compression is not the explanation.** `posprobe_planes.py` has always
+passed `compress_weight=False` and `sv_pairs.py` did not, which was a plausible
+reason for a buffer not to decode. Rebuilding the pair with it off gives
+**identical** numbers, 92.1% and 64.6%.
+
+**And the main result now holds across both build settings:**
+
+```
+sv_rg   63 vectors   C peaks at 0x4000:  0x9080 len 256
+sv_rgu  44 vectors   C peaks at 0x4000:  0x9080 len 256     (compress_weight=False)
+sv_dw   33 vectors   C peaks at 0x4000:  NONE
+sv_dwu  51 vectors   C peaks at 0x4000:  NONE                (compress_weight=False)
+```
+
+The table is found in both regular builds, at the same offset and size, and in
+neither depthwise build.
+
+⚠ One scare along the way, recorded so it is not mistaken for a finding: the
+A-column oracle appeared to fail on `sv_rgu`, which would have voided the run.
+It was a scripting bug, the depthwise weight sum passed as the reference for
+both models. The C-peak oracle above is unaffected and fires correctly.
+
+**Still open**: where a depthwise layer's per-channel bias and requant actually
+live. Not the A/B/C table, and not the 576-byte weight buffer in any reading
+tried so far.
+
 ## 🔑 2026-08-09 offline depthwise, second oracle (A per-channel coefficient table is absent from the vendor's depthwise model under two independent tests, one of which has a working positive control.)
 
 The first oracle (C peaking at `0x4000`) only covered one grouping, so here is a

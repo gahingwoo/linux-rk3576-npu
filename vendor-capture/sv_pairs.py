@@ -161,8 +161,8 @@ def pair_dw():
     # depthwise in ONNX is groups == in_channels, so the weight is (32, 1, k, k)
     wdw = (rng.randn(32, 1, 3, 3) * 0.08).astype(np.float32)
     wrg = (rng.randn(32, 32, 3, 3) * 0.08).astype(np.float32)
-    compile_grouped("sv_dw", wdw, b, groups=32, stride=1)
-    compile_grouped("sv_rg", wrg, b, groups=1, stride=1)
+    compile_grouped("sv_dwu", wdw, b, groups=32, stride=1)
+    compile_grouped("sv_rgu", wrg, b, groups=1, stride=1)
     HW = old_hw
 
 
@@ -193,7 +193,12 @@ def compile_grouped(name, w, bias, groups, stride):
     open(ds, "w").write(os.path.abspath(calib) + "\n")
 
     r = RKNN(verbose=False)
-    r.config(target_platform="rk3576")
+    # ⚠ compress_weight defaults to on, and with it the weight buffer in the
+    # .rknn does not decode: three readings of the depthwise one, int8 under a
+    # fitted scale, fp16, and per-channel 18-byte blocks against a mispaired
+    # control, all found nothing. posprobe_planes.py has always passed
+    # compress_weight=False for exactly this reason.
+    r.config(target_platform="rk3576", compress_weight=False)
     assert r.load_onnx(model=onnx) == 0, f"{name}: load_onnx"
     assert r.build(do_quantization=True, dataset=ds) == 0, f"{name}: build"
     assert r.export_rknn(rknn_path) == 0, f"{name}: export"
