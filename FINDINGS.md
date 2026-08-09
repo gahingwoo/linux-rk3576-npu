@@ -88,6 +88,47 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-09 offline depthwise coefficients (The vendor emits no A/B/C table for a depthwise layer, and mesa writes one anyway. That is the requant signature round 43 measured.)
+
+Using the single-variable pair from `sv_pairs.py dw`, ic = oc = 32 at 112x112,
+k=3, s=1, one calibration set, only `groups` moving.
+
+Decoding the coefficient table with the layout this project established, 64
+bytes per 8 channels, A int32 at +0, B int16 at +32, C int16 at +48:
+
+| | A | B | C |
+|---|---|---|---|
+| **sv_rg**, regular | `-152272, -102671, 91137, ...`, range +-200k | small ints | `14098, 12727, 14416, ...`, **max exactly 16384** |
+| **sv_dw**, depthwise | `0, 0, 0, 0, 0, 1`, range -1.2e9 to 3.9e8 | `-5888, 0, 1, 0, 4` | `0, 0, 0, ...` with two large negatives |
+
+The regular one decodes exactly as mesa models it. `C` peaks at `0x4000`, which
+is what `C[oc] = round(2^14 * wt_sc[oc] / max wt_sc)` requires of the max-scale
+channel. The depthwise one is not a coefficient table in that layout at all.
+
+**That could just mean the wrong blob was picked**, so it was checked properly:
+scanning **every** vector in both files for one whose C column peaks at exactly
+`0x4000`, which is a layout-specific signature rather than a plausibility
+judgement:
+
+```
+sv_rg:  0x009080 len 256:  C peaks at 0x4000 (1 of 32 channels at the max)
+sv_dw:  NO vector anywhere has a C column peaking at 0x4000
+```
+
+Exactly one hit in the regular model, at the expected size of 8 bytes per
+channel, and none in the depthwise one.
+
+⚠ Scoped honestly: this rules out the 8-channels-per-64-bytes grouping. A
+depthwise table with a different grouping would not be detected by that oracle.
+
+**So mesa hands the hardware a regular-conv A/B/C table for a depthwise layer
+and the vendor does not.** That is what round 43 measured from the other side:
+`dwconv` fires and collapses to 6 distinct values over a 101-value reference,
+which is what a meaningless requant looks like, not a weight DMA fault.
+
+**Next**: find what the vendor does write for depthwise, which is now a
+well-posed offline question over the same pair, and only then touch the board.
+
 ## 2026-08-09 round 43 (What the failures actually look like. Depthwise fires and saturates; the chain writes one constant. And the metric has a caveat that a passing model exposed.)
 
 Both baselines 128/128 with 0 constant channels.
