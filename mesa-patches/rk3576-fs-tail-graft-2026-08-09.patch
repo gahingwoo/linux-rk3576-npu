@@ -1,0 +1,66 @@
+From e1b3f7f1017608957a7d6b44830d62f0ed857a74 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 9 Aug 2026 12:19:39 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_TAIL, graft the vendor's coefficient
+ tail
+
+A full dump of the vendor's coefficient buffer for two convolutions differing in
+kernel size and in weights is byte identical from 0x0b90 onward: 5232 bytes of a
+13-byte pattern repeated 54 times, more constant content, zeros, then 1280
+uint16 all 0x3c00, which is fp16 1.0. The vendor's whole buffer is about 8 KB.
+
+This file writes one float32 per weight at the same address, 204800 bytes for
+conv2d-cal. The knob writes the captured tail at its offset and zeroes past it,
+giving the buffer the vendor's shape while keeping the A/B/C table computed
+here, so the question is whether those 200 KB of floats are needed at all.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 33 ++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 41e520a..0bd2298 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -723,6 +723,39 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+        * per-channel part from the geometry. A single constant is enough to ask
+        * whether the region is load bearing at all.
+        */
++      /*
++       * ROCKET_FS_TAIL=<path>: graft the vendor's coefficient tail on.
++       *
++       * A full 8192-byte dump of the vendor's buffer for two convolutions that
++       * differ in kernel size AND in weights is byte identical from 0x0b90
++       * onward: 5232 bytes made of a 13-byte pattern repeated 54 times, more
++       * constant content, zeros, and finally 1280 uint16 all equal to 0x3c00,
++       * which is fp16 1.0. Model independent, and the vendor's whole buffer is
++       * about 8 KB.
++       *
++       * What this file writes at the same address is one float32 per weight,
++       * MAX2(ic*oc*k*k, 8192) of them, which is 204800 bytes for conv2d-cal. So
++       * this writes the vendor's tail at its own offset and zeroes everything
++       * past the end of it, giving the buffer the vendor's shape while keeping
++       * the A/B/C table this driver computes.
++       *
++       * ⚠ conv2d-cal is the control and it must survive: it computes today with
++       * the float surface and fails when that surface is zeroed, so those floats
++       * are doing something for it. If it survives this, mesa's 200 KB of floats
++       * are not needed and the buffer is far simpler than assumed. If it breaks,
++       * the vendor's structure cannot be grafted on piecemeal.
++       */
++      const char *tailf = getenv("ROCKET_FS_TAIL");
++      if (tailf && bufsize > 0x0b90) {
++         FILE *f = fopen(tailf, "rb");
++         if (f) {
++            size_t n = fread(b8 + 0x0b90, 1, bufsize - 0x0b90, f);
++            fclose(f);
++            if (0x0b90 + n < bufsize)
++               memset(b8 + 0x0b90 + n, 0, bufsize - 0x0b90 - n);
++         }
++      }
++
+       if (getenv("ROCKET_FS_PERCH")) {
+          uint16_t v = (uint16_t)strtoul(getenv("ROCKET_FS_PERCH"), NULL, 0);
+          uint8_t *p8 = b8 + groups * 64;
+-- 
+2.43.0
+

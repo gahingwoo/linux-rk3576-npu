@@ -1,49 +1,41 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 25. Round 24 found the k-dependence. This one calibrates it.
+# 2026-08-09 round 26. Graft the vendor's coefficient tail onto mesa's buffer.
 #
-# WHAT ROUND 24 ESTABLISHED, controls first:
-#   knob fired            coefficient buffer md5 1beebc1f -> 84278999
-#   control that failed   conv2d-cal with the region ZEROED went 2/2 to 0/2,
-#                         relu maxdiff 1 to 128. THE REGION IS LOAD BEARING.
-#   and the payload       on a constant input, conv2d-cal and cal_k3 with the
-#                         vendor-shaped table returned BYTE IDENTICAL results,
-#                         where before k=5 was correct and k=3 was a flat zero
-#                         point.
+# The full vendor dump is byte identical from 0x0b90 onward across two models
+# that differ in kernel size AND in weights: 5232 bytes of a 13-byte pattern
+# repeated 54 times, more constant content, zeros, then 1280 uint16 all 0x3c00,
+# which is fp16 1.0. The vendor's whole buffer is about 8 KB.
 #
-# So the thing that depends on the kernel is that region. mesa writes a float32
-# surface there whose size is MAX2(ic*oc*k*k, 8192) floats and whose content is
-# one entry per weight, so both its length and its values move with the kernel,
-# and it is load bearing. The vendor writes a per-output-channel uint16 table
-# instead, which does not depend on the kernel at all. Replacing one with the
-# other made the two kernel sizes agree.
+# mesa writes, at the same address, one float32 per weight, MAX2(ic*oc*k*k,8192)
+# of them, which is 204800 bytes for conv2d-cal.
 #
-# That explains why every single variable before this was refuted: the regcmd,
-# the weight layout, the bias, the requant and A, B and C are all correct, and
-# this was the only k-dependent payload, mistaken for padding against an
-# out-of-bounds read.
+# ROCKET_FS_TAIL=<path> writes that captured tail at 0x0b90 and zeroes
+# everything past it, so the buffer takes the vendor's SHAPE while keeping the
+# A/B/C table this driver computes.
 #
-# WHAT IS NOT KNOWN: the value. 0x1700 was the middle of the captured range and
-# it over-scales, both models saturating to 255. The captured values were 5400
-# to 6400 across 128 channels for models whose weights differ per channel; for
-# a per-tensor model like conv2d-cal the correct table should be uniform, so a
-# single constant can be right, and this sweeps for it.
+# ⚠ DECISION RULE, before the run. conv2d-cal is the control and it computes
+# 2/2 today:
+#   it SURVIVES  -> mesa's 200 KB of per-weight floats are not needed, the
+#                   buffer is far simpler than assumed, and then k=3 is the
+#                   interesting line
+#   it BREAKS    -> those floats do something for it that the vendor's constant
+#                   does not, and the structure cannot be grafted piecemeal.
+#                   That is a real answer too, and it bounds the next step.
 #
-# DECISION RULE: conv2d-cal is the oracle, it must return to 2/2 at the right
-# value. If some value makes it correct, that value against its known scales
-# gives the formula. If nothing in the sweep helps, the table is per-channel in
-# a way a constant cannot express and the next step is deriving it from the
-# capture instead.
+# Zeroing this region already breaks conv2d-cal (round 24), so "breaks" alone is
+# not informative; what matters is whether it breaks DIFFERENTLY from zeroed,
+# which is why the zeroed case is run again here for comparison.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
+TAIL=$NPU_DIR/vendor-coef-tail-0x0b90.bin
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-try() {
-	log "--- FS_PERCH=$1 ---"
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_PERCH="$1" \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 1 > "$C" 2>&1
-}
+many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
+flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -51,51 +43,70 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	# -n 8 floods the serial console and wedges the box. Learned the hard way.
 	dmesg -n 4 2>/dev/null
-
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
+
 	log ""
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
+	log "  tail blob: $(ls -l $TAIL 2>/dev/null | awk '{print $5}') bytes (expect 5232)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal untouched, the oracle for correct ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+	log "===== 1) CONTROL: conv2d-cal untouched ====="
+	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 2) SWEEP the per-channel value on conv2d-cal ====="
-	log "  0x1700 saturated, so walk down. relu maxdiff going to 1 is correct."
+	log "===== 2) THE TEST: conv2d-cal with the vendor tail grafted on ====="
+	log "  survives -> mesa's 200KB of floats are not needed"
 	sleep 2
-	for v in 0x1700 0x1000 0x0c00 0x0800 0x0600 0x0400 0x0300 0x0200 0x0100 0x0080 0x0040 0x0010; do
-		try $v
-		sleep 1
+	many conv2d-cal.tflite 2 ROCKET_FS_TAIL=$TAIL
+
+	log ""
+	log "===== 3) for comparison, conv2d-cal with the region ZEROED ====="
+	log "  known to break it; is 2 different from this, or the same?"
+	sleep 2
+	many conv2d-cal.tflite 2 ROCKET_FS_ZERO=1
+
+	log ""
+	log "===== 4) k=3 with the vendor tail ====="
+	sleep 2
+	many cal_k3.tflite 2 ROCKET_FS_TAIL=$TAIL
+
+	log ""
+	log "===== 5) k=1 with the vendor tail ====="
+	sleep 2
+	many cal_k1.tflite 2 ROCKET_FS_TAIL=$TAIL
+
+	log ""
+	log "===== 6) constant input, which isolates requant(bias) ====="
+	sleep 2
+	flat conv2d-cal.tflite ROCKET_FS_TAIL=$TAIL
+	flat cal_k3.tflite     ROCKET_FS_TAIL=$TAIL
+
+	log ""
+	log "===== 7) prove the knob fired: bytes at 0x1600 must be 00 3c ====="
+	sleep 2
+	rm -rf /tmp/t1; mkdir -p /tmp/t1; cd /tmp/t1 || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_TAIL=$TAIL \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
+	for f in /tmp/t1/mesa-biases-*.bin; do
+		[ -f "$f" ] || continue
+		python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+		python3 - "$f" > "$C" 2>&1 <<'PY'
+import sys
+d=open(sys.argv[1],'rb').read()
+print(f"    at 0x1600: {' '.join(f'{x:02x}' for x in d[0x1600:0x1610])}")
+print(f"    at 0x2000: {' '.join(f'{x:02x}' for x in d[0x2000:0x2010])}")
+print(f"    nonzero past 0x2000: {sum(1 for x in d[0x2000:] if x)} of {len(d)-0x2000}")
+PY
 	done
+	cd / || return 0
 
 	log ""
-	log "===== 3) the two nearest neighbours of 0x4000, the Q14 unit ====="
-	log "  mesa's C coefficient uses 0x4000 as unity, so try around it"
+	log "===== 8) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
-	for v in 0x4000 0x2000; do try $v; sleep 1; done
+	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 4) whichever value looked best, on k=3 as well ====="
-	log "  read section 2 first and compare; this is only a convenience run"
-	sleep 2
-	for v in 0x0400 0x0100; do
-		log "--- k=3 FS_PERCH=$v ---"
-		env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_PERCH=$v \
-			python3 "$NPU_DIR/test_model.py" "$NPU_DIR/cal_k3.tflite" 1 > "$C" 2>&1
-		sleep 1
-	done
-
-	log ""
-	log "===== 5) REPEAT CONTROL: conv2d-cal untouched ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== look for relu maxdiff dropping toward 1 in section 2. That    ====="
-	log "===== value against conv2d-cal's known scales gives the formula.    ====="
+	log "===== Read 7 first (00 3c at 0x1600, zeros past 0x2000), then 2.   ====="
 	sync
 }
 
