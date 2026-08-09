@@ -1,0 +1,63 @@
+From 6dce263f0672a67d896a9877b7366a30154dac67 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 9 Aug 2026 20:51:55 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_PERCH, write the coefficient tail
+ the way the vendor does
+
+A vendor capture of two convolutions with 128 output channels shows the region
+at groups*64 holding 128 uint16, one per output channel, values around 5400 to
+6400 and correlating +0.87 with the per-channel weight scale, followed by 0e 0e
+and zeros. What this file writes there by default is a float32 dequantised
+weight surface of thousands of entries. Same address, different element type,
+length and meaning.
+
+The value is passed in rather than derived: the two captured models carry
+different weights, so nothing yet separates the per-channel part from the
+geometry. A constant is enough to ask whether the region is load bearing.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 29 ++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 8b8e3dc..41e520a 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -703,6 +703,35 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+          }
+       }
+ 
++      /*
++       * ROCKET_FS_PERCH=<u16>: write the region at groups*64 the way the VENDOR
++       * writes it, instead of as a float array.
++       *
++       * A vendor capture on 2026-08-09, of two convolutions with 128 output
++       * channels, shows that region holding 256 bytes of 128 uint16, one per
++       * output channel, values around 5400 to 6400 and correlating +0.87 with
++       * the per-channel weight scale, followed by 0e 0e and then zeros. It is a
++       * per-channel 16-bit multiplier.
++       *
++       * What this code writes by default is a float32 dequantised weight
++       * surface, thousands of entries, sized MAX2(ic*oc*k*k, 8192) floats. Same
++       * address, different element type, different length, different meaning.
++       *
++       * The value is passed in rather than derived because the exact formula is
++       * not known yet: the capture correlates with the weight scale but the two
++       * captured models carry different weights, so nothing separates the
++       * per-channel part from the geometry. A single constant is enough to ask
++       * whether the region is load bearing at all.
++       */
++      if (getenv("ROCKET_FS_PERCH")) {
++         uint16_t v = (uint16_t)strtoul(getenv("ROCKET_FS_PERCH"), NULL, 0);
++         uint8_t *p8 = b8 + groups * 64;
++         memset(p8, 0, bufsize - groups * 64);
++         for (unsigned oc = 0; oc < output_channels; oc++)
++            ((uint16_t *)p8)[oc] = v;
++         ((uint16_t *)p8)[output_channels] = 0x0e0e;
++      }
++
+       if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+          static int task = 0;
+          rkt_dump_buffer(b8, "biases", 0, task++, 0, bufsize);
+-- 
+2.43.0
+

@@ -26,10 +26,22 @@ both BO dumps came out, the four-dumps-per-boot patch working as intended.
 | k=3 | 5436..6202 | 116 | **+0.856** |
 
 So the region immediately after the A/B/C table holds a **per-output-channel
-16-bit multiplier that tracks the weight scale**, and **mesa writes zeros
-there**. This is the region `rkt_coefs.c` calls the float surface, sizes by a
-guess, leaves zeroed and marks TODO. It is not floats and it is not the size of
-the weight count: it is 2 bytes per output channel.
+16-bit multiplier that tracks the weight scale**.
+
+⚠ **CORRECTION, within an hour of writing the above.** I first said mesa "writes
+zeros there". It does not. `rkt_coefs.c` fills that region by default with a
+**float32 dequantised weight surface**, thousands of entries, sized
+`MAX2(ic*oc*k*k, 8192)` floats, and only zeroes it under `ROCKET_FS_ZERO`. So the
+difference is sharper than "empty against full":
+
+| at `groups*64` | |
+|---|---|
+| mesa, default | float32 array, one entry per weight, thousands of them |
+| **vendor** | **128 uint16, one per output channel, then `0e 0e`, then zeros** |
+
+Same address, different element type, different length, different meaning. The
+TODO comment in that function is about the float content being unfilled, and the
+capture says the whole float framing is wrong.
 
 ⚠ **A confound I built in**: `gen_geom.py` gives each geometry its own random
 weights, so the k=5 and k=3 tables differ for that reason too. Nothing here

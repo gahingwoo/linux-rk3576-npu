@@ -1,45 +1,47 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-08 round 23. Round 22 found the last k-dependent thing.
+# 2026-08-09 round 24. The vendor capture ran and it corrected something I had
+# said, so read the correction first.
 #
-# The coefficient buffer sizes came back 206080, 75008 and 34048 bytes for k=5,
-# 3 and 1, and mesa's own expression reproduces all three exactly:
+# ⚠ I claimed mesa "writes zeros" in the region after the A/B/C table. It does
+# not. By default rkt_coefs.c fills it with a float32 dequantised weight
+# surface, thousands of entries, sized MAX2(ic*oc*k*k, 8192) floats.
 #
-#   bufsize = groups*64 + MAX2(wt_elems, 8192)*4 + 0x100,  wt_elems = ic*oc*k*k
+# The vendor writes something else entirely at the same address, groups*64:
 #
-# So that buffer is an A/B/C table of groups*64 = 1024 bytes followed by a FLOAT
-# SURFACE region whose size is derived from the weight count, and therefore from
-# the kernel. Its first 12 bytes are identical across all three, which is the
-# A values, as expected from a shared bias tensor.
+#   0x000..0x400   the A/B/C table, ~870 of 1024 bytes nonzero, same as mesa
+#   0x400..0x500   128 uint16, ONE PER OUTPUT CHANNEL, values 5400..6400,
+#                  correlating +0.87 with the per-channel weight scale
+#   0x500 onward   0e 0e, then zeros
 #
-# That region is the only k-dependent thing left. Everything else about these
-# three models is either verified identical or verified correct against a vendor
-# .rknn compiled at the same geometry: the regcmd in absolute terms, the weight
-# layout including the 32-channel grouping, the bias tensor, the requant, and A,
-# B and C. And mesa's comment says the size is a guess, "a float region bounded
-# by the full weight count", with the content left zeroed and the real content a
-# TODO.
+# Same address, different element type, different length, different meaning.
 #
-# ROCKET_FS_ELEMS overrides that element count, so the three models can be given
-# a byte-identical coefficient buffer with only the kernel differing.
+# ⚠ What is NOT claimed: that this explains the kernel-size split. The two
+# captured models carry different weights, so nothing separates the per-channel
+# part from the geometry, and the exact formula is unknown. This round asks only
+# whether the region is load bearing at all, which is a yes or no question that
+# a single constant can answer.
 #
-#   2  the three constant-input baselines with FS_ELEMS forced to 51200, which
-#      is the k=5 value. If k=3 and k=1 start behaving like k=5, the float
-#      surface region is the k dependence.
-#   3  the same on real inputs.
-#   4  ⚠ THE CONTROL: conv2d-cal with FS_ELEMS forced SMALL, 8192. It computes
-#      correctly today, so shrinking a region the hardware reads should change
-#      something. If nothing changes anywhere in this round, the knob is not
-#      load bearing and the answer is elsewhere.
+#   ROCKET_FS_PERCH=<u16>  writes the vendor SHAPE: one uint16 per output
+#                          channel, then 0e 0e, then zeros.
+#   ROCKET_FS_ZERO=1       zeroes the region entirely, already existed.
+#
+# DECISION RULE, before the run:
+#   conv2d-cal changes under FS_ZERO or FS_PERCH -> the region is load bearing,
+#       the vendor shape is worth deriving properly, and the float surface mesa
+#       writes today is wrong
+#   conv2d-cal is unchanged under BOTH            -> the region is inert for a
+#       working geometry, and any effect on k=3 is the interesting part
+#   nothing changes anywhere                      -> inert, dead end, say so
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
 many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
+flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
+	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -53,49 +55,55 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal computes ====="
+	log "===== 1) CONTROL: conv2d-cal untouched, the float surface as today ====="
 	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 2) constant input, all three with FS_ELEMS = 51200 (the k=5 value) ====="
-	log "  makes the coefficient buffer identical; only the kernel differs"
+	log "===== 2) conv2d-cal with the region ZEROED ====="
+	log "  it computes today, so if the region matters this must change"
 	sleep 2
-	flat conv2d-cal.tflite ROCKET_FS_ELEMS=51200
-	flat cal_k3.tflite     ROCKET_FS_ELEMS=51200
-	flat cal_k1.tflite     ROCKET_FS_ELEMS=51200
+	many conv2d-cal.tflite 2 ROCKET_FS_ZERO=1
 
 	log ""
-	log "===== 3) real input, k=3 and k=1 with FS_ELEMS = 51200 ====="
+	log "===== 3) conv2d-cal with the VENDOR SHAPE, one u16 per channel ====="
+	log "  0x1700 is mid range of the captured 5400..6400"
 	sleep 2
-	many cal_k3.tflite 2 ROCKET_FS_ELEMS=51200
-	many cal_k1.tflite 2 ROCKET_FS_ELEMS=51200
+	many conv2d-cal.tflite 2 ROCKET_FS_PERCH=0x1700
 
 	log ""
-	log "===== 4) THE CONTROL: conv2d-cal with FS_ELEMS forced SMALL (8192) ====="
-	log "  it computes today, so shrinking a region the hardware reads should"
-	log "  change something. Nothing changing anywhere means the knob is inert."
+	log "===== 4) k=3 with the vendor shape ====="
 	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_ELEMS=8192
+	many cal_k3.tflite 2 ROCKET_FS_PERCH=0x1700
+	log "  and zeroed, for the pair"
+	many cal_k3.tflite 2 ROCKET_FS_ZERO=1
 
 	log ""
-	log "===== 5) buffer sizes with the knob, to prove it fired ====="
+	log "===== 5) the constant input, which isolates requant(bias) ====="
+	log "  k=5 returns it correctly today, k=3 returns a flat zero point"
 	sleep 2
-	rm -rf /tmp/fs; mkdir -p /tmp/fs; cd /tmp/fs || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_ELEMS=51200 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/cal_k3.tflite" > /dev/null 2>&1
-	for f in /tmp/fs/mesa-biases-*.bin; do
+	flat conv2d-cal.tflite ROCKET_FS_PERCH=0x1700
+	flat cal_k3.tflite     ROCKET_FS_PERCH=0x1700
+
+	log ""
+	log "===== 6) prove the knob fired: the coefficient buffer both ways ====="
+	sleep 2
+	rm -rf /tmp/p1 /tmp/p2; mkdir -p /tmp/p1 /tmp/p2
+	cd /tmp/p1 && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
+	cd /tmp/p2 && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_PERCH=0x1700 \
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
+	cd /
+	for f in /tmp/p1/mesa-biases-*.bin /tmp/p2/mesa-biases-*.bin; do
 		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
 	done
-	log "  (k=3 was 75008 bytes without the knob; 206080 means it fired)"
-	cd / || return 0
 
 	log ""
-	log "===== 6) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
 	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== Read 5 first for whether the knob fired, then 2.              ====="
+	log "===== Read 6 first for whether the knob fired, then 2 and 3.        ====="
 	sync
 }
 
