@@ -1,0 +1,41 @@
+From 8ca95073998481973f3ab80e3436178bbd2f7145 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 9 Aug 2026 13:14:17 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_MIDZERO, zero the slice between
+ A/B/C and the tail
+
+With the vendor tail grafted, everything from 0x0b90 on is byte identical
+between models, conv2d-cal computes correctly and cal_k3 is still flat at the
+zero point, so the kernel dependence is not in the tail. What is left is 0x400
+to 0x0b90, holding the first 1936 bytes of the float surface.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 0bd2298..5debdb8 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -745,6 +745,19 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+        * are not needed and the buffer is far simpler than assumed. If it breaks,
+        * the vendor's structure cannot be grafted on piecemeal.
+        */
++      /*
++       * ROCKET_FS_MIDZERO: zero the slice between the A/B/C table and the tail.
++       *
++       * With the tail grafted, everything from 0x0b90 on is byte identical
++       * between models, conv2d-cal is correct and cal_k3 is still flat at the
++       * zero point, so the kernel dependence is not in the tail. What is left
++       * k-dependent in this buffer is 0x400 to 0x0b90, still holding the first
++       * 1936 bytes of the float surface. Zeroing exactly that slice says
++       * whether the buffer carries the dependence at all.
++       */
++      if (getenv("ROCKET_FS_MIDZERO") && bufsize > 0x0b90)
++         memset(b8 + 0x400, 0, 0x0b90 - 0x400);
++
+       const char *tailf = getenv("ROCKET_FS_TAIL");
+       if (tailf && bufsize > 0x0b90) {
+          FILE *f = fopen(tailf, "rb");
+-- 
+2.43.0
+

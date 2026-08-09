@@ -1,37 +1,36 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 26. Graft the vendor's coefficient tail onto mesa's buffer.
+# 2026-08-09 round 27. Round 26 got a real result and refuted round 24.
 #
-# The full vendor dump is byte identical from 0x0b90 onward across two models
-# that differ in kernel size AND in weights: 5232 bytes of a 13-byte pattern
-# repeated 54 times, more constant content, zeros, then 1280 uint16 all 0x3c00,
-# which is fp16 1.0. The vendor's whole buffer is about 8 KB.
+#   conv2d-cal with the vendor tail grafted   2/2 OK, relu maxdiff 1
+#   the same with 197888 bytes zeroed past 0x2000, confirmed in the dump
 #
-# mesa writes, at the same address, one float32 per weight, MAX2(ic*oc*k*k,8192)
-# of them, which is 204800 bytes for conv2d-cal.
+# So mesa's per-weight float32 surface is NOT NEEDED. The model that computes is
+# exactly as correct with 197888 bytes of its coefficient buffer deleted and
+# replaced by a 5232-byte constant captured from the vendor. The buffer goes
+# from 206080 bytes to 8192.
 #
-# ROCKET_FS_TAIL=<path> writes that captured tail at 0x0b90 and zeroes
-# everything past it, so the buffer takes the vendor's SHAPE while keeping the
-# A/B/C table this driver computes.
+# ⚠ And that refutes round 24. It read "a k-independent table makes both kernel
+# sizes agree" as locating the k-dependence in this region. With the tail
+# grafted both models now get byte-identical content from 0x0b90 on, conv2d-cal
+# is correct and cal_k3 is still flat at the zero point. Identical bytes,
+# different behaviour, so the dependence is not there. Round 24 agreed at a
+# wrong value, which was never evidence of anything.
 #
-# ⚠ DECISION RULE, before the run. conv2d-cal is the control and it computes
-# 2/2 today:
-#   it SURVIVES  -> mesa's 200 KB of per-weight floats are not needed, the
-#                   buffer is far simpler than assumed, and then k=3 is the
-#                   interesting line
-#   it BREAKS    -> those floats do something for it that the vendor's constant
-#                   does not, and the structure cannot be grafted piecemeal.
-#                   That is a real answer too, and it bounds the next step.
+# What is still k-dependent in this buffer is 0x400 to 0x0b90, which holds the
+# first 1936 bytes of the float surface. ROCKET_FS_MIDZERO zeroes exactly that.
 #
-# Zeroing this region already breaks conv2d-cal (round 24), so "breaks" alone is
-# not informative; what matters is whether it breaks DIFFERENTLY from zeroed,
-# which is why the zeroed case is run again here for comparison.
+# DECISION RULE:
+#   conv2d-cal survives midzero + tail -> the buffer is k-independent apart from
+#       the A/B/C table, and since cal_k3 still fails the WHOLE coefficient
+#       buffer is exonerated and the search moves elsewhere
+#   conv2d-cal breaks                  -> that slice matters, and it is 1936
+#       bytes rather than 200 KB, which is a small enough target to decode
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 TAIL=$NPU_DIR/vendor-coef-tail-0x0b90.bin
 C=/dev/console
 log() { echo "$@" > "$C"; }
-
 many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
 flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
@@ -41,75 +40,68 @@ start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
-	# -n 8 floods the serial console and wedges the box. Learned the hard way.
 	dmesg -n 4 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
-
 	log ""
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
-	log "  tail blob: $(ls -l $TAIL 2>/dev/null | awk '{print $5}') bytes (expect 5232)"
 
 	log ""
 	log "===== 1) CONTROL: conv2d-cal untouched ====="
 	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 2) THE TEST: conv2d-cal with the vendor tail grafted on ====="
-	log "  survives -> mesa's 200KB of floats are not needed"
+	log "===== 2) conv2d-cal, tail grafted, as round 26 (must still be 2/2) ====="
 	sleep 2
 	many conv2d-cal.tflite 2 ROCKET_FS_TAIL=$TAIL
 
 	log ""
-	log "===== 3) for comparison, conv2d-cal with the region ZEROED ====="
-	log "  known to break it; is 2 different from this, or the same?"
+	log "===== 3) THE TEST: tail grafted AND 0x400..0x0b90 zeroed ====="
+	log "  survives -> the buffer is k-independent apart from A/B/C"
 	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_ZERO=1
+	many conv2d-cal.tflite 2 ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
 
 	log ""
-	log "===== 4) k=3 with the vendor tail ====="
+	log "===== 4) k=3 the same way ====="
 	sleep 2
-	many cal_k3.tflite 2 ROCKET_FS_TAIL=$TAIL
+	many cal_k3.tflite 2 ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
 
 	log ""
-	log "===== 5) k=1 with the vendor tail ====="
+	log "===== 5) constant input, both, tail + midzero ====="
 	sleep 2
-	many cal_k1.tflite 2 ROCKET_FS_TAIL=$TAIL
+	flat conv2d-cal.tflite ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
+	flat cal_k3.tflite     ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
 
 	log ""
-	log "===== 6) constant input, which isolates requant(bias) ====="
+	log "===== 6) prove it fired: 0x400..0x0b90 zero, 0x1600 = 00 3c ====="
 	sleep 2
-	flat conv2d-cal.tflite ROCKET_FS_TAIL=$TAIL
-	flat cal_k3.tflite     ROCKET_FS_TAIL=$TAIL
-
-	log ""
-	log "===== 7) prove the knob fired: bytes at 0x1600 must be 00 3c ====="
-	sleep 2
-	rm -rf /tmp/t1; mkdir -p /tmp/t1; cd /tmp/t1 || return 0
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_TAIL=$TAIL \
+	rm -rf /tmp/m1; mkdir -p /tmp/m1; cd /tmp/m1 || return 0
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
+		ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1 \
 		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
-	for f in /tmp/t1/mesa-biases-*.bin; do
+	for f in /tmp/m1/mesa-biases-*.bin; do
 		[ -f "$f" ] || continue
-		python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
 		python3 - "$f" > "$C" 2>&1 <<'PY'
 import sys
 d=open(sys.argv[1],'rb').read()
+print(f"    size {len(d)}")
+print(f"    nonzero 0x000..0x400 (A/B/C): {sum(1 for x in d[0:0x400] if x)}")
+print(f"    nonzero 0x400..0x0b90      : {sum(1 for x in d[0x400:0x0b90] if x)}  (expect 0)")
 print(f"    at 0x1600: {' '.join(f'{x:02x}' for x in d[0x1600:0x1610])}")
-print(f"    at 0x2000: {' '.join(f'{x:02x}' for x in d[0x2000:0x2010])}")
-print(f"    nonzero past 0x2000: {sum(1 for x in d[0x2000:] if x)} of {len(d)-0x2000}")
+print(f"    nonzero past 0x2000        : {sum(1 for x in d[0x2000:] if x)}  (expect 0)")
 PY
 	done
 	cd / || return 0
 
 	log ""
-	log "===== 8) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
 	sleep 2
 	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== Read 7 first (00 3c at 0x1600, zeros past 0x2000), then 2.   ====="
+	log "===== Read 6 first, then 3. If 3 is 2/2 the whole coefficient      ====="
+	log "===== buffer is exonerated and the search moves elsewhere.          ====="
 	sync
 }
-
 case "$1" in
 	start) start ;;
 	stop|restart) : ;;

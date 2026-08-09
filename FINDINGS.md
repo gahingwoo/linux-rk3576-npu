@@ -3,6 +3,40 @@
 
 
 
+## 2026-08-09 round 26 (⚠ mesa's 200 KB float surface is NOT NEEDED: a 5232-byte model-independent constant does the same job. And that refutes round 24's reading.)
+
+Knob confirmed fired: `0x1600` reads `00 3c 00 3c ...`, `0x2000` onward is zero,
+**nonzero past 0x2000: 0 of 197888**.
+
+| step | result |
+|---|---|
+| `conv2d-cal` untouched | 2/2 OK, relu maxdiff 1 |
+| **`conv2d-cal` with the vendor tail grafted** | **2/2 OK, relu maxdiff 1** |
+| `conv2d-cal` with the region zeroed | 0/2 FAIL |
+| `cal_k3` with the tail | 0/2 FAIL, unchanged |
+| `cal_k1` with the tail | 0/2 FAIL, unchanged |
+
+**The model that computes is exactly as correct with 197888 bytes of its
+coefficient buffer deleted and replaced by a 5232-byte constant captured from the
+vendor.** So the per-weight float32 surface `rkt_coefs.c` builds is not needed:
+the buffer goes from 206080 bytes to 8192, and the region that
+`FINDINGS-FLOATSURFACE.md` called a value-dependent blob is a model-independent
+constant. That is a simplification worth having regardless of the open bug, and
+it removes the largest unexplained payload in the driver.
+
+⚠ **And it refutes what round 24 concluded.** That round read "a k-independent
+table makes both kernel sizes agree" as locating the k-dependence in this region.
+With the tail grafted, both models now receive **byte-identical content from
+0x0b90 onward**, conv2d-cal is correct and cal_k3 is still flat at the zero
+point. **Identical bytes, different behaviour, so the k-dependence is not
+there.** Round 24 agreed at a wrong value, which was never evidence.
+
+What remains k-dependent in that buffer is the slice `0x400..0x0b90`, which still
+holds the first 1936 bytes of mesa's float surface. Round 27 zeroes exactly that
+slice, keeping A/B/C and the tail, with conv2d-cal as the control: if it survives,
+the coefficient buffer is k-independent apart from A/B/C, and if cal_k3 still
+fails then the whole buffer is exonerated.
+
 ## 2026-08-09 full vendor coefficient dump (The buffer is ~8 KB with a model-independent tail, against mesa's 206 KB of per-weight floats. Structure below, blobs saved.)
 
 `hexlen` raised to 8192 so the whole dumped region prints. Two models, same
