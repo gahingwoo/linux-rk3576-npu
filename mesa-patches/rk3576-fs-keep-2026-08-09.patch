@@ -1,0 +1,64 @@
+From 3ddc7c9964b69a4fa76b48902ae49e22f91d6558 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 14:15:53 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_KEEP, to measure the load bearing
+ slice
+
+Round 30 reported per output channel instead of per model. Zeroing the 256
+bytes at groups*64 destroys all 128 channels, not the 64 that a 4-byte per
+channel layout would touch, and writing a correct per-channel fp16 weight scale
+fails identically. A plausible large float fails like a zero does, so it is not
+a magnitude problem. That is three rounds of substituting a meaning into this
+region, all failing the same way.
+
+The size, on the other hand, has never been measured. 0x0b90 is where the
+vendor's constant tail begins, which says nothing about this driver; all that is
+known is that keeping 0x400..0x0b90 works and zeroing it all fails.
+ROCKET_FS_KEEP=<n> keeps the first n bytes of the slice and zeroes the rest, so
+a sweep finds the boundary.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 28 ++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 39db381..667f67c 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -821,6 +821,34 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       if (getenv("ROCKET_FS_MIDZERO") && bufsize > 0x0b90)
+          memset(b8 + 0x400, 0, 0x0b90 - 0x400);
+ 
++      /*
++       * ROCKET_FS_KEEP=<n>: keep the first n bytes of the float surface and
++       * zero the rest of it, up to 0x0b90.
++       *
++       * The extent of what this driver actually needs there has never been
++       * measured. 0x0b90 was picked because that is where the VENDOR's constant
++       * tail begins, which says nothing about mesa. What is known is only that
++       * keeping 0x400..0x0b90 works and zeroing all of it fails, so the answer
++       * is somewhere in those 1936 bytes.
++       *
++       * Round 30 ruled out reading it as a per-channel table: changing the first
++       * 256 bytes destroys all 128 output channels uniformly rather than the 64
++       * a 4-byte-per-channel layout would touch, and substituting a plausible
++       * large float fails exactly like substituting zero. So stop assigning it a
++       * meaning and measure its size instead.
++       *
++       * Sizes worth landing on, for conv2d-cal at ic=16 oc=128 k=5:
++       *    512 = 128 floats = one per output channel
++       *   1600 = 400 floats = ic*k*k, one output channel's worth of weights
++       *   1936 = the whole slice, which must pass, and 0 must fail
++       */
++      const char *keep = getenv("ROCKET_FS_KEEP");
++      if (keep && bufsize > 0x0b90) {
++         unsigned n = strtoul(keep, NULL, 0);
++         if (n < 0x0b90 - 0x400)
++            memset(b8 + 0x400 + n, 0, (0x0b90 - 0x400) - n);
++      }
++
+       /*
+        * ROCKET_FS_TABLE_OVER / ROCKET_FS_HOLE: separate the two things round 28
+        * changed together.
+-- 
+2.43.0
+

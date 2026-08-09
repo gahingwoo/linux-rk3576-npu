@@ -2,46 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 30. Ask the 256 bytes at groups*64 which CHANNELS they own.
+# 2026-08-09 round 31. Measure how BIG the load bearing slice is, having run out
+# of ways to guess what it MEANS.
 #
-# Round 29 settled what they must contain: exactly mesa's float32 dequantised
-# weights. Zeroing them fails, and writing a CORRECT per-channel fp16 weight
-# scale fails the same way, with the rest of the float surface proven present
-# (1656 nonzero bytes in 0x500..0x0b90 in the dump).
+# Round 30, with both baselines clean at 128/128:
+#   the 256 bytes zeroed        0/128 channels, maxdiff 128 on every one
+#   the 256 bytes as fp16       0/128 channels
+# All 128 channels, not the 64 a 4-byte-per-channel layout would touch. So this
+# is not a per-channel table in mesa's hands, and a plausible large float fails
+# exactly like a zero does. Three rounds of substituting a meaning have all
+# failed the same way, so stop.
 #
-# The register hypothesis that came out of that is now DEAD, checked offline
-# against a vendor .rknn compiled at conv2d-cal's geometry: mesa's DPU_RDMA
-# block matches the vendor (0x501c=0x710, 0x5034=0x41, 0x5044=0x40000010), the
-# computed CNA/CORE/DPU values match too (0x101c=0xc800, 0x1020=0x190,
-# 0x1080=0x01010202, 0x4030=0x007f0710, 0x4050=0x80011111), and 0x4100..0x4154
-# are zero on both sides. So the configuration is NOT where the two differ.
+# What was never measured is the SIZE. 0x0b90 is where the VENDOR's constant
+# tail starts, which says nothing about this driver. All that is known is that
+# keeping 0x400..0x0b90 works and zeroing all of it fails, so the boundary is
+# somewhere inside those 1936 bytes. ROCKET_FS_KEEP=<n> keeps the first n and
+# zeroes the rest of the slice, so a sweep finds it.
 #
-# What has never been asked is the granularity. 256 bytes over 128 output
-# channels is 2 bytes each, which is the vendor's layout; over 64 channels it is
-# 4 bytes each. perch.py reports per output channel instead of one number, so
-# the damage pattern names the element size.
+# Sizes that would mean something, at ic=16 oc=128 k=5:
+#    512 = 128 floats = one per output channel
+#   1600 = 400 floats = ic*k*k, exactly one output channel's weights
 #
 # DECISION RULE, written before the run:
-#   all 128 channels wrong        the region is global, not per-channel, and
-#                                 the vendor's per-channel reading does not
-#                                 carry over to how mesa drives it
-#   channels 0..63 wrong only     4 bytes per channel: mesa's float32 IS a
-#                                 per-channel table and only half of it fits in
-#                                 the 256 bytes. That makes the whole surface
-#                                 128 float32 = 512 bytes, not 200 KB, and the
-#                                 fp16 attempt failed only because it was the
-#                                 wrong ELEMENT SIZE
-#   some other channel pattern    read it literally, it is the layout
-#   damage ignores channels       not a per-channel structure at all
-#   step 1 not all-match          the build is wrong, stop and check the image
+#   the boundary lands on 512    one float per output channel: the surface is
+#                                512 bytes, not 200 KB, and the fp16 attempt
+#                                failed on ELEMENT SIZE alone
+#   lands on 1600                one output channel's worth of weights, which
+#                                says the hardware reads channel 0's weights
+#                                from here and the rest from the weight buffer
+#   lands somewhere else         report the number, it is the measurement
+#   no boundary, only 1936 works every byte matters and the slice is opaque;
+#                                then the next move is the vendor's own value
+#                                at each offset, not mesa's
+#   step 1 or 8 not 128/128      the build is wrong, stop and check the image
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 perch() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$m" > "$C" 2>&1; }
-many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -53,34 +52,25 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) BASELINE per channel: must be 128/128 ====="
+	log "===== 1) BASELINE, untouched float surface: must be 128/128 ====="
 	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
 
-	log ""
-	log "===== 2) the 256 bytes ZEROED, per channel ====="
-	log "  0..63 only -> 4 bytes per channel;  all 128 -> not per-channel"
-	sleep 2
-	perch conv2d-cal.tflite ROCKET_FS_HOLE=1
+	for n in 1936 1600 1024 512 256 0; do
+		log ""
+		log "===== KEEP $n bytes of the slice, zero the rest to 0x0b90 ====="
+		sleep 2
+		perch conv2d-cal.tflite ROCKET_FS_FLOATS=1 ROCKET_FS_KEEP=$n
+	done
 
 	log ""
-	log "===== 3) the 256 bytes as fp16 per-channel scale, per channel ====="
-	sleep 2
-	perch conv2d-cal.tflite ROCKET_FS_TABLE_OVER=1
-
-	log ""
-	log "===== 4) CONTROL that can fail: baseline again ====="
-	log "  if this is not 128/128 the runs above say nothing"
+	log "===== 8) CONTROL that can fail: baseline again ====="
+	log "  not 128/128 here and the sweep above says nothing"
 	sleep 2
 	perch conv2d-cal.tflite ROCKET_FS_FLOATS=1
 
 	log ""
-	log "===== 5) the usual whole-model number, for continuity ====="
-	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_FLOATS=1
-
-	log ""
-	log "===== Read 1 and 4 first. Then the channel RANGES in 2.          ====="
-	log "===== 0..63 alone means the surface is 128 float32, not 200 KB.  ====="
+	log "===== Read 1 and 8 first. KEEP 1936 must pass and KEEP 0 must     ====="
+	log "===== fail; the smallest passing n is the answer.                 ====="
 	sync
 }
 case "$1" in

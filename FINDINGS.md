@@ -88,6 +88,38 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 30 (Not a per-channel table. Changing those 256 bytes destroys all 128 output channels, not the 64 a per-channel layout would touch.)
+
+Both baselines clean, so the run counts.
+
+| step | channels matching CPU |
+|---|---|
+| 1) untouched float surface | **128/128** |
+| 2) the 256 bytes zeroed | **0/128**, maxdiff 128 on every channel |
+| 3) the 256 bytes as fp16 per-channel scales | **0/128** |
+| 4) baseline again | **128/128** |
+
+The first branch of the decision rule. A 4-byte-per-channel table would have
+left channels 64..127 alone; instead every channel is pinned at the output zero
+point. And substituting a plausible large float fails exactly like substituting
+zero, so it is not a magnitude problem either: `0x43d3 0x43d3` read as float32
+is 423.65, the same order as the dequantised weights that work.
+
+**Three rounds have now tried to substitute a meaning into this region and all
+three failed identically.** The vendor's per-channel fp16 reading is solid about
+the vendor's own files and does not describe how mesa drives the same address.
+
+**So measure the size instead of guessing the meaning.** The extent has never
+actually been measured: `0x0b90` was picked because that is where the vendor's
+constant tail starts, which says nothing about this driver. All that is known is
+that keeping `0x400..0x0b90` works and zeroing all of it fails, so the boundary
+is somewhere in those 1936 bytes. `ROCKET_FS_KEEP=<n>` keeps the first n bytes
+and zeroes the rest, and round 31 sweeps 1936, 1600, 1024, 512, 256, 0 with the
+baseline at both ends. Landing on 512 would mean one float per output channel,
+and that the fp16 attempt failed on element size alone; landing on 1600 would
+mean `ic*k*k`, exactly one output channel's worth of weights. Built, not
+flashed.
+
 ## 2026-08-09 offline register audit (The register hypothesis from round 29 is dead. mesa's configuration matches the vendor at this geometry, DPU_RDMA included.)
 
 Round 29 concluded the format of the surface at `groups*64` must come from a
