@@ -3,6 +3,47 @@
 
 
 
+## 2026-08-09 VENDOR COEFFICIENT CAPTURE (⚠ the region mesa zeroes is not zero on the vendor: a 128-entry per-output-channel uint16 table.)
+
+First attempt did not run: `rknn_init = -1` both models, because the vendor NPU
+driver never probed. With mainline U-Boot and TF-A in SPI the Rockchip SCMI
+power domain and reset protocols are absent, `SCMI protocol 17 not active` and
+`22 not active`, so enabling the NPU clock returns -71. **The vendor kernel needs
+`rock4d-spi-uboot-vendor.img` in SPI.** After that swap both models loaded and
+both BO dumps came out, the four-dumps-per-boot patch working as intended.
+
+**The coefficient buffer, 8192 bytes dumped, same structure in both:**
+
+| offset | content |
+|---|---|
+| `0x000..0x400` | the A/B/C table, ~870 of 1024 bytes nonzero, matching mesa's `groups*64` layout for 128 output channels |
+| **`0x400..0x500`** | **`a0 16 61 17 65 17 4b 17 ...`, 256 bytes = 128 uint16, one per output channel** |
+| `0x500` onward | `0e 0e` then zeros |
+
+| dump | values | distinct | correlation with the per-channel weight scale |
+|---|---|---|---|
+| k=5 | 5691..6394 | 113 | **+0.873** |
+| k=3 | 5436..6202 | 116 | **+0.856** |
+
+So the region immediately after the A/B/C table holds a **per-output-channel
+16-bit multiplier that tracks the weight scale**, and **mesa writes zeros
+there**. This is the region `rkt_coefs.c` calls the float surface, sizes by a
+guess, leaves zeroed and marks TODO. It is not floats and it is not the size of
+the weight count: it is 2 bytes per output channel.
+
+⚠ **A confound I built in**: `gen_geom.py` gives each geometry its own random
+weights, so the k=5 and k=3 tables differ for that reason too. Nothing here
+attributes the difference between them to the kernel. The one thing this does
+establish is that **the vendor populates a region mesa leaves empty**, which is
+a real and unimplemented piece of the datapath.
+
+Whether it explains the kernel-size split is a separate question and is not
+claimed here. It is a candidate for the *gain* being wrong, which is what was
+measured: against the CPU the k=3 response is about 80x too small and the k=1
+response about 3.5x too large, while the spatial mapping is correct. The models
+that fail are per-tensor quantized, so the correct table for them would be
+uniform rather than varying, and mesa writes zero rather than uniform.
+
 ## 2026-08-09 (Offline is exhausted for the last question, and here is why. A vendor coefficient capture is built and waiting.)
 
 **The coefficient buffer cannot be read out of a `.rknn`.** Scanning a compiled
