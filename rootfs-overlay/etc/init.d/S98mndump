@@ -1,47 +1,49 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 24. The vendor capture ran and it corrected something I had
-# said, so read the correction first.
+# 2026-08-09 round 25. Round 24 found the k-dependence. This one calibrates it.
 #
-# ⚠ I claimed mesa "writes zeros" in the region after the A/B/C table. It does
-# not. By default rkt_coefs.c fills it with a float32 dequantised weight
-# surface, thousands of entries, sized MAX2(ic*oc*k*k, 8192) floats.
+# WHAT ROUND 24 ESTABLISHED, controls first:
+#   knob fired            coefficient buffer md5 1beebc1f -> 84278999
+#   control that failed   conv2d-cal with the region ZEROED went 2/2 to 0/2,
+#                         relu maxdiff 1 to 128. THE REGION IS LOAD BEARING.
+#   and the payload       on a constant input, conv2d-cal and cal_k3 with the
+#                         vendor-shaped table returned BYTE IDENTICAL results,
+#                         where before k=5 was correct and k=3 was a flat zero
+#                         point.
 #
-# The vendor writes something else entirely at the same address, groups*64:
+# So the thing that depends on the kernel is that region. mesa writes a float32
+# surface there whose size is MAX2(ic*oc*k*k, 8192) floats and whose content is
+# one entry per weight, so both its length and its values move with the kernel,
+# and it is load bearing. The vendor writes a per-output-channel uint16 table
+# instead, which does not depend on the kernel at all. Replacing one with the
+# other made the two kernel sizes agree.
 #
-#   0x000..0x400   the A/B/C table, ~870 of 1024 bytes nonzero, same as mesa
-#   0x400..0x500   128 uint16, ONE PER OUTPUT CHANNEL, values 5400..6400,
-#                  correlating +0.87 with the per-channel weight scale
-#   0x500 onward   0e 0e, then zeros
+# That explains why every single variable before this was refuted: the regcmd,
+# the weight layout, the bias, the requant and A, B and C are all correct, and
+# this was the only k-dependent payload, mistaken for padding against an
+# out-of-bounds read.
 #
-# Same address, different element type, different length, different meaning.
+# WHAT IS NOT KNOWN: the value. 0x1700 was the middle of the captured range and
+# it over-scales, both models saturating to 255. The captured values were 5400
+# to 6400 across 128 channels for models whose weights differ per channel; for
+# a per-tensor model like conv2d-cal the correct table should be uniform, so a
+# single constant can be right, and this sweeps for it.
 #
-# ⚠ What is NOT claimed: that this explains the kernel-size split. The two
-# captured models carry different weights, so nothing separates the per-channel
-# part from the geometry, and the exact formula is unknown. This round asks only
-# whether the region is load bearing at all, which is a yes or no question that
-# a single constant can answer.
-#
-#   ROCKET_FS_PERCH=<u16>  writes the vendor SHAPE: one uint16 per output
-#                          channel, then 0e 0e, then zeros.
-#   ROCKET_FS_ZERO=1       zeroes the region entirely, already existed.
-#
-# DECISION RULE, before the run:
-#   conv2d-cal changes under FS_ZERO or FS_PERCH -> the region is load bearing,
-#       the vendor shape is worth deriving properly, and the float surface mesa
-#       writes today is wrong
-#   conv2d-cal is unchanged under BOTH            -> the region is inert for a
-#       working geometry, and any effect on k=3 is the interesting part
-#   nothing changes anywhere                      -> inert, dead end, say so
+# DECISION RULE: conv2d-cal is the oracle, it must return to 2/2 at the right
+# value. If some value makes it correct, that value against its known scales
+# gives the formula. If nothing in the sweep helps, the table is per-channel in
+# a way a constant cannot express and the next step is deriving it from the
+# capture instead.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
 
-many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
-flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
+try() {
+	log "--- FS_PERCH=$1 ---"
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_PERCH="$1" \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 1 > "$C" 2>&1
+}
 
 start() {
 	i=0
@@ -55,55 +57,45 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal untouched, the float surface as today ====="
-	many conv2d-cal.tflite 2
+	log "===== 1) CONTROL: conv2d-cal untouched, the oracle for correct ====="
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 2) conv2d-cal with the region ZEROED ====="
-	log "  it computes today, so if the region matters this must change"
+	log "===== 2) SWEEP the per-channel value on conv2d-cal ====="
+	log "  0x1700 saturated, so walk down. relu maxdiff going to 1 is correct."
 	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_ZERO=1
-
-	log ""
-	log "===== 3) conv2d-cal with the VENDOR SHAPE, one u16 per channel ====="
-	log "  0x1700 is mid range of the captured 5400..6400"
-	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_PERCH=0x1700
-
-	log ""
-	log "===== 4) k=3 with the vendor shape ====="
-	sleep 2
-	many cal_k3.tflite 2 ROCKET_FS_PERCH=0x1700
-	log "  and zeroed, for the pair"
-	many cal_k3.tflite 2 ROCKET_FS_ZERO=1
-
-	log ""
-	log "===== 5) the constant input, which isolates requant(bias) ====="
-	log "  k=5 returns it correctly today, k=3 returns a flat zero point"
-	sleep 2
-	flat conv2d-cal.tflite ROCKET_FS_PERCH=0x1700
-	flat cal_k3.tflite     ROCKET_FS_PERCH=0x1700
-
-	log ""
-	log "===== 6) prove the knob fired: the coefficient buffer both ways ====="
-	sleep 2
-	rm -rf /tmp/p1 /tmp/p2; mkdir -p /tmp/p1 /tmp/p2
-	cd /tmp/p1 && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
-	cd /tmp/p2 && env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos ROCKET_FS_PERCH=0x1700 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
-	cd /
-	for f in /tmp/p1/mesa-biases-*.bin /tmp/p2/mesa-biases-*.bin; do
-		[ -f "$f" ] && python3 "$NPU_DIR/bstat.py" "$f" > "$C" 2>&1
+	for v in 0x1700 0x1000 0x0c00 0x0800 0x0600 0x0400 0x0300 0x0200 0x0100 0x0080 0x0040 0x0010; do
+		try $v
+		sleep 1
 	done
 
 	log ""
-	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 3) the two nearest neighbours of 0x4000, the Q14 unit ====="
+	log "  mesa's C coefficient uses 0x4000 as unity, so try around it"
 	sleep 2
-	many conv2d-cal.tflite 2
+	for v in 0x4000 0x2000; do try $v; sleep 1; done
 
 	log ""
-	log "===== Read 6 first for whether the knob fired, then 2 and 3.        ====="
+	log "===== 4) whichever value looked best, on k=3 as well ====="
+	log "  read section 2 first and compare; this is only a convenience run"
+	sleep 2
+	for v in 0x0400 0x0100; do
+		log "--- k=3 FS_PERCH=$v ---"
+		env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_PERCH=$v \
+			python3 "$NPU_DIR/test_model.py" "$NPU_DIR/cal_k3.tflite" 1 > "$C" 2>&1
+		sleep 1
+	done
+
+	log ""
+	log "===== 5) REPEAT CONTROL: conv2d-cal untouched ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== look for relu maxdiff dropping toward 1 in section 2. That    ====="
+	log "===== value against conv2d-cal's known scales gives the formula.    ====="
 	sync
 }
 

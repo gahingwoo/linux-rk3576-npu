@@ -3,6 +3,48 @@
 
 
 
+## 2026-08-09 round 24 (⚠ THE K-DEPENDENCE IS FOUND. The coefficient tail is load bearing, and replacing mesa's float surface with the vendor's shape makes 5x5 and 3x3 agree.)
+
+Controls first. The knob fired, coefficient buffer md5 `1beebc1f` to `84278999`,
+distinct 209 to 140. And the control could fail, and did:
+
+| conv2d-cal, which computes 2/2 today | result |
+|---|---|
+| untouched | 2/2 OK, relu maxdiff 1 |
+| **region ZEROED** (`ROCKET_FS_ZERO=1`) | **0/2 FAIL, relu maxdiff 128** |
+| region written the vendor way, one u16 per channel | 0/2 FAIL, relu maxdiff 119 |
+
+**So the region is load bearing.** Zeroing it breaks the only model that works.
+
+**And the payload.** On a constant input, with the vendor-shaped table in place:
+
+| | first 12 channels |
+|---|---|
+| `conv2d-cal` (k=5) | `128 177 255 128 128 128 128 196 188 255 128 128` |
+| **`cal_k3` (k=3)** | **byte identical** |
+
+Before this, on the same test, k=5 returned the correct `requant(bias)` and k=3
+returned a flat zero point. **Giving both a table that does not depend on the
+kernel makes them agree.**
+
+**That is the k-dependence.** `rkt_coefs.c` writes a float32 surface at
+`groups*64` whose size is `MAX2(ic*oc*k*k, 8192)` floats and whose content is one
+entry per weight, so both its length and its values move with the kernel, and it
+is load bearing. The vendor writes a per-output-channel uint16 table there, which
+does not depend on the kernel at all.
+
+It also explains why every single variable before this was refuted with a clean
+control: the regcmd, the weight layout, the bias, the requant and A, B and C are
+all correct, and this was the only k-dependent payload left. It was mistaken for
+padding added to stop an out-of-bounds read.
+
+⚠ **The value is not known.** `0x1700` was the middle of the captured range and
+it over-scales, both models saturating to 255. The captured values ran 5400 to
+6400 across 128 channels of models whose per-channel weight scales differ; for a
+per-tensor model like conv2d-cal the correct table should be uniform, so a single
+constant can be right. Round 25 sweeps for it with conv2d-cal as the oracle: the
+value that returns it to 2/2, against its known scales, gives the formula.
+
 ## 2026-08-09 VENDOR COEFFICIENT CAPTURE (⚠ the region mesa zeroes is not zero on the vendor: a 128-entry per-output-channel uint16 table.)
 
 First attempt did not run: `rknn_init = -1` both models, because the vendor NPU
