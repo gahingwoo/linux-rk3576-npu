@@ -1,5 +1,5 @@
 --- /tmp/rknpu_job.c.bak	2026-08-09 19:25:11.639929234 +1200
-+++ rknpu_job.c	2026-08-09 19:25:33.635079411 +1200
++++ /home/parallels/Desktop/rk3576-vendor-kernel/drivers/rknpu/rknpu_job.c	2026-08-09 21:02:14.740487219 +1200
 @@ -593,15 +593,23 @@
  		 * pre-compute (the result is the job's product, not yet here).
  		 */
@@ -27,7 +27,7 @@
  
  				if (rphys && pfn_valid(__phys_to_pfn(rphys))) {
  					const u64 *rv = (const u64 *)phys_to_virt(rphys);
-@@ -621,12 +629,23 @@
+@@ -621,12 +629,33 @@
  						}
  					}
  
@@ -52,7 +52,17 @@
 +					 * Dump both: the whole table and the
 +					 * start of the surface.
 +					 */
-+					rknpu_cap_dump_bo(dom, "bias", a_bias, 8192, 2048);
++					/*
++					 * ⚠ hexlen was 2048 against a len of
++					 * 8192, so the first look at this buffer
++					 * reported 4608 nonzero bytes and showed
++					 * only 1684 of them. The 2924 nonzero
++					 * bytes past 0x800 were never printed and
++					 * were mistaken for zeros, which turned
++					 * "128 uint16 then padding" into a claim
++					 * it could not support. Print all of it.
++					 */
++					rknpu_cap_dump_bo(dom, "bias", a_bias, 8192, 8192);
 +					rknpu_cap_dump_bo(dom, "output", a_out, 4096, 256);
  
  					/*

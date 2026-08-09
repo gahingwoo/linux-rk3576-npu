@@ -3,7 +3,42 @@
 
 
 
-## 2026-08-09 round 24 (⚠ THE K-DEPENDENCE IS FOUND. The coefficient tail is load bearing, and replacing mesa's float surface with the vendor's shape makes 5x5 and 3x3 agree.)
+## 2026-08-09 round 25 (⚠ The sweep found nothing, and it exposes two errors of mine in round 24. Read this before acting on that entry.)
+
+Twelve values from `0x0010` to `0x4000`, plus `0x2000`, all on `conv2d-cal` with
+the controls passing 2/2 at both ends. Every one of them: relu maxdiff 119 to
+128, top1 npu = 1. **No constant in that region restores the model that works.**
+
+**Error 1, an over-reading.** Round 24 said that giving both kernel sizes a
+k-independent table "makes them agree", and treated that as progress. They agree
+because they are **equally wrong**, not because either is right. Agreement at a
+wrong value is not evidence that the vendor's format is the fix, and this sweep
+shows that format with any constant makes `conv2d-cal` worse rather than better.
+
+What survives from round 24 is only this, and it is solid because the control
+could fail and did: **zeroing the region takes `conv2d-cal` from 2/2 to 0/2, so
+the region is load bearing.** mesa's float surface is evidently right for
+`conv2d-cal`, since that model computes with it.
+
+**Error 2, and the worse one: I under-dumped and read the gap as zeros.**
+
+```
+dump #1: bias len=8192  nonzero (whole buffer) = 4608
+   hexdump covered 2048 bytes, of which 1684 nonzero
+   never looked at: 2924 nonzero bytes beyond 0x800
+```
+
+The capture reported 4608 nonzero bytes in 8192 and printed only the first 2048.
+I described the layout as "128 uint16, then `0e 0e`, then zeros" when **more than
+half the nonzero content was in the part that was never printed**. That claim is
+withdrawn: what is established is the first 1024 bytes are the A/B/C table and
+the 256 bytes after it are 128 uint16, one per output channel. Everything I said
+about the rest was an artifact of the dump length.
+
+Fixed in the capture patch, `hexlen` 2048 to 8192, so the whole dumped region is
+printed. Capture image rebuilt and verified to carry the rebuilt kernel.
+
+## 2026-08-09 round 24 (⚠ PARTLY WITHDRAWN by round 25 above: the region is load bearing, but "the k-dependence is found" was an over-reading. The coefficient tail is load bearing, and replacing mesa's float surface with the vendor's shape makes 5x5 and 3x3 agree.)
 
 Controls first. The knob fired, coefficient buffer md5 `1beebc1f` to `84278999`,
 distinct 209 to 140. And the control could fail, and did:
