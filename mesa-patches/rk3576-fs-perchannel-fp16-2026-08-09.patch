@@ -1,0 +1,83 @@
+From f2d7ed5384d8cc7922f3293d9f9c894945b47f0b Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <huhuvmb88@outlook.com>
+Date: Sun, 9 Aug 2026 13:43:36 +1200
+Subject: [PATCH] rocket RK3576: write a per-channel fp16 weight scale table at
+ groups*64
+
+The vendor's coefficient buffer is stored in the .rknn, so this region can be
+read on the host. Compiling one identical model twice shows coef 0x500..0x0b90
+is not reproducible, while the A/B/C table and the 2 bytes per channel at
+groups*64 are. On those, a 5x5 whose weights are zero outside the centre 3x3
+and the 3x3 it contains come out byte identical, dropping 128 channels to 64
+leaves the first 64 entries alone, and scaling channel 7's weights by 2 and
+channel 11's by 1/2 moves exactly those two entries by exactly 2.0 and 0.5.
+
+So it is one fp16 per output channel holding that channel's weight scale, not
+the float32 dequantised weight surface written here today. That also explains
+why zeroing from 0x400 broke the model that computes: the float32 weights were
+being read as fp16 pairs and happened to be nonzero.
+
+ROCKET_FS_FLOATS restores the old surface, ROCKET_FS_REL writes the scale
+relative to the largest channel, ROCKET_FS_ZERO zeroes the region.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 44 +++++++++++++++++++++++++-
+ 1 file changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 5debdb8..7bd3483 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -680,7 +680,49 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                if (slot < fcap)
+                   fs[slot] = -(float)biases_in[oc] * in_sc * wt;
+             }
+-         } else if (!getenv("ROCKET_FS_ZERO")) {
++         } else if (!getenv("ROCKET_FS_ZERO") && !getenv("ROCKET_FS_FLOATS")) {
++            /*
++             * One fp16 per OUTPUT CHANNEL, the per-channel weight scale.
++             *
++             * Not a per-weight float surface. Compiling vendor .rknn files on
++             * the host and pulling this region straight out of the container
++             * says so directly:
++             *
++             *  - compiling ONE identical model twice gives a byte identical
++             *    A/B/C table and a byte identical region here, so both are
++             *    reproducible and can be compared across models;
++             *  - dropping a model from 128 to 64 output channels leaves the
++             *    first 64 entries byte identical, so entry i belongs to
++             *    channel i;
++             *  - multiplying channel 7's weights by 2 and channel 11's by 1/2
++             *    moves exactly those two entries, by exactly 2.0 and 0.5, and
++             *    leaves the other 126 alone.
++             *
++             * Read as fp16 the entries are the channel's weight scale. That
++             * also explains why zeroing this region breaks conv2d-cal while
++             * the float surface is otherwise unnecessary: the float32 weights
++             * that used to land here were being read as fp16 pairs and
++             * happened to be nonzero, and zero here scales every channel to
++             * nothing.
++             *
++             * ROCKET_FS_FLOATS restores the old per-weight float surface,
++             * ROCKET_FS_REL writes the scale relative to the largest channel
++             * the way the A/B/C table's C term is written.
++             */
++            const float *wsc = poperation->conv.weight_tensor->scales;
++            float wt_sc = poperation->conv.weight_tensor->scale;
++            float norm = 1.0f;
++            if (getenv("ROCKET_FS_REL")) {
++               norm = wsc ? wsc[0] : wt_sc;
++               if (wsc)
++                  for (unsigned oc = 1; oc < output_channels; oc++)
++                     if (wsc[oc] > norm)
++                        norm = wsc[oc];
++            }
++            uint16_t *fs16 = (uint16_t *)(b8 + groups * 64);
++            for (unsigned oc = 0; oc < output_channels; oc++)
++               fs16[oc] = _mesa_float_to_half((wsc ? wsc[oc] : wt_sc) / norm);
++         } else if (getenv("ROCKET_FS_FLOATS")) {
+             const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
+             float wt_sc = poperation->conv.weight_tensor->scale;
+             unsigned iw = poperation->conv.weight_tensor->dims[1];
+-- 
+2.43.0
+

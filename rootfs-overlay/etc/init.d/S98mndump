@@ -1,31 +1,44 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 27. Round 26 got a real result and refuted round 24.
+# 2026-08-09 round 28. The region at groups*64 is a PER-CHANNEL fp16 WEIGHT
+# SCALE TABLE, not a per-weight float surface. Worked out offline, no board.
 #
-#   conv2d-cal with the vendor tail grafted   2/2 OK, relu maxdiff 1
-#   the same with 197888 bytes zeroed past 0x2000, confirmed in the dump
+# The vendor's coefficient buffer is not built at load time, it is STORED in the
+# .rknn, so the whole question became a host question. Compiling models with
+# rknn-toolkit2 here and pulling the region out of the container gives:
 #
-# So mesa's per-weight float32 surface is NOT NEEDED. The model that computes is
-# exactly as correct with 197888 bytes of its coefficient buffer deleted and
-# replaced by a 5232-byte constant captured from the vendor. The buffer goes
-# from 206080 bytes to 8192.
+#   compile ONE identical model twice   A/B/C and the table are byte identical,
+#                                       but coef 0x500..0x0b90 is NOT: the
+#                                       toolkit writes different garbage there
+#                                       every build. So the "1936 k-dependent
+#                                       bytes" of rounds 26 and 27 were noise.
+#   128 channels vs 64, same weights    the first 64 entries are byte identical
+#   channel 7 x2 and channel 11 x0.5    exactly those two entries move, by
+#                                       exactly 2.0 and 0.5, other 126 untouched
+#   5x5 with a zero ring vs the 3x3     BYTE IDENTICAL, both chunks
+#     it contains, same weights
 #
-# ⚠ And that refutes round 24. It read "a k-independent table makes both kernel
-# sizes agree" as locating the k-dependence in this region. With the tail
-# grafted both models now get byte-identical content from 0x0b90 on, conv2d-cal
-# is correct and cal_k3 is still flat at the zero point. Identical bytes,
-# different behaviour, so the dependence is not there. Round 24 agreed at a
-# wrong value, which was never evidence of anything.
+# Read as fp16 the entries are the channel's weight scale. And the kernel size
+# does not enter this buffer at all, which is why every attempt to find the
+# k=5/k=3 divide in it has failed.
 #
-# What is still k-dependent in this buffer is 0x400 to 0x0b90, which holds the
-# first 1936 bytes of the float surface. ROCKET_FS_MIDZERO zeroes exactly that.
+# It also explains round 27: zeroing from 0x400 killed conv2d-cal because the
+# float32 weights that landed there were being read as fp16 pairs and happened
+# to be nonzero. Zero here scales every channel to nothing.
 #
-# DECISION RULE:
-#   conv2d-cal survives midzero + tail -> the buffer is k-independent apart from
-#       the A/B/C table, and since cal_k3 still fails the WHOLE coefficient
-#       buffer is exonerated and the search moves elsewhere
-#   conv2d-cal breaks                  -> that slice matters, and it is 1936
-#       bytes rather than 200 KB, which is a small enough target to decode
+# So mesa now writes oc fp16 values at groups*64 and nothing else.
+#
+# DECISION RULE, written before the run:
+#   2 is 2/2                 the table is right, and 200 KB of floats become 128
+#                            fp16. Whether 3 (k=3) computes is a separate
+#                            question and NOT what this round is testing.
+#   2 breaks, 4 is 2/2       the absolute scale is wrong; 5 says whether the
+#                            relative one is right instead.
+#   2 and 5 both break       the fp16 reading is right about WHICH bytes but
+#                            wrong about the value, and 4 (the old floats) is
+#                            the only thing that works, i.e. no worse than today
+#   4 breaks                 the build is not what I think it is, stop and check
+#                            the image before reading anything else
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 TAIL=$NPU_DIR/vendor-coef-tail-0x0b90.bin
@@ -33,8 +46,6 @@ C=/dev/console
 log() { echo "$@" > "$C"; }
 many() { m="$1"; n="$2"; shift 2; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
 	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$m" "$n" > "$C" 2>&1; }
-flat() { m="$1"; shift; env TEFLON_LIB=/usr/lib/libteflon.so "$@" \
-	python3 "$NPU_DIR/flatin.py" "$NPU_DIR/$m" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -46,60 +57,69 @@ start() {
 	log "  task_con16=$(cat /sys/module/rocket/parameters/task_con16 2>/dev/null)"
 
 	log ""
-	log "===== 1) CONTROL: conv2d-cal untouched ====="
+	log "===== 1) BASELINE: the old float surface, conv2d-cal ====="
+	log "  ROCKET_FS_FLOATS restores exactly what shipped in round 27"
+	many conv2d-cal.tflite 2 ROCKET_FS_FLOATS=1
+
+	log ""
+	log "===== 2) THE TEST: fp16 per-channel weight scale, conv2d-cal ====="
+	log "  128 fp16 at groups*64, everything after it zero"
+	sleep 2
 	many conv2d-cal.tflite 2
 
 	log ""
-	log "===== 2) conv2d-cal, tail grafted, as round 26 (must still be 2/2) ====="
+	log "===== 3) same table, cal_k3 (the kernel size that has never worked) ====="
+	log "  offline says this buffer does not depend on k, so a failure here is"
+	log "  EXPECTED and says the divide is in the weights or the registers"
+	sleep 2
+	many cal_k3.tflite 2
+
+	log ""
+	log "===== 4) CONTROL that can fail: the table zeroed ====="
+	log "  must BREAK. If a zeroed table computes, the region is not read and"
+	log "  every reading above is about bytes nobody uses."
+	sleep 2
+	many conv2d-cal.tflite 2 ROCKET_FS_ZERO=1
+
+	log ""
+	log "===== 5) the scale written RELATIVE to the largest channel ====="
+	sleep 2
+	many conv2d-cal.tflite 2 ROCKET_FS_REL=1
+
+	log ""
+	log "===== 6) fp16 table PLUS the vendor's constant tail ====="
 	sleep 2
 	many conv2d-cal.tflite 2 ROCKET_FS_TAIL=$TAIL
 
 	log ""
-	log "===== 3) THE TEST: tail grafted AND 0x400..0x0b90 zeroed ====="
-	log "  survives -> the buffer is k-independent apart from A/B/C"
-	sleep 2
-	many conv2d-cal.tflite 2 ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
-
-	log ""
-	log "===== 4) k=3 the same way ====="
-	sleep 2
-	many cal_k3.tflite 2 ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
-
-	log ""
-	log "===== 5) constant input, both, tail + midzero ====="
-	sleep 2
-	flat conv2d-cal.tflite ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
-	flat cal_k3.tflite     ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1
-
-	log ""
-	log "===== 6) prove it fired: 0x400..0x0b90 zero, 0x1600 = 00 3c ====="
-	sleep 2
+	log "===== 7) dump the buffer: 128 fp16 then zeros ====="
 	rm -rf /tmp/m1; mkdir -p /tmp/m1; cd /tmp/m1 || return 0
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DEBUG=dump_bos \
-		ROCKET_FS_TAIL=$TAIL ROCKET_FS_MIDZERO=1 \
-		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" > /dev/null 2>&1
+		python3 "$NPU_DIR/test_dw.py" "$NPU_DIR/conv2d-cal.tflite" \
+		> /dev/null 2>&1
 	for f in /tmp/m1/mesa-biases-*.bin; do
 		[ -f "$f" ] || continue
 		python3 - "$f" > "$C" 2>&1 <<'PY'
-import sys
-d=open(sys.argv[1],'rb').read()
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
 print(f"    size {len(d)}")
 print(f"    nonzero 0x000..0x400 (A/B/C): {sum(1 for x in d[0:0x400] if x)}")
-print(f"    nonzero 0x400..0x0b90      : {sum(1 for x in d[0x400:0x0b90] if x)}  (expect 0)")
-print(f"    at 0x1600: {' '.join(f'{x:02x}' for x in d[0x1600:0x1610])}")
-print(f"    nonzero past 0x2000        : {sum(1 for x in d[0x2000:] if x)}  (expect 0)")
+print(f"    nonzero 0x400..0x500 (table): {sum(1 for x in d[0x400:0x500] if x)}  (expect ~256)")
+print(f"    nonzero 0x500..end         : {sum(1 for x in d[0x500:] if x)}  (expect 0)")
+v = struct.unpack_from('<8H', d, 0x400)
+print(f"    table[0:8] raw   {[hex(x) for x in v]}")
 PY
 	done
 	cd / || return 0
 
 	log ""
-	log "===== 7) REPEAT CONTROL: conv2d-cal untouched ====="
+	log "===== 8) REPEAT CONTROL: 1 again, to show nothing drifted ====="
 	sleep 2
-	many conv2d-cal.tflite 2
+	many conv2d-cal.tflite 2 ROCKET_FS_FLOATS=1
 
 	log ""
-	log "===== Read 6 first, then 3. If 3 is 2/2 the whole coefficient      ====="
-	log "===== buffer is exonerated and the search moves elsewhere.          ====="
+	log "===== Read 4 first. If a ZEROED table still computes, stop: the      ====="
+	log "===== region is not read and 2/3/5/6 mean nothing. Then read 2.      ====="
 	sync
 }
 case "$1" in

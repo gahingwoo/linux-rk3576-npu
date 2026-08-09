@@ -3,6 +3,91 @@
 
 
 
+## 2026-08-09 round 28, offline (The coefficient buffer is stored in the .rknn, so this stopped needing a board. The region at `groups*64` is a per-channel fp16 weight scale table. Rounds 26 and 27 were reading toolkit noise.)
+
+The vendor's coefficient buffer is not synthesised at load time. Mapping the
+8192 bytes captured from the board back into `g_cal_rk3576.rknn` puts every
+model-dependent part of it in four contiguous chunks of the model file, each
+behind an exact uint32 length prefix:
+
+| coefficient buffer | .rknn offset | size |
+|---|---|---|
+| `0x000..0x400`, the A/B/C table | `0x8540` | 1024 |
+| `0x400..0x500`, 2 bytes per output channel | `0x37c0` | 256 |
+| `0x500..0x700` | `0x81c0` | 512 |
+| `0x700..0x0b00` | `0x7d80` | 1024 |
+
+`rknn_blobs.py` pulls them out and checks itself against that capture on every
+run. So "what does the vendor put here" became a host question: compile a model,
+read the bytes.
+
+**The control that should have been run first, and now was.** Compiling ONE
+identical model twice:
+
+| chunk | stable across a recompile |
+|---|---|
+| `0x000..0x400` A/B/C | **1024/1024** |
+| `0x400..0x500` | **256/256** |
+| `0x500..0x700` | 16/512 |
+| `0x700..0x0b00` | 33/1024 |
+
+⚠ **So `0x500..0x0b90` is not reproducible.** The toolkit writes different
+content there on every build of the same model: about 46% zeros and the rest
+reading as leftover float data. **Rounds 26 and 27 measured that.** The "1682 of
+1936 bytes differ" and the "k=5 sparse, k=3 dense" block structure were compile
+to compile noise, not a property of any model. Both are withdrawn.
+
+**What the reproducible part depends on**, each pair differing in exactly one
+thing (`sv_pairs.py`, `sv_compare.py`):
+
+| pair | A/B/C | the 2-bytes-per-channel table |
+|---|---|---|
+| same model twice (control) | identical | identical |
+| different weights | 856/1024 differ | 227/256 differ |
+| **5x5 with a zero ring vs the 3x3 it contains, same weights** | **identical** | **identical** |
+| 128 channels vs 64, shared weights | first 512 B identical | first 128 B identical |
+
+The kernel pair is the one that was designed to be readable: the 5x5 model's
+weights are zero outside the centre 3x3 and equal to the 3x3 model's inside it,
+so both compute the same function, both quantize the shared taps to the same
+bytes, and only k moves. **Nothing in this buffer depends on the kernel size.**
+
+**What the table is.** Read as fp16 the entries are each channel's weight scale.
+Not asserted from the magnitude agreeing, which was only good to about 7%, but
+from moving one channel (`sv_scaleprobe.py`): multiply channel 7's weights by 2
+and channel 11's by 1/2, recompile, and
+
+```
+entries that changed: [7, 11]
+  channel   7: 0.0018549  -> 0.00370979   ratio 2.0000
+  channel  11: 0.00193024 -> 0.000965118  ratio 0.5000
+  untouched channels that moved anyway: 0
+```
+
+**This is one fp16 per output channel, at `groups*64`, which for oc=128 is
+exactly `0x400`.** `rkt_coefs.c` writes a float32 dequantised weight surface
+there instead, `MAX2(ic*oc*k*k, 8192)` entries, 204800 bytes for conv2d-cal.
+Same address, wrong element type, wrong length, wrong meaning.
+
+It also explains round 27 without any appeal to kernel size: zeroing from
+`0x400` killed conv2d-cal because the float32 weights landing there were being
+read as fp16 pairs and happened to be nonzero, and zero scales every channel to
+nothing.
+
+**Round 28 ships that**: `oc` fp16 values at `groups*64` and nothing after them,
+with `ROCKET_FS_FLOATS` restoring the old surface, `ROCKET_FS_REL` writing the
+scale relative to the largest channel, and `ROCKET_FS_ZERO` as the control that
+must fail. Built, not flashed.
+
+⚠ The k=5 versus k=3 divide is **not in the coefficient buffer**. That is the
+main thing this round changes about where to look next: it is in the weight
+buffer layout or in the registers.
+
+⚠ Deploy path, learned the hard way: copying `libteflon.so` into
+`buildroot/br-out/target/` does nothing, the rootfs build overwrites it from
+`rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
+`images/rootfs.ext2` and grepping it for the knob names.
+
 ## 2026-08-09 round 27 (The k-dependence is localised to 1936 bytes, and it is load bearing. From 200 KB down to that.)
 
 Knob confirmed: `0x400..0x0b90` zeroed, `0x1600` reads `00 3c`, nothing past
