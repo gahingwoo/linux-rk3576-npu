@@ -3,6 +3,47 @@
 
 
 
+## 2026-08-09 (Offline is exhausted for the last question, and here is why. A vendor coefficient capture is built and waiting.)
+
+**The coefficient buffer cannot be read out of a `.rknn`.** Scanning a compiled
+model end to end finds only metadata, an index ramp followed by `1.0f` floats,
+and the weight blob. The A/B/C table and the float surface are built by
+librknnrt at load time, which is why the earlier float-surface work was done
+from runtime captures rather than from the file. So "what does the vendor put in
+the coefficient buffer for a 3x3 conv" has no offline answer.
+
+That matters because it is the only surface left. For one model with only the
+kernel cropped, everything the driver produces is verified: the regcmd in
+absolute terms against a vendor build at the same geometry, the weight layout
+including the 32-channel grouping, the weight contents (read by the CMAC,
+confirmed by forcing them), the bias tensor, the requant, and A, B and C. The
+coefficient buffer's size was equalised in round 23 with no effect, and its
+contents are the part that could not be checked.
+
+**Built and ready to flash** (`dirty/sdcard-cap.img`), the vendor capture stack
+rather than another rocket experiment:
+
+- the vendor kernel's capture patch was a one-shot, `cap_bo_done`, so only the
+  first model of a boot got dumped. Now `cap_bo_n < 4`, numbered in the header,
+  so one boot captures both models.
+- the `bias` BO dump goes from 1024 bytes to 8192, showing 2048, so it covers
+  the whole A/B/C table for 128 output channels and the start of the float
+  surface.
+- two models at the same 16 in, 128 out, 80x80, stride 2, differing only in the
+  kernel: `g_cal_rk3576.rknn` at 5x5 and `g_cal_k3_rk3576.rknn` at 3x3.
+
+**What it decides, stated before the run:** if the two coefficient buffers are
+byte identical, exactly as mesa's own are, the coefficient buffer is excluded on
+the vendor side too and whatever depends on the kernel sits below everything
+either driver writes. If they differ, the difference is the answer and can be
+carried straight into mesa.
+
+⚠ This costs two flashes, to the capture image and back, and it is a different
+image from the rocket rounds. Recorded because the last several rounds were
+flashed without a decision rule agreed first, twice with probes that could not
+have measured anything (rounds 18 and 19), which is a bad way to spend someone
+else's hardware time.
+
 ## 2026-08-09 round 23 (The float surface size is inert. Refuted by a control that could fail, and it was the last k-dependent thing in any buffer.)
 
 The knob fired: `cal_k3`'s coefficient buffer went from 75008 to 206080 bytes,

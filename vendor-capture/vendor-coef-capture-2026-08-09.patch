@@ -1,0 +1,59 @@
+--- /tmp/rknpu_job.c.bak	2026-08-09 19:25:11.639929234 +1200
++++ rknpu_job.c	2026-08-09 19:25:33.635079411 +1200
+@@ -593,15 +593,23 @@
+ 		 * pre-compute (the result is the job's product, not yet here).
+ 		 */
+ 		{
+-			static int cap_bo_done;
++			/*
++			 * Was a one-shot, which meant only the first model of a
++			 * boot got its buffers dumped. Allow the first few, so
++			 * one boot can capture a 5x5 conv and a 3x3 one and the
++			 * coefficient buffers can be compared directly. The
++			 * count is printed with the dump so each belongs to a
++			 * known run.
++			 */
++			static int cap_bo_n;
+ 
+-			if (!cap_bo_done) {
++			if (cap_bo_n < 4) {
+ 				struct iommu_domain *dom =
+ 					rknpu_dev->iommu_domains[job->iommu_domain_id];
+ 				phys_addr_t rphys = dom ?
+ 					iommu_iova_to_phys(dom, first_task->regcmd_addr) : 0;
+ 
+-				cap_bo_done = 1;
++				cap_bo_n++;
+ 
+ 				if (rphys && pfn_valid(__phys_to_pfn(rphys))) {
+ 					const u64 *rv = (const u64 *)phys_to_virt(rphys);
+@@ -621,12 +629,23 @@
+ 						}
+ 					}
+ 
+-					pr_info("rknpu cap: ==== BO DUMP (task_start=%d task_number=%d) ====\n",
+-						task_start, task_number);
+-					rknpu_cap_dump_bo(dom, "weights", a_wt, 16384, 2048);
+-					rknpu_cap_dump_bo(dom, "input", a_feat, 4096, 512);
+-					rknpu_cap_dump_bo(dom, "bias", a_bias, 1024, 512);
+-					rknpu_cap_dump_bo(dom, "output", a_out, 4096, 512);
++					pr_info("rknpu cap: ==== BO DUMP #%d (task_start=%d task_number=%d) ====\n",
++						cap_bo_n, task_start, task_number);
++					rknpu_cap_dump_bo(dom, "weights", a_wt, 16384, 512);
++					rknpu_cap_dump_bo(dom, "input", a_feat, 4096, 256);
++					/*
++					 * The coefficient buffer is the point of
++					 * this capture. For 128 output channels
++					 * the A/B/C table is groups*64 = 1024
++					 * bytes, and whatever follows it is the
++					 * float surface, which mesa leaves zeroed
++					 * and cannot read out of a .rknn because
++					 * the runtime builds it at load time.
++					 * Dump both: the whole table and the
++					 * start of the surface.
++					 */
++					rknpu_cap_dump_bo(dom, "bias", a_bias, 8192, 2048);
++					rknpu_cap_dump_bo(dom, "output", a_out, 4096, 256);
+ 
+ 					/*
+ 					 * Store the FULL payload for replay into
