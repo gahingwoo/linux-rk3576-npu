@@ -88,6 +88,36 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 35 (It is a bitfield in the low 16 bits. bit0 clear, bit2 set, high byte nonzero, and bits 16 to 31 don't care.)
+
+Both baselines and the round trip clean.
+
+| word | low 16 as `hh ll` | channels |
+|---|---|---|
+| `0xc2db1a44` exact | `00011010 01000100` | **128/128** |
+| `0xffffff44` | `11111111 01000100` | **128/128** |
+| `0xc2801a44` bits 16..22 cleared | `00011010 01000100` | **128/128** |
+| `0x005b1a44` sign and exponent cleared | `00011010 01000100` | **128/128** |
+| `0xc2db1a04` | `00011010 00000100` | **128/128** |
+| `0x00000044` | `00000000 01000100` | 0/128 |
+| `0xc2db0044` | `00000000 01000100` | 0/128 |
+| `0xc2db1a45` | `00011010 01000101` | 0/128 |
+| `0xc2db1a40` | `00011010 01000000` | 0/128 |
+| `0xc2db1aff` | `00011010 11111111` | 0/128 |
+
+**Every pass has bit 0 clear, bit 2 set and a nonzero high byte. Every failure
+breaks exactly one of those three.** And three separate words with the top half
+mangled all pass, so **bits 16 to 31 are don't care entirely.**
+
+So the four bytes that `rkt_coefs.c` fills with a dequantised float weight are
+consumed as a bitfield in their low 16 bits. It works today because the weight
+mesa happens to write has the right two bits, which is luck, not design.
+
+**Round 36** finishes the map: each single bit of 8..15 on its own with bit 2
+set, and bits 1 and 3..7 varied with a known good high byte, plus `bit0 set` as
+the probe that must fail. The smallest passing word is what mesa should write,
+and then the 197888 byte surface can go. Built, not flashed.
+
 ## 2026-08-09 round 34 (The round trip holds, so the knob is sound. And the word is not being read as a float: sign and exponent are don't care, the low byte is not.)
 
 mesa's actual word, dumped rather than computed:
