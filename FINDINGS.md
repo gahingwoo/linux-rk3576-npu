@@ -88,6 +88,40 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 41 (The region is closed. It is not copies of the word, filling it is harmless, and it is not the cause of anything that remains.)
+
+Both baselines 128/128.
+
+| `ROCKET_FS_FILL` on mn_pw24 | 1 | 2 | 8 | 32 | 128 | 512 | 1024 | whole region |
+|---|---|---|---|---|---|---|---|---|
+| channels | 297 | 297 | 297 | 297 | 297 | 297 | 297 | **297** |
+
+Every count identical, so **the region is not repeated copies of the word** and
+the constant cannot be pushed further there. The old float surface still gets
+408, and that difference is real but is not something a uniform word can
+reproduce. The decision rule's third branch applies: say so and stop pushing it.
+
+Filling the whole region is harmless, which is worth knowing on its own:
+conv2d-cal 128/128, cal_k3 128/128, mn_pw2 64/64. And `dwconv` and `conv2x` are
+unmoved by any of it, as in round 40.
+
+**So this region is characterised, fixed, and is not the cause of what remains.**
+
+**The next target is depthwise, and the first concrete lead came for free on the
+host.** Comparing a vendor `.rknn` compiled depthwise against one compiled as a
+regular conv, 41 registers differ and most are geometry. Two are not:
+
+| register | vendor depthwise | vendor regular |
+|---|---|---|
+| `0x1018` | `0x40000505` | `0x40000404` |
+| `0x1040` | `0x14000000` | `0x10000000` |
+
+and those are exactly the values `rkt_regcmd.c` selects on `split`. **A depthwise
+layer that is not split gets the regular values from mesa and the split values
+from the vendor.** `ROCKET_DW_SPLITVALS` makes depthwise take them, and round 42
+tests it, with the knob checked against a regular conv so a leak would show.
+Built, not flashed.
+
 ## 2026-08-09 round 40 (Depthwise and chaining do not depend on this word at all, so they have separate causes. And at 1024 channels the constant is WORSE than the surface it replaced.)
 
 Both baselines 128/128.

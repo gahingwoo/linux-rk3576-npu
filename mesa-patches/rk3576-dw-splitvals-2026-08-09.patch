@@ -1,0 +1,61 @@
+From 68e52774656cde2eecac820f36757361a30158fe Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 15:46:53 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_DW_SPLITVALS, the first concrete
+ depthwise difference
+
+Comparing a vendor .rknn compiled depthwise against one compiled as a regular
+conv on the host, 41 registers differ and most are geometry. Two are not:
+0x1018 is 0x40000505 for depthwise against 0x40000404, and 0x1040 is 0x14000000
+against 0x10000000. Those are exactly the values this file selects on split, so
+a depthwise layer that is not split gets the regular values from mesa and the
+split ones from the vendor.
+
+dwconv is 0 of 16 channels with every coefficient word tried and with the old
+float surface, so whatever is wrong with depthwise is elsewhere, and this is the
+first concrete difference found since.
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 0e26293..fc938f7 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -439,7 +439,23 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     */
+    bool cbuf_derive = getenv("ROCKET_CBUF_DERIVE") != NULL;
+    bool split = cbuf_derive ? capped : (s != 2);
+-   R_CNA(0x1018, (split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
++   /*
++    * ROCKET_DW_SPLITVALS: take the split values for a DEPTHWISE layer too.
++    *
++    * Comparing a vendor .rknn compiled as depthwise against one compiled as a
++    * regular conv, on the host, 41 registers differ and most of them are just
++    * geometry. These two are not: the vendor's depthwise carries 0x40000505
++    * here and 0x14000000 at 0x1040, which are exactly the values this file
++    * selects on `split`. A depthwise layer that is not split therefore gets
++    * 0x40000404 and 0x10000000 from mesa and 0x40000505 and 0x14000000 from
++    * the vendor.
++    *
++    * dwconv is 0 of 16 channels with every coefficient word tried and with the
++    * old float surface, so whatever is wrong with depthwise is elsewhere, and
++    * this is the first concrete difference found since.
++    */
++   bool dw_split = split || (dw && getenv("ROCKET_DW_SPLITVALS"));
++   R_CNA(0x1018, (dw_split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
+    R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
+    R_CNA(0x1020, (dw ? oc : ic) * k * k);
+    R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc - 1)));
+@@ -464,7 +480,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     * never fires (wt_rd=0) while the dw's small weights do -- an execution-state skip
+     * ("weights already staged"). A fresh (empty) weight bank should force the pw layer
+     * to DMA its weights. dw keeps bank 0 (it fetches fine). Test: pw wt_rd 0 -> >0? */
+-   R_CNA(0x1040, (split ? 0x14000000 : 0x10000000)
++   R_CNA(0x1040, (dw_split ? 0x14000000 : 0x10000000)
+                  | ((wnum > 0 && (!tile_jobs || tile_cbuf)) ? task->cbuf_input_row_start * surf : 0)
+                  | ((rkt_env_u32("ROCKET_FC_BANK", 0) & 0x7) << 8)
+                  | CNA_CBUF_CON0_WEIGHT_BANK(dw ? 0 : rkt_env_u32("ROCKET_WT_BANK", 0)));
+-- 
+2.43.0
+

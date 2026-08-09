@@ -2,46 +2,46 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 41. One word is not enough at 1024 channels. How many?
+# 2026-08-09 round 42. The coefficient region is closed. Go at depthwise, with
+# a difference found offline.
 #
-# Round 40, both baselines 128/128:
-#   dwconv    0/16 for ALL SIX known-good words AND for the old float surface
-#   conv2x    0/16 likewise
-#   mn_pw24   297/1024 for all six words, identical every time
-#             408/1024 for the OLD FLOAT SURFACE
+# Round 41 closed the region. mn_pw24 is 297 of 1024 for EVERY fill count, 1, 2,
+# 8, 32, 128, 512, 1024 and the whole region, so the region is not copies of the
+# word and the constant cannot be pushed further there. Filling is harmless:
+# conv2d-cal 128/128, cal_k3 128/128, mn_pw2 64/64 with the whole thing filled.
+# And dwconv and conv2x are unmoved by any of it, as in round 40.
 #
-# Two clean results. Depthwise and chaining do NOT depend on this word at all,
-# so they have separate causes and the coefficient word is settled for them.
+# So the region is characterised, fixed, and is not the cause of what remains.
 #
-# And one regression, which the decision rule named in advance: at 1024 output
-# channels the old surface beats the constant, 408 against 297. So the constant
-# is NOT a strict improvement, and something consumed there scales with
-# something mn_pw24 has more of. One word is enough at oc=128 and at oc=16,
-# measured both ways, so the count is not simply one per output channel either.
+# Depthwise next, and the first concrete lead came for free on the host.
+# Comparing a vendor .rknn compiled depthwise against one compiled as a regular
+# conv, 41 registers differ, most of them geometry. Two are not:
 #
-# ROCKET_FS_FILL=<n> writes the word into the first n slots, 0 meaning fill the
-# whole region. If filling fixes mn_pw24 the question becomes what n is; if it
-# does not, the region is not a repeat of this word and the 408 is telling us
-# the floats carry something else.
+#   0x1018   vendor depthwise 0x40000505     regular 0x40000404
+#   0x1040   vendor depthwise 0x14000000     regular 0x10000000
+#
+# and those are exactly the values rkt_regcmd.c selects on `split`. A depthwise
+# layer that is not split gets the regular values from mesa and the split ones
+# from the vendor. ROCKET_DW_SPLITVALS makes depthwise take them.
 #
 # DECISION RULE, written before the run:
-#   fill fixes mn_pw24 outright   the region is n copies, and the sweep below
-#                                 says what n is
-#   fill beats 408 but is not
-#     1024/1024                   right shape, wrong value or wrong stride
-#   fill is no better than 297    the region is NOT copies of this word, and
-#                                 the float surface is doing something the
-#                                 constant cannot; say so and stop pushing it
-#   fill breaks conv2d-cal        writing past what the layer needs is harmful,
-#                                 which is itself worth knowing
-#   step 1 or 9 not 128/128       the build is wrong, stop
+#   dwconv moves off 0/16       the lead is real; then find whether it is one
+#                               register or both, steps 4 and 5 say which
+#   dwconv unchanged            these two registers are not it, and the offline
+#                               diff has 39 more rows to work through
+#   mn_dw1 improves but dwconv
+#     does not                  the two depthwise models differ in something
+#                               else and that difference is the next question
+#   a regular conv regresses    the knob is leaking outside depthwise, which
+#                               would be a bug in the knob, not a finding
+#   step 1 or 8 not 128/128     the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-p() { log ""; log "  -- $2  FS_FILL=$1"; sleep 1; \
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FILL="$1" \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$2" > "$C" 2>&1; }
+p() { log ""; log "  -- $1   $2"; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -51,37 +51,35 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) BASELINE: conv2d-cal default, must be 128/128 ====="
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "===== 1) BASELINE: conv2d-cal, must be 128/128 ====="
+	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) mn_pw24: how many copies of the word ====="
-	log "  297 is one word, 408 is the old float surface. Beat both."
-	for n in 1 2 8 32 128 512 1024 0; do
-		p $n mn_pw24.tflite
-	done
+	log "===== 2..3) depthwise as it is now ====="
+	p dwconv.tflite ""
+	p mn_dw1.tflite ""
 
 	log ""
-	log "===== 3) does filling HARM the layers that already work ====="
-	p 0 conv2d-cal.tflite
-	p 0 cal_k3.tflite
-	p 0 mn_pw2.tflite
+	log "===== 4..5) THE TEST: depthwise takes the split values ====="
+	p dwconv.tflite ROCKET_DW_SPLITVALS=1
+	p mn_dw1.tflite ROCKET_DW_SPLITVALS=1
 
 	log ""
-	log "===== 4) and does filling do anything for the separate causes ====="
-	p 0 dwconv.tflite
-	p 0 conv2x.tflite
+	log "===== 6) and the chained model that contains a depthwise ====="
+	p mn_conv0dw1.tflite ROCKET_DW_SPLITVALS=1
 
 	log ""
-	log "===== 9) CONTROL that can fail: conv2d-cal default again ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+	log "===== 7) the knob must NOT touch a regular conv ====="
+	p conv2d-cal.tflite ROCKET_DW_SPLITVALS=1
+	p cal_k3.tflite ROCKET_DW_SPLITVALS=1
 
 	log ""
-	log "===== Read 1 and 9 first. Then mn_pw24: any n beating 408 means   ====="
-	log "===== the region is copies of the word; none means it is not.     ====="
+	log "===== 8) CONTROL that can fail: conv2d-cal plain again ====="
+	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== Read 1 and 8 first. Then 2 against 4: does dwconv move at   ====="
+	log "===== all? Anything other than 0/16 is the first movement there.  ====="
 	sync
 }
 case "$1" in
