@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 import os, sys, numpy as np, torch, torch.nn as nn
 OC,IC,K,HW = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), 8
 tag=sys.argv[4]

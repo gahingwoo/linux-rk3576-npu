@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Fit the per-window OIHW *phase* law across 4 ramp multipliers {37,43,53,61}.
 Run when the 4 posprobe captures come back:

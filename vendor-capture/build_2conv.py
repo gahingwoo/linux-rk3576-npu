@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 import os; SCR=os.path.dirname(os.path.abspath(__file__))
 import numpy as np, tensorflow as tf
 # Two sequential int8 conv2d ops -> Teflon delegates BOTH as NPU tasks.

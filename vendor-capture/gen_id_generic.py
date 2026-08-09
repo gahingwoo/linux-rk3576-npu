@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Identifiable GENERIC-conv generator for decoding the RK3576 generic weight-buffer
 layout — the one Mesa's rkt_fill_weights still packs in the RK3588 order

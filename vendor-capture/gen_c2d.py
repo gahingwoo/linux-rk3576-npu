@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 import os,sys,numpy as np,torch,torch.nn as nn
 # conv2d-shaped controlled conv: IC=16 OC=128 K=5 stride2 pad SAME-ish, HW=80
 tag=sys.argv[1]; mode=sys.argv[2]

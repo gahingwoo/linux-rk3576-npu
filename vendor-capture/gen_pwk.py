@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Identifiable POINTWISE (1x1) conv for decoding the RK3576 normal-conv weight
 layout. ic=32 oc=64 k1 s1 (= MobileNet conv_pw_1 shape). Weight encodes its own

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """Mirror fill_regcmd_rk3576_normal() exactly and diff all 4 units vs the .rknn.
 Usage: predict_full.py <tag> in=.. out=.. k=.. s=.. p=.. hw=.. [g=..]"""
 import sys, struct

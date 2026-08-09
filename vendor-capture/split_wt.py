@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Split + diff the vendor ordered writel trace (vendor_wt.trace pulled from the
 board's /opt/npu-cap/). Lines look like:

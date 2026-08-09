@@ -88,6 +88,43 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 29 (Those 256 bytes must hold mesa's own floats. Nothing else works there, including the vendor's own kind of content. So mesa and the vendor are reading that region under different formats, and the difference is a register.)
+
+Round 28 could not decide because it moved two things at once. This moved one.
+
+| step | result |
+|---|---|
+| 1) the float surface that computes | **2/2 OK** |
+| **2) that same surface, only the 256 table bytes overwritten with fp16 scales** | **0/2 FAIL**, raw 127 |
+| **3) that same surface, only those 256 bytes zeroed** | **0/2 FAIL**, raw 120 |
+| 4) 2 again on `cal_k3` | 0/2 FAIL |
+| 5) repeat of 1 | **2/2 OK**, nothing drifted |
+
+The dump shows the isolation was real: 256 nonzero at the table **and 1656
+nonzero in `0x500..0x0b90`**, so the float surface behind it was present and
+untouched. Those 256 bytes were the only difference from a passing run.
+
+**So `0x400..0x400+2*oc` must contain exactly mesa's float32 dequantised
+weights.** Zeroing them fails and replacing them with a correct per-channel
+fp16 weight scale fails the same way.
+
+**That is not a contradiction of the offline work, it is the interesting part.**
+The vendor's own model files put one fp16 per output channel at that address and
+unreproducible filler after it, and the vendor computes. mesa puts float32
+across `0x400..0x0b90`, every byte of it load bearing, and mesa computes. Two
+different formats in the same place, both working. A buffer cannot be read two
+ways by itself, so **the format and length of that surface must come from a
+register**, and that is where mesa and the vendor diverge, not in the bytes.
+
+⚠ So the pre-written rule's "go decode `0x500..0x0b90` offline" does not apply:
+offline already showed that region is filler in the vendor's files. **The next
+comparison is the DPU_RDMA register block, mesa's emitted stream against a
+vendor `.rknn` compiled at the same geometry**, which `extract_regcmd.py`
+already reads and which needs no board. For `sv_k5` the vendor sets `0x5004=0e`,
+`0x501c=0x710`, `0x5034=0x41`, `0x5044=0x40000010`, and `0x5020/0x5024=0`,
+though base addresses in a `.rknn` are relocation placeholders and mean nothing
+until mesa's values sit next to them.
+
 ## 2026-08-09 round 28 on the board (The region is read, the offline reading of it is not overturned, and the round could not test it because I moved two things at once.)
 
 | step | result |

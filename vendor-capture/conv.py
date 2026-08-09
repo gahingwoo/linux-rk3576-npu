@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Convert work/<tag>.onnx -> work/<tag>.rknn for rk3576, quietly.
 Usage: conv.py <tag>

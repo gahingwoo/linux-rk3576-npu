@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Teflon MobileNetV1 UINT8 inference for RK3576 NPU bringup.
 Usage: TEFLON_LIB=/usr/lib/libteflon.so python3 infer.py <model.tflite> [image]

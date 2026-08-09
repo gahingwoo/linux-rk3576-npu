@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Convert the real (already-quantized) MobileNetV1 tflite to an RK3576 .rknn so the
 vendor driver compiles the real per-layer register command stream. We diff the

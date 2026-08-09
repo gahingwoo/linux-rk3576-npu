@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Build an ONNX conv that is the SAME conv as Mesa's conv2d.tflite: identical
 shape (16->128, 5x5, stride 2, SAME pad, input 1x16x80x80) and identical weights

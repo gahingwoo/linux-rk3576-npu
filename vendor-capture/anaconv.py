@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 import numpy as np, struct
 WT_SC=3.91255
 d=open("conv2d_rk3576.rknn","rb").read()

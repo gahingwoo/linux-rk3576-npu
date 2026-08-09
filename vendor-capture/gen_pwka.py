@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """Asymmetric-weight pointwise (pwka): ic=32 oc=64 k1, weights ALL POSITIVE so
 the per-tensor weight zero point is far from 128 (~33). Diff its vendor regcmd
 against pwk (symmetric, zp~132) to isolate the weight-zero-point register."""

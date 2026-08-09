@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Decode + judge a captured SDP coefficient buffer (from the per-axis capture image,
 CAPTURE-PERAX.md). Run the instant the board log comes back:

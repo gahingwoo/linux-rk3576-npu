@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """
 Export a single Conv2d to ONNX, matching MobileNetV1's first conv that fails to
 engage on RK3576: in=3, out=32, 3x3, stride 2, pad 1, input 1x3x224x224. One conv

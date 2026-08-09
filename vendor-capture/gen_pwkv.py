@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 """oc-VARYING asymmetric pointwise (pwkv): w[oc][ic] = (oc-30) (varies per oc,
 constant over ic) -> per-oc weight sum differs so the bias-offset field steps
 per channel (reveals the bias-buffer stride/grouping), and the tensor zp != 0,128

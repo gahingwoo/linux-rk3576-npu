@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0
 import struct, numpy as np
 def locate_abc(path, OC=128):
     d=open(path,'rb').read()
