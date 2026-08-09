@@ -1,0 +1,57 @@
+From a70a9699aaf5a670ec7c69ad8376cdaaf44a38c6 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 15:35:08 +1200
+Subject: [PATCH] rocket RK3576: ROCKET_FS_FILL, because one word is not enough
+ at 1024 channels
+
+Six words that compute correctly elsewhere all give mn_pw24 the same 297 of its
+1024 channels, and the old per-weight float surface gives 408. So the constant
+is not a strict improvement at that size: something consumed there scales with
+something that layer has more of, and the floats satisfy it for more channels by
+accident than one word does on purpose. One word is enough at 128 output
+channels and at 16, both measured, so it is not one per output channel either.
+
+ROCKET_FS_FILL=<n> writes the word into the first n slots, 0 meaning the whole
+region, so the count can be swept.
+
+The same sweep also showed dwconv and conv2x are 0/16 for all six words and for
+the old surface, so depthwise and chaining do not depend on this word at all.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 50a93a3..c658a77 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -718,8 +718,26 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+              * ROCKET_FS_FLOATS restores the old surface, ROCKET_FS_F0 sets this
+              * word to something else.
+              */
++            /*
++             * ROCKET_FS_FILL=<n>: write the word into the first n slots
++             * instead of just the first, 0 meaning fill the whole region.
++             *
++             * One word is enough at 128 output channels and at 16, measured
++             * both ways. It is NOT enough at 1024: mn_pw24 gets 297 of its
++             * 1024 channels with any single known-good word and 408 with the
++             * old per-weight float surface, which is worse than the surface it
++             * replaced. Whatever is consumed there scales with something this
++             * layer has more of, and the floats satisfy the requirement for
++             * more channels by accident than one word does on purpose.
++             */
+             uint32_t *fs32 = (uint32_t *)(b8 + groups * 64);
+-            fs32[0] = 0x1004;
++            unsigned cap = (bufsize - groups * 64) / sizeof(uint32_t);
++            const char *fill = getenv("ROCKET_FS_FILL");
++            unsigned n = fill ? strtoul(fill, NULL, 0) : 1;
++            if (n == 0 || n > cap)
++               n = cap;
++            for (unsigned i = 0; i < n; i++)
++               fs32[i] = 0x1004;
+          } else if (getenv("ROCKET_FS_FLOATS") ||
+                     getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
+             const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
+-- 
+2.43.0
+

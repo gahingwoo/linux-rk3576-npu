@@ -88,6 +88,35 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 40 (Depthwise and chaining do not depend on this word at all, so they have separate causes. And at 1024 channels the constant is WORSE than the surface it replaced.)
+
+Both baselines 128/128.
+
+| model | all six known-good words | the old float surface |
+|---|---|---|
+| dwconv | 0/16 every time | **0/16** |
+| conv2x | 0/16 every time | **0/16** |
+| **mn_pw24**, oc = 1024 | **297/1024, identical for all six** | **408/1024** |
+
+**Depthwise and chaining are settled with respect to this word.** Six different
+words that all compute correctly elsewhere, plus the old float surface, and
+nothing moves either model by a single channel. They have their own causes, and
+those can now be attacked without the weight-bit coincidence in the way.
+
+⚠ **The constant is not a strict improvement.** The decision rule named this
+case before the run, and it happened: at 1024 output channels the old per-weight
+float surface gets 408 channels right and the constant gets 297. Whatever is
+consumed there scales with something `mn_pw24` has more of, and the floats
+satisfy the requirement for more channels by accident than one word does on
+purpose. One word is enough at oc=128 and at oc=16, both measured directly, so
+the count is not simply one per output channel either.
+
+**Round 41** adds `ROCKET_FS_FILL=<n>`, which writes the word into the first n
+slots, 0 meaning the whole region, and sweeps n on `mn_pw24` against both
+numbers. It also checks that filling does not harm the layers that already work,
+because writing past what a layer needs may itself be harmful. Built, not
+flashed.
+
 ## 2026-08-09 round 39 (Two more models come good, and for the first time some fail PARTIALLY, which is new information.)
 
 Both baselines 128/128.
