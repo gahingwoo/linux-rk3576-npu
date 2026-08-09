@@ -2,45 +2,68 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 39. Every regular conv shape now computes. Go at depthwise,
-# the chain, and MobileNet.
+# 2026-08-09 round 40. Sweep the word on the models that still fail.
 #
-# Round 38, with the constant word as the DEFAULT and no knobs set anywhere:
-#   conv2d-cal  5x5 s2      128/128        cal_s1     5x5 s1     128/128
-#   cal_k3      3x3         128/128        cal_oc16   oc=16        16/16
-#   cal_k1      1x1         128/128        cal_izp0   in_zp=0    128/128
-#   whole model conv2d-cal 2/2 OK, cal_k3 2/2 OK
-#   cal_k3 with the OLD float surface        0/128
+# Round 39, both baselines 128/128:
+#   mn_pw2   64/64      real pointwise, ic 32 -> oc 64, NOW WORKS
+#   md003    16/16      NOW WORKS
+#   mn_pw24  297/1024   partial, oc = 1024
+#   mn_dw1   3/32       partial, depthwise
+#   dwconv   0/16       depthwise
+#   mn_conv0 0/32       first conv, the 4-channel ARGB path
+#   conv2x   0/16       chained
+#   mn_conv0dw1 1/32    chained
+#   MobileNet v1        FAIL, top1 0 against 754
+#   md011               NO OUTPUT AT ALL, header printed and nothing after
 #
-# 1x1 was the last non-depthwise shape on the open list and it computes. So does
-# 3x3. The kernel size wall and the pointwise wall were the same bug: a
-# dequantised weight landing in a bitfield, and a model worked or not depending
-# on whether its first weight carried the right bits.
+# Partial per-channel results are new. Everything used to be all or nothing, so
+# 297 of 1024 and 3 of 32 are signal, not noise.
 #
-# What is left from before all this: depthwise, chained operations, and
-# MobileNet, which has both. Those were always attributed to separate causes.
-# This asks whether they were the same coincidence.
+# 0x1004 was fitted on conv2d-cal, which has oc=128. There is no reason the same
+# word is right for a depthwise layer, for a 4 channel first conv, or for oc =
+# 1024, and the way to find out is the sweep that already worked once. The words
+# below are all known-good on conv2d-cal, so if one of them fixes dwconv the
+# requirement is not a single constant but something the driver has to compute.
 #
 # DECISION RULE, written before the run:
-#   dwconv computes           depthwise was the same bug, and only the chain is
-#                             left
-#   dwconv still fails        it has its own cause, now attackable without the
-#                             weight-bit confound in the way
-#   conv2x computes           chaining works, and MobileNet is reachable
-#   MobileNet top1 matches    the whole point of the driver, from end to end
-#   MobileNet runs but is
-#     wrong                   report which layer, the per-channel view is there
-#   step 1 or 12 not 128/128  the build is wrong, stop and check the image
+#   some word fixes dwconv        depthwise was the same bug with a different
+#                                 required word; find what it depends on
+#   no word changes dwconv at all depthwise has a genuinely separate cause, and
+#                                 the coefficient word is settled for it
+#   dwconv changes but never
+#     reaches 16/16               the word matters AND something else is wrong
+#   a word improves mn_pw24       the count is a function of the word, so the
+#                                 region is bigger than one word at oc=1024
+#   the old float surface beats
+#     the constant anywhere        say so plainly, it would mean the constant is
+#                                 not a strict improvement
+#   step 1 or 14 not 128/128      the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-perch() { log ""; log "===== $1: $2 per channel ====="; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$2" > "$C" 2>&1; }
-many() { log ""; log "===== $1: $2 whole model ====="; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$2" "${3:-2}" > "$C" 2>&1; }
+sweep() {
+	m="$1"
+	log ""
+	log "===== $m: default 0x1004, then other known-good words ====="
+	for v in "" 0x3fc4 0x1044 0x2044 0xff44 0x0fc4; do
+		if [ -z "$v" ]; then lbl="default"; else lbl="$v"; fi
+		log "  -- $m  FS_F0=$lbl"
+		sleep 1
+		if [ -z "$v" ]; then
+			env TEFLON_LIB=/usr/lib/libteflon.so \
+				python3 "$NPU_DIR/perch.py" "$NPU_DIR/$m" > "$C" 2>&1
+		else
+			env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_KEEP=4 \
+				ROCKET_FS_F0="$v" \
+				python3 "$NPU_DIR/perch.py" "$NPU_DIR/$m" > "$C" 2>&1
+		fi
+	done
+	log "  -- $m  the OLD float surface, for contrast"
+	sleep 1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/$m" > "$C" 2>&1
+}
 
 start() {
 	i=0
@@ -51,43 +74,29 @@ start() {
 
 	log ""
 	log "===== 1) BASELINE: conv2d-cal, must be 128/128 ====="
-	perch 1 conv2d-cal.tflite
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
+
+	sweep dwconv.tflite
+	sweep conv2x.tflite
+	sweep mn_pw24.tflite
 
 	log ""
-	log "===== 2..4) DEPTHWISE, which has its own history ====="
-	perch 2 dwconv.tflite
-	perch 3 mn_dw1.tflite
-	perch 4 mn_conv0.tflite
-
-	log ""
-	log "===== 5..6) POINTWISE from the real model ====="
-	perch 5 mn_pw2.tflite
-	perch 6 mn_pw24.tflite
-
-	log ""
-	log "===== 7..8) CHAINED: two ops in one graph ====="
-	perch 7 conv2x.tflite
-	perch 8 mn_conv0dw1.tflite
-
-	log ""
-	log "===== 9) MOBILENET V1, the whole thing ====="
+	log "===== md011, which printed nothing last round ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" \
-		"$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite" 2 > "$C" 2>&1
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/md011.tflite" > "$C" 2>&1
+	log "  (if this is silent again it is the script or the model, not the NPU)"
 
 	log ""
-	log "===== 10..11) the md003 pair, for continuity with older rounds ====="
-	perch 10 md003.tflite
-	perch 11 md011.tflite
+	log "===== 14) CONTROL that can fail: conv2d-cal again ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 12) CONTROL that can fail: conv2d-cal again ====="
-	perch 12 conv2d-cal.tflite
-
-	log ""
-	log "===== Read 1 and 12 first. Then 2 for depthwise, 7 for the chain, ====="
-	log "===== 9 for MobileNet.                                            ====="
+	log "===== Read 1 and 14 first. Then: does ANY word move dwconv off   ====="
+	log "===== 0/16? That is the whole question of this round.             ====="
 	sync
 }
 case "$1" in

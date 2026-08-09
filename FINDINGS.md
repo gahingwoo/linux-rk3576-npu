@@ -88,6 +88,39 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 39 (Two more models come good, and for the first time some fail PARTIALLY, which is new information.)
+
+Both baselines 128/128.
+
+| model | what it is | channels |
+|---|---|---|
+| **mn_pw2** | real pointwise, ic 32 to oc 64 | **64/64** |
+| **md003** | | **16/16** |
+| mn_pw24 | pointwise, oc = 1024 | **297/1024** |
+| mn_dw1 | depthwise | 3/32 |
+| dwconv | depthwise | 0/16 |
+| mn_conv0 | first conv, the 4 channel path | 0/32 |
+| conv2x | two ops in one graph | 0/16 |
+| mn_conv0dw1 | two ops | 1/32 |
+| MobileNet v1 | whole model | FAIL, top1 0 against 754 |
+| md011 | | **no output line at all** |
+
+**Partial per-channel results are new.** Everything on this driver used to be
+all or nothing, so 297 of 1024 and 3 of 32 are signal. So is the fact that
+`mn_pw2` now works: pointwise from the real model, not a synthetic probe.
+
+⚠ `md011` printed its header and nothing after it, so something in that run
+died silently. Not attributed to the NPU until it is reproduced.
+
+**Round 40 applies the method that just worked to what still fails.** `0x1004`
+was fitted on conv2d-cal at oc=128, and there is no reason it is the right word
+for a depthwise layer, a 4 channel first conv, or oc=1024. So sweep the
+known-good words on `dwconv`, `conv2x` and `mn_pw24`, each against the old float
+surface for contrast. If some word moves `dwconv` off 0 of 16, depthwise was the
+same bug needing a different word, and the requirement is not a constant but
+something the driver has to compute. If nothing moves it, depthwise has a
+separate cause and the coefficient word is settled for it. Built, not flashed.
+
 ## 🔑 2026-08-09 round 38 (Every regular convolution shape computes, with the constant as the default and no knobs set. 1x1 included, which was the last non-depthwise shape on the open list.)
 
 | model | shape | channels |
