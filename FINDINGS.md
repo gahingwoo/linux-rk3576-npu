@@ -88,6 +88,51 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-09 offline depthwise, full-file sweep (There is no quantised per-channel coefficient anywhere in the vendor's depthwise model. The offline route is exhausted; this needs a runtime capture.)
+
+Not just the length-prefixed blobs this time, the **whole file**, byte by byte:
+int32, int16 and float32, strides 2, 4, 6, 8, 10, 16 and 64, every base offset,
+correlated against the known bias, the known per-channel weight sum, and five
+linear combinations of the two, since `A = bias - (in_zp - 0x80) * sw` and it is
+not obvious which term dominates for a one-tap-per-channel kernel.
+
+**Four hits above 0.98, and all four are the same thing:**
+
+```
+off 0x06018  float32 stride 4 +0  vs bias  corr +1.0000
+off 0x06016  float32 stride 4 +2  vs bias  corr +1.0000   (the same array)
+```
+
+Verified exactly rather than by correlation: the 128 bytes at `0x06018` are the
+known bias array byte for byte. And it appears in **exactly one of the four
+builds**:
+
+```
+sv_dwu  (depthwise, compress_weight=False)  exact bias array at 0x06018
+sv_rgu  (regular,   compress_weight=False)  NOT FOUND
+sv_dw   (depthwise, compressed)             NOT FOUND
+sv_rg   (regular,   compressed)             NOT FOUND
+```
+
+**That is the unquantised source bias, which the hardware cannot consume**, kept
+by the toolkit when weight compression is off. It is bookkeeping, not a
+coefficient table. Nothing else in the entire file is per-channel.
+
+**So the vendor's depthwise `.rknn` contains no quantised per-channel
+coefficient at all**, which is consistent with everything before it: no A/B/C
+table under two structural oracles, and nothing in the 576-byte weight buffer
+under three readings.
+
+**The conclusion is that librknnrt builds the depthwise per-channel coefficients
+at load time**, from the float bias and the scales, into a buffer the model file
+never contains. Which means the offline route that answered the regular-conv
+questions cannot answer this one.
+
+**Next, and it needs the board**: capture the coefficient BO for a depthwise
+layer from the vendor runtime, the way the 8192-byte regular-conv buffer was
+captured. ⚠ That needs `rock4d-spi-uboot-vendor.img` in SPI, and
+`rock4d-spi-uboot.img` back afterwards for rocket.
+
 ## 2026-08-09 offline depthwise, weight buffer (Where the per-channel data goes is still open. Three readings of the 576-byte buffer fail, and weight compression is not the explanation.)
 
 The 576-byte depthwise buffer is `oc*k*k*2`, two bytes per tap for int8 weights,
