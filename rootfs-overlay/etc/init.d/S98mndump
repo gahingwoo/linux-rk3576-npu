@@ -2,52 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-09 round 38. The constant is now the DEFAULT. Try everything that
-# has never worked.
+# 2026-08-09 round 39. Every regular conv shape now computes. Go at depthwise,
+# the chain, and MobileNet.
 #
-# Round 37, both baselines clean:
-#   0x1004  conv2d-cal   128/128     the smallest word the rule allows, never
-#                                    run before, so this was a prediction
-#   0x3fc4  conv2d-cal   128/128     every free bit set
-#   0x1005  conv2d-cal     0/128     near miss, as predicted
-#   0x0fc4  conv2d-cal   128/128     ⚠ predicted to FAIL. The rule's second
-#                                    clause was wrong and is refitted below.
-#   0x1004  cal_s1       128/128
-#   0x1004  cal_oc16      16/16      oc=16, so a different offset too
-#   cal_k3  baseline       0/128
-#   0x1004  cal_k3       128/128     <-- THE 3x3 KERNEL COMPUTES
+# Round 38, with the constant word as the DEFAULT and no knobs set anywhere:
+#   conv2d-cal  5x5 s2      128/128        cal_s1     5x5 s1     128/128
+#   cal_k3      3x3         128/128        cal_oc16   oc=16        16/16
+#   cal_k1      1x1         128/128        cal_izp0   in_zp=0    128/128
+#   whole model conv2d-cal 2/2 OK, cal_k3 2/2 OK
+#   cal_k3 with the OLD float surface        0/128
 #
-# ⚠ The kernel size was never the dividing line. rkt_coefs.c filled that word
-# with a dequantised weight, so whether a model worked came down to whether its
-# FIRST WEIGHT happened to carry the right bits. conv2d-cal's did, cal_k3's did
-# not, and every round that tried to explain k=5 against k=3 was chasing that
-# coincidence.
+# 1x1 was the last non-depthwise shape on the open list and it computes. So does
+# 3x3. The kernel size wall and the pointwise wall were the same bug: a
+# dequantised weight landing in a bitfield, and a model worked or not depending
+# on whether its first weight carried the right bits.
 #
-# Refitted against all 24 words:
-#     (w & 0x3f) == 0x04   and   ((w >> 6) & 0xff) >= T,  0x21 < T <= 0x3f
-#
-# mesa now writes 0x1004 there by default and nothing else in the region. The
-# buffer SIZE is deliberately left alone this round, so content is the only
-# thing that changed.
+# What is left from before all this: depthwise, chained operations, and
+# MobileNet, which has both. Those were always attributed to separate causes.
+# This asks whether they were the same coincidence.
 #
 # DECISION RULE, written before the run:
-#   1 and 2 both 128/128        the default reproduces the tested state
-#   cal_k1 computes             the 1x1 kernel was the same coincidence
-#   depthwise computes          so was that
-#   the chain computes          so was that, and MobileNet becomes reachable
-#   any of them still fails     it has a separate cause, and now it can be
-#                               attacked without the weight-bit confound
-#   1 or 2 not 128/128          the build is wrong, stop and check the image
+#   dwconv computes           depthwise was the same bug, and only the chain is
+#                             left
+#   dwconv still fails        it has its own cause, now attackable without the
+#                             weight-bit confound in the way
+#   conv2x computes           chaining works, and MobileNet is reachable
+#   MobileNet top1 matches    the whole point of the driver, from end to end
+#   MobileNet runs but is
+#     wrong                   report which layer, the per-channel view is there
+#   step 1 or 12 not 128/128  the build is wrong, stop and check the image
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-perch() { log ""; log "===== $1: $2 (default, constant word) ====="; sleep 2; \
+perch() { log ""; log "===== $1: $2 per channel ====="; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$2" > "$C" 2>&1; }
-many() { log ""; log "===== $1: $2 whole-model ====="; sleep 2; \
+many() { log ""; log "===== $1: $2 whole model ====="; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so \
-	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$2" 2 > "$C" 2>&1; }
+	python3 "$NPU_DIR/test_model.py" "$NPU_DIR/$2" "${3:-2}" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -57,39 +50,44 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the new DEFAULT on the model that always worked ====="
+	log "===== 1) BASELINE: conv2d-cal, must be 128/128 ====="
 	perch 1 conv2d-cal.tflite
 
 	log ""
-	log "===== 2) the new DEFAULT on the 3x3 that never worked ====="
-	perch 2 cal_k3.tflite
+	log "===== 2..4) DEPTHWISE, which has its own history ====="
+	perch 2 dwconv.tflite
+	perch 3 mn_dw1.tflite
+	perch 4 mn_conv0.tflite
 
 	log ""
-	log "===== 3..6) everything else that has never worked ====="
-	perch 3 cal_k1.tflite
-	perch 4 cal_s1.tflite
-	perch 5 cal_oc16.tflite
-	perch 6 cal_izp0.tflite
+	log "===== 5..6) POINTWISE from the real model ====="
+	perch 5 mn_pw2.tflite
+	perch 6 mn_pw24.tflite
 
 	log ""
-	log "===== 7) whole-model numbers, for the record ====="
-	many 7 conv2d-cal.tflite
-	many 8 cal_k3.tflite
+	log "===== 7..8) CHAINED: two ops in one graph ====="
+	perch 7 conv2x.tflite
+	perch 8 mn_conv0dw1.tflite
 
 	log ""
-	log "===== 9) the old float surface, to show the difference ====="
+	log "===== 9) MOBILENET V1, the whole thing ====="
 	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FS_FLOATS=1 \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/cal_k3.tflite" > "$C" 2>&1
-	log "  cal_k3 with the old surface: this is the 0/128 that stood all along"
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" \
+		"$NPU_DIR/mobilenet_v1_1.0_224_quant.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== 10) CONTROL that can fail: default on conv2d-cal again ====="
-	perch 10 conv2d-cal.tflite
+	log "===== 10..11) the md003 pair, for continuity with older rounds ====="
+	perch 10 md003.tflite
+	perch 11 md011.tflite
 
 	log ""
-	log "===== Read 1 and 10 first, then 2. If cal_k3 is 128/128 with no    ====="
-	log "===== knobs set, the kernel size wall is gone.                     ====="
+	log "===== 12) CONTROL that can fail: conv2d-cal again ====="
+	perch 12 conv2d-cal.tflite
+
+	log ""
+	log "===== Read 1 and 12 first. Then 2 for depthwise, 7 for the chain, ====="
+	log "===== 9 for MobileNet.                                            ====="
 	sync
 }
 case "$1" in

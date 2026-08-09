@@ -88,6 +88,33 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-09 round 38 (Every regular convolution shape computes, with the constant as the default and no knobs set. 1x1 included, which was the last non-depthwise shape on the open list.)
+
+| model | shape | channels |
+|---|---|---|
+| conv2d-cal | 5x5 stride 2 | **128/128** |
+| **cal_k3** | **3x3** | **128/128** |
+| **cal_k1** | **1x1** | **128/128** |
+| cal_s1 | 5x5 stride 1 | **128/128** |
+| cal_oc16 | 16 output channels | **16/16** |
+| cal_izp0 | input zero point 0 | **128/128** |
+| conv2d-cal, whole model | | 2/2 OK, relu maxdiff 1 |
+| cal_k3, whole model | | 2/2 OK, relu maxdiff 1 |
+| cal_k3 with the **old float surface** | | **0/128** |
+| control, conv2d-cal again | | 128/128 |
+
+**The 1x1 wall and the kernel size wall were the same bug.** Both were recorded
+for months as separate hardware mysteries, with their own theories: the
+pointwise one had "the DPU runs and writes the whole surface with exactly
+out_offset while ignoring the weights, the input, and the A operand". Neither
+was about geometry. A dequantised weight was landing in a bitfield, and a model
+computed or not according to whether its first weight carried the right bits.
+
+**Round 39** goes at what is left from before all this: depthwise, chained
+operations, and MobileNet, which has both. Those were also attributed to
+separate causes, so the question is whether they were the same coincidence.
+Built, not flashed.
+
 ## 🔑 2026-08-09 round 37 (THE 3x3 KERNEL COMPUTES. The kernel size was never the dividing line, it was one weight-derived word landing in a bitfield.)
 
 Both baselines 128/128.
