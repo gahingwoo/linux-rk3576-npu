@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import struct, numpy as np, sys
 def locate_abc(d, OC):
     for o in range(0, len(d)-DivPad(OC), 16):

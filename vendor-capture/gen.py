@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Parameterized single-Conv2d ONNX generator for differential register mapping.
 Usage: gen.py <tag> in=3 out=32 k=3 s=2 p=1 hw=224

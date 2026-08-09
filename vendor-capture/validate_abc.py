@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """Byte-exact validation of the rkt_coefs.c per-axis ABC encoder against the
 board-captured vendor buffer (dirty/npu-cap/out/{pw_oc,pw_ic}). Mirrors the
 encoder: A=0x80*(sum(wq)+bias), B=0x80-wt_zp, C=round(2^14*wt_sc[oc]/max(wt_sc)),

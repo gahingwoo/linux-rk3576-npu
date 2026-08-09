@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Minimal TFLite flatbuffer reader (no tensorflow / tflite_runtime needed): pull
 the conv op's shape + stride/pad + per-tensor quant, and the raw weight/bias

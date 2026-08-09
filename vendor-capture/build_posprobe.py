@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import os, numpy as np, torch, torch.nn as nn
 from rknn.api import RKNN
 SCR = os.path.dirname(os.path.abspath(__file__))

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import os, numpy as np, torch, torch.nn as nn
 IC,OC,K,HW=16,128,5,80
 os.makedirs("work",exist_ok=True)

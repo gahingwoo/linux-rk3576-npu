@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import numpy as np, struct, sys
 path=sys.argv[1]; OC=int(sys.argv[2]); IC=int(sys.argv[3]); K=int(sys.argv[4])
 d=open(path,'rb').read()

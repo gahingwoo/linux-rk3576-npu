@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Score the VENDOR two-submit control. Pull exp_run0..4.bin + exp_b0/b1.bin off
 the SD (/opt/npu-cap/) into a dir and run:  python3 score_twosubmit.py <dir>

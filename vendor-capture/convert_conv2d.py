@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Convert Mesa's own conv2d.tflite to an RK3576 .rknn, keeping the tflite's
 quantized weights byte-for-byte (do_quantization=False). This guarantees the

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Extract the CNA (and optionally other unit) register map from each .rknn and
 tabulate reg -> value across tags so registers that change with a swept conv

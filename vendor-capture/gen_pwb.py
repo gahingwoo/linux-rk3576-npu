@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """pwb: pwka weights (zp=0, oc-const) but NONZERO per-oc bias = oc*100. Shows
 where bias_q lands in the SDP bias buffer (A field of 0x5020, or the 0x5024 buffer)."""
 import os, numpy as np, torch, torch.nn as nn

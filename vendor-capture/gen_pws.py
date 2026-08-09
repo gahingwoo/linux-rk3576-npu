@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """pws: SYMMETRIC weights w[oc][ic]=2*ic-31 (range -31..31 -> wt_zp~128 -> B~0),
 oc-constant. Isolates the bias-buffer field A when the weight-zp term vanishes."""
 import os, numpy as np, torch, torch.nn as nn

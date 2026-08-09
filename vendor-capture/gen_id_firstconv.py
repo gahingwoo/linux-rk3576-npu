@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Identifiable FIRSTCONV generator for decoding the RK3576 first-conv weight-buffer
 layout (the conv0 that ends up distinct=2 / MAC=0 because mesa packs the generic

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 THE CLEANEST WALL EXPERIMENT: run ONE KNOWN-GOOD conv N times in a row, in one
 power session, and compare every invoke against the CPU reference.

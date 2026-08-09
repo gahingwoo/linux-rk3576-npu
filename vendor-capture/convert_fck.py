@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import sys
 from rknn.api import RKNN
 rknn = RKNN(verbose=False)

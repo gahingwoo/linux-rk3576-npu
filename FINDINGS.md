@@ -88,6 +88,47 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-09 round 28 on the board (The region is read, the offline reading of it is not overturned, and the round could not test it because I moved two things at once.)
+
+| step | result |
+|---|---|
+| 1) the old float surface, `conv2d-cal` | **2/2 OK** |
+| 2) fp16 per-channel weight scale | 0/2 FAIL, relu maxdiff 128 |
+| 3) the same table, `cal_k3` | 0/2 FAIL |
+| **4) control, the table zeroed** | **0/2 FAIL, as it must** |
+| 5) the scale relative to the largest channel | 0/2 FAIL, relu maxdiff 119 |
+| 6) the table plus the vendor's constant tail | 0/2 FAIL |
+| 8) repeat of 1 | **2/2 OK**, nothing drifted |
+
+The dump confirms the knob fired: 256 nonzero bytes at `0x400..0x500`, nothing
+after, `table[0:8]` all `0x43d3`.
+
+**The value was not the problem.** `conv2d-cal`'s weight scale really is
+`3.9125464` (it is a synthetic calibration model, output scale 32.0), and fp16
+of that really is `0x43d3`. mesa wrote what it was asked to write.
+
+⚠ **The round could not decide anything, and that is my error.** It changed two
+things at once: it put the table at `0x400` **and** left everything after it
+zero. Round 27 zeroed both as well. So nothing so far separates
+
+- `0x400..0x400+2*oc` must hold mesa's floats, from
+- `0x500..0x0b90` is the load bearing part and the table is fine.
+
+That also withdraws the neat "this explains round 27" line in the round 28
+offline entry below: a properly nonzero fp16 table fails too, so "the floats
+there were nonzero when read as fp16" is not sufficient as an explanation.
+
+**What survives, and is not weakened by any of this:** the region IS read, since
+zeroing it fails. And the offline results stand on their own, because they are
+about the vendor's own files, not about this driver: the table is 2 bytes per
+output channel, it is per-channel, it scales exactly with that channel's weight
+scale, and nothing in the vendor's coefficient buffer depends on kernel size.
+
+**Round 29** splits the two: `ROCKET_FS_TABLE_OVER` writes the float surface
+exactly as the passing configuration does and then overwrites only the table's
+bytes, and `ROCKET_FS_HOLE` is its complement, the same surface with only those
+bytes zeroed. Built, not flashed.
+
 ## 2026-08-09 round 27 (The k-dependence is localised to 1936 bytes, and it is load bearing. From 200 KB down to that.)
 
 Knob confirmed: `0x400..0x0b90` zeroed, `0x1600` reads `00 3c`, nothing past

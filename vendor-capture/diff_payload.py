@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Diff the vendor (rknpu) NPU payload against Mesa's, for the simplest conv --
 working purely from the two SERIAL-CONSOLE logs (no USB / no binary transfer).

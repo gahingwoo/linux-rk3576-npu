@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 # Isolation models to crack the per-channel SDP A/B/C requant formula.
 # All conv2d-shaped (16->128,5x5,s2,SAME). Captured on the board -> A/B/C at bo01@51200.
 import os, numpy as np, torch, torch.nn as nn

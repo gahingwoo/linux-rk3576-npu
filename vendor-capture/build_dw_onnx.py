@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 # Depthwise conv matching MobileNet v1 dw1: 32ch, 3x3, stride 1, SAME pad,
 # input 1x32x112x112. Convert -> RK3576 rknn (do_quantization=True -> vendor
 # uint8 per-tensor, MobileNet's regime) -> extract the vendor depthwise regcmd

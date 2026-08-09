@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """Minimal TFLite flatbuffer reader (no schema module) to pull tensors,
 quantization, operators and buffer data for offline golden computation."""
 import struct, numpy as np

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Print the Mesa ROCKET_DEBUG=dump_bos buffers as TEXT, in the same "cap: BO"
 format the instrumented vendor kernel prints, so the Mesa payload comes back

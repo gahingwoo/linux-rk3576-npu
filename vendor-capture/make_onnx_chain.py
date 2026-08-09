@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 MobileNetV1 head: conv0 -> dw1 -> pw1 (-> dw2), exported to ONNX so the toolkit
 compiles them IN-GRAPH. dw1/pw1 are then middle layers (real depthwise/pointwise

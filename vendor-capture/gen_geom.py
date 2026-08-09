@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Compile vendor .rknn files at chosen conv geometries, so the CNA registers mesa
 fills from a hardcoded ladder can be read at geometries nobody ever captured.

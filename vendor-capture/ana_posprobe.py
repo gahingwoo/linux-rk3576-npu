@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Decide the coef float-surface WEIGHT PLACEMENT from the two matched-shape probes
 (build_posprobe.py). Run the instant the board files come back:

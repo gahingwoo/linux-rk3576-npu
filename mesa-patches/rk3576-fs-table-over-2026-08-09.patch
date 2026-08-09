@@ -1,0 +1,196 @@
+From 7129bfdaeb2e16377028e44c39e91461f4bfcd6f Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 9 Aug 2026 13:53:35 +1200
+Subject: [PATCH] rocket RK3576: split the table from the rest of the
+ coefficient surface
+
+Round 28 wrote the per-channel fp16 table at groups*64 and left the rest of
+the buffer zero, and conv2d-cal went from 2/2 to 0/2. The zeroed-table control
+also failed, so the region is read, and the value was right: the model's weight
+scale is 3.9125464 and fp16 of that is the 0x43d3 the dump shows.
+
+But that run changed two things at once, the table and the remainder, and so
+did the run before it. Add ROCKET_FS_TABLE_OVER, which writes the float surface
+exactly as the configuration that computes does and then overwrites only the
+table's 2*oc bytes, and ROCKET_FS_HOLE, the same surface with only those bytes
+zeroed. Between them the table is isolated from the rest.
+
+Also add the copyright line for the RK3576 work to the rocket files.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c  | 61 ++++++++++++++++++++++++-
+ src/gallium/drivers/rocket/rkt_device.c |  1 +
+ src/gallium/drivers/rocket/rkt_device.h |  1 +
+ src/gallium/drivers/rocket/rkt_ml.c     |  1 +
+ src/gallium/drivers/rocket/rkt_ml.h     |  1 +
+ src/gallium/drivers/rocket/rkt_regcmd.c |  1 +
+ src/gallium/drivers/rocket/rkt_task.c   |  1 +
+ 7 files changed, 65 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 7bd3483..39db381 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+@@ -680,7 +681,10 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                if (slot < fcap)
+                   fs[slot] = -(float)biases_in[oc] * in_sc * wt;
+             }
+-         } else if (!getenv("ROCKET_FS_ZERO") && !getenv("ROCKET_FS_FLOATS")) {
++         } else if (!getenv("ROCKET_FS_ZERO") &&
++                    !getenv("ROCKET_FS_FLOATS") &&
++                    !getenv("ROCKET_FS_TABLE_OVER") &&
++                    !getenv("ROCKET_FS_HOLE")) {
+             /*
+              * One fp16 per OUTPUT CHANNEL, the per-channel weight scale.
+              *
+@@ -705,6 +709,22 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+              * happened to be nonzero, and zero here scales every channel to
+              * nothing.
+              *
++             * ⚠ ON THE BOARD (round 28) THIS TABLE ALONE DOES NOT COMPUTE.
++             * conv2d-cal is 2/2 with the old float surface and 0/2 with this,
++             * and so is the relative variant. The zeroed-table control did
++             * fail, so the region IS read; the offline reading of WHICH bytes
++             * mean what is not in question. What round 28 could not tell is
++             * WHY, because it moved two things at once: it put the table at
++             * 0x400 AND left everything after it zero, and round 27 had zeroed
++             * both as well.
++             *
++             * ROCKET_FS_TABLE_OVER splits them. It writes the float surface
++             * exactly as the working configuration does and then overwrites
++             * only the table's own bytes, so the table is the only difference.
++             * Its complement is ROCKET_FS_HOLE, the float surface with just
++             * those bytes zeroed. Together they say whether 0x400..0x400+2*oc
++             * needs mesa's floats or whether the breakage lives after it.
++             *
+              * ROCKET_FS_FLOATS restores the old per-weight float surface,
+              * ROCKET_FS_REL writes the scale relative to the largest channel
+              * the way the A/B/C table's C term is written.
+@@ -722,7 +742,8 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+             uint16_t *fs16 = (uint16_t *)(b8 + groups * 64);
+             for (unsigned oc = 0; oc < output_channels; oc++)
+                fs16[oc] = _mesa_float_to_half((wsc ? wsc[oc] : wt_sc) / norm);
+-         } else if (getenv("ROCKET_FS_FLOATS")) {
++         } else if (getenv("ROCKET_FS_FLOATS") ||
++                    getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
+             const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
+             float wt_sc = poperation->conv.weight_tensor->scale;
+             unsigned iw = poperation->conv.weight_tensor->dims[1];
+@@ -800,6 +821,42 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       if (getenv("ROCKET_FS_MIDZERO") && bufsize > 0x0b90)
+          memset(b8 + 0x400, 0, 0x0b90 - 0x400);
+ 
++      /*
++       * ROCKET_FS_TABLE_OVER / ROCKET_FS_HOLE: separate the two things round 28
++       * changed together.
++       *
++       * Round 27 zeroed 0x400..0x0b90 and conv2d-cal broke. Round 28 wrote the
++       * per-channel fp16 table at 0x400 and left everything after it zero, and
++       * it broke too, while the old float surface computes and the zeroed-table
++       * control fails as it should. Neither round says whether what the model
++       * needs is the table's own bytes or the rest of the surface behind it,
++       * because both rounds moved both.
++       *
++       * TABLE_OVER writes the float surface exactly as the configuration that
++       * computes does, then overwrites only the table's 2*oc bytes, so the
++       * table is the ONLY difference from a passing run. HOLE is its
++       * complement: the same surface with only those bytes zeroed.
++       *
++       *   TABLE_OVER computes  the table is compatible and the earlier
++       *                        breakage was the zeroed remainder
++       *   TABLE_OVER breaks    those bytes must hold mesa's floats, and the
++       *                        offline reading does not carry over to what this
++       *                        driver puts in the rest of the buffer
++       *   HOLE breaks          confirms the slice is load bearing by itself,
++       *                        which is what makes TABLE_OVER readable
++       *   HOLE computes        the slice is NOT load bearing on its own and
++       *                        round 27's failure was entirely the remainder
++       */
++      if (getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
++         const float *wsc = poperation->conv.weight_tensor->scales;
++         float wt_sc = poperation->conv.weight_tensor->scale;
++         uint16_t *fs16 = (uint16_t *)(b8 + groups * 64);
++         for (unsigned oc = 0; oc < output_channels; oc++)
++            fs16[oc] = getenv("ROCKET_FS_HOLE")
++                          ? 0
++                          : _mesa_float_to_half(wsc ? wsc[oc] : wt_sc);
++      }
++
+       const char *tailf = getenv("ROCKET_FS_TAIL");
+       if (tailf && bufsize > 0x0b90) {
+          FILE *f = fopen(tailf, "rb");
+diff --git a/src/gallium/drivers/rocket/rkt_device.c b/src/gallium/drivers/rocket/rkt_device.c
+index 6025c06..faf1e56 100644
+--- a/src/gallium/drivers/rocket/rkt_device.c
++++ b/src/gallium/drivers/rocket/rkt_device.c
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_device.h b/src/gallium/drivers/rocket/rkt_device.h
+index 7dd57c0..56091a9 100644
+--- a/src/gallium/drivers/rocket/rkt_device.h
++++ b/src/gallium/drivers/rocket/rkt_device.h
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index 31c1db9..c3b81e5 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
+index 60d309a..f6fb3ba 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.h
++++ b/src/gallium/drivers/rocket/rkt_ml.h
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index d8bb8d6..0e26293 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 15e634e..8635e1b 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+-- 
+2.43.0
+

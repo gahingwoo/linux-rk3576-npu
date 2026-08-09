@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """pwz: oc-CONSTANT pointwise, w[oc][ic]=ic-8 (ic-range -8..23 -> tensor zp~66,
 oc-identical so A/B stay clean per-layer constants). Third B(zp) data point to
 fix the bias-buffer coeff formula (pwka zp=0 B=128, pwkv zp=128 B=-127)."""

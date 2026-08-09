@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Scan an .rknn (or any binary) for the NPU register-command stream and decode it
 in the SAME format as our rocket/rknpu dump, so it diffs directly.

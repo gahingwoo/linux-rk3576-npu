@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import os; SCR=os.path.dirname(os.path.abspath(__file__))
 import numpy as np, tensorflow as tf
 # ONE standalone depthwise conv, uint8 I/O (conv2d-cal's PROVEN regime) -> isolate

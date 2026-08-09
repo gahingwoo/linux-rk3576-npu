@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 import os, sys, numpy as np, torch, torch.nn as nn
 OC,IC,K = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
 tag=sys.argv[4]; mode=sys.argv[5] if len(sys.argv)>5 else "occonst"

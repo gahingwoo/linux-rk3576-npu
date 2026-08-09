@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Find rknpu_task descriptors in a .rknn and print enable_mask / int_mask /
 int_clear etc. These are the per-task PC-submit values the vendor kernel writes

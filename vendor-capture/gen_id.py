@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: MIT
 """
 Identifiable depthwise generator for decoding the RK3576 weight-buffer layout.
 Builds conv_dw_1 shape (ic=oc=32, g=32, k3, s1, p1, hw112) with KNOWN weights:
