@@ -28,6 +28,10 @@
 #
 # ⚠ Needs rock4d-spi-uboot-vendor.img in SPI, and rock4d-spi-uboot.img back
 # afterwards before rocket will run again.
+# ⚠ THIS FILE MUST BE INSTALLED AS /opt/npu-cap/run-coefs.sh, NOT
+# run-capture.sh. S98npucap hardcodes run-coefs.sh, so injecting it under any
+# other name boots the PREVIOUS round's script and wastes a flash. That happened
+# on 2026-08-10: the board ran the old 5x5-then-3x3 coefficient capture.
 CAP=/opt/npu-cap
 OUT=$CAP/out
 export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH

@@ -88,6 +88,24 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 a wasted flash, and what it cost
+
+The first depthwise capture round never ran. `S98npucap` hardcodes
+`/opt/npu-cap/run-coefs.sh`, and the new script was injected as
+`run-capture.sh`, which is the name the older per-axis round used. The board
+booted, ran the previous round's 5x5-then-3x3 coefficient capture, and produced
+a log with nothing to do with depthwise.
+
+My error, and the check that would have caught it is one line: read what the
+init script actually invokes before injecting, rather than matching the name in
+a document that described a different round. `run-dwcoef.sh` now carries that
+warning at the top, and the round is rebuilt under the right name.
+
+Verified in the image before rebuilding this time, so the next flash is not
+spent on the same class of mistake: the boot script's target file is the
+depthwise round and calls the decoder, both models are present, `runner`,
+`capture.so`, `librknnrt.so` and `python3.11` all exist.
+
 ## 2026-08-10 depthwise, the per-channel-scaled gap closed, and the capture prepared
 
 ⚠ The full-file sweep used correlation, which is scale invariant, so it finds
