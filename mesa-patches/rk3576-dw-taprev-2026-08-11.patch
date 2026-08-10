@@ -1,0 +1,72 @@
+From 9308d19ea03c222299411dbe340fe5a2295ed2e9 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 23:24:56 +1200
+Subject: [PATCH] rocket RK3576: a knob for the depthwise spatial block order
+
+The 1024 channel impulse decodes to a perfect single tap of the right input
+plane, correlation +1.000 on every channel and 897 of 1024 reading their own
+plane, but the wrong tap: against the tap the impulse was placed at, the
+hardware uses (-p) mod 9. At 32 channels the same buffer and the same packing
+code give a byte-exact surface, so the order cannot be globally wrong.
+
+ROCKET_DW_TAPREV writes the spatial blocks in exactly the order the board
+reported, which turns the observation into a test. The loop now computes an
+explicit block offset instead of a running index, which is identical when the
+knob is off.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 29 ++++++++++++++++++++++----
+ 1 file changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 2f8eddd..5efe963 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -193,18 +193,39 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       unsigned channels = input_channels_real;
+       uint8_t pad = zero_point - 0x80;
+       uint8_t zplane = getenv("ROCKET_DW_ZP_POS") ? pad : (uint8_t)(-(int8_t)pad);
+-      unsigned n = 0;
++      unsigned npos = weights_width * weights_height;
++      unsigned block = DIV_ROUND_UP(channels, 2) * 4;
++      /*
++       * ROCKET_DW_TAPREV: write the spatial blocks in reverse cyclic order.
++       *
++       * The 1024 channel impulse decodes to a perfect single tap of the right
++       * input plane, correlation +1.000 on every channel and 897 of 1024
++       * reading their OWN plane, but the WRONG tap: measured against the tap
++       * the impulse was placed at, the hardware uses (-p) mod 9. At 32
++       * channels the same buffer and the same code give a byte-exact surface,
++       * so the order cannot be globally wrong. This writes the permutation the
++       * board reported, which turns the observation into a test rather than a
++       * story: if it makes the 1024 channel case correct and breaks the 32
++       * channel one, the traversal depends on something and the next question
++       * is what.
++       */
++      bool taprev = getenv("ROCKET_DW_TAPREV") != NULL;
+ 
+       for (int y = 0; y < weights_width; y++) {        /* ky (dims[1]) */
+          for (int x = 0; x < weights_height; x++) {     /* kx (dims[2]) */
++            unsigned pos = y * weights_height + x;
++            uint8_t *blk =
++               weights_out + (taprev ? (npos - pos) % npos : pos) * block;
++            unsigned n = 0;
++
+             for (unsigned g = 0; g < DIV_ROUND_UP(channels, 2); g++) {
+                for (unsigned s = 0; s < 2; s++) {
+                   unsigned c = g * 2 + s;
+-                  weights_out[n++] =
++                  blk[n++] =
+                      c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
+                }
+-               weights_out[n++] = zplane;
+-               weights_out[n++] = zplane;
++               blk[n++] = zplane;
++               blk[n++] = zplane;
+             }
+          }
+       }
+-- 
+2.43.0
+

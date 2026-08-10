@@ -2,45 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 63. The 1024 channel depthwise, with the method that worked.
+# 2026-08-11 round 64. The 1024 channel depthwise uses the wrong TAP.
 #
-# Round 62 SOLVED the 112x112 depthwise: dw_imp 32 of 32 all COMPUTED, mn_dw1
-# 32 of 32 with the other nine references genuinely constant, the row profile
-# flat, the control reproducing the old breakage, and the fix holding with the
-# seam at 46 and at 64. Regular shapes untouched, whole model 2/2.
+# Round 63's impulse decode at 1024 channels:
 #
-# mn_dw25 did not move: 7x7 with 1024 channels, 2 COMPUTED of 1024. It is a
-# single window so the staging fix cannot touch it, and it is a different bug.
+#   CPU control decodes to its own impulse   1019/1024
+#   hardware reads its OWN input plane        897/1024
+#   hardware decodes to the same impulse      112/1024
+#   correlation on every printed row          +1.000
 #
-# Two candidates were killed offline before building anything:
+#   ch     0  1  2  3  4  5  6  7  8      the tap the impulse was placed at
+#   npu    0  8  7  6  5  4  3  2  1      the tap the hardware used
 #
-#   task->output_channels has an ad-hoc doubling for depthwise only when the
-#   channel count is 32 or fewer, which looked like exactly the kind of special
-#   case that breaks at 1024. It is not used by the RK3576 path at all; that
-#   path takes output_channels_real.
+# So the hardware computes a PERFECT single tap of the RIGHT input plane and
+# picks the wrong one, by (-p) mod 9. It is not noise: correlation is 1.000,
+# the plane is right for 897 channels, and the CPU decodes its own impulse
+# 1019 times out of 1024 through the same code.
 #
-#   calc_weights_banks() counts k*k*ic bytes for a depthwise layer while the
-#   CNA is programmed to DMA twice that, since the buffer carries two bytes per
-#   channel. At 1024 channels that is a 9216 byte shortfall. But the function
-#   adds a whole spare bank and a bank is 512 entries of 128 bytes, so even the
-#   1024 channel case has 65536 bytes for 18432. No overflow, at any width.
+# And it cannot be globally wrong, because dw_imp and mn_dw1 at 112x112 are
+# byte-exact against the CPU on the same buffer and the same packing code, both
+# re-run at the top of this round.
 #
-# So use the instrument that worked. dw25_imp.tflite is mn_dw25 with every tap
-# at the weight zero point except one per channel at c mod 9, and a zero bias;
-# its input and output scales are equal, so the correct output of channel c is
-# its own input shifted by that tap. dwimp.py now scales to 1024 channels by
-# checking each channel's own plane plus the neighbours a packing error would
-# reach: the pair partner and the 16, 32, 64 and C/2 strides.
+# What differs is not the channel count but the PATH. rkt_regcmd's `split` is
+# `capped`, which is only true for a row-windowed layer, so a depthwise that
+# does not window gets 0x1018 = 0x40000404 and CBUF_CON0 = 0x10000000 where a
+# windowed one gets 0x40000505 and 0x14000000. mn_dw1 windows; mn_dw25 at 7x7
+# does not. ROCKET_DW_SPLITVALS forces the windowed values for any depthwise
+# and has been sitting unused in the driver.
+#
+# ROCKET_DW_TAPREV is the other half: write the spatial blocks in exactly the
+# order the board reported. That turns the observation into a test rather than
+# a story.
 #
 # DECISION RULE, written before the run:
-#   CPU control decodes, hardware      the wiring is right at 1024 channels too
-#     agrees                           and what is left is the value
-#   hardware reads a NEIGHBOURING      the channel packing breaks above some
-#     plane                            width, and the offset names the stride
-#   hardware fits no tap               neither, and the next step is the row and
-#                                      column profile on a 7x7 surface
-#   mn_dw1 or dw_imp regress           the round 62 fix is not stable and that
-#                                      comes first
+#   SPLITVALS fixes mn_dw25            the two CNA words are the tap traversal,
+#                                      and they belong to depthwise rather than
+#                                      to windowing
+#   TAPREV fixes mn_dw25 and breaks    the traversal really does depend on
+#     mn_dw1                           something, and SPLITVALS says what
+#   TAPREV fixes BOTH                  the order was wrong all along and
+#                                      112x112 was compensating somewhere else
+#   neither moves it                   the tap reading is wrong; go to the row
+#                                      and column profile on 7x7
+#   dw_imp or mn_dw1 regress           the round 62 fix comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -48,8 +52,8 @@ log() { echo "$@" > "$C"; }
 p() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
-d() { log ""; log "  -- decode $1"; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so \
+d() { log ""; log "  -- decode $1   $2"; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/dwimp.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
@@ -60,33 +64,39 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) REGRESSION: the round 62 fix must still hold ====="
+	log "===== 1..2) REGRESSION: 112x112 depthwise must still be exact ====="
 	p dw_imp.tflite ""
 	p mn_dw1.tflite ""
 
 	log ""
-	log "===== 2) the 1024 channel impulse: which tap, which channel ====="
-	d dw25_imp.tflite
+	log "===== 3..4) mn_dw25: the windowed CNA words, forced ====="
+	p dw25_imp.tflite ROCKET_DW_SPLITVALS=1
+	p mn_dw25.tflite ROCKET_DW_SPLITVALS=1
 
 	log ""
-	log "===== 3) the same model through the ordinary metric ====="
-	p dw25_imp.tflite ""
+	log "===== 5..6) mn_dw25: the tap order the board reported ====="
+	p dw25_imp.tflite ROCKET_DW_TAPREV=1
+	p mn_dw25.tflite ROCKET_DW_TAPREV=1
 
 	log ""
-	log "===== 4) mn_dw25 with its real weights ====="
-	p mn_dw25.tflite ""
+	log "===== 7) both together ====="
+	p dw25_imp.tflite "ROCKET_DW_SPLITVALS=1 ROCKET_DW_TAPREV=1"
 
 	log ""
-	log "===== 5) the 32 channel impulse decode, as the method's control ====="
-	d dw_imp.tflite
+	log "===== 8) does TAPREV break the 112x112 case? ====="
+	p dw_imp.tflite ROCKET_DW_TAPREV=1
 
 	log ""
-	log "===== 6) a regular shape, which must be untouched ====="
+	log "===== 9) decode again, whichever way test 3 to 7 came out ====="
+	d dw25_imp.tflite ROCKET_DW_SPLITVALS=1
+
+	log ""
+	log "===== 10) a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read test 1 first. If the 112x112 depthwise regressed, the ====="
-	log "===== 1024 channel result is not the thing to work on.           ====="
+	log "===== Read tests 1 and 2 first: the 112x112 depthwise is solved  ====="
+	log "===== and must stay solved, whatever the 1024 channel case does. ====="
 	sync
 }
 case "$1" in
