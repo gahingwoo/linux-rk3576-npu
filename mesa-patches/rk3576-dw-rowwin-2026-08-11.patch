@@ -1,0 +1,74 @@
+From fa80714410118cc4237556dec76a9247cf26bec7 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 22:57:30 +1200
+Subject: [PATCH] rocket RK3576: make the depthwise row-window boundary movable
+
+The row maxdiff profile of a 112x112 stride-1 depthwise, sampled every eighth
+row, is 1 1 1 1 1 1 1 1 1 1 1 1 200 200. Rows 0 to 88 are within one of the
+reference, which is rounding, and rows 96 and 104 are garbage.
+rkt_split_tasks emits 90 output rows then 22 for this shape, so task 0 is
+right and task 1 is wrong, and the depthwise arithmetic is correct.
+
+The vendor's capture of the same layer carries DPU 0x4024 = 0x59 then 0x15,
+90 output rows then 22, so the split itself matches. What differs is what the
+second window is told.
+
+ROCKET_ROWWIN=N overrides the input rows staged per task, so the boundary can
+be moved before eighteen per-window registers are read: N >= 113 gives one
+task and should give a whole correct surface, N = 46 gives three and the error
+should follow the second window rather than staying at row 90.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_task.c | 28 ++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 8635e1b..cd64582 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -4,6 +4,8 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <stdlib.h>
++
+ #include "rkt_task.h"
+ #include "rkt_ml.h"
+ 
+@@ -237,7 +239,31 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+        * 0x30000000 flags). Window N's CNA CBUF input offset (0x1040 low) is the
+        * cumulative staged input rows of the earlier windows, carried in the task.
+        */
+-      unsigned max_iwin = 91;
++      /*
++       * ROCKET_ROWWIN=N overrides the input rows staged per task.
++       *
++       * Round 60 put the depthwise error exactly here. The row maxdiff profile
++       * of a 112x112 depthwise, sampled every eighth row, is
++       *
++       *     1 1 1 1 1 1 1 1 1 1 1 1 200 200
++       *
++       * so rows 0 to 88 are within one of the reference, which is rounding,
++       * and rows 96 and 104 are garbage. With max_iwin 91 this loop emits 90
++       * output rows then 22, so task 0 is right and task 1 is wrong. The
++       * vendor's own capture of the same layer carries 0x4024 = 0x59 then 0x15,
++       * 90 rows then 22, so the SPLIT matches and it is the second window's
++       * setup that does not.
++       *
++       * That also explains why every regular shape in this project is perfect:
++       * they are 80x80 or smaller and take the single-task path below.
++       *
++       * Moving the boundary is the cheapest way to tell a per-window bug from
++       * a bug at one particular row. N >= 113 gives one task and the whole
++       * surface should come out right; N = 46 gives three and the error should
++       * start at the second one wherever that now falls.
++       */
++      const char *rw = getenv("ROCKET_ROWWIN");
++      unsigned max_iwin = rw ? (unsigned)strtoul(rw, NULL, 0) : 91;
+       unsigned overlap = (operation->weights_height - 1) / 2;
+       unsigned line_in = calc_line_stride(operation->input_width);
+       unsigned line_out = calc_line_stride(operation->output_width);
+-- 
+2.43.0
+

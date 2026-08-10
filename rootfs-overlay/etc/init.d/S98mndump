@@ -2,53 +2,47 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 60. WHERE in the surface is the depthwise error?
+# 2026-08-11 round 61. Move the seam.
 #
-# Round 59's impulse run is the strongest result depthwise has produced.
-# dw_imp.tflite has one live tap per channel, so the correct output of channel
-# c is its own input shifted by that tap, and the hardware decoded to
+# Round 60 put the depthwise error exactly. Row maxdiff, every eighth row:
 #
-#   CPU control decodes to its own impulse   27/32
-#   hardware decodes to the SAME impulse     27/32
-#   hardware reads its OWN input channel     27/32
-#   correlation on every printed row         +1.000
+#   dw_imp   1 1 1 1 1 1 1 1 1 1 1 1 200 200
+#   mn_dw1   1 1 1 1 1 1 1 1 1 1 1 1 255 255
 #
-# The five that "miss" give the same answer for the CPU as for the hardware, so
-# they are the decoder aliasing on a ramp input, not a hardware fact. The
-# channel map, the tap map and the plane order are all correct. The wiring is
-# not the bug.
+# Rows 0 to 88 are within ONE of the reference, which is rounding, and rows 96
+# and 104 are garbage. rkt_split_tasks emits 90 output rows then 22 for a
+# 112x112 stride-1 layer, so task 0 is right and task 1 is wrong.
 #
-# But the same run is 0 of 32 on maxdiff, with maxdiff 200 on every channel and
-# the hardware's value range, 0..219 over 220 distinct values, IDENTICAL to the
-# reference's. Perfect correlation on an interior crop plus a large maxdiff over
-# the whole surface means the error is somewhere the crop did not look. The
-# decoder cropped rows 8 to 38.
+# So the depthwise ARITHMETIC IS CORRECT, all of it. The coefficient work of
+# rounds 54 to 58 stands, and every sweep since came back flat because there
+# was nothing left in the coefficients to find.
 #
-# The row profile says where, and there is a specific candidate. mesa splits
-# these depthwise layers into TWO tasks, which is visible as two OUT_CVT lines
-# per depthwise run in every log since round 54, while conv2d-cal emits one.
-# A 3x3 conv across a row-window seam needs a halo row from the neighbouring
-# window, and no coefficient sweep could ever have reached that. It would also
-# explain why every regular shape in this project is perfect: none of them
-# tile.
+# It also explains the shape of this whole investigation: every regular model
+# here is 80x80 or smaller and takes the single-task path, which is why they
+# are all perfect.
 #
-# The pad registers are already excluded offline: the vendor writes
-# 0x1080 = 0x01000101 and 0x1084 = 0xffffff80 for BOTH the depthwise and the
-# regular model of the single-variable pair, and mesa's pad value matches for
-# an input zero point of 0.
+# The vendor's own capture of the same layer carries DPU 0x4024 = 0x59 then
+# 0x15, which is 90 output rows then 22. The SPLIT matches ours exactly. What
+# differs is what the second window is told, and the capture names the
+# eighteen registers a window moves: 0x1018, 0x1028, 0x102c, 0x1034, 0x1038,
+# 0x103c, 0x1040, 0x1078, 0x1080, 0x1088, 0x1098, 0x301c, 0x4018, 0x4024,
+# 0x4034, 0x40b8, 0x5010 and 0x1014.
 #
-# Nothing in the driver changed. perch.py now prints which rows and columns
-# carry error, the row maxdiff profile, and the maxdiff with the outer ring
-# excluded.
+# Before reading eighteen registers, establish that the bug is per-window
+# rather than at one particular row. ROCKET_ROWWIN moves the boundary.
 #
 # DECISION RULE, written before the run:
-#   error only in the outer ring        it is the padding, and the pad value or
-#                                       the pad amounts are the next target
-#   error concentrated near one row     it is the tile seam, and the halo
-#     in the middle                     between row windows is the bug
-#   error on every row                  neither, and the affine reading of
-#                                       round 59 has to be re-derived
-#   conv2d-cal shows no rows at all     the control, it has no error to place
+#   ROWWIN 113 gives a whole correct    the tiling is the bug, full stop, and
+#     surface                           round 62 goes at the second window's
+#                                       registers with a working reference
+#   ROWWIN 46 breaks from row 45        the bug is per-window, not at row 90
+#   the error stays at row 90 whatever  it is that row, not the windowing
+#     ROWWIN is
+#   ROWWIN 113 fails to run at all      the CBUF cannot stage 112 rows, which
+#                                       is why the window exists; still tells
+#                                       us the split is forced rather than
+#                                       chosen
+#   conv2d-cal unchanged                the control: it never takes this path
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -65,24 +59,28 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the impulse model: where is the error? ====="
+	log "===== 1..4) dw_imp: move the seam and watch where the error goes ====="
 	p dw_imp.tflite ""
+	p dw_imp.tflite ROCKET_ROWWIN=113
+	p dw_imp.tflite ROCKET_ROWWIN=46
+	p dw_imp.tflite ROCKET_ROWWIN=64
 
 	log ""
-	log "===== 2) mn_dw1, the same question on the real weights ====="
+	log "===== 5..6) mn_dw1, the real weights, one task or two ====="
 	p mn_dw1.tflite ""
+	p mn_dw1.tflite ROCKET_ROWWIN=113
 
 	log ""
-	log "===== 3) mn_dw25, 7x7, too small to tile: does it still err? ====="
-	p mn_dw25.tflite ""
+	log "===== 7) mn_dw25 is 7x7 and never tiled, so it must not move ====="
+	p mn_dw25.tflite ROCKET_ROWWIN=113
 
 	log ""
-	log "===== 4) conv2d-cal, the control with no error to place ====="
-	p conv2d-cal.tflite ""
+	log "===== 8) conv2d-cal, the control that never takes this path ====="
+	p conv2d-cal.tflite ROCKET_ROWWIN=113
 
 	log ""
-	log "===== Read the row list. An outer ring is padding; a band in the ====="
-	log "===== middle is the seam between the two row windows.            ====="
+	log "===== Read test 2 first. If ROWWIN=113 gives one task and every  ====="
+	log "===== row correct, the depthwise conv is solved bar the tiling.  ====="
 	sync
 }
 case "$1" in
