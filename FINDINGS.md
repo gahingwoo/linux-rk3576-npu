@@ -88,6 +88,40 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 50 (VOID, and then closed properly: tflite per-axis forbids the very thing the vendor's B encodes)
+
+Baselines 128/128. Per-channel B is harmless on the working shapes, all three
+still 128/128, and changed **nothing** on dwconv, mn_dw1 or mn_pw24, every count
+identical to baseline.
+
+That is not a refutation, because the knob was a no-op. Checking the models
+rather than assuming:
+
+| model | scales | zero_points | distinct zero points |
+|---|---|---|---|
+| dwconv | 16, **per-axis** | 16 | **1**, all zero |
+| mn_dw1 | 1 | 1 | 110 |
+| mn_pw24 | 1 | 1 | 130 |
+| conv2d-cal | 1 | 1 | 133 |
+
+`dwconv` is genuinely per-axis in its scales, but all sixteen of its zero points
+are 0, so `0x80 - zero_points[oc]` is 128 for every channel, exactly what the
+scalar path already produced. The other three are per-tensor. **No model in the
+suite could have shown a difference**, and I should have checked that before
+spending a flash.
+
+**And checking it closes the thread rather than leaving it open.** The tflite
+spec requires per-axis quantisation to be symmetric, with a zero point of zero
+on every channel. The vendor's B varies because rknn uses asymmetric
+per-channel quantisation, which tflite does not permit. So the decode stands,
+the vendor's B really is `0x80 - wt_zp[oc]` per channel, and it is **not
+reproducible from a tflite model and does not need to be**: with per-axis zero
+points pinned at 0, B is uniformly 128, which is what mesa's scalar path already
+writes.
+
+So this is a real difference between the two stacks that cannot be the cause of
+mesa's depthwise failure, and the third difference is still unlocated.
+
 ## 🔑 2026-08-10 B is PER CHANNEL in the vendor, and mesa has never used the per-channel zero point
 
 Round 49 said the difference is elsewhere in the surface. Decoding the vendor's
