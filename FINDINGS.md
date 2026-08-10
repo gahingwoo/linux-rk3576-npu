@@ -88,6 +88,38 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 49 (The vendor's own value produces an empty convolution in mesa. Same field, two configurations, two different acceptable contents.)
+
+Baselines 128/128 at both ends.
+
+| | distinct | range |
+|---|---|---|
+| baseline, `0x1004` | 128 | 128..255 |
+| **`0x0E0E`, the vendor's own second-operand value** | **1** | **all 128**, empty |
+| the full vendor layout | 1 | all 128 |
+| **dwconv with `0x0E0E`** | **21** (baseline 6) | 0..128 |
+| mn_dw1, full layout | 247 | 0..255 |
+
+`0x0E0E & 0x3f` is `0x0E`, which violates the round 36 rule, and it produced
+exactly what that rule predicts. So the rule holds for mesa and the vendor's own
+value fails in mesa.
+
+**The contradiction is now stated cleanly**: the vendor writes `0x0E0E` at its
+`0x5024` target and computes; mesa writes `0x1004` at its `0x5024` target and
+computes; swapping either way fails. One field, two configurations, two
+disjoint sets of acceptable contents. So what differs is not this field's
+content, and round 36's rule is a property of mesa's configuration, confirmed a
+second time by a direct test rather than by inference.
+
+The identification of the slot as the second operand still stands, since mesa's
+`0x5024` demonstrably points at `groups*64`. What does not follow, and what
+round 49 disproves, is that the vendor's content can simply be copied into it.
+
+**The one consistent positive**: `dwconv` responds to this field every time.
+Baseline 6 distinct values, 21 with `0x0E0E`, 28 with the scale table in round
+47. Depthwise reads it and the regular shapes tolerate a wide range, which is
+the opposite of how this looked when the field was thought to be a scale.
+
 ## 🔑 2026-08-10 the magic word slot IS the second operand, and round 46 left it empty
 
 Putting the capture's layout beside mesa's answers what the round 36 rule
