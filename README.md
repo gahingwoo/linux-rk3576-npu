@@ -37,7 +37,7 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
-## ⚠ Inference is correct for one convolution shape, not yet in general
+## Every regular convolution shape computes; depthwise and chaining do not
 
 Bring-up works: the NPU probes, powers up and down through runtime PM, and runs
 jobs to completion. Submits recompute, and the completion interrupt arrives.
@@ -61,6 +61,18 @@ by taking an ordered trace of every register write during one submit and diffing
 it against the same trace from the vendor driver on the same board: exactly one
 value differed.
 
+**Confirmed by Rockchip.** On 2026-08-10 Chaoyi Chen replied on the list with
+the field layout from the vendor side, which matches what the trace had already
+forced:
+
+```
+RK3588   BIT[11:0] task_number  BIT[12] task_pp_en  BIT[13] task_count_clear
+RK3576   BIT[15:0] task_number  BIT[16] task_pp_en  BIT[17] task_count_clear
+         BIT[18] task_last_layer_clear
+```
+
+RK3576 also has a fourth control at bit 18 that this work did not know about.
+
 **That also corrects a claim carried in all six cover letters.** The completion
 interrupt does reach the GIC on RK3576. It never fired because the PC believed
 it had 28672 tasks left. With the fix and the poll disabled, so only a real
@@ -69,43 +81,78 @@ zero timeouts. [Correction sent to the
 list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/);
 v7 drops the poll.
 
-**What computes today**, each confirmed with an A/B control in a single boot and
-a control model passing at both ends of the run:
+**What computes today**, every one confirmed per output channel against the
+CPU, in a single boot, with a control model passing at both ends of the run:
 
-| convolution | |
+| convolution | output channels correct |
 |---|---|
-| 5x5 stride 2, 16 in, 128 out | correct, byte exact against the CPU above the output zero point |
-| 5x5 stride 1, 16 in, 128 out | correct |
-| 5x5 stride 2, 16 in, 16 out | correct |
+| 5x5 stride 2, 16 in, 128 out | 128 / 128 |
+| 5x5 stride 1, 16 in, 128 out | 128 / 128 |
+| **3x3**, 16 in, 128 out | **128 / 128** |
+| **1x1**, 16 in, 128 out | **128 / 128** |
+| 5x5 stride 2, 16 in, 16 out | 16 / 16 |
+| input zero point 0 | 128 / 128 |
+| pointwise from MobileNet, 32 in, 64 out | 64 / 64 |
 
-The last two are new, from two Mesa fixes where a register had been filled from
-a constant fitted to a capture rather than derived:
+Two of those came from earlier Mesa fixes, where a register had been filled from
+a constant fitted to one capture rather than derived:
 
 - `CNA 0x1080` is the **padding** register,
   `(pad_right << 24) | (pad_bottom << 16) | (pad_left << 8) | pad_top`. The
   constant it replaced, `0x02020101`, is exactly SAME padding for a 5x5 stride 2
-  convolution, so every other geometry was configured with the wrong padding or
-  with none.
+  convolution, so every other geometry was configured with the wrong padding.
 - `DPU 0x4050` depends on the **output channel count**: `0x80011111` for a
   multiple of 32 and `0x80011011` otherwise, ten for ten across a sweep.
 
 Both were found by compiling vendor `.rknn` files on the host at chosen
 geometries and reading the registers back, which the RKNN toolkit supports from
 ONNX on arm64. That turns "what does the vendor put here" into a question
-answerable without the board.
+answerable without the board, and it is how most of what follows was settled
+too.
 
-**What does not compute: anything with a kernel smaller than 5x5.** Cropping the
-working model's own kernel to its centre 3x3 or 1x1, which leaves the bias, the
-scales and the output shape untouched, breaks it. For those the driver's output
-has been verified against a vendor build at the same geometry and matches: the
-register stream in absolute terms, the weight buffer layout including the
-32-channel grouping, the bias, the requant, and the A, B and C coefficients. An
-input impulse lands in exactly the right output pixels, so no tap is paired with
-the wrong input. The simplest failing case is a constant input at the input zero
-point, where every MAC product is zero by construction and the answer must be
-`requant(bias)`: 5x5 returns exactly that, 3x3 returns the zero point
-everywhere, and 1x1 returns values below the zero point that the same clamp
-forbids at 5x5.
+**The kernel size was never the dividing line.** For months 3x3 and 1x1 were
+carried as two separate hardware mysteries, each with its own theory. Both were
+the same bug, and it was in this driver's Mesa side.
+
+`rkt_coefs.c` filled a region of the coefficient buffer with a float32
+dequantised weight per weight, `MAX2(ic*oc*k*k, 8192)` of them, 197888 bytes for
+the model that worked. Measured on hardware per output channel, keeping the
+first **four** bytes of that region and zeroing the rest leaves every channel
+correct, and keeping zero bytes leaves none. So one word out of 197888 bytes was
+doing the work.
+
+That word is not read as a float at all. Flipping its sign changes nothing.
+Doubling it changes nothing. Clearing its low byte, worth 0.0005 as a float,
+destroys all 128 output channels. Twenty four words later the requirement is
+
+```
+(w & 0x3f) == 0x04    and    ((w >> 6) & 0xff) >= T,   0x21 < T <= 0x3f
+```
+
+a bitfield in the low 16 bits, with bits 14, 15 and everything above them free.
+The old code was filling it with a dequantised weight, so **whether a model
+computed came down to whether its first weight happened to carry the right
+bits.** The 5x5 model's did and the 3x3 model's did not.
+
+Mesa now writes one constant there, `0x1004`, and the 197888 byte surface is
+gone. The rule was tested as a prediction before it was believed: `0x1004` is
+the smallest word it allows and had never been run, `0x3fc4` sets every free bit
+at once, and both pass while the near misses beside them fail.
+
+This also explains a negative result that had been puzzling: compiling vendor
+`.rknn` files on the host and comparing them shows the vendor's coefficient
+buffer carries **no kernel size dependence at all**. There was none to find.
+
+**What still does not compute**: depthwise, chained operations, and MobileNet,
+which contains both. Those are not the same bug. Six words that compute
+correctly elsewhere, and the old float surface, all leave a depthwise
+convolution at 0 of 16 channels, so it does not depend on that word at all.
+Depthwise fires and saturates, collapsing to 6 distinct values against a
+reference with 101, which is a requantisation signature rather than a weight
+delivery one. A vendor `.rknn` compiled as depthwise carries no per channel
+coefficient table at all, checked with two independent structural oracles and a
+positive control, so the vendor runtime must build those coefficients at load
+time.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
 retractions.
