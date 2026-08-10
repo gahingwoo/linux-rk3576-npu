@@ -88,6 +88,36 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 B is PER CHANNEL in the vendor, and mesa has never used the per-channel zero point
+
+Round 49 said the difference is elsewhere in the surface. Decoding the vendor's
+A/B/C table found it, in the one column nobody had looked at:
+
+```
+sv_rgu B column   26 distinct values over 32 channels, range -25 to 23, mean 0.16
+                  correlates with NOTHING tested: bias, weight sum, A, C, wt_sc
+mesa              B = 0x80 - wt_zp, ONE value for the entire layer
+```
+
+A tight spread centred on zero is exactly what `0x80 - wt_zp[oc]` looks like
+when the per-channel zero points sit near 128, which is what an asymmetric uint8
+quantiser produces. That it correlates with nothing else is the point: it is not
+derived from the weights at all, it is a zero point.
+
+**And the interface has carried this all along.** `pipe_tensor` has a
+`zero_points` **array** beside `scales`, and `rkt_ml.c` already tests it to
+decide whether a tensor is per-axis quantised. `rkt_coefs.c` has only ever read
+the scalar `weight_tensor->zero_point`, in every place it needs a zero point.
+
+`ROCKET_B_PERCH` uses `zero_points[oc]` when the array is present. Round 50
+built, not flashed, running it on the shapes that work as a regression check and
+on depthwise and `mn_pw24`, which are the per-channel quantised ones where a
+missing per-channel zero point should show.
+
+⚠ Not claimed: that this fixes depthwise. It is one missing term, found by
+decoding rather than guessing, in a table whose other two columns are already
+understood.
+
 ## ⚠ 2026-08-10 round 49 (The vendor's own value produces an empty convolution in mesa. Same field, two configurations, two different acceptable contents.)
 
 Baselines 128/128 at both ends.

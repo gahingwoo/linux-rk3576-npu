@@ -2,40 +2,35 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 49. The magic word slot IS the second operand, and round 46
-# moved the pointer without writing anything at the new target.
+# 2026-08-10 round 50. B is PER CHANNEL in the vendor. mesa has never used the
+# per-channel zero point, although the interface has carried it all along.
 #
-# The vendor's layout, from the capture:
+# Round 49 established that the second-operand field takes different acceptable
+# contents in the two configurations, so the difference is elsewhere in the
+# surface. Decoding the vendor's A/B/C table found it:
 #
-#     0x5020 -> [A/B/C table][oc x fp16 scales]
-#     0x5024 -> 0x0E0E, then zeros          (identical in both models)
+#   sv_rgu B column   26 distinct values over 32 channels, -25 to 23, mean 0.16
+#                     correlates with NOTHING: not bias, weight sum, A, C, scale
+#   mesa              B = 0x80 - wt_zp, ONE value for the whole layer
 #
-# mesa's 0x5024 is bias_addr + groups*64, which is where the fp16 scales belong.
-# So the word this driver writes at groups*64 has been serving as the SECOND
-# OPERAND all along, not as a scale. That is what the round 36 "bitfield rule"
-# actually describes, and it is why the vendor's scale entries violate it in
-# 30 of 32 while its models compute: they are not the same field.
+# A small spread centred on zero is what 0x80 - wt_zp[oc] looks like when the
+# per-channel zero points sit near 128, which is what an asymmetric uint8
+# quantiser gives. And `pipe_tensor` carries a `zero_points` ARRAY beside
+# `scales`; rkt_ml.c already tests it to decide whether a tensor is per-axis
+# quantised. rkt_coefs.c has only ever read the scalar.
 #
-# It also says what round 46 got wrong. It wrote the scales and moved the
-# pointer, but never wrote anything at the NEW target, so the second operand
-# read zeros.
-#
-# Two tests, cheapest first:
-#   2  put the vendor's second-operand value, 0x0E0E, where mesa's 0x5024
-#      already points. No layout change at all. ROCKET_FS_F0 does this already.
-#   3  the full vendor layout: fp16 scales at groups*64, 0x0E0E at
-#      groups*64 + oc*2, and 0x5024 moved there.
+# ROCKET_B_PERCH uses zero_points[oc] when the array is present.
 #
 # DECISION RULE, written before the run:
-#   2 is 128/128            the slot is the second operand and 0x0E0E is its
-#                           value; the magic word retires with an explanation
-#   2 fails                 0x0E0E is not sufficient there, so the slot's
-#                           content depends on something else as well
-#   3 is 128/128            the whole vendor layout is adoptable and the
-#                           surface is finally derived end to end
-#   3 fails but 2 passes    the layout move is still wrong somewhere; keep the
-#                           simple version and stop moving the pointer
-#   1 or 9 not 128/128      the build is wrong, stop
+#   2 is 128/128 and 1 is too    harmless on per-tensor models, as expected,
+#                                since there the array is absent or uniform
+#   any per-axis model improves  the per-channel zero point was a real missing
+#                                term and the second operand puzzle may follow
+#   dwconv moves again           depthwise is per-channel, so this is where it
+#                                should show
+#   2 regresses                  the array is not what this reading says, and
+#                                the scalar was right
+#   1 or 9 not 128/128           the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -52,33 +47,32 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) BASELINE: the magic word, must be 128/128 ====="
+	log "===== 1) BASELINE: must be 128/128 ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE CHEAP TEST: the vendor's 0x0E0E in the same slot ====="
-	p conv2d-cal.tflite ROCKET_FS_F0=0x0E0E
-	p cal_k3.tflite ROCKET_FS_F0=0x0E0E
-	p dwconv.tflite ROCKET_FS_F0=0x0E0E
+	log "===== 2..4) per-channel B on the shapes that work ====="
+	p conv2d-cal.tflite ROCKET_B_PERCH=1
+	p cal_k3.tflite ROCKET_B_PERCH=1
+	p cal_k1.tflite ROCKET_B_PERCH=1
 
 	log ""
-	log "===== 3) THE FULL LAYOUT: scales, 0x0E0E past them, pointer moved ====="
-	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
-	p cal_k3.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
+	log "===== 5..7) per-channel B where it should matter ====="
+	p dwconv.tflite ROCKET_B_PERCH=1
+	p mn_dw1.tflite ROCKET_B_PERCH=1
+	p mn_pw24.tflite ROCKET_B_PERCH=1
 
 	log ""
-	log "===== 4) the full layout on depthwise ====="
-	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
-	p mn_dw1.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
-	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1 ROCKET_DW_REC48=1"
+	log "===== 8) per-channel B together with the depthwise record ====="
+	p dwconv.tflite "ROCKET_B_PERCH=1 ROCKET_DW_REC48=1"
 
 	log ""
 	log "===== 9) CONTROL that can fail: baseline again ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 9, then 2. 0x0E0E is the vendor's own value for   ====="
-	log "===== the field mesa has been sweeping blind since round 32.       ====="
+	log "===== Read 1 and 9. Then 5: depthwise is per-channel quantised, so ====="
+	log "===== if the missing zero point matters anywhere it is there.      ====="
 	sync
 }
 case "$1" in

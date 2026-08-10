@@ -1,0 +1,59 @@
+From e7d3db18baf785ad9aec5c4771f2c8b51e58af42 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 19:46:54 +1200
+Subject: [PATCH] rocket RK3576: B is per channel in the vendor, use
+ zero_points[oc]
+
+Decoded from the runtime capture. sv_rgu's B column holds 26 distinct values
+across 32 channels, ranging -25 to 23 with a mean of 0.16, and correlates with
+nothing tested: not the bias, the weight sum, A, C or the scale. A tight spread
+centred on zero is what 0x80 - wt_zp[oc] looks like when the per-channel zero
+points sit near 128, which is what an asymmetric uint8 quantiser gives, and
+correlating with nothing is the point: it is a zero point, not something derived
+from the weights.
+
+This file has only ever read the scalar weight_tensor->zero_point, but
+pipe_tensor carries a zero_points array beside scales and rkt_ml.c already tests
+it to decide whether a tensor is per-axis quantised. ROCKET_B_PERCH uses
+zero_points[oc] when the array is present.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index d124bad..7291622 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -712,9 +712,28 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+              * zero point at 3x3. Something k-dependent is being added to a MAC
+              * that should be zero, and B is the only k-dependent term.
+              */
++            /*
++             * ROCKET_B_PERCH: B is PER CHANNEL in the vendor, not per layer.
++             *
++             * Decoded from the runtime capture. sv_rgu's B column holds 26
++             * distinct values across 32 channels, ranging -25 to 23 with a mean
++             * of 0.16, and correlates with nothing: not the bias, the weight
++             * sum, A, C or the scale. A small spread centred on zero is exactly
++             * what 0x80 - wt_zp[oc] looks like when the per-channel zero points
++             * sit near 128, which is what an asymmetric uint8 quantiser
++             * produces.
++             *
++             * This file has only ever used the scalar
++             * `weight_tensor->zero_point`, but `pipe_tensor` carries a
++             * `zero_points` array beside `scales`, and rkt_ml.c already tests
++             * it to decide whether a tensor is per-axis quantised. So the
++             * per-channel zero point is available and has never been used here.
++             */
++            const int *wzp = poperation->conv.weight_tensor->zero_points;
++            int zp_oc = (wzp && getenv("ROCKET_B_PERCH")) ? wzp[oc] : (int)wt_zp;
+             *B = getenv("ROCKET_B_VALUE")
+                     ? (int16_t)strtol(getenv("ROCKET_B_VALUE"), NULL, 0)
+-                    : (int16_t)(0x80 - (int)wt_zp);
++                    : (int16_t)(0x80 - zp_oc);
+             /*
+              * C is a Q14 per-channel scale ratio (=0x4000 for the max-scale channel).
+              * If the HW does NOT apply a built-in >>14 after the BS C-multiply, this
+-- 
+2.43.0
+
