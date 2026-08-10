@@ -1,0 +1,85 @@
+From 734ce293e12f7cd4f308d954da6c656b67fd35d3 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 18:31:12 +1200
+Subject: [PATCH] rocket RK3576: a depthwise layer takes a float32 bias, not
+ the int32 A/B/C table
+
+Captured from the vendor runtime with the single-variable pair sv_rgu and
+sv_dwu, ic = oc = 32 at 112x112 with k=3 s=1 and only groups differing, whose
+biases are known exactly. The regular capture holds the int32 A/B/C table at
+bo01+0x2400 correlating +0.9972 with the per-channel weight sum and no float
+bias anywhere; the depthwise capture holds the float32 bias array byte for byte
+at bo01+0x3198 and no A/B/C table at all, +0.0000 where the regular one gives
++0.9972.
+
+The two formats are mutually exclusive and the register that selects between
+them is one this driver already sets correctly: 0x501c is 0x0710 for a regular
+conv and 0x0510 for depthwise. So mesa has been telling the DPU to read that
+surface in depthwise mode and then filling it with the regular integer table,
+which is why a depthwise layer fires and saturates rather than producing
+nothing.
+
+ROCKET_DW_FLOATBIAS writes bias[oc] * in_sc * wt_sc[oc] as float32 at the start
+of the buffer for depthwise layers.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 37 ++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index c658a77..3cda26e 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -565,6 +565,42 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                if (wscales[oc] > max_sc)
+                   max_sc = wscales[oc];
+ 
++         /*
++          * ROCKET_DW_FLOATBIAS: a DEPTHWISE layer takes a float32 bias per
++          * output channel, not the int32 A/B/C table.
++          *
++          * Captured from the vendor runtime with the single-variable pair
++          * sv_rgu and sv_dwu, ic = oc = 32 at 112x112, k=3, s=1, only `groups`
++          * differing, whose biases are known here exactly:
++          *
++          *   regular    int32 A/B/C table at bo01+0x2400, correlating +0.9972
++          *              with the per-channel weight sum, and NO float bias
++          *              anywhere in the buffer
++          *   depthwise  the float32 bias array BYTE FOR BYTE at bo01+0x3198,
++          *              and NO A/B/C table (+0.0000 where the regular one
++          *              gives +0.9972)
++          *
++          * The two formats are mutually exclusive, and the register that
++          * selects between them is one this driver already sets correctly:
++          * 0x501c is 0x0710 for a regular conv and 0x0510 for depthwise, which
++          * rkt_regcmd.c emits. So mesa has been telling the DPU to read this
++          * surface in depthwise mode and then filling it with the regular
++          * integer table. That is why a depthwise layer fires and saturates,
++          * collapsing to 6 distinct values against a 101-value reference,
++          * rather than producing nothing.
++          */
++         if (rkt_is_depthwise(poperation) && getenv("ROCKET_DW_FLOATBIAS")) {
++            float *fb = (float *)b8;
++            const float *bsc = poperation->conv.weight_tensor->scales;
++            float wt_sc = poperation->conv.weight_tensor->scale;
++            float in_sc = poperation->input_tensors[0]->scale;
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               float sc = (bsc ? bsc[oc] : wt_sc) * in_sc;
++               fb[oc] = (float)biases_in[oc] * sc;
++            }
++            goto biases_done;
++         }
++
+          for (unsigned oc = 0; oc < output_channels; oc++) {
+             int32_t sw = calculate_weight_sum(poperation, oc, weights);
+             unsigned g = oc / 8, i = oc % 8;
+@@ -652,6 +688,7 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+             *C = cval ? (int16_t)strtol(cval, NULL, 0)
+                       : (int16_t)(16.0f * rel + 0.5f);
+          }
++biases_done:
+ 
+          /*
+           * (b) board test: the zeroed float surface stalls the SDP (core
+-- 
+2.43.0
+

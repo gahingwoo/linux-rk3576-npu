@@ -88,6 +88,43 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 THE DEPTHWISE FORMAT (A depthwise layer takes a float32 bias, not the int32 A/B/C table. Captured from the vendor runtime, with the control passing.)
+
+The pair is `sv_rgu` and `sv_dwu`, ic = oc = 32 at 112x112, k=3, s=1, one
+calibration set, only `groups` differing, biases known here exactly. Decoded
+with the same oracle as the offline work, control first:
+
+| | regular `sv_rgu` | depthwise `sv_dwu` |
+|---|---|---|
+| int32 A/B/C at `bo01+0x2400`, blocked 64/8/4 | **+0.9972** vs the per-channel weight sum | **+0.0000**, absent |
+| float32 bias array | **not present anywhere in the buffer** | **byte for byte at `bo01+0x3198`** |
+
+The control reproduces the host result exactly, `+0.9972` in the same blocked
+layout, so the capture is real and the decode is trustworthy. The depthwise
+match is not a correlation, it is the 128 bytes of the known bias array
+byte for byte.
+
+**The two formats are mutually exclusive, and the register that selects between
+them is one this driver already sets correctly.** `0x501c` is `0x0710` for a
+regular conv and `0x0510` for depthwise, which `rkt_regcmd.c` emits and which
+matched the vendor in the offline register audit.
+
+**So mesa has been telling the DPU to read that surface in depthwise mode and
+then filling it with the regular integer table.** That is precisely what round
+43 measured from the other side: `dwconv` fires and collapses to 6 distinct
+values against a 101-value reference, which is a meaningless requant rather than
+a missing one.
+
+It also closes the loop on the offline dead end. The depthwise `.rknn` has no
+A/B/C table because a depthwise layer does not use one, and the only per-channel
+thing in the file was the raw float32 bias, which is exactly what the runtime
+hands the hardware.
+
+`ROCKET_DW_FLOATBIAS` writes `bias[oc] * in_sc * wt_sc[oc]` as float32 at the
+start of the buffer for depthwise layers. Round 44 built, not flashed, with the
+knob checked against a regular conv so a leak would show. Raw dumps kept in
+`dirty/vendorcap-dw-2026-08-10/`.
+
 ## ⚠ 2026-08-10 a wasted flash, and what it cost
 
 The first depthwise capture round never ran. `S98npucap` hardcodes
