@@ -1,0 +1,82 @@
+From 1a5eac226594386145d079798cd89eca8b4072c5 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 20:10:07 +1200
+Subject: [PATCH] rocket RK3576: make the vendor's coefficient layout the
+ default
+
+Round 52 measured it: the fp16 per-channel weight scale table with the second
+operand moved past it and kept at 0x1004 gives 128/128 on conv2d-cal, cal_k3 and
+cal_k1, the same as the arrangement it replaces, while the same layout with the
+vendor's 0x0E0E gives 0/128 exactly as round 49 predicted.
+
+So write, by default, the A/B/C table followed by one fp16 weight scale per
+output channel, with 0x5024 pointing past it, instead of a lone constant sitting
+where the scale table belongs. Every part of that is derived from the model
+except the four-byte operand.
+
+ROCKET_SCALE_OFF restores the previous arrangement, ROCKET_SCALE_MUL writes the
+requant multiplier in the table instead of the weight scale, and ROCKET_OP2
+overrides the operand.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c  | 18 +++++++++++++++---
+ src/gallium/drivers/rocket/rkt_regcmd.c |  2 +-
+ 2 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index bfeef7a..5453ffd 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -883,14 +883,26 @@ biases_done:
+              * what round 47 tested and is kept only so the comparison can be
+              * repeated.
+              */
+-            bool scale_table = getenv("ROCKET_SCALE_TABLE") != NULL;
++            /*
++             * DEFAULT since round 52, which measured it: the fp16 per-channel
++             * weight scale table, with the second operand moved past it, gives
++             * 128/128 on conv2d-cal, cal_k3 and cal_k1, the same as the old
++             * arrangement, and it is the vendor's layout rather than a
++             * constant sitting where a table belongs.
++             *
++             * ROCKET_SCALE_OFF restores the single word at groups*64.
++             */
++            bool scale_table = getenv("ROCKET_SCALE_OFF") == NULL;
+             if (scale_table) {
+                uint16_t *sc16 = (uint16_t *)(b8 + groups * 64);
+                const float *wsc = poperation->conv.weight_tensor->scales;
+                float wt_sc = poperation->conv.weight_tensor->scale;
+                float in_sc = poperation->input_tensors[0]->scale;
+                float out_sc = poperation->output_tensors[0]->scale;
+-               bool raw = getenv("ROCKET_SCALE_TABLE_WT") != NULL;
++               /* The capture's entries match the scale implied by A at +0.998,
++                * so the weight scale is the content; the requant multiplier is
++                * kept behind ROCKET_SCALE_MUL for comparison. */
++               bool raw = getenv("ROCKET_SCALE_MUL") == NULL;
+                for (unsigned oc = 0; oc < output_channels; oc++) {
+                   float w = wsc ? wsc[oc] : wt_sc;
+                   sc16[oc] = _mesa_float_to_half(raw ? w
+@@ -912,7 +924,7 @@ biases_done:
+                 * the pointer past the scale table but never wrote anything at
+                 * the new target, so the DPU read zeros. Write it.
+                 */
+-               if (getenv("ROCKET_SCALE_PTR")) {
++               if (getenv("ROCKET_SCALE_OFF") == NULL) {
+                   /*
+                    * ⚠ The operand VALUE stays mesa's, not the vendor's.
+                    *
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index f854fdc..4c021ae 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -728,7 +728,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+        * now so each can be attributed.
+        */
+       R_RDMA(0x5024, bias_addr + DIV_ROUND_UP(oc, 8) * 64 +
+-                     (getenv("ROCKET_SCALE_PTR") ? oc * 2 : 0));
++                     (getenv("ROCKET_SCALE_OFF") ? 0 : oc * 2));
+    }
+    R_RDMA(0x5028, 0x00000000);
+    R_RDMA(0x502c, 0x00000000);
+-- 
+2.43.0
+

@@ -88,6 +88,26 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-10 round 53 (Lock it in: the vendor's layout becomes the default)
+
+mesa now writes, with no knobs set:
+
+```
+0x5020 -> [A/B/C table][oc x fp16 weight scale]
+0x5024 -> the operand, four bytes
+```
+
+instead of a lone constant sitting where the scale table belongs. Everything
+there is derived from the model except those four bytes.
+
+`ROCKET_SCALE_OFF` restores the previous arrangement and is the control in round
+53: it has to still pass, or round 52's comparison was not what it looked like.
+`ROCKET_SCALE_MUL` writes the requant multiplier instead of the weight scale and
+`ROCKET_OP2` overrides the operand, so both alternatives stay reproducible.
+
+Round 53 runs every shape that already worked, on the new default and on the old
+path, plus depthwise where nothing is expected to change. Built, not flashed.
+
 ## 🔑🔑 2026-08-10 round 52 THE LAYOUT IS ADOPTED (the vendor's arrangement works in mesa, and the magic word shrinks to one operand slot)
 
 Baselines 128/128 at both ends.

@@ -2,32 +2,32 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 52. Move the pointer, keep mesa's own operand value.
+# 2026-08-10 round 53. Lock in round 52: the vendor's layout is now the DEFAULT.
 #
-# Round 51 ran the combination the capture calls the vendor's arrangement, the
-# weight scale in the table with the pointer moved past it, and it failed with
-# distinct 1, an empty convolution. The round 49 combination beside it failed
-# identically. So the table CONTENT is not the issue and the POINTER MOVE is.
+# Round 52 measured it. The fp16 per-channel weight scale table, with the second
+# operand moved past it and kept at 0x1004, gives 128/128 on conv2d-cal, cal_k3
+# and cal_k1, the same as the arrangement it replaces, and the same layout with
+# the vendor's 0x0E0E gives 0/128 exactly as round 49 predicted.
 #
-# And that is consistent rather than mysterious. When the pointer moves, the new
-# target gets 0x0E0E, the vendor's own operand value, and round 49 already
-# showed that exact word produces an empty convolution in the slot mesa's 0x5024
-# already points at. Same word, same failure, once directly and once after
-# moving the pointer to it.
+# So mesa now writes, by default:
 #
-# So the operand value is what is wrong in both, not the move. Move the pointer
-# and keep 0x1004, which mesa's configuration demonstrably accepts.
+#     0x5020 -> [A/B/C table][oc x fp16 weight scale]
+#     0x5024 -> the operand, four bytes
+#
+# instead of a lone constant sitting where the scale table belongs. Every part
+# of that is derived from the model except the four-byte operand.
+#
+# ROCKET_SCALE_OFF restores the old arrangement, which is the control here: it
+# has to still pass, or the comparison in round 52 was not what it looked like.
 #
 # DECISION RULE, written before the run:
-#   2 is 128/128            the layout is adoptable with mesa's operand value,
-#                           the fp16 table is in place, and only the operand
-#                           content still differs from the vendor
-#   2 fails too             the move itself is wrong regardless of the value,
-#                           and mesa's surface differs from the vendor's in a
-#                           way the pointer cannot express; stop moving it
-#   4 moves depthwise       the table matters for depthwise even where the
-#                           regular shapes are indifferent
-#   1 or 9 not 128/128      the build is wrong, stop
+#   1, 2, 3 all 128/128        the new default is a clean replacement and the
+#                              old path can eventually go
+#   any of them regresses      the default flip is wrong, revert it
+#   ROCKET_SCALE_OFF differs
+#     from the new default      the two paths are not equivalent on that model,
+#                              which is worth knowing per shape
+#   depthwise unchanged        expected; it does not read this chain
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -35,7 +35,6 @@ log() { echo "$@" > "$C"; }
 p() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
-V="ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
 
 start() {
 	i=0
@@ -45,32 +44,36 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) BASELINE: must be 128/128 ====="
+	log "===== 1..4) THE NEW DEFAULT, no knobs at all ====="
 	p conv2d-cal.tflite ""
+	p cal_k3.tflite ""
+	p cal_k1.tflite ""
+	p cal_s1.tflite ""
 
 	log ""
-	log "===== 2) pointer moved, operand kept at mesa's 0x1004 ====="
-	p conv2d-cal.tflite "$V"
-	p cal_k3.tflite "$V"
-	p cal_k1.tflite "$V"
+	log "===== 5..6) more shapes on the new default ====="
+	p cal_oc16.tflite ""
+	p mn_pw2.tflite ""
 
 	log ""
-	log "===== 3) the same but with the vendor's 0x0E0E, which must FAIL ====="
-	p conv2d-cal.tflite "$V ROCKET_OP2=0x0E0E"
+	log "===== 7..8) the OLD arrangement, which must still pass ====="
+	p conv2d-cal.tflite ROCKET_SCALE_OFF=1
+	p cal_k3.tflite ROCKET_SCALE_OFF=1
 
 	log ""
-	log "===== 4) the arrangement on depthwise ====="
-	p dwconv.tflite "$V"
-	p mn_dw1.tflite "$V"
-	p dwconv.tflite "$V ROCKET_DW_REC48=1"
+	log "===== 9..10) depthwise, expected unchanged ====="
+	p dwconv.tflite ""
+	p mn_dw1.tflite ""
 
 	log ""
-	log "===== 9) CONTROL that can fail: baseline again ====="
-	p conv2d-cal.tflite ""
+	log "===== 11) whole model, for the record ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read 1 and 9, then 2 against 3. If 2 passes and 3 fails, the ====="
-	log "===== layout is fine and only the operand value is still mesa's.   ====="
+	log "===== Every shape that worked before must still work, with the     ====="
+	log "===== scale table derived instead of a constant standing in for it.====="
 	sync
 }
 case "$1" in
