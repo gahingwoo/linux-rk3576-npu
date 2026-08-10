@@ -59,6 +59,16 @@ cap_one() {
 cap_one sv_rgu sv_rgu_rk3576.rknn
 cap_one sv_dwu sv_dwu_rk3576.rknn
 
-echo "===== DONE. Pull /opt/npu-cap/out/ from SD partition 2, then:  ====="
-echo "=====   vendor-capture/dwcoef_decode.py out/sv_rgu out/sv_dwu  ====="
+# Decode ON THE BOARD and print the verdict, so this round is read the same way
+# as every other one: flash, boot, read the console. The files still land in
+# $OUT as a fallback if the decode needs revisiting on the host.
+echo ""
+echo "===== DECODE: control first ====="
+python3 $CAP/dwcoef_onboard.py $OUT/sv_rgu rg 2>&1
+echo ""
+echo "===== DECODE: depthwise ====="
+python3 $CAP/dwcoef_onboard.py $OUT/sv_dwu dw 2>&1
+echo ""
+echo "===== Read the CONTROL line first. If it FAILS, the depthwise    ====="
+echo "===== result says nothing. Raw dumps are in /opt/npu-cap/out/.   ====="
 sync
