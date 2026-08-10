@@ -1,0 +1,178 @@
+From 2e41b621ac8727cc22284180c441f708fa08ef8f Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 23:05:08 +1200
+Subject: [PATCH] rocket RK3576: stage only the rows a row window does not
+ already have
+
+A row window overlaps the one before it by one row on each side, and those rows
+are already in the CBUF: the reuse base at 0x103c points straight back at them
+and rkt_regcmd already computes it correctly. rkt_split_tasks staged them
+again, which writes them a second time at the next free CBUF row, so every row
+after the overlap sits two rows late and the window convolves shifted input.
+
+Measured: the row maxdiff profile of a 112x112 stride-1 depthwise, every eighth
+row, is 1 1 1 1 1 1 1 1 1 1 1 1 200 200. Rows 0 to 88 are within one of the
+reference and rows 96 and 104 are garbage, on a split of 90 output rows then
+22. Moving the boundary with ROCKET_ROWWIN moves the break with it, so it is
+per window rather than at one row, and a single 112 row window is worse still
+because 91 input rows is a real CBUF limit.
+
+The vendor's capture of this exact layer writes two different row counts for
+its second window where this driver wrote one:
+
+    0x102c  23   the rows the window SPANS
+    0x1028  21   the rows the window STAGES, as 56 x 21
+    0x1078  21
+    0x1098  21   as 112 x 21
+
+So split_task gains staged_rows, the loop stages from the first row not
+already present, and the three staging registers carry that count while 0x102c
+keeps the span.
+
+ROCKET_STAGE_ALL=1 restores the old behaviour as a control.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_ml.h     | 12 +++++++++
+ src/gallium/drivers/rocket/rkt_regcmd.c | 18 ++++++++++---
+ src/gallium/drivers/rocket/rkt_task.c   | 35 +++++++++++++++++++++++--
+ 3 files changed, 59 insertions(+), 6 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
+index f6fb3ba..383cc0a 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.h
++++ b/src/gallium/drivers/rocket/rkt_ml.h
+@@ -54,6 +54,18 @@ struct split_task {
+    unsigned cbuf_input_row_start;
+    unsigned cbuf_reuse_row;
+ 
++   /*
++    * Input rows this task actually STAGES, which is not the same as the rows
++    * its window covers once a window overlaps the one before it.
++    *
++    * The vendor's capture of a 112x112 stride-1 depthwise writes both numbers
++    * for its second window and they differ: 0x102c carries 23, the rows the
++    * window spans, while 0x1028, 0x1078 and 0x1098 all carry 21, the rows it
++    * brings in. The first two of the 23 are already in the CBUF from the
++    * window before, and the reuse base at 0x103c points back at them.
++    */
++   unsigned staged_rows;
++
+    unsigned output_width;
+    unsigned output_height;
+    unsigned output_channels;
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 22a3ce2..54cc90c 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -319,7 +319,17 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    unsigned full_inh = operation->input_height;
+    unsigned full_oh = operation->output_height;
+    unsigned win_orows = task->output_height;   /* this window's output rows */
+-   unsigned win_irows = task->input_height;     /* this window's staged input rows */
++   unsigned win_irows = task->input_height;     /* rows this window SPANS */
++   /*
++    * Rows this task actually STAGES. A window overlaps the one before it, and
++    * those rows are already in the CBUF, reachable through the reuse base at
++    * 0x103c. The vendor's capture of a 112x112 stride-1 depthwise writes both
++    * numbers for its second window: 0x102c carries 23, the span, while 0x1028,
++    * 0x1078 and 0x1098 carry 21, the rows brought in. Writing the span to all
++    * four stages the overlap twice, so every row after it sits two rows late
++    * and the window convolves shifted input.
++    */
++   unsigned stg_irows = task->staged_rows ? task->staged_rows : win_irows;
+    bool capped = win_orows < full_oh;           /* a window of a larger output */
+    unsigned wnum = task->num;
+ 
+@@ -460,7 +470,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
+    R_CNA(0x1020, (dw ? oc : ic) * k * k);
+    R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc - 1)));
+-   R_CNA(0x1028, ((surf * win_irows) << 16) | (ic - 1));
++   R_CNA(0x1028, ((surf * stg_irows) << 16) | (ic - 1));
+    R_CNA(0x102c, ((inw - 1) << 16) | (win_irows - 1));
+    R_CNA(0x1030, (wbpk << 16) | (ow - 1));
+    R_CNA(0x1034, ow * win_orows - 1);
+@@ -498,7 +508,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x106c, 0x00000000);
+    R_CNA(0x1070, 0x00000000);
+    R_CNA(0x1074, 0x00000000);
+-   R_CNA(0x1078, ((inw - 1) << 16) | (win_irows - 1));
++   R_CNA(0x1078, ((inw - 1) << 16) | (stg_irows - 1));
+    R_CNA(0x107c, ic - 1);
+    /* stride-2: depthwise (conv0) uses 0x00000101; a normal conv needs the
+     * 0x0202 SURF_STRIDE high field (vendor capture of this k=5 s=2 conv). */
+@@ -566,7 +576,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x108c, 0x000f000f);
+    R_CNA(0x1090, inw * 4);
+    R_CNA(0x1094, inw * full_inh);
+-   R_CNA(0x1098, (inw * win_irows + 3) & ~3u);
++   R_CNA(0x1098, (inw * stg_irows + 3) & ~3u);
+    R_CNA(0x109c, 0x00000000);
+    R_CNA(0x1100, 0x00000000);
+    R_CNA(0x1104, 0x00000000);
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index cd64582..bc38de5 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -269,6 +269,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+       unsigned line_out = calc_line_stride(operation->output_width);
+       unsigned out_start = 0;
+       unsigned cbuf_rows = 0;
++      unsigned staged_end = 0;   /* input rows already in the CBUF */
+ 
+       while (out_start < full_oh) {
+          struct split_task task = {0};
+@@ -285,9 +286,38 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+          task.input_banks = available_input_banks;
+          task.weights_banks = available_weights_banks;
+          task.input_data_entries = task.input_banks * operation->cbuf_entries_per_bank;
++         /*
++          * A window overlaps the one before it by `overlap` rows, and those
++          * rows are ALREADY in the CBUF. Staging them again writes them a
++          * second time at the next free CBUF row, so everything after them
++          * sits `overlap` rows too late and the window convolves shifted
++          * input. That is the whole of the depthwise error: round 60 measured
++          * rows 0 to 88 within one of the reference and rows 96 and 104
++          * garbage, on a split of 90 output rows then 22.
++          *
++          * The vendor's capture of this exact layer writes both numbers for
++          * its second window and they differ: 0x102c carries 23, the rows the
++          * window spans, while 0x1028, 0x1078 and 0x1098 carry 21, the rows it
++          * stages. mesa wrote 23 to all four.
++          *
++          * So stage from the first row that is not already there, and let the
++          * reuse base at 0x103c reach back for the rest.
++          *
++          * ROCKET_STAGE_ALL=1 restores the old behaviour, and is the control:
++          * it has to reproduce the broken second window exactly.
++          */
++         unsigned new_lo = MAX2(in_lo, staged_end);
++         unsigned staged = (in_hi >= new_lo) ? in_hi - new_lo + 1 : 0;
++
++         if (getenv("ROCKET_STAGE_ALL")) {
++            new_lo = in_lo;
++            staged = win_irows;
++         }
++
+          task.output_height = win_orows;
+          task.input_height = win_irows;
+-         task.input_offset = in_lo * line_in;
++         task.staged_rows = staged;
++         task.input_offset = new_lo * line_in;
+          task.output_offset = out_start * line_out;
+          task.cbuf_input_row_start = cbuf_rows;
+          task.cbuf_reuse_row = in_lo;
+@@ -298,7 +328,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+          task.atomic_count = task.output_width * win_orows;
+ 
+          util_dynarray_append(&operation->tasks, struct split_task, task);
+-         cbuf_rows += win_irows;
++         cbuf_rows += staged;
++         staged_end = in_hi + 1;
+          out_start = out_end;
+       }
+       return;
+-- 
+2.43.0
+

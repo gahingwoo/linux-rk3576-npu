@@ -2,47 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 61. Move the seam.
+# 2026-08-11 round 62. The overlap rows were being staged twice.
 #
-# Round 60 put the depthwise error exactly. Row maxdiff, every eighth row:
+# Round 61 moved the seam and it followed:
 #
-#   dw_imp   1 1 1 1 1 1 1 1 1 1 1 1 200 200
-#   mn_dw1   1 1 1 1 1 1 1 1 1 1 1 1 255 255
+#   ROWWIN  tasks  first bad row
+#     91      2       ~90        the default
+#     64      2       ~64
+#     46      3       ~48
+#    113      1        0         one window, and the WHOLE surface is wrong
 #
-# Rows 0 to 88 are within ONE of the reference, which is rounding, and rows 96
-# and 104 are garbage. rkt_split_tasks emits 90 output rows then 22 for a
-# 112x112 stride-1 layer, so task 0 is right and task 1 is wrong.
+# So the bug is per window, not at row 90, and a single oversized window is not
+# a fix: 91 input rows is a real CBUF limit and 112 rows overruns it. The
+# windowing is forced, not chosen.
 #
-# So the depthwise ARITHMETIC IS CORRECT, all of it. The coefficient work of
-# rounds 54 to 58 stands, and every sweep since came back flat because there
-# was nothing left in the coefficients to find.
+# The vendor's capture of this exact layer then names the bug. Its second
+# window writes TWO different row counts where mesa writes one:
 #
-# It also explains the shape of this whole investigation: every regular model
-# here is 80x80 or smaller and takes the single-task path, which is why they
-# are all perfect.
+#   0x102c  22 -> 23 rows   the rows the window SPANS       mesa 23, correct
+#   0x1028  0x498/56 = 21   the rows the window STAGES      mesa 23, wrong
+#   0x1078  20 -> 21        the same                        mesa 23, wrong
+#   0x1098  2352/112 = 21   the same                        mesa 23, wrong
 #
-# The vendor's own capture of the same layer carries DPU 0x4024 = 0x59 then
-# 0x15, which is 90 output rows then 22. The SPLIT matches ours exactly. What
-# differs is what the second window is told, and the capture names the
-# eighteen registers a window moves: 0x1018, 0x1028, 0x102c, 0x1034, 0x1038,
-# 0x103c, 0x1040, 0x1078, 0x1080, 0x1088, 0x1098, 0x301c, 0x4018, 0x4024,
-# 0x4034, 0x40b8, 0x5010 and 0x1014.
+# A window overlaps the one before it by one row each side, and those rows are
+# already in the CBUF: the reuse base at 0x103c is 56 x 89, pointing straight
+# back at them, and mesa already computes that correctly. Staging them again
+# writes them a second time at the next free CBUF row, so every row after the
+# overlap sits two rows late and the window convolves shifted input. Round 60's
+# reading fits exactly: right value range, perfect correlation on an interior
+# crop of window 0, garbage in window 1.
 #
-# Before reading eighteen registers, establish that the bug is per-window
-# rather than at one particular row. ROCKET_ROWWIN moves the boundary.
+# So rkt_split_tasks now stages from the first row that is NOT already there,
+# and the three staging registers carry that count while 0x102c keeps the span.
+#
+# ROCKET_STAGE_ALL=1 restores the old behaviour and is the control: it has to
+# reproduce the broken second window exactly, or this round is not measuring
+# what it claims.
 #
 # DECISION RULE, written before the run:
-#   ROWWIN 113 gives a whole correct    the tiling is the bug, full stop, and
-#     surface                           round 62 goes at the second window's
-#                                       registers with a working reference
-#   ROWWIN 46 breaks from row 45        the bug is per-window, not at row 90
-#   the error stays at row 90 whatever  it is that row, not the windowing
-#     ROWWIN is
-#   ROWWIN 113 fails to run at all      the CBUF cannot stage 112 rows, which
-#                                       is why the window exists; still tells
-#                                       us the split is forced rather than
-#                                       chosen
-#   conv2d-cal unchanged                the control: it never takes this path
+#   dw_imp COMPUTED 32/32          the depthwise conv is SOLVED
+#   the row profile goes flat but  the shift is fixed and something smaller is
+#     COMPUTED stays low           left, read the new profile
+#   unchanged                      the double staging is not the mechanism and
+#                                  the eighteen per-window registers get read
+#                                  one at a time
+#   STAGE_ALL does not reproduce   the control failed, the round is void
+#     the old profile
+#   regular shapes regress         the change leaked outside the windowed path
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -59,28 +65,38 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) dw_imp: move the seam and watch where the error goes ====="
+	log "===== 1..2) dw_imp: the fix, then the control that must break ====="
 	p dw_imp.tflite ""
-	p dw_imp.tflite ROCKET_ROWWIN=113
+	p dw_imp.tflite ROCKET_STAGE_ALL=1
+
+	log ""
+	log "===== 3..4) mn_dw1: the fix, then the control ====="
+	p mn_dw1.tflite ""
+	p mn_dw1.tflite ROCKET_STAGE_ALL=1
+
+	log ""
+	log "===== 5..6) move the seam again: the fix must hold anywhere ====="
 	p dw_imp.tflite ROCKET_ROWWIN=46
 	p dw_imp.tflite ROCKET_ROWWIN=64
 
 	log ""
-	log "===== 5..6) mn_dw1, the real weights, one task or two ====="
-	p mn_dw1.tflite ""
-	p mn_dw1.tflite ROCKET_ROWWIN=113
+	log "===== 7) mn_dw25 is 7x7, one window, so it must not move ====="
+	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 7) mn_dw25 is 7x7 and never tiled, so it must not move ====="
-	p mn_dw25.tflite ROCKET_ROWWIN=113
+	log "===== 8..9) REGULAR shapes, which never take the windowed path ====="
+	p conv2d-cal.tflite ""
+	p cal_k3.tflite ""
 
 	log ""
-	log "===== 8) conv2d-cal, the control that never takes this path ====="
-	p conv2d-cal.tflite ROCKET_ROWWIN=113
+	log "===== 10) whole model, for the record ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read test 2 first. If ROWWIN=113 gives one task and every  ====="
-	log "===== row correct, the depthwise conv is solved bar the tiling.  ====="
+	log "===== Read test 2 first: the control must reproduce the broken   ====="
+	log "===== second window, or test 1 is not a comparison.              ====="
 	sync
 }
 case "$1" in
