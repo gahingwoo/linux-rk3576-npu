@@ -88,6 +88,48 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 THE DEPTHWISE RECORD IS 48 BYTES, NOT 64 (and this corrects two earlier results of mine)
+
+Round 44 concluded depthwise takes a float32 bias. **That was wrong**, and what
+corrected it was reading the registers out of the capture instead of searching
+the buffer for something recognisable.
+
+`bo00` is not the regcmd; it is inside `bo01`. Decoding it gives the addresses
+the vendor actually programmed, against the BO bases in `meta.txt`:
+
+| | `sv_rgu` regular | `sv_dwu` depthwise |
+|---|---|---|
+| `0x1110` weights | offset 0 | offset 0, and the depthwise weight buffer is 576 = `0x240` bytes |
+| `0x5020` bias base | offset **`0x2400`** | offset **`0x240`**, immediately after the weights |
+| `0x5024` second operand | offset `0x2540` | offset `0x400` |
+| `0x501c` mode | `0x0710` | `0x0510` |
+
+So the surface the DPU reads for depthwise starts at `bo01+0x240`. **The float32
+bias at `0x3198` is not it** and is librknnrt's own copy, which is why writing
+it changed nothing useful.
+
+**Decoding `0x240`:**
+
+| record | A vs the known per-channel weight sum | C |
+|---|---|---|
+| **48 bytes**: A 8x int32 at +0, C 8x int16 at +32, **no B** | **+0.9696** | **peaks at exactly `0x4000`**, 32 distinct |
+| 64 bytes, what mesa writes | -0.15 | maximum is not `0x4000` |
+
+A regular conv is A at +0, B at +32, C at +48 in 64 bytes. **A depthwise layer
+drops B and packs the record into 48.** mesa writing 64 means every channel's A
+and C are read from the wrong offset, which is exactly why a depthwise layer
+fires and saturates rather than producing nothing.
+
+⚠ **This corrects the two entries above that said the vendor emits no
+per-channel coefficient table for depthwise.** Both scans, the C-peak one and
+the ground-truth A-versus-weight-sum one, tried 64, 32 and 128 byte blocks and
+**never 48**. Two independent oracles agreeing meant only that they shared an
+assumption, not that the answer was right. The positive control could not catch
+it either, because the control is a regular conv and 64 is correct there.
+
+`ROCKET_DW_REC48` writes A and C in 48-byte records for depthwise. Round 45
+built, not flashed, with the knob checked against a regular conv.
+
 ## ⚠ 2026-08-10 round 44 (The float bias alone does NOT fix depthwise, and the number that looks like an improvement is not one.)
 
 Baselines 128/128 at both ends, and the knob does not leak: conv2d-cal and

@@ -1,0 +1,90 @@
+From febb4d08e379daab57a78dd183b7fc4837d3dbcb Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 18:44:27 +1200
+Subject: [PATCH] rocket RK3576: a depthwise layer uses a 48-byte coefficient
+ record, not 64
+
+Decoded from the vendor runtime capture. The regcmd lives inside bo01, and
+against the BO bases in meta.txt it puts 0x5020 at bo01+0x240 for depthwise,
+immediately after the 576-byte depthwise weight buffer, and at bo01+0x2400 for a
+regular conv. So the float32 bias found at 0x3198 in the previous round is not
+the surface the DPU reads, which is why writing it achieved nothing.
+
+At 0x240 the table decodes as A 8 x int32 at +0 and C 8 x int16 at +32 with no B
+term, a 48-byte record. A then correlates +0.9696 with the known per-channel
+weight sum and C peaks at exactly 0x4000, the layout's own signature. With the
+64-byte record this driver writes, A falls to -0.15 and C's maximum is not
+0x4000.
+
+A regular conv is A at +0, B at +32, C at +48 in 64 bytes. Depthwise drops B and
+packs into 48, so writing 64 reads every channel's A and C from the wrong
+offset, which is why a depthwise layer fires and saturates.
+
+This also corrects two earlier results that said the vendor emits no per-channel
+table for depthwise: both scans tried 64, 32 and 128 byte blocks and never 48.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 48 ++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 3cda26e..15d3176 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -589,6 +589,54 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+           * collapsing to 6 distinct values against a 101-value reference,
+           * rather than producing nothing.
+           */
++         /*
++          * ROCKET_DW_REC48: a DEPTHWISE layer uses a 48 byte coefficient
++          * record, not the 64 byte one.
++          *
++          * Decoded from the vendor runtime capture (sv_dwu, ic = oc = 32 at
++          * 112x112, k=3, s=1, weights and bias known here exactly). The
++          * register 0x5020 points at bo01+0x240, which is immediately after the
++          * 576 byte depthwise weight buffer, and the table there decodes as
++          *
++          *    A   8 x int32  at +0     the bias plus the weight sum term
++          *    C   8 x int16  at +32    the per-channel multiplier
++          *    (no B)                   record is 48 bytes, not 64
++          *
++          * against a regular conv's A at +0, B at +32, C at +48 in 64 bytes.
++          * With the 48 byte record A correlates +0.9696 with the known
++          * per-channel weight sum and C peaks at exactly 0x4000, which is the
++          * layout's own signature; with the 64 byte record both collapse, to
++          * -0.15 and a maximum that is not 0x4000.
++          *
++          * ⚠ This corrects two earlier conclusions in FINDINGS.md that said the
++          * vendor emits no per-channel coefficient table for depthwise. Both
++          * scans tried 64, 32 and 128 byte blocks and never 48, so they missed
++          * a table that was there.
++          *
++          * mesa writing 64 byte records means every channel's A and C are read
++          * from the wrong offsets, which is why a depthwise layer fires and
++          * saturates rather than producing nothing.
++          */
++         if (rkt_is_depthwise(poperation) && getenv("ROCKET_DW_REC48")) {
++            const float *wscales = poperation->conv.weight_tensor->scales;
++            float max_sc = wscales ? wscales[0] : 1.0f;
++            if (wscales)
++               for (unsigned oc = 1; oc < output_channels; oc++)
++                  if (wscales[oc] > max_sc)
++                     max_sc = wscales[oc];
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               int32_t sw = calculate_weight_sum(poperation, oc, weights);
++               unsigned g = oc / 8, i = oc % 8;
++               int32_t *A = (int32_t *)(b8 + g * 48 + i * 4);
++               int16_t *C = (int16_t *)(b8 + g * 48 + 32 + i * 2);
++               float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
++               *A = biases_in[oc] -
++                    (in_zp - 0x80) * sw;
++               *C = (int16_t)(0x4000 * rel);
++            }
++            goto biases_done;
++         }
++
+          if (rkt_is_depthwise(poperation) && getenv("ROCKET_DW_FLOATBIAS")) {
+             float *fb = (float *)b8;
+             const float *bsc = poperation->conv.weight_tensor->scales;
+-- 
+2.43.0
+
