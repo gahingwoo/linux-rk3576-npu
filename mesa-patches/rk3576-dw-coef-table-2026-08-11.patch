@@ -1,0 +1,333 @@
+From c3f444156fe2c0d5a2da9aa959aa1d6684721160 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 21:54:45 +1200
+Subject: [PATCH] rocket RK3576: the depthwise coefficient table, decoded from
+ the vendor capture
+
+The vendor does emit a per-channel coefficient table for a depthwise layer. It
+is not in the .rknn, librknnrt builds it at load time, which is why every
+earlier search of the model file concluded there was none.
+
+Resolving the capture's address registers into the captured buffers puts
+sv_dwu's 0x5020 immediately past its 576 byte weight buffer and its 0x5024 448
+bytes later, for 32 output channels. Minus the 64 bytes of fp16 weight scale
+that leaves 384, which read as eight records of
+
+    A   8 x int32   at +0
+    C   8 x int16   at +32
+    (no B)
+
+in plain channel order, records four to seven zero, against a regular conv's
+four records of [A|B|C] in 64 bytes. C is round(0x4000 * wt_sc / max wt_sc) for
+32 of 32 channels and A is
+
+    round(bias/(in_sc*wt_sc[oc])) + (in_zp-0x80)*(N*wt_zp[oc] - sum(w_q))
+
+for 32 of 32 channels of both models, with nothing fitted: the weights, biases
+and the calibration set are all generated on the host.
+
+Since calculate_weight_sum() already returns sum(w_q - wt_zp), that expression
+is bias - (in_zp - 0x80) * sw, which this file has written all along. A was
+never the problem. Three other things were wrong together, so changing any one
+of them alone could not move anything: the record is 48 bytes rather than 64,
+there are twice as many of them, and the fp16 table and the 0x5024 operand past
+it both move with that. ROCKET_DW_REC48 did the first and left the pointer
+inside the table it had just resized.
+
+rkt_coef_table_bytes() is now the single expression for where the fp16 entries
+start, so rkt_coefs.c and rkt_regcmd.c cannot drift apart. Eight records for 32
+channels is either twice the regular grouping or a padding of the channel count
+to 64, and this geometry cannot tell them apart; the doubling ships because it
+is the doubling rkt_fill_weights already applies to the depthwise channel
+atomic, and ROCKET_DW_RECS overrides it.
+
+The weight buffer is confirmed rather than changed: mesa's packing reproduces
+all 288 of the vendor's weight lanes under the ky-major plane order it uses, 96
+of 288 under the transpose. The two bytes after each channel pair, called
+padding here, are the negated per-channel weight zero point, the same quantity
+a regular conv carries as B. The sign is corrected; every model here is
+per-axis quantised so it is zero either way, and the per-channel array is
+deliberately left alone because its domain differs from the scalar zero point.
+
+ROCKET_DW_REC64 restores the old record as the control, ROCKET_DW_C14 writes
+the vendor's Q14 C instead of this driver's Q4, ROCKET_DW_ZP_POS restores the
+old zero point sign.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c  | 104 +++++++++++++++++++-----
+ src/gallium/drivers/rocket/rkt_coefs.h  |  38 +++++++++
+ src/gallium/drivers/rocket/rkt_regcmd.c |  10 ++-
+ 3 files changed, 131 insertions(+), 21 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 5453ffd..ea4f690 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -162,20 +162,37 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+     *
+     * The buffer is KH*KW spatial blocks in row-major (ky outer, kx inner)
+     * order.  Each block packs the channels two at a time, every channel pair
+-    * followed by two weight-zero-point pad bytes, i.e. two bytes per channel:
++    * followed by the two channels' weight zero points, i.e. two bytes per
++    * channel:
+     *
+     *   buf[p*block + g*4 + 0] = w[2g  ][ky][kx]   (p = ky*KW + kx)
+     *   buf[p*block + g*4 + 1] = w[2g+1][ky][kx]
+-    *   buf[p*block + g*4 + 2] = zp
+-    *   buf[p*block + g*4 + 3] = zp
++    *   buf[p*block + g*4 + 2] = -wt_zp[2g  ]
++    *   buf[p*block + g*4 + 3] = -wt_zp[2g+1]
+     *
+     * block = DIV_ROUND_UP(channels, 2) * 4, so for the 32-channel layers the
+     * block is 64 bytes and the whole buffer is 9*64 = 576 bytes, matching the
+     * size the CNA weight DMA is programmed with (0x101c).
++    *
++    * Confirmed against the vendor's own 576 bytes for sv_dwu, whose weights are
++    * known exactly: all 288 weight lanes match under this order, and 96 of 288
++    * under the ky/kx transpose, so the plane order is settled too. The two
++    * lanes after each pair came back as the NEGATED per-channel weight zero
++    * point, identical in every spatial block, which is the same sign and the
++    * same quantity a regular conv carries as B in its A/B/C record. This file
++    * used to write +zp there.
++    *
++    * The sign is fixed below; the per-CHANNEL part is deliberately not taken
++    * up. `zero_points[]` is in a different domain from the scalar
++    * `zero_point` on the tensors this driver sees, and getting that wrong is
++    * what made round 50 a void experiment. Every model here is per-axis
++    * quantised, where the zero point is zero and both the sign and the domain
++    * are moot, so there is nothing to measure the guess against.
+     */
+    if (soc == RKT_SOC_RK3576 && rkt_is_depthwise(poperation)) {
+       unsigned channels = input_channels_real;
+       uint8_t pad = zero_point - 0x80;
++      uint8_t zplane = getenv("ROCKET_DW_ZP_POS") ? pad : (uint8_t)(-(int8_t)pad);
+       unsigned n = 0;
+ 
+       for (int y = 0; y < weights_width; y++) {        /* ky (dims[1]) */
+@@ -186,8 +203,8 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+                   weights_out[n++] =
+                      c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
+                }
+-               weights_out[n++] = pad;
+-               weights_out[n++] = pad;
++               weights_out[n++] = zplane;
++               weights_out[n++] = zplane;
+             }
+          }
+       }
+@@ -472,6 +489,14 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+       unsigned wt_zp = poperation->conv.weight_tensor->zero_point;
+       int32_t in_zp = poperation->input_tensors[0]->zero_point;
+       unsigned groups = DIV_ROUND_UP(output_channels, 8);
++      /*
++       * Where the fp16 weight scale table starts, which is the end of the
++       * per-channel record table and differs between a regular conv and a
++       * depthwise one. rkt_regcmd.c points 0x5024 past the same two regions,
++       * so both files call the same helper and cannot drift apart.
++       */
++      unsigned table_bytes =
++         rkt_coef_table_bytes(rkt_is_depthwise(poperation), output_channels);
+       /*
+        * The DPU_RDMA reads a per-channel BS *float* surface from 0x5024 (=
+        * bias + groups*64) for ALL output channels. The vendor's buffer for this
+@@ -510,7 +535,8 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+        */
+       if (getenv("ROCKET_FS_ELEMS"))
+          wt_elems = (unsigned)strtoul(getenv("ROCKET_FS_ELEMS"), NULL, 0);
+-      unsigned bufsize = groups * 64 + MAX2(wt_elems, 8192) * sizeof(float) + 0x100;
++      unsigned bufsize =
++         table_bytes + MAX2(wt_elems, 8192) * sizeof(float) + 0x100;
+       uint8_t *b8;
+ 
+       /*
+@@ -617,22 +643,60 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+           * from the wrong offsets, which is why a depthwise layer fires and
+           * saturates rather than producing nothing.
+           */
+-         if (rkt_is_depthwise(poperation) && getenv("ROCKET_DW_REC48")) {
+-            const float *wscales = poperation->conv.weight_tensor->scales;
+-            float max_sc = wscales ? wscales[0] : 1.0f;
+-            if (wscales)
+-               for (unsigned oc = 1; oc < output_channels; oc++)
+-                  if (wscales[oc] > max_sc)
+-                     max_sc = wscales[oc];
++         /*
++          * DEFAULT for depthwise: the 48 byte record, decoded element for
++          * element from the vendor runtime capture.
++          *
++          * sv_dwu's 0x5020 points at bo01+0x240, immediately past its 576 byte
++          * weight buffer, and its 0x5024 448 bytes later. Taking the last 64 of
++          * those as the fp16 scale table leaves 384 bytes, which read as eight
++          * records of
++          *
++          *    A   8 x int32  at +0
++          *    C   8 x int16  at +32
++          *    (no B)
++          *
++          * in plain channel order, records four to seven zero. C came back as
++          * round(0x4000 * wt_sc[oc] / max(wt_sc)) for all 32 channels, and A as
++          *
++          *    A[oc] = round(bias / (in_sc * wt_sc[oc]))
++          *            + (in_zp - 0x80) * (N * wt_zp[oc] - sum(w_q))
++          *
++          * for all 32 channels of BOTH models, with nothing fitted: the
++          * calibration set was generated here so in_sc and in_zp are known.
++          * Since calculate_weight_sum() already returns sum(w_q - wt_zp), that
++          * is exactly `bias - (in_zp - 0x80) * sw`, the expression this file
++          * has used for A all along. So A needed no change; the record shape,
++          * the record count and where the fp16 table lands after it did.
++          *
++          * ⚠ This corrects the earlier conclusion, in FINDINGS.md and in the
++          * ROCKET_DW_FLOATBIAS comment below, that the vendor emits no
++          * per-channel table for depthwise. It emits one; it is not in the
++          * .rknn, librknnrt builds it at load time, and every search that
++          * looked for it in the model file was looking in the wrong place.
++          *
++          * ROCKET_DW_REC64 restores the regular 64 byte record, which is the
++          * control: it has to reproduce the old depthwise behaviour exactly.
++          */
++         if (rkt_is_depthwise(poperation) && !getenv("ROCKET_DW_REC64")) {
+             for (unsigned oc = 0; oc < output_channels; oc++) {
+                int32_t sw = calculate_weight_sum(poperation, oc, weights);
+                unsigned g = oc / 8, i = oc % 8;
+                int32_t *A = (int32_t *)(b8 + g * 48 + i * 4);
+                int16_t *C = (int16_t *)(b8 + g * 48 + 32 + i * 2);
+                float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
+-               *A = biases_in[oc] -
+-                    (in_zp - 0x80) * sw;
+-               *C = (int16_t)(0x4000 * rel);
++               *A = biases_in[oc] - (in_zp - 0x80) * sw;
++               /*
++                * Q4, matching the regular path a few lines below rather than
++                * the vendor's Q14. The vendor writes 0x4000 * rel, but this
++                * driver's OUT_CVT is its own and the regular path is byte
++                * exact on hardware with 16 * rel while 0x4000 * rel railed the
++                * output. Keeping one convention across both records is what
++                * makes the depthwise result comparable with the regular one.
++                * ROCKET_DW_C14 writes the vendor's Q14 instead.
++                */
++               *C = getenv("ROCKET_DW_C14") ? (int16_t)(0x4000 * rel)
++                                            : (int16_t)(16.0f * rel + 0.5f);
+             }
+             goto biases_done;
+          }
+@@ -855,7 +919,7 @@ biases_done:
+              * bitfield rule fitted in rounds 36 and 37 was describing valid
+              * fp16 encodings all along.
+              */
+-            uint32_t *fs32 = (uint32_t *)(b8 + groups * 64);
++            uint32_t *fs32 = (uint32_t *)(b8 + table_bytes);
+             /*
+              * ⚠ No `goto biases_done` here: that label is EARLIER in the
+              * function, so jumping to it re-executes everything between and
+@@ -894,7 +958,7 @@ biases_done:
+              */
+             bool scale_table = getenv("ROCKET_SCALE_OFF") == NULL;
+             if (scale_table) {
+-               uint16_t *sc16 = (uint16_t *)(b8 + groups * 64);
++               uint16_t *sc16 = (uint16_t *)(b8 + table_bytes);
+                const float *wsc = poperation->conv.weight_tensor->scales;
+                float wt_sc = poperation->conv.weight_tensor->scale;
+                float in_sc = poperation->input_tensors[0]->scale;
+@@ -939,12 +1003,12 @@ biases_done:
+                    * configuration accepts. ROCKET_OP2 overrides it.
+                    */
+                   const char *o2 = getenv("ROCKET_OP2");
+-                  uint32_t *op2 = (uint32_t *)(b8 + groups * 64 +
++                  uint32_t *op2 = (uint32_t *)(b8 + table_bytes +
+                                                output_channels * 2);
+                   op2[0] = o2 ? (uint32_t)strtoul(o2, NULL, 0) : 0x1004;
+                }
+             }
+-            unsigned cap = (bufsize - groups * 64) / sizeof(uint32_t);
++            unsigned cap = (bufsize - table_bytes) / sizeof(uint32_t);
+             const char *fill = getenv("ROCKET_FS_FILL");
+             unsigned n = fill ? strtoul(fill, NULL, 0) : 1;
+             if (n == 0 || n > cap)
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.h b/src/gallium/drivers/rocket/rkt_coefs.h
+index d670cec..508c8da 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.h
++++ b/src/gallium/drivers/rocket/rkt_coefs.h
+@@ -6,6 +6,8 @@
+ #ifndef RKT_COEFS_H
+ #define RKT_COEFS_H
+ 
++#include <stdlib.h>
++
+ #include "rkt_ml.h"
+ 
+ struct pipe_resource *
+@@ -17,4 +19,40 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                 const struct pipe_ml_operation *poperation,
+                 unsigned *truncate_bits);
+ 
++/*
++ * Bytes of the per-channel coefficient table that sits at the start of the
++ * 0x5020 surface, before the fp16 weight scale table.
++ *
++ * Decoded from the vendor runtime capture of sv_rgu and sv_dwu, which differ
++ * only in `groups`. Both surfaces are [table][oc x fp16 weight scale] with
++ * 0x5024 pointing just past the fp16 entries, and the address registers give
++ * the sizes directly: the regular conv's 0x5024 is 320 bytes past its 0x5020
++ * and the depthwise one's is 448, with 32 output channels either way. Minus
++ * the 64 bytes of fp16 that leaves 256 and 384, that is four 64 byte records
++ * and eight 48 byte ones.
++ *
++ * ⚠ Eight records for 32 channels is twice what a record per eight channels
++ * would give, and this geometry CANNOT tell the doubling apart from a padding
++ * of the channel count up to 64: both give eight. The doubling is what is
++ * written here because it is the same doubling this driver already applies to
++ * the depthwise channel atomic in rkt_fill_weights. A depthwise capture at
++ * some other channel count would settle it; ROCKET_DW_RECS overrides the
++ * record count so the alternative can be tested from the board without a
++ * rebuild.
++ */
++static inline unsigned
++rkt_coef_table_bytes(bool depthwise, unsigned output_channels)
++{
++   unsigned groups = DIV_ROUND_UP(output_channels, 8);
++
++   if (!depthwise)
++      return groups * 64;
++
++   const char *recs = getenv("ROCKET_DW_RECS");
++   if (recs)
++      groups = (unsigned)strtoul(recs, NULL, 0) / 2;
++
++   return groups * 2 * 48;
++}
++
+ #endif /* RKT_COEFS_H */
+\ No newline at end of file
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 4c021ae..22a3ce2 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -7,6 +7,7 @@
+ #include <stdlib.h>
+ 
+ #include "rkt_regcmd.h"
++#include "rkt_coefs.h"
+ #include "rkt_ml.h"
+ #include "rkt_registers.h"
+ 
+@@ -727,7 +728,14 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+        * to 0/128. Two changes, one result, nothing learned. They are two knobs
+        * now so each can be attributed.
+        */
+-      R_RDMA(0x5024, bias_addr + DIV_ROUND_UP(oc, 8) * 64 +
++      /*
++       * The table in front of the fp16 entries is a different size for a
++       * depthwise layer: 48 byte records rather than 64, and twice as many of
++       * them. rkt_coef_table_bytes() is what rkt_fill_biases() lays the buffer
++       * out with, so this pointer is computed from the same expression instead
++       * of repeating the regular conv's arithmetic here.
++       */
++      R_RDMA(0x5024, bias_addr + rkt_coef_table_bytes(dw, oc) +
+                      (getenv("ROCKET_SCALE_OFF") ? 0 : oc * 2));
+    }
+    R_RDMA(0x5028, 0x00000000);
+-- 
+2.43.0
+

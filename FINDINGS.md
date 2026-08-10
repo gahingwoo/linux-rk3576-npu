@@ -1,6 +1,88 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 🔑🔑 2026-08-11 round 54, offline: THE DEPTHWISE COEFFICIENT TABLE EXISTS, and it is decoded
+
+**The claim this replaces.** Two earlier readings concluded the vendor emits no
+per-channel coefficient table for a depthwise layer. Both searched the `.rknn`.
+**It is not in the `.rknn`: librknnrt builds it at load time**, which is why a
+full-file sweep of the model file, two structural oracles and three readings of
+the weight buffer all came back empty. The runtime capture has it in plain
+sight, and this is the first time the capture's address registers were resolved
+into the captured buffers rather than read as opaque values.
+
+**Resolving the address registers** (`sv_addrmap.py`) for `sv_dwu`, the
+depthwise half of the single-variable pair:
+
+| register | resolves to | what is there |
+|---|---|---|
+| CNA `0x1110` | `bo1+0x0000` | the 576 byte weight buffer |
+| RDMA `0x5020` | `bo1+0x0240` | immediately past it |
+| RDMA `0x5024` | `bo1+0x0400` | `0x0E0E`, the four byte operand |
+
+so the per-channel region is exactly 448 bytes, for 32 output channels. The
+regular conv in the same capture has the same shape of thing with a delta of
+320. Taking 64 bytes of fp16 off each leaves **256 and 384**.
+
+**What the 384 bytes are** (`dwcoef_rec48.py`): eight records of 48 bytes,
+
+```
+A   8 x int32   at +0
+C   8 x int16   at +32
+(no B)
+```
+
+in plain channel order, records four to seven zero, against the regular conv's
+four records of `[A|B|C]` in 64. Nothing here is fitted. Both models were
+compiled from weights and biases generated in `sv_pairs.py`, and the
+calibration set is generated too, so `in_scale` and `in_zp` are known:
+
+| term | formula | control (regular) | depthwise |
+|---|---|---|---|
+| C | `round(0x4000 * wt_sc[oc] / max wt_sc)` | 32/32 exact | 32/32 exact |
+| A | `round(bias/(in_sc*wt_sc[oc])) + (in_zp-0x80)*(N*wt_zp[oc] - sum(w_q))` | **32/32 exact** | **32/32 exact** |
+| fp16 table | `wt_sc[oc]` | corr 0.999997, ratio 1.00001 | corr 1.000000, ratio 0.99994 |
+| B (regular only) | `-wt_zp[oc]` | 32/32 exact | absent |
+
+⚠ **A needed no change.** `calculate_weight_sum()` already returns
+`sum(w_q - wt_zp)`, so the derived expression IS `bias - (in_zp - 0x80) * sw`,
+which this driver has written all along. What was wrong was the record shape,
+the record count, and where the fp16 table and the `0x5024` operand land after
+it. **Three things at once, which is why changing any one of them never moved
+anything.** `ROCKET_DW_REC48` in rounds past changed the record and left the
+`0x5024` pointer inside the table it had just resized.
+
+**The weight buffer is not the bug.** mesa's RK3576 depthwise packing
+reproduces the vendor's 576 bytes: **288 of 288 weight lanes** under the
+ky-major plane order it uses, 96 of 288 under the transpose. The two bytes after
+each channel pair, which this file called padding, are the **negated
+per-channel weight zero point**, identical in every spatial block, the same
+quantity and the same sign a regular conv carries as B. Every model here is
+per-axis quantised so that zero point is zero and the sign was never visible;
+it is corrected anyway.
+
+**The single-variable register diff**, the thing round 42 could not do because
+`g_dw1` and `g_k3s1` differed in three ways: `sv_rgu` and `sv_dwu` differ in
+`groups` alone, and **14 value registers move**, identically in all six tasks.
+`rkt_regcmd.c` already emits the vendor's value for every one of them. The
+register stream is not the bug either.
+
+**Also settled**: the toolkit quantises conv weights **per output channel and
+asymmetrically**, min and max of the channel onto the 256 codes. That
+reproduces the stored bytes of the regular conv as a multiset, 9216 of 9216,
+where symmetric `/127` reaches 89.7 percent. The stored order is a shuffle, not
+OIHW, which is expected of a hardware layout.
+
+⚠ **The one thing 32 channels cannot pin**: eight records for 32 channels is
+either twice the regular grouping or a padding of the channel count to 64, and
+this geometry gives eight either way. The doubling is what shipped, because it
+is the doubling this driver already applies to the depthwise channel atomic.
+`ROCKET_DW_RECS` overrides it so the board can decide.
+
+⚠ **numpy started dying with SIGILL** in its own `_sanity_check` on this VM;
+the bundled OpenBLAS picks a kernel the guest traps on. Pinned with a `.pth` in
+the venv setting `OPENBLAS_CORETYPE=ARMV8`. Nothing to do with the NPU, but it
+stops every offline script in this repo.
 
 
 ## 2026-08-09 round 28, offline (The coefficient buffer is stored in the .rknn, so this stopped needing a board. The region at `groups*64` is a per-channel fp16 weight scale table. Rounds 26 and 27 were reading toolkit noise.)
