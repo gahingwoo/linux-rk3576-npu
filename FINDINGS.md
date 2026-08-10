@@ -88,6 +88,42 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 44 (The float bias alone does NOT fix depthwise, and the number that looks like an improvement is not one.)
+
+Baselines 128/128 at both ends, and the knob does not leak: conv2d-cal and
+cal_k3 are both 128/128 with `ROCKET_DW_FLOATBIAS` set.
+
+| | int32 A/B/C table | float32 bias |
+|---|---|---|
+| dwconv | 0/16, distinct 6 | **0/16**, distinct 4 |
+| mn_dw1 | 3/32, distinct 124, 19/32 constant | **5/32**, distinct **2**, **32/32 constant**, 26 at zp |
+| mn_conv0dw1 | 1/32 | 8/32, distinct 2, 32/32 constant |
+
+⚠ **The 3/32 to 5/32 is not an improvement.** The distinct count collapses from
+124 to **2** and every one of the 32 channels becomes constant. The extra
+"matching" channels are the ones where the CPU is also zero under ReLU, which is
+exactly the metric caveat that a passing model, `mn_pw2`, exposed in round 43.
+Read properly, the float bias made the output *worse*: it went from wrong and
+varying to very nearly constant.
+
+**What this does not overturn**: the capture itself. The bias really is a
+contiguous 32-entry float32 block at `bo01+0x3198`, byte for byte, and there
+really is no A/B/C table in the depthwise buffer. Dumping the region confirms a
+clean block from `0x3198` to `0x3218` and nothing float-shaped immediately
+after.
+
+**So the format is necessary but not sufficient.** Something else in that buffer
+is also read for depthwise. The surrounding bytes are not a second 32-entry
+array: they look like records with float fields near `0.00417` at a 32-byte
+spacing, but that spacing does not hold across 32 entries, so the structure is
+not yet decoded and guessing at it again would repeat the mistake this round
+already made.
+
+**Next, and it is offline**: the dumps are kept at
+`dirty/vendorcap-dw-2026-08-10/`, so the depthwise coefficient buffer can be
+decoded properly against the known weights and bias before anything else is
+flashed.
+
 ## 🔑 2026-08-10 THE DEPTHWISE FORMAT (A depthwise layer takes a float32 bias, not the int32 A/B/C table. Captured from the vendor runtime, with the control passing.)
 
 The pair is `sv_rgu` and `sv_dwu`, ic = oc = 32 at 112x112, k=3, s=1, one
