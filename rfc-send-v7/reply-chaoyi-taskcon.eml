@@ -1,0 +1,45 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v6 7/9] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com>
+References: <20260806063413.350184-1-gahing@gahingwoo.com>
+ <20260806063413.350184-8-gahing@gahingwoo.com>
+ <20260807211629.1573228-1-gahing@gahingwoo.com>
+ <4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com>
+
+Hi Chaoyi,
+
+Thank you, that settles it, and no apology needed for not reading the
+series.
+
+> For RK3576:
+>
+> - BIT[15:0] task_number
+> - BIT[16] task_pp_en
+> - BIT[17] task_count_clear
+> - BIT[18] task_last_layer_clear
+
+That matches the register trace bit for bit, and it is worth more than
+the trace, because the trace could only say which word the vendor writes
+and not what the bits in it are.
+
+BIT[18] is new to me. I was setting it because the vendor's word had it
+set and clearing it was not something I wanted to try blind. Now it can
+be named rather than shipped as 0x7 << 16:
+
+  #define PC_TASK_CON_TASK_NUMBER		GENMASK(15, 0)
+  #define PC_TASK_CON_TASK_PP_EN		BIT(16)
+  #define PC_TASK_CON_TASK_COUNT_CLEAR		BIT(17)
+  #define PC_TASK_CON_TASK_LAST_LAYER_CLEAR	BIT(18)
+
+with the RK3588 positions kept beside them, since the two differ only in
+the width of the first field and that is exactly what made v1 through v6
+wrong.
+
+One question, if you have a moment. Is task_last_layer_clear meant to be
+set on every submit, or only on the task that ends a layer? Setting it
+unconditionally works on RK3576 here, but working and being right are
+not the same thing, and I would rather not encode a guess in a driver
+other people will copy from.
+
+Thanks again,
+Jiaxing

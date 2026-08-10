@@ -2,50 +2,59 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 58. Are A and the MAC in the same units for depthwise?
+# 2026-08-11 round 59. Ask the hardware which input each multiply got.
 #
-# Round 57 swept the OUT_CVT shift from -3 to +3 on the honest metric:
+# Round 58 finishes the coefficient surface off. A scaled on its own:
 #
-#   mn_dw1    COMPUTED  1 1 1 1 0 0 0        never moves
-#   mn_dw25   COMPUTED  2 2 0
-#   conv2d-cal at +1     128 of 128 -> 0     so the knob does reach the HW
+#   ASHIFT   -7  -4  -2  -1   0  +1  +4  +7
+#   COMPUTED  0   0   0   0   1   0   0   0
 #
-# A global scale is not what is left. But a global OUTPUT shift cannot fix a
-# mismatch between the two things added before it: A is added to the MAC, and
-# if the depthwise accumulator sits at a different power of two from the
-# regular one, then shifting the sum moves both together and nothing improves.
-# That is exactly the shape of round 57's flat sweep.
+# and C on the depthwise path, properly this time, gives 0, 1, 1 at 4, 64 and
+# 256 against 1 at the default. The default is the best point of both sweeps,
+# so A and C are already right, which is what the capture said. conv2d-cal with
+# ROCKET_DW_ASHIFT=7 is still 128 of 128 COMPUTED, so the depthwise knobs are
+# gated correctly and the round is not measuring a leak.
 #
-# The signature was already visible offline. Sorting mn_dw1's channels by |A|
-# puts every saturated channel at one end: the channels whose output is pinned
-# are the ones with the largest |A|, which is what an A too large for its MAC
-# looks like. rkt_fill_biases has carried the same idea for regular convs since
-# the beginning as ROCKET_BIAS_SCALE80, defaulting off because it measured
-# wrong there. It has never been tried on depthwise, because until this week
-# the depthwise record was the wrong shape anyway.
+# Every scalar in the record is now either verified against the vendor or swept
+# and found to be at its best value. The depthwise conv fires on every channel
+# and computes the wrong number, and nothing this driver writes changes WHICH
+# number. So the suspect is which INPUT each multiply gets, and a random model
+# cannot see that: every wrong answer looks alike.
 #
-# ⚠ Round 57's tests 11 and 12 are VOID. They swept ROCKET_C_VALUE on a
-# depthwise model and came back identical to the default at 4 and at 64, which
-# reads as C being inert. It is not evidence: that variable is only read by the
-# regular branch, so the sweep never changed a byte. The same failure as round
-# 50. ROCKET_DW_C_VALUE is the depthwise one and is swept properly below.
+# dw_imp.tflite is mn_dw1 with every tap set to the weight zero point, exactly
+# zero after dequantisation, except ONE tap per channel at position c mod 9,
+# and a zero bias. Its input and output scales are equal, so the correct output
+# of channel c is its own input shifted by that tap. dwimp.py scores each
+# output channel against all nine shifts of all 32 input planes and says what
+# actually fits.
+#
+#   right shift, right channel   the tap map and the channel map are right, and
+#                                the error is in the ARITHMETIC, not the wiring
+#   right shift, wrong channel   the channels are permuted. This is the live
+#                                suspicion: the weight buffer packs channels in
+#                                PAIRS and CNA 0x1024 carries 1, not 31
+#   wrong shift, right channel   ky and kx are transposed or the planes are
+#                                ordered differently than mesa writes them
+#   nothing fits any single tap  more than one tap lands on a channel, so the
+#                                4 byte group is read as 4 weights rather than
+#                                2 weights and 2 zero points
+#
+# The CPU interpreter runs the same file and is decoded the same way. If its
+# own answer is not the identity mapping then the model is not what the decoder
+# thinks it is and the hardware column means nothing.
 #
 # DECISION RULE, written before the run:
-#   one ASHIFT makes COMPUTED jump      A and the MAC are in different units,
-#                                       and the exponent names the factor
-#   COMPUTED flat across ASHIFT and     A is not the remaining bug either, and
-#     across DW_C_VALUE                 what is left is the MAC's operands, so
-#                                       the next round goes at the CNA feeding
-#                                       the CMAC rather than the coefficients
-#   conv2d-cal moves at all             the depthwise knobs are leaking into
-#                                       the regular path and the round is void
+#   CPU control not 32/32          void, fix the model or the decoder first
+#   hardware 32/32                 the wiring is right and round 60 goes back
+#                                  to arithmetic with that ruled out
+#   hardware reads the wrong       read the permutation off the table; it is
+#     channel                      the answer
+#   hardware fits no single tap    the 4 byte group is being misread, and the
+#                                  zero point lanes are the thing to move
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 log() { echo "$@" > "$C"; }
-p() { log ""; log "  -- $1   $2"; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -55,36 +64,32 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..8) mn_dw1, A scaled on its own ====="
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=-7
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=-4
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=-2
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=-1
-	p mn_dw1.tflite ""
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=1
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=4
-	p mn_dw1.tflite ROCKET_DW_ASHIFT=7
+	log "===== 1) the impulse decode: which tap, which channel ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/dwimp.py" > "$C" 2>&1
 
 	log ""
-	log "===== 9..11) mn_dw25, the same at the ends ====="
-	p mn_dw25.tflite ROCKET_DW_ASHIFT=-7
-	p mn_dw25.tflite ""
-	p mn_dw25.tflite ROCKET_DW_ASHIFT=7
+	log "===== 2) the same model through the ordinary metric ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/dw_imp.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 12..14) C on the depthwise path, properly this time ====="
-	p mn_dw1.tflite ROCKET_DW_C_VALUE=4
-	p mn_dw1.tflite ROCKET_DW_C_VALUE=64
-	p mn_dw1.tflite ROCKET_DW_C_VALUE=256
+	log "===== 3) mn_dw1 unchanged, so this round is comparable ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/mn_dw1.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== 15..16) REGULAR shapes, which the depthwise knobs must not touch ====="
-	p conv2d-cal.tflite ROCKET_DW_ASHIFT=7
-	p cal_k3.tflite ""
+	log "===== 4) a regular shape, which must be untouched ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > "$C" 2>&1
 
 	log ""
-	log "===== Read COMPUTED. Test 15 must be 128 of 128: a depthwise knob  ====="
-	log "===== that moves a regular conv means the gating is wrong.         ====="
+	log "===== Read the CONTROL line first: the CPU must decode to its own ====="
+	log "===== impulse 32 of 32, or the hardware column says nothing.      ====="
 	sync
 }
 case "$1" in

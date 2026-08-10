@@ -1,0 +1,41 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v6 7/9] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260808123926.23903-1-royalnet026@gmail.com>
+References: <20260806063413.350184-1-gahing@gahingwoo.com>
+ <20260806063413.350184-8-gahing@gahingwoo.com>
+ <20260807211629.1573228-1-gahing@gahingwoo.com>
+ <20260808123926.23903-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+> One item outlives it, because it is not part of the poll machinery. In
+> rocket_core_init(), the new multi-power-domain attach returns without
+> unwinding rocket_job_init():
+
+You are right, and the path immediately above it is the model, as you
+say. RK3576 still needs the attach in v7, so the shape does survive the
+rewrite, and v7 unwinds rocket_job_init() on that return.
+
+> the commit message says nothing changes for RK3588, but struct
+> rocket_core's clks[] grows from 4 to 6 there while the two extra names
+> only arrive in 7/9
+
+Moved rather than explained: the array grows in the patch that adds the
+two names, so the RK3588 patch really does change nothing for RK3588.
+
+The poll is gone in v7 entirely, not reduced. With the TASK_CON fix the
+interrupt retires every job, so there is nothing for a fallback to fall
+back to, and a fallback that never runs is a fallback nobody tests. The
+job_lock move goes out on its own with a Fixes tag rather than riding in
+a feature series, so it can be picked up on its own timeline.
+
+> I would rather send you results than a tag that covers less than it
+> looks like it does.
+
+So would I, and thank you for putting it that way. Probe, multi-task
+jobs, all three cores in parallel, a forced timeout and reset, and
+runtime-PM cycling against a bit-exact oracle is more coverage than any
+tag I could ask you for. I will send v7 to you directly when it goes
+out.
+
+Jiaxing
