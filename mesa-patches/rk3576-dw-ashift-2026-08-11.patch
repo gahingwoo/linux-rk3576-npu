@@ -1,0 +1,106 @@
+From cbad429b3ab54fba39c5681445e2cd48788a3afc Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 22:29:10 +1200
+Subject: [PATCH] rocket RK3576: scale depthwise A on its own, and a depthwise
+ C knob
+
+Sweeping the OUT_CVT shift from -3 to +3 leaves the depthwise COMPUTED count
+flat, 1 on mn_dw1 and 2 on mn_dw25, while the same knob at +1 takes conv2d-cal
+from 128 of 128 to 0. So the knob reaches the hardware and a global output
+scale is not what is left.
+
+What a global output shift cannot fix is a mismatch between the two things
+added before it. A is added to the MAC, so if the depthwise accumulator sits at
+a different power of two from the regular one, A and the MAC are in different
+units and shifting the sum moves both together. The signature is visible
+offline: sorting mn_dw1's channels by |A| puts every saturated channel at one
+end, which is what an A too large for its MAC looks like. rkt_fill_biases has
+carried the same idea for regular convs as ROCKET_BIAS_SCALE80 since the
+beginning, defaulting off because it measured wrong there, and it has never
+been tried on depthwise because until now the record was the wrong shape.
+
+ROCKET_DW_ASHIFT=N scales A alone, left for positive N and right for negative,
+computed in 64 bits so a large shift does not wrap before it is stored.
+
+ROCKET_DW_C_VALUE forces C on the depthwise path. ROCKET_C_VALUE is read only
+by the regular branch, so sweeping it on a depthwise model changes nothing and
+looks like C being inert; two tests were lost to that.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 43 ++++++++++++++++++++++++--
+ 1 file changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index ea4f690..2f8eddd 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -677,15 +677,44 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+           *
+           * ROCKET_DW_REC64 restores the regular 64 byte record, which is the
+           * control: it has to reproduce the old depthwise behaviour exactly.
++          *
++          * ROCKET_DW_ASHIFT=N scales A alone, left for N > 0 and right for
++          * N < 0.
++          *
++          * Round 57 swept the OUT_CVT shift from -3 to +3 on the honest
++          * metric and COMPUTED never moved off 1 on mn_dw1 or 2 on mn_dw25,
++          * while the same knob at +1 takes conv2d-cal from 128 of 128 to 0, so
++          * it does reach the hardware. A global scale cannot be what is left.
++          *
++          * What a global output shift CANNOT fix is a mismatch between the two
++          * things that are added before it. A is added to the MAC, and if the
++          * depthwise accumulator runs at a different power of two from the
++          * regular one then A and the MAC are in different units and shifting
++          * the sum moves both together. The signature is already visible
++          * offline: sorting mn_dw1's channels by |A| puts every channel whose
++          * output saturates at one end, which is what an A that is far too
++          * large for its MAC looks like. rkt_fill_biases carries the same idea
++          * for regular convs as ROCKET_BIAS_SCALE80, defaulting off because it
++          * measured wrong there.
+           */
+          if (rkt_is_depthwise(poperation) && !getenv("ROCKET_DW_REC64")) {
++            const char *ash = getenv("ROCKET_DW_ASHIFT");
++            int a_sh = ash ? atoi(ash) : 0;
++            const char *dwc = getenv("ROCKET_DW_C_VALUE");
++
+             for (unsigned oc = 0; oc < output_channels; oc++) {
+                int32_t sw = calculate_weight_sum(poperation, oc, weights);
+                unsigned g = oc / 8, i = oc % 8;
+                int32_t *A = (int32_t *)(b8 + g * 48 + i * 4);
+                int16_t *C = (int16_t *)(b8 + g * 48 + 32 + i * 2);
+                float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
+-               *A = biases_in[oc] - (in_zp - 0x80) * sw;
++               int64_t a = (int64_t)biases_in[oc] - (int64_t)(in_zp - 0x80) * sw;
++
++               if (a_sh > 0)
++                  a <<= a_sh;
++               else if (a_sh < 0)
++                  a >>= -a_sh;
++               *A = (int32_t)a;
+                /*
+                 * Q4, matching the regular path a few lines below rather than
+                 * the vendor's Q14. The vendor writes 0x4000 * rel, but this
+@@ -694,9 +723,17 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                 * output. Keeping one convention across both records is what
+                 * makes the depthwise result comparable with the regular one.
+                 * ROCKET_DW_C14 writes the vendor's Q14 instead.
++                *
++                * ⚠ ROCKET_DW_C_VALUE, not ROCKET_C_VALUE. Round 57 swept
++                * ROCKET_C_VALUE on a depthwise model and got results identical
++                * to the default at 4 and at 64, which looked like C being
++                * inert. It is not evidence: that variable is only read by the
++                * regular branch below, so the sweep never changed anything.
++                * Those two tests are void, the same way round 50 was void.
+                 */
+-               *C = getenv("ROCKET_DW_C14") ? (int16_t)(0x4000 * rel)
+-                                            : (int16_t)(16.0f * rel + 0.5f);
++               *C = dwc ? (int16_t)strtol(dwc, NULL, 0)
++                        : getenv("ROCKET_DW_C14") ? (int16_t)(0x4000 * rel)
++                                                  : (int16_t)(16.0f * rel + 0.5f);
+             }
+             goto biases_done;
+          }
+-- 
+2.43.0
+

@@ -2,53 +2,43 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 57. Is what is left of depthwise a single scale?
+# 2026-08-11 round 58. Are A and the MAC in the same units for depthwise?
 #
-# Round 56's honest metric:
+# Round 57 swept the OUT_CVT shift from -3 to +3 on the honest metric:
 #
-#   mn_dw1    9 of 32 match, but COMPUTED 1        baseline COMPUTED 0
-#   mn_dw25   432 of 1024 match, but COMPUTED 2    baseline COMPUTED 0
-#   regular   128 of 128 match, COMPUTED 128       the metric's control, passes
+#   mn_dw1    COMPUTED  1 1 1 1 0 0 0        never moves
+#   mn_dw25   COMPUTED  2 2 0
+#   conv2d-cal at +1     128 of 128 -> 0     so the knob does reach the HW
 #
-# So round 55's numbers were mostly a saturated output agreeing with a saturated
-# reference, and the real depthwise state is 1 and 2 channels, not 9 and 432.
+# A global scale is not what is left. But a global OUTPUT shift cannot fix a
+# mismatch between the two things added before it: A is added to the MAC, and
+# if the depthwise accumulator sits at a different power of two from the
+# regular one, then shifting the sum moves both together and nothing improves.
+# That is exactly the shape of round 57's flat sweep.
 #
-# What is NOT an artefact: on the shipped configuration mn_dw1 has ZERO channels
-# where the hardware is constant and the reference varies, against 14 on the
-# round 53 baseline, and mn_dw25 has 197 against 227. The depthwise conv now
-# fires everywhere. Its numbers are wrong.
+# The signature was already visible offline. Sorting mn_dw1's channels by |A|
+# puts every saturated channel at one end: the channels whose output is pinned
+# are the ones with the largest |A|, which is what an A too large for its MAC
+# looks like. rkt_fill_biases has carried the same idea for regular convs since
+# the beginning as ROCKET_BIAS_SCALE80, defaulting off because it measured
+# wrong there. It has never been tried on depthwise, because until this week
+# the depthwise record was the wrong shape anyway.
 #
-# Everything upstream is verified against the vendor capture: the weight buffer
-# 288 of 288 lanes, the fourteen depthwise registers, the 48 byte record, and A
-# and C at 32 of 32 channels each. Two things were checked offline this round
-# and both came back closed:
-#
-#   the vendor's INPUT buffer is byte identical between the depthwise and the
-#   regular model, same size, same ramp, so there is no depthwise-specific
-#   feature layout to get wrong
-#
-#   the capture cannot answer the output question at all: it is taken before
-#   the run, so every output buffer in it is zero. Do not try again.
-#
-# That leaves the one convention this driver picks rather than derives, the
-# requant magnitude. mesa writes C in Q4 and the OUT_CVT shift it computes; the
-# vendor writes C in Q14 with a shift two larger. If what remains is a single
-# power of two, one shift on this sweep turns many channels COMPUTED at once.
-# C and the shift are the same knob in opposite directions, so sweeping the
-# shift alone covers both, and the sweep is on the honest metric.
-#
-# Nothing in the driver changed. Every knob here is already in the shipped
-# libteflon.so.
+# ⚠ Round 57's tests 11 and 12 are VOID. They swept ROCKET_C_VALUE on a
+# depthwise model and came back identical to the default at 4 and at 64, which
+# reads as C being inert. It is not evidence: that variable is only read by the
+# regular branch, so the sweep never changed a byte. The same failure as round
+# 50. ROCKET_DW_C_VALUE is the depthwise one and is swept properly below.
 #
 # DECISION RULE, written before the run:
-#   one shift makes mn_dw1 COMPUTED jump      what is left is a scale, and the
-#                                             next round derives it properly
-#   COMPUTED stays at 0 or 1 across the sweep the remaining error is NOT a
-#                                             global scale, and the next round
-#                                             must look per channel or at the
-#                                             MAC itself
-#   conv2d-cal at +1 does not break           the knob is not reaching the
-#                                             hardware and the sweep is void
+#   one ASHIFT makes COMPUTED jump      A and the MAC are in different units,
+#                                       and the exponent names the factor
+#   COMPUTED flat across ASHIFT and     A is not the remaining bug either, and
+#     across DW_C_VALUE                 what is left is the MAC's operands, so
+#                                       the next round goes at the CNA feeding
+#                                       the CMAC rather than the coefficients
+#   conv2d-cal moves at all             the depthwise knobs are leaking into
+#                                       the regular path and the round is void
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -65,38 +55,36 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 0) the knob must MOVE a shape that works, or the sweep is void ====="
-	p conv2d-cal.tflite ""
-	p conv2d-cal.tflite ROCKET_OUT_SHIFT_ADD=1
-
-	log ""
-	log "===== 1..7) mn_dw1, OUT_CVT shift swept around the computed value ====="
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-3
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-2
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-1
+	log "===== 1..8) mn_dw1, A scaled on its own ====="
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=-7
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=-4
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=-2
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=-1
 	p mn_dw1.tflite ""
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=1
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=2
-	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=3
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=1
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=4
+	p mn_dw1.tflite ROCKET_DW_ASHIFT=7
 
 	log ""
-	log "===== 8..10) the same on mn_dw25, 1024 channels ====="
-	p mn_dw25.tflite ROCKET_OUT_SHIFT_ADD=-2
+	log "===== 9..11) mn_dw25, the same at the ends ====="
+	p mn_dw25.tflite ROCKET_DW_ASHIFT=-7
 	p mn_dw25.tflite ""
-	p mn_dw25.tflite ROCKET_OUT_SHIFT_ADD=2
+	p mn_dw25.tflite ROCKET_DW_ASHIFT=7
 
 	log ""
-	log "===== 11..12) C directly, in case it is not equivalent to the shift ====="
-	p mn_dw1.tflite ROCKET_C_VALUE=64
-	p mn_dw1.tflite ROCKET_C_VALUE=4
+	log "===== 12..14) C on the depthwise path, properly this time ====="
+	p mn_dw1.tflite ROCKET_DW_C_VALUE=4
+	p mn_dw1.tflite ROCKET_DW_C_VALUE=64
+	p mn_dw1.tflite ROCKET_DW_C_VALUE=256
 
 	log ""
-	log "===== 13) regular shape, unswept, must still be 128 COMPUTED ====="
+	log "===== 15..16) REGULAR shapes, which the depthwise knobs must not touch ====="
+	p conv2d-cal.tflite ROCKET_DW_ASHIFT=7
 	p cal_k3.tflite ""
 
 	log ""
-	log "===== Read COMPUTED, not the match count. Check test 0 first: if   ====="
-	log "===== conv2d-cal is still 128 COMPUTED at +1, the knob is inert.   ====="
+	log "===== Read COMPUTED. Test 15 must be 128 of 128: a depthwise knob  ====="
+	log "===== that moves a regular conv means the gating is wrong.         ====="
 	sync
 }
 case "$1" in
