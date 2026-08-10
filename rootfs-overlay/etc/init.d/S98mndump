@@ -2,35 +2,37 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 50. B is PER CHANNEL in the vendor. mesa has never used the
-# per-channel zero point, although the interface has carried it all along.
+# 2026-08-10 round 51. The one combination the capture says is right and that
+# has never been run.
 #
-# Round 49 established that the second-operand field takes different acceptable
-# contents in the two configurations, so the difference is elsewhere in the
-# surface. Decoding the vendor's A/B/C table found it:
+# A is now confirmed exactly. Using the EXACT per-channel scale from the
+# captured fp16 table rather than an approximation, A / swq is 127.5 to 133.7
+# and the fit is A = 127.993*swq with a maximum error of 572 over a range of
+# +-196872. That is mesa's own formula, A = bias_q - (in_zp - 0x80)*sw, with
+# in_zp = 0, and rknn quantises its input as int8 zp 0 while these tflite models
+# are uint8 zp 128. So A agrees, B was closed last round, C is mesa's formula.
 #
-#   sv_rgu B column   26 distinct values over 32 channels, -25 to 23, mean 0.16
-#                     correlates with NOTHING: not bias, weight sum, A, C, scale
-#   mesa              B = 0x80 - wt_zp, ONE value for the whole layer
+# What is left is the LAYOUT, and the combination that matters was never run:
 #
-# A small spread centred on zero is what 0x80 - wt_zp[oc] looks like when the
-# per-channel zero points sit near 128, which is what an asymmetric uint8
-# quantiser gives. And `pipe_tensor` carries a `zero_points` ARRAY beside
-# `scales`; rkt_ml.c already tests it to decide whether a tensor is per-axis
-# quantised. rkt_coefs.c has only ever read the scalar.
+#   round 47   the WEIGHT SCALE in the table, pointer NOT moved
+#   round 49   the REQUANT MULTIPLIER in the table, pointer moved
+#   never      the WEIGHT SCALE in the table, pointer moved
 #
-# ROCKET_B_PERCH uses zero_points[oc] when the array is present.
+# The capture says the table holds the weight scale: those entries match the
+# scale implied by A at +0.998. Round 49 moved the pointer with the wrong
+# content in the table, and round 47 had the right content with the pointer
+# still aimed at it. ROCKET_SCALE_TABLE_WT plus ROCKET_SCALE_PTR is the vendor's
+# actual arrangement.
 #
 # DECISION RULE, written before the run:
-#   2 is 128/128 and 1 is too    harmless on per-tensor models, as expected,
-#                                since there the array is absent or uniform
-#   any per-axis model improves  the per-channel zero point was a real missing
-#                                term and the second operand puzzle may follow
-#   dwconv moves again           depthwise is per-channel, so this is where it
-#                                should show
-#   2 regresses                  the array is not what this reading says, and
-#                                the scalar was right
-#   1 or 9 not 128/128           the build is wrong, stop
+#   2 is 128/128            the vendor's layout is adoptable and the surface is
+#                           derived end to end; the magic word retires
+#   2 fails, 3 (multiplier
+#     + pointer) also fails  the content is not the issue and the layout move
+#                           itself is wrong, so stop moving the pointer
+#   depthwise moves on 4     the layout matters there even if the regular
+#                           shapes are indifferent
+#   1 or 9 not 128/128      the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -51,28 +53,27 @@ start() {
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2..4) per-channel B on the shapes that work ====="
-	p conv2d-cal.tflite ROCKET_B_PERCH=1
-	p cal_k3.tflite ROCKET_B_PERCH=1
-	p cal_k1.tflite ROCKET_B_PERCH=1
+	log "===== 2) THE UNTESTED ONE: weight scale in the table, pointer moved ====="
+	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
+	p cal_k3.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
 
 	log ""
-	log "===== 5..7) per-channel B where it should matter ====="
-	p dwconv.tflite ROCKET_B_PERCH=1
-	p mn_dw1.tflite ROCKET_B_PERCH=1
-	p mn_pw24.tflite ROCKET_B_PERCH=1
+	log "===== 3) for contrast, the multiplier with the pointer, round 49 ====="
+	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
 
 	log ""
-	log "===== 8) per-channel B together with the depthwise record ====="
-	p dwconv.tflite "ROCKET_B_PERCH=1 ROCKET_DW_REC48=1"
+	log "===== 4) the vendor arrangement on depthwise ====="
+	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
+	p mn_dw1.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
+	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1 ROCKET_DW_REC48=1"
 
 	log ""
 	log "===== 9) CONTROL that can fail: baseline again ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 9. Then 5: depthwise is per-channel quantised, so ====="
-	log "===== if the missing zero point matters anywhere it is there.      ====="
+	log "===== Read 1 and 9, then 2. This is the vendor's own arrangement:  ====="
+	log "===== weight scale in the table, second operand past it.           ====="
 	sync
 }
 case "$1" in

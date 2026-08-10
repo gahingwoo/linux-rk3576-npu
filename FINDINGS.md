@@ -88,6 +88,39 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 A confirmed exactly, and the untested combination identified
+
+Using the **exact** per-channel scale from the captured fp16 table, rather than
+the `max/127` approximation that misled several rounds:
+
+```
+A / swq   =  127.514 .. 133.650
+fit       =  A = 127.993*swq + ...   max error 572 over a range of +-196872  (0.3%)
+```
+
+**A = 128 x swq**, which is mesa's own formula `A = bias_q - (in_zp - 0x80)*sw`
+with `in_zp = 0`. rknn quantises its input as int8 with zero point 0, while
+these tflite models are uint8 with zero point 128, so the weight-sum term is
+present for the vendor and absent for mesa, and both are the same expression.
+
+So the arithmetic is settled: **A agrees, B was closed last round, C is mesa's
+formula.** What is left is the layout, and laying out what has actually been run
+shows the combination that matters was never one of them:
+
+| | table content | pointer |
+|---|---|---|
+| round 47 | weight scale | not moved |
+| round 49 | requant multiplier | moved |
+| **never run** | **weight scale** | **moved** |
+
+The capture says the table holds the **weight scale**, since those entries match
+the scale implied by A at +0.998. Round 49 moved the pointer with the wrong
+content in the table; round 47 had the right content with the pointer still
+aimed at it. Neither tested the vendor's actual arrangement.
+
+Round 51 runs `ROCKET_SCALE_TABLE_WT` together with `ROCKET_SCALE_PTR`, with the
+round 49 combination beside it for contrast. Built, not flashed.
+
 ## ⚠ 2026-08-10 round 50 (VOID, and then closed properly: tflite per-axis forbids the very thing the vendor's B encodes)
 
 Baselines 128/128. Per-channel B is harmless on the working shapes, all three
