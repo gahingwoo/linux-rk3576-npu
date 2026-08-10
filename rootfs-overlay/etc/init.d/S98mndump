@@ -2,37 +2,40 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 48. The slot holds the REQUANT MULTIPLIER, derived at last.
+# 2026-08-10 round 49. The magic word slot IS the second operand, and round 46
+# moved the pointer without writing anything at the new target.
 #
-# Round 47 separated the two changes and both failed, but it also said why the
-# table failed. conv2d-cal's weight_tensor->scale is 3.9125464 and fp16 of that
-# is 0x43d3, exactly the value round 28 proved fails. So the slot is not the
-# weight scale.
+# The vendor's layout, from the capture:
 #
-# Reading every word rounds 36 and 37 swept, as fp16, gives the window:
+#     0x5020 -> [A/B/C table][oc x fp16 scales]
+#     0x5024 -> 0x0E0E, then zeros          (identical in both models)
 #
-#   pass  0.000474 0.00049 0.000521 0.002937 0.003059 0.003181 0.008331
-#   fail  0.00013 and below, 2.13 and above
+# mesa's 0x5024 is bias_addr + groups*64, which is where the fp16 scales belong.
+# So the word this driver writes at groups*64 has been serving as the SECOND
+# OPERAND all along, not as a scale. That is what the round 36 "bitfield rule"
+# actually describes, and it is why the vendor's scale entries violate it in
+# 30 of 32 while its models compute: they are not the same field.
 #
-# and in_sc * wt_sc / out_sc for conv2d-cal is 0.00095521, INSIDE it. The magic
-# word 0x1004 is 0.00049, the same order. The vendor's captured entries are
-# around 0.0012 for its own model. Everything lines up on the requant
-# multiplier and nothing lines up on the weight scale.
+# It also says what round 46 got wrong. It wrote the scales and moved the
+# pointer, but never wrote anything at the NEW target, so the second operand
+# read zeros.
 #
-# So ROCKET_SCALE_TABLE now writes in_sc * wt_sc[oc] / out_sc as fp16, one entry
-# per output channel. For a per-tensor model that is one value repeated, which
-# should behave like the constant; for depthwise it is 32 different values,
-# which is where round 47 saw dwconv move from 6 distinct values to 28.
+# Two tests, cheapest first:
+#   2  put the vendor's second-operand value, 0x0E0E, where mesa's 0x5024
+#      already points. No layout change at all. ROCKET_FS_F0 does this already.
+#   3  the full vendor layout: fp16 scales at groups*64, 0x0E0E at
+#      groups*64 + oc*2, and 0x5024 moved there.
 #
 # DECISION RULE, written before the run:
-#   2 is 128/128                 the derived multiplier replaces the magic word
-#                                and the surface is fully derived at last
-#   2 fails but 3 (weight scale)
-#     fails the same way         the formula is still wrong, and the window says
-#                                what magnitude to aim for
-#   dwconv keeps moving          per-channel values are what depthwise needs;
-#                                chase the remaining error there
-#   1 or 9 not 128/128           the build is wrong, stop
+#   2 is 128/128            the slot is the second operand and 0x0E0E is its
+#                           value; the magic word retires with an explanation
+#   2 fails                 0x0E0E is not sufficient there, so the slot's
+#                           content depends on something else as well
+#   3 is 128/128            the whole vendor layout is adoptable and the
+#                           surface is finally derived end to end
+#   3 fails but 2 passes    the layout move is still wrong somewhere; keep the
+#                           simple version and stop moving the pointer
+#   1 or 9 not 128/128      the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,31 +56,29 @@ start() {
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE TEST: in_sc * wt_sc / out_sc as fp16 ====="
-	p conv2d-cal.tflite ROCKET_SCALE_TABLE=1
+	log "===== 2) THE CHEAP TEST: the vendor's 0x0E0E in the same slot ====="
+	p conv2d-cal.tflite ROCKET_FS_F0=0x0E0E
+	p cal_k3.tflite ROCKET_FS_F0=0x0E0E
+	p dwconv.tflite ROCKET_FS_F0=0x0E0E
 
 	log ""
-	log "===== 3) the weight scale instead, which round 47 ran, must FAIL ====="
-	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1"
+	log "===== 3) THE FULL LAYOUT: scales, 0x0E0E past them, pointer moved ====="
+	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
+	p cal_k3.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
 
 	log ""
-	log "===== 4..5) the derived multiplier on the other regular shapes ====="
-	p cal_k3.tflite ROCKET_SCALE_TABLE=1
-	p cal_k1.tflite ROCKET_SCALE_TABLE=1
-
-	log ""
-	log "===== 6..8) and on depthwise, where round 47 saw it move ====="
-	p dwconv.tflite ROCKET_SCALE_TABLE=1
-	p mn_dw1.tflite ROCKET_SCALE_TABLE=1
-	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_DW_REC48=1"
+	log "===== 4) the full layout on depthwise ====="
+	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
+	p mn_dw1.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
+	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1 ROCKET_DW_REC48=1"
 
 	log ""
 	log "===== 9) CONTROL that can fail: baseline again ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 9, then 2. If it is 128/128 the whole surface is  ====="
-	log "===== derived and the magic word can go.                           ====="
+	log "===== Read 1 and 9, then 2. 0x0E0E is the vendor's own value for   ====="
+	log "===== the field mesa has been sweeping blind since round 32.       ====="
 	sync
 }
 case "$1" in

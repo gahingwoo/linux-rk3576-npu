@@ -88,6 +88,34 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 the magic word slot IS the second operand, and round 46 left it empty
+
+Putting the capture's layout beside mesa's answers what the round 36 rule
+describes:
+
+```
+vendor   0x5020 -> [A/B/C table][oc x fp16 scales]
+         0x5024 -> 0x0E0E, then zeros
+mesa     0x5020 -> [A/B/C table]
+         0x5024 -> groups*64          <- exactly where mesa writes the magic word
+```
+
+**mesa's `0x5024` points at `groups*64`, so the word this driver has been
+sweeping since round 32 is the SECOND OPERAND, not a scale.** That resolves the
+contradiction in round 48 without any special pleading: the vendor's fp16 scale
+entries violate the round 36 rule in 30 of 32 because they are **a different
+field**. The rule describes what mesa's second operand tolerates.
+
+It also names round 46's mistake precisely. It wrote the scales and moved the
+pointer past them, but **never wrote anything at the new target**, so the second
+operand read zeros. Both halves were right and the round still failed.
+
+Round 49 tests the cheap version first, and it needs no new code because
+`ROCKET_FS_F0` already writes that exact word: put the vendor's own
+second-operand value, `0x0E0E`, where mesa's `0x5024` already points, with no
+layout change at all. Then the full vendor layout, scales at `groups*64`,
+`0x0E0E` at `groups*64 + oc*2`, pointer moved there. Built, not flashed.
+
 ## ⚠🔑 2026-08-10 round 48 (The requant-multiplier reading is WITHDRAWN, and the round 36 rule turns out not to be the hardware's format either)
 
 Baselines 128/128 at both ends.
