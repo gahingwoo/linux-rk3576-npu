@@ -2,46 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 56. Make the depthwise metric honest before believing it.
+# 2026-08-11 round 57. Is what is left of depthwise a single scale?
 #
-# Round 55 attributed round 54 cleanly and moved depthwise a long way:
+# Round 56's honest metric:
 #
-#   mn_dw1    3/32 on the round 53 baseline  ->  9/32
-#   mn_dw25   188/1024                       ->  432/1024
+#   mn_dw1    9 of 32 match, but COMPUTED 1        baseline COMPUTED 0
+#   mn_dw25   432 of 1024 match, but COMPUTED 2    baseline COMPUTED 0
+#   regular   128 of 128 match, COMPUTED 128       the metric's control, passes
 #
-# and settled that the record COUNT is inert: 4, 8 and 16 records on mn_dw1,
-# 128 against 256 on mn_dw25, all byte identical, even though each moves the
-# fp16 table and the 0x5024 operand with it. What is load bearing is the 48
-# byte record stride and the weight buffer's zero point lane.
+# So round 55's numbers were mostly a saturated output agreeing with a saturated
+# reference, and the real depthwise state is 1 and 2 channels, not 9 and 432.
 #
-# ⚠ Then the offline read of WHICH channels matched came back suspicious.
-# Sorted by |A| the nine matching channels on mn_dw1 are the nine largest,
-# every one of them, and A is added to the MAC before the requant. An A large
-# enough saturates the whole surface to one value, and if the CPU reference
-# saturates too then the channel scores a match without one multiply having to
-# be right. mn_dw1 reported 8 constant channels and 5 pinned at the zero point,
-# which is the same order as the 9 it called correct.
+# What is NOT an artefact: on the shipped configuration mn_dw1 has ZERO channels
+# where the hardware is constant and the reference varies, against 14 on the
+# round 53 baseline, and mn_dw25 has 197 against 227. The depthwise conv now
+# fires everywhere. Its numbers are wrong.
 #
-# That is the proxy trap this project has been caught by before, so the count
-# gets split before another hypothesis is built on it. perch.py now reports
-# COMPUTED, meaning the channel matches AND the reference varies across it, and
-# trivial, meaning it matches a reference that is constant. Only the first is
-# evidence of arithmetic.
+# Everything upstream is verified against the vendor capture: the weight buffer
+# 288 of 288 lanes, the fourteen depthwise registers, the 48 byte record, and A
+# and C at 32 of 32 channels each. Two things were checked offline this round
+# and both came back closed:
 #
-# Nothing in the driver changed this round. Same libteflon.so, same everything;
-# only the measurement.
+#   the vendor's INPUT buffer is byte identical between the depthwise and the
+#   regular model, same size, same ramp, so there is no depthwise-specific
+#   feature layout to get wrong
+#
+#   the capture cannot answer the output question at all: it is taken before
+#   the run, so every output buffer in it is zero. Do not try again.
+#
+# That leaves the one convention this driver picks rather than derives, the
+# requant magnitude. mesa writes C in Q4 and the OUT_CVT shift it computes; the
+# vendor writes C in Q14 with a shift two larger. If what remains is a single
+# power of two, one shift on this sweep turns many channels COMPUTED at once.
+# C and the shift are the same knob in opposite directions, so sweeping the
+# shift alone covers both, and the sweep is on the honest metric.
+#
+# Nothing in the driver changed. Every knob here is already in the shipped
+# libteflon.so.
 #
 # DECISION RULE, written before the run:
-#   COMPUTED stays near 9 and 432   the gains are real and the next round goes
-#                                   after the remaining channels
-#   COMPUTED collapses to near 0    round 55's numbers were saturation, the
-#                                   real state is much worse than reported, and
-#                                   every conclusion drawn from the channel
-#                                   count has to be re-read
-#   COMPUTED on the baseline (4)    tells the same for the round 53 numbers, so
-#                                   the comparison stays valid either way
-#   regular shapes unchanged        they were 128/128 before and must still be,
-#                                   with COMPUTED equal to the match count
+#   one shift makes mn_dw1 COMPUTED jump      what is left is a scale, and the
+#                                             next round derives it properly
+#   COMPUTED stays at 0 or 1 across the sweep the remaining error is NOT a
+#                                             global scale, and the next round
+#                                             must look per channel or at the
+#                                             MAC itself
+#   conv2d-cal at +1 does not break           the knob is not reaching the
+#                                             hardware and the sweep is void
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -58,34 +65,38 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) mn_dw1: shipped, then the round 53 baseline ====="
-	p mn_dw1.tflite ""
-	p mn_dw1.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
-
-	log ""
-	log "===== 3..4) mn_dw25: shipped, then the round 53 baseline ====="
-	p mn_dw25.tflite ""
-	p mn_dw25.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
-
-	log ""
-	log "===== 5) mn_dw1 with the zero point lane sign alone reverted ====="
-	p mn_dw1.tflite ROCKET_DW_ZP_POS=1
-
-	log ""
-	log "===== 6..8) REGULAR shapes: COMPUTED must equal the match count ====="
+	log "===== 0) the knob must MOVE a shape that works, or the sweep is void ====="
 	p conv2d-cal.tflite ""
+	p conv2d-cal.tflite ROCKET_OUT_SHIFT_ADD=1
+
+	log ""
+	log "===== 1..7) mn_dw1, OUT_CVT shift swept around the computed value ====="
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-3
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-2
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=-1
+	p mn_dw1.tflite ""
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=1
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=2
+	p mn_dw1.tflite ROCKET_OUT_SHIFT_ADD=3
+
+	log ""
+	log "===== 8..10) the same on mn_dw25, 1024 channels ====="
+	p mn_dw25.tflite ROCKET_OUT_SHIFT_ADD=-2
+	p mn_dw25.tflite ""
+	p mn_dw25.tflite ROCKET_OUT_SHIFT_ADD=2
+
+	log ""
+	log "===== 11..12) C directly, in case it is not equivalent to the shift ====="
+	p mn_dw1.tflite ROCKET_C_VALUE=64
+	p mn_dw1.tflite ROCKET_C_VALUE=4
+
+	log ""
+	log "===== 13) regular shape, unswept, must still be 128 COMPUTED ====="
 	p cal_k3.tflite ""
-	p cal_oc16.tflite ""
 
 	log ""
-	log "===== 9) whole model, for the record ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Read the COMPUTED line, not the match count. A channel whose ====="
-	log "===== reference is constant can be matched by a saturated output.  ====="
+	log "===== Read COMPUTED, not the match count. Check test 0 first: if   ====="
+	log "===== conv2d-cal is still 128 COMPUTED at +1, the knob is inert.   ====="
 	sync
 }
 case "$1" in
