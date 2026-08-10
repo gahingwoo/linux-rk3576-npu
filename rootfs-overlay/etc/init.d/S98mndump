@@ -2,49 +2,37 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 45. Depthwise uses a 48-BYTE coefficient record, not 64.
+# 2026-08-10 round 46. The surface at 0x5020 is decoded. Write the real thing.
 #
-# Captured from the vendor runtime with the single-variable pair sv_rgu and
-# sv_dwu, ic = oc = 32 at 112x112, k=3, s=1, only `groups` differing, whose
-# biases are known here exactly. Decoded with the same oracle as the .rknn work,
-# control first:
+# From the runtime capture, the layout is
 #
-# Round 44 said depthwise takes a float32 bias. That was WRONG, and reading the
-# registers out of the capture is what corrected it: 0x5020 points at
-# bo01+0x240, immediately after the 576-byte depthwise weight buffer, and NOT at
-# the float bias at 0x3198, which is librknnrt's own copy. Decoding 0x240:
+#     0x5020 -> [A/B/C table]   64 B per 8 ch regular, 48 B per 8 ch depthwise
+#               [oc x fp16]     the per-channel WEIGHT SCALE, 2 bytes each
+#     0x5024 -> 0x0E0E, then zeros            (identical in both models)
 #
-#   record 48 bytes:  A 8 x int32 at +0, C 8 x int16 at +32, NO B
-#     A vs the known per-channel weight sum   corr +0.9696
-#     C peaks at exactly 0x4000, 32 distinct  the layout's own signature
-#   record 64 bytes (what mesa writes):
-#     A corr -0.15, C maximum is not 0x4000   both collapse
+# The 32 uint16 immediately before the 0x5024 target decode as fp16 and match
+# the per-channel scale implied by A at +0.998, ratio 0.933 to 1.040, which is
+# fp16 rounding. Against max|w|/127 they only reach +0.875, which is why every
+# earlier attempt that assumed that scale looked like a mismatch.
 #
-# ⚠ This also corrects the two "no coefficient table for depthwise" results in
-# FINDINGS.md. Both scans tried 64, 32 and 128 byte blocks and never 48.
+# ⚠ THIS EXPLAINS THE MAGIC WORD. mesa's 0x5024 is bias_addr + groups*64, which
+# lands ON the fp16 scale table instead of past it, so rounds 32 to 37 were
+# sweeping values INTO channel 0's scale slot. 0x1004 is fp16 0.00049, a small
+# positive scale, and the bitfield rule (w & 0x3f) == 0x04 with a magnitude
+# floor was describing valid fp16 encodings the whole time.
 #
-# The two formats are mutually exclusive. And the register that selects between
-# them is one this driver ALREADY SETS CORRECTLY: 0x501c is 0x0710 for a regular
-# conv and 0x0510 for depthwise, which rkt_regcmd.c emits and which matched the
-# vendor in the offline audit.
-#
-# So mesa has been telling the DPU to read that surface in depthwise mode and
-# then filling it with the regular integer table. That is exactly round 43's
-# measurement: dwconv fires and saturates to 6 distinct values against a
-# 101-value reference, rather than producing nothing.
-#
-# ROCKET_DW_REC48 writes A and C in 48-byte records for depthwise layers.
+# ROCKET_SCALE_TABLE writes oc fp16 scales there and moves 0x5024 past them.
 #
 # DECISION RULE, written before the run:
-#   dwconv computes             the record size was the depthwise bug
-#   dwconv moves but is wrong    the record is right and a term is not; compare
-#                               the written A and C against the capture directly
-#   dwconv unchanged at 0/16    the record size is not it either, and the next
-#                               step is to diff mesa's written buffer against
-#                               the captured one byte by byte
-#   a regular conv regresses    the knob leaks outside depthwise, a bug in the
-#                               knob rather than a finding
-#   step 1 or 8 not 128/128     the build is wrong, stop
+#   1 and 8 still 128/128        the real table is at least as good as the
+#                                magic word on the shapes that already work
+#   any regular shape regresses  the pointer move is wrong, revert it first
+#   depthwise moves              the scale table matters for depthwise too and
+#                                the record size can be retried on top of it
+#   nothing changes anywhere     the fp16 table is equivalent to the constant
+#                                for these models, which is expected for
+#                                per-tensor quantisation where every entry is
+#                                the same value
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -61,35 +49,31 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) BASELINE: conv2d-cal, must be 128/128 ====="
+	log "===== 1) BASELINE: the magic word, must be 128/128 ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2..3) depthwise as it is now, the 64-byte record ====="
-	p dwconv.tflite ""
-	p mn_dw1.tflite ""
+	log "===== 2..4) THE TEST: the real fp16 scale table ====="
+	p conv2d-cal.tflite ROCKET_SCALE_TABLE=1
+	p cal_k3.tflite ROCKET_SCALE_TABLE=1
+	p cal_k1.tflite ROCKET_SCALE_TABLE=1
 
 	log ""
-	log "===== 4..5) THE TEST: depthwise gets a 48-byte record ====="
-	p dwconv.tflite ROCKET_DW_REC48=1
-	p mn_dw1.tflite ROCKET_DW_REC48=1
+	log "===== 5..6) and on the shapes that never worked ====="
+	p dwconv.tflite ROCKET_SCALE_TABLE=1
+	p mn_pw24.tflite ROCKET_SCALE_TABLE=1
 
 	log ""
-	log "===== 6) the chained model that contains a depthwise ====="
-	p mn_conv0dw1.tflite ROCKET_DW_REC48=1
+	log "===== 7) scale table AND the 48-byte depthwise record ====="
+	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_DW_REC48=1"
 
 	log ""
-	log "===== 7) the knob must NOT touch a regular conv ====="
-	p conv2d-cal.tflite ROCKET_DW_REC48=1
-	p cal_k3.tflite ROCKET_DW_REC48=1
-
-	log ""
-	log "===== 8) CONTROL that can fail: conv2d-cal plain again ====="
+	log "===== 8) CONTROL that can fail: baseline again ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 8 first. Then 2 against 4: any movement off      ====="
-	log "===== 0/16 means the record size was the depthwise bug.           ====="
+	log "===== Read 1 and 8 first. Then 2: if the real table computes, the   ====="
+	log "===== magic word can go and this is a derived value at last.        ====="
 	sync
 }
 case "$1" in

@@ -88,6 +88,51 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑🔑 2026-08-10 THE SURFACE IS DECODED, and it explains the magic word
+
+Following `0x5024` rather than guessing finished this. In both models it points
+at `0x0E0E` followed by zeros, identical, so the second operand is not the
+depthwise difference. But the **deltas** are:
+
+| | `0x5020` to `0x5024` |
+|---|---|
+| vendor regular, oc=32 | 320 bytes = 256 of table + **64** |
+| vendor depthwise, oc=32 | 448 bytes |
+| mesa, `DIV_ROUND_UP(oc,8)*64` | **256** |
+
+And the 64 bytes immediately before the `0x5024` target, in both models, are
+**32 uint16, one per output channel**. Read as fp16 they are the per-channel
+weight scale:
+
+```
+fp16 there            0.001202  0.001271  0.00105   0.001131  0.000842 ...
+scale implied by A    0.001224  0.001262  0.001046  0.001132  0.000843 ...
+corr +0.998192, ratio 0.9332 to 1.0397   (fp16 rounding)
+vs max|w_c|/127: only +0.875              (the approximation that misled me)
+```
+
+**So the surface is:**
+
+```
+0x5020 -> [A/B/C table]   64 B per 8 channels regular, 48 B per 8 channels depthwise
+          [oc x fp16]     the per-channel weight scale
+0x5024 -> 0x0E0E, then zeros
+```
+
+⚠ **This explains the magic word, and retires it.** mesa's `0x5024` is
+`bias_addr + groups*64`, which lands **on** the fp16 scale table instead of past
+it, so rounds 32 to 37 were sweeping values into channel 0's scale slot. `0x1004`
+is fp16 `0.00049`, a small positive scale, and the rule `(w & 0x3f) == 0x04` with
+a magnitude floor was describing **valid fp16 encodings** the whole time. The
+"bitfield" was a float format seen through the wrong lens.
+
+It also explains why exactly one word mattered: `conv2d-cal` is per-tensor
+quantised, so every entry of that table is the same value, and getting the first
+one right is getting all of them right.
+
+`ROCKET_SCALE_TABLE` writes `oc` fp16 scales there and moves `0x5024` past them.
+Round 46 built, not flashed.
+
 ## 🔑 2026-08-10 A and C are consistent with ONE per-channel scale, and mesa's formulas are the right shape
 
 Round 45 reported that the captured A and C do not match mesa's formulas. That

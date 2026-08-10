@@ -1,0 +1,94 @@
+From d21a9b2f899d0b8e7c4d5a87ffeaf34c283a488c Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 18:58:42 +1200
+Subject: [PATCH] rocket RK3576: the coefficient surface holds a per-channel
+ fp16 scale table, and 0x5024 must clear it
+
+Decoded from the runtime capture. 0x5020 points at the A/B/C table, then oc fp16
+entries holding the per-channel weight scale, then 0x5024 at 0x0E0E followed by
+zeros. The 32 uint16 immediately before the 0x5024 target decode as fp16 and
+match the scale implied by A at +0.998 with a ratio of 0.933 to 1.040, which is
+fp16 rounding; against max|w|/127 they reach only +0.875, which is the
+approximation that made this look like a mismatch for several rounds.
+
+mesa's 0x5024 is bias_addr + groups*64, which lands on that table rather than
+past it. For 32 output channels the vendor's delta is 320 bytes, 256 of table
+plus 64 of scales, while this driver computes 256.
+
+That explains the magic word: rounds 32 to 37 were sweeping values into channel
+0's scale slot, 0x1004 is fp16 0.00049, and the bitfield rule was describing
+valid fp16 encodings. One word sufficed because conv2d-cal is per-tensor
+quantised, so every entry of the table is the same value.
+
+ROCKET_SCALE_TABLE writes the real table and moves the pointer past it.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c  | 29 +++++++++++++++++++++++++
+ src/gallium/drivers/rocket/rkt_regcmd.c | 11 +++++++++-
+ 2 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 15d3176..9048098 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -815,7 +815,36 @@ biases_done:
+              * layer has more of, and the floats satisfy the requirement for
+              * more channels by accident than one word does on purpose.
+              */
++            /*
++             * ROCKET_SCALE_TABLE: write the per-channel weight scale as fp16,
++             * one entry per output channel, which is what the vendor puts here.
++             *
++             * Decoded from the runtime capture. The surface 0x5020 points at is
++             *
++             *    [A/B/C table]                 64 B per 8 channels regular,
++             *                                  48 B per 8 channels depthwise
++             *    [oc x fp16 weight scale]      2 bytes per channel
++             *    0x5024 ->  0x0E0E, then zeros
++             *
++             * and the 32 uint16 immediately before the 0x5024 target decode as
++             * fp16 matching the per-channel scale implied by A at +0.998.
++             *
++             * That is what this driver has been writing a single magic word
++             * into: mesa's 0x5024 is bias_addr + groups*64, which lands ON this
++             * table rather than past it, and the constant 0x1004 found by
++             * sweeping is simply fp16 0.00049, a plausible small scale. So the
++             * bitfield rule fitted in rounds 36 and 37 was describing valid
++             * fp16 encodings all along.
++             */
+             uint32_t *fs32 = (uint32_t *)(b8 + groups * 64);
++            if (getenv("ROCKET_SCALE_TABLE")) {
++               uint16_t *sc16 = (uint16_t *)(b8 + groups * 64);
++               const float *wsc = poperation->conv.weight_tensor->scales;
++               float wt_sc = poperation->conv.weight_tensor->scale;
++               for (unsigned oc = 0; oc < output_channels; oc++)
++                  sc16[oc] = _mesa_float_to_half(wsc ? wsc[oc] : wt_sc);
++               goto biases_done;
++            }
+             unsigned cap = (bufsize - groups * 64) / sizeof(uint32_t);
+             const char *fill = getenv("ROCKET_FS_FILL");
+             unsigned n = fill ? strtoul(fill, NULL, 0) : 1;
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index fc938f7..86afda9 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -712,7 +712,16 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+       R_RDMA(0x5020, bias_addr);
+       /* Second SDP operand points just past the [A|B|C] bias structure
+        * (DIV_ROUND_UP(oc,8)*64 bytes); it lands in the zeroed pad of the bias bo. */
+-      R_RDMA(0x5024, bias_addr + DIV_ROUND_UP(oc, 8) * 64);
++      /*
++       * The second operand sits PAST the per-channel fp16 scale table, not on
++       * it. The runtime capture puts 0x5020 at the A/B/C table, then oc fp16
++       * scale entries, then 0x5024: for 32 output channels the vendor's
++       * 0x5020 to 0x5024 delta is 320 bytes, which is 256 of table plus 64 of
++       * scales, while this line computes 256. ROCKET_SCALE_TABLE fills those
++       * entries, so the pointer has to clear them.
++       */
++      R_RDMA(0x5024, bias_addr + DIV_ROUND_UP(oc, 8) * 64 +
++                     (getenv("ROCKET_SCALE_TABLE") ? oc * 2 : 0));
+    }
+    R_RDMA(0x5028, 0x00000000);
+    R_RDMA(0x502c, 0x00000000);
+-- 
+2.43.0
+
