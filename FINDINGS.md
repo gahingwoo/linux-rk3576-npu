@@ -88,6 +88,45 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ✅ 2026-08-10 round 53 RESULT: the derived layout is in, with no regressions
+
+| model | new default | old arrangement |
+|---|---|---|
+| conv2d-cal | **128/128** | 128/128 |
+| cal_k3 | **128/128** | 128/128 |
+| cal_k1 | **128/128** | |
+| cal_s1 | **128/128** | |
+| cal_oc16 | **16/16** | |
+| mn_pw2 | **64/64** | |
+| conv2d-cal, whole model | **2/2 OK**, relu maxdiff 1 | |
+| dwconv, mn_dw1 | unchanged, as expected | |
+
+The control passes, so round 52's comparison was what it looked like, and every
+shape that worked before still works. **The vendor's coefficient layout is the
+default and nothing regressed.**
+
+Where that leaves the surface:
+
+```
+0x5020 -> [A/B/C table]              A = bias_q - (in_zp - 0x80)*sw, verified
+                                     B = 0x80 - wt_zp, verified
+                                     C = 0x4000 * s_c / max(s_c), verified
+          [oc x fp16 weight scale]   derived from weight_tensor->scales
+0x5024 -> operand                    four bytes, still a constant
+```
+
+Two things remain, and both are now sharply stated rather than diffuse:
+
+1. **The four-byte operand.** mesa needs `0x1004` and the vendor writes
+   `0x0E0E`, and each fails in the other's configuration. `0x13d3` is in the
+   right fp16 magnitude range and still fails, so magnitude alone does not
+   explain it and the round 36 bit pattern is doing real work under mesa's
+   configuration.
+2. **Depthwise.** Unmoved by the entire coefficient chain: the 48-byte record,
+   the fp16 table, the float bias, per-channel B, six different operand words
+   and the old float surface all leave it at 6 distinct values. Whatever is
+   wrong is not in this buffer.
+
 ## 2026-08-10 round 53 (Lock it in: the vendor's layout becomes the default)
 
 mesa now writes, with no knobs set:
