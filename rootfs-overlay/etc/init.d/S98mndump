@@ -2,53 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 62. The overlap rows were being staged twice.
+# 2026-08-11 round 63. The 1024 channel depthwise, with the method that worked.
 #
-# Round 61 moved the seam and it followed:
+# Round 62 SOLVED the 112x112 depthwise: dw_imp 32 of 32 all COMPUTED, mn_dw1
+# 32 of 32 with the other nine references genuinely constant, the row profile
+# flat, the control reproducing the old breakage, and the fix holding with the
+# seam at 46 and at 64. Regular shapes untouched, whole model 2/2.
 #
-#   ROWWIN  tasks  first bad row
-#     91      2       ~90        the default
-#     64      2       ~64
-#     46      3       ~48
-#    113      1        0         one window, and the WHOLE surface is wrong
+# mn_dw25 did not move: 7x7 with 1024 channels, 2 COMPUTED of 1024. It is a
+# single window so the staging fix cannot touch it, and it is a different bug.
 #
-# So the bug is per window, not at row 90, and a single oversized window is not
-# a fix: 91 input rows is a real CBUF limit and 112 rows overruns it. The
-# windowing is forced, not chosen.
+# Two candidates were killed offline before building anything:
 #
-# The vendor's capture of this exact layer then names the bug. Its second
-# window writes TWO different row counts where mesa writes one:
+#   task->output_channels has an ad-hoc doubling for depthwise only when the
+#   channel count is 32 or fewer, which looked like exactly the kind of special
+#   case that breaks at 1024. It is not used by the RK3576 path at all; that
+#   path takes output_channels_real.
 #
-#   0x102c  22 -> 23 rows   the rows the window SPANS       mesa 23, correct
-#   0x1028  0x498/56 = 21   the rows the window STAGES      mesa 23, wrong
-#   0x1078  20 -> 21        the same                        mesa 23, wrong
-#   0x1098  2352/112 = 21   the same                        mesa 23, wrong
+#   calc_weights_banks() counts k*k*ic bytes for a depthwise layer while the
+#   CNA is programmed to DMA twice that, since the buffer carries two bytes per
+#   channel. At 1024 channels that is a 9216 byte shortfall. But the function
+#   adds a whole spare bank and a bank is 512 entries of 128 bytes, so even the
+#   1024 channel case has 65536 bytes for 18432. No overflow, at any width.
 #
-# A window overlaps the one before it by one row each side, and those rows are
-# already in the CBUF: the reuse base at 0x103c is 56 x 89, pointing straight
-# back at them, and mesa already computes that correctly. Staging them again
-# writes them a second time at the next free CBUF row, so every row after the
-# overlap sits two rows late and the window convolves shifted input. Round 60's
-# reading fits exactly: right value range, perfect correlation on an interior
-# crop of window 0, garbage in window 1.
-#
-# So rkt_split_tasks now stages from the first row that is NOT already there,
-# and the three staging registers carry that count while 0x102c keeps the span.
-#
-# ROCKET_STAGE_ALL=1 restores the old behaviour and is the control: it has to
-# reproduce the broken second window exactly, or this round is not measuring
-# what it claims.
+# So use the instrument that worked. dw25_imp.tflite is mn_dw25 with every tap
+# at the weight zero point except one per channel at c mod 9, and a zero bias;
+# its input and output scales are equal, so the correct output of channel c is
+# its own input shifted by that tap. dwimp.py now scales to 1024 channels by
+# checking each channel's own plane plus the neighbours a packing error would
+# reach: the pair partner and the 16, 32, 64 and C/2 strides.
 #
 # DECISION RULE, written before the run:
-#   dw_imp COMPUTED 32/32          the depthwise conv is SOLVED
-#   the row profile goes flat but  the shift is fixed and something smaller is
-#     COMPUTED stays low           left, read the new profile
-#   unchanged                      the double staging is not the mechanism and
-#                                  the eighteen per-window registers get read
-#                                  one at a time
-#   STAGE_ALL does not reproduce   the control failed, the round is void
-#     the old profile
-#   regular shapes regress         the change leaked outside the windowed path
+#   CPU control decodes, hardware      the wiring is right at 1024 channels too
+#     agrees                           and what is left is the value
+#   hardware reads a NEIGHBOURING      the channel packing breaks above some
+#     plane                            width, and the offset names the stride
+#   hardware fits no tap               neither, and the next step is the row and
+#                                      column profile on a 7x7 surface
+#   mn_dw1 or dw_imp regress           the round 62 fix is not stable and that
+#                                      comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -56,6 +48,9 @@ log() { echo "$@" > "$C"; }
 p() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
+d() { log ""; log "  -- decode $1"; sleep 2; \
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+	python3 "$NPU_DIR/dwimp.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
 	i=0
@@ -65,38 +60,33 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) dw_imp: the fix, then the control that must break ====="
+	log "===== 1) REGRESSION: the round 62 fix must still hold ====="
 	p dw_imp.tflite ""
-	p dw_imp.tflite ROCKET_STAGE_ALL=1
-
-	log ""
-	log "===== 3..4) mn_dw1: the fix, then the control ====="
 	p mn_dw1.tflite ""
-	p mn_dw1.tflite ROCKET_STAGE_ALL=1
 
 	log ""
-	log "===== 5..6) move the seam again: the fix must hold anywhere ====="
-	p dw_imp.tflite ROCKET_ROWWIN=46
-	p dw_imp.tflite ROCKET_ROWWIN=64
+	log "===== 2) the 1024 channel impulse: which tap, which channel ====="
+	d dw25_imp.tflite
 
 	log ""
-	log "===== 7) mn_dw25 is 7x7, one window, so it must not move ====="
+	log "===== 3) the same model through the ordinary metric ====="
+	p dw25_imp.tflite ""
+
+	log ""
+	log "===== 4) mn_dw25 with its real weights ====="
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 8..9) REGULAR shapes, which never take the windowed path ====="
+	log "===== 5) the 32 channel impulse decode, as the method's control ====="
+	d dw_imp.tflite
+
+	log ""
+	log "===== 6) a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
-	p cal_k3.tflite ""
 
 	log ""
-	log "===== 10) whole model, for the record ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Read test 2 first: the control must reproduce the broken   ====="
-	log "===== second window, or test 1 is not a comparison.              ====="
+	log "===== Read test 1 first. If the 112x112 depthwise regressed, the ====="
+	log "===== 1024 channel result is not the thing to work on.           ====="
 	sync
 }
 case "$1" in

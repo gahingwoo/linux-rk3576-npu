@@ -58,15 +58,31 @@ def shifted(plane, ky, kx):
     return out
 
 
-# A crop keeps the search cheap on the board and still holds 30x30 samples,
-# which no wrong shift can fit by accident.
-sl = (slice(8, 38), slice(8, 38))
+# A crop keeps the search cheap on the board. On a 112x112 surface it still
+# holds 30x30 samples, which no wrong shift can fit by accident; on a 7x7 one
+# there is nothing to crop and the whole surface is used.
+sl = (slice(8, 38), slice(8, 38)) if H >= 40 else (slice(0, H), slice(0, W))
+
+# Scanning every input plane is 9 x C correlations per output channel, which is
+# fine at 32 channels and hopeless at 1024. Above that, check the channel's OWN
+# plane plus the neighbours a packing error would plausibly reach: the pair
+# partner, and the 16, 32 and 64 channel strides the atomics are built from.
+if C <= 64:
+    CANDS = list(range(C))
+else:
+    CANDS = None
 
 
 def decode(surface, c):
     """Best (source channel, ky, kx) for this output channel."""
     best = (-2.0, None)
-    for sc in range(C):
+    if CANDS is None:
+        cands = sorted({(c + d) % C for d in
+                        (0, 1, -1, 2, -2, 8, -8, 16, -16, 32, -32, 64, -64,
+                         C // 2, -(C // 2))})
+    else:
+        cands = CANDS
+    for sc in cands:
         for ky in range(3):
             for kx in range(3):
                 cand = shifted(x[:, :, sc], ky, kx)[sl].ravel().astype(float)
