@@ -1,7 +1,51 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
-## 🔑🔑 2026-08-11 round 54, offline: THE DEPTHWISE COEFFICIENT TABLE EXISTS, and it is decoded
+## 2026-08-11 round 62 RESULT: **DEPTHWISE IS SOLVED.** The overlap rows were staged twice
+
+| model | before | after |
+|---|---|---|
+| `dw_imp` (impulse, 112x112x32) | 0/32 | **32/32, all COMPUTED** |
+| `mn_dw1` (112x112x32) | 9/32 match, 1 COMPUTED | **32/32 match, 23 COMPUTED** |
+| row maxdiff profile, every 8th row | `1 x12, 200, 200` | **`1` everywhere** |
+| seam moved to 46, and to 64 | — | **32/32 both** |
+| `conv2d-cal`, `cal_k3` | 128/128 | 128/128, whole model 2/2 |
+
+`mn_dw1`'s other 9 channels are trivial because the reference is genuinely
+constant on them, so **every channel is right**.
+
+**The control passes**: `ROCKET_STAGE_ALL=1` reproduces the old broken profile
+exactly, `1 x12, 200, 200` on `dw_imp` and `255, 255` on `mn_dw1`. And the fix
+is not tuned to one boundary: moving the seam to 46 rows (three windows) and to
+64 (two) still gives 32/32.
+
+**The bug.** A row window overlaps the one before it by one row on each side,
+and those rows are already in the CBUF. `rkt_regcmd` already pointed the reuse
+base at them correctly (`0x103c` = `56 x 89`). `rkt_split_tasks` staged them
+*again*, which writes them a second time at the next free CBUF row, so every
+row after the overlap sat two rows late and the window convolved shifted input.
+
+The vendor's capture of this exact layer writes **two different row counts**
+for its second window where mesa wrote one:
+
+| register | vendor | means | mesa was |
+|---|---|---|---|
+| `0x102c` | 23 | rows the window **spans** | 23, correct |
+| `0x1028` | 21 (`56 x 21`) | rows it **stages** | 23, wrong |
+| `0x1078` | 21 | the same | 23, wrong |
+| `0x1098` | 21 (`112 x 21`) | the same | 23, wrong |
+
+**Why this hid for so long**: every regular model in this project is 80x80 or
+smaller and takes the single-task path, so nothing that tiles was ever correct
+and nothing that was correct ever tiled. Every coefficient sweep came back flat
+because the coefficients were already right.
+
+**Still open**: `mn_dw25`, 7x7 with 1024 channels, is unchanged at 2 COMPUTED
+of 1024. It is a single window, so this fix does not touch it, and it is now
+clearly a different bug.
+
+
+## 2026-08-11 round 54, offline: THE DEPTHWISE COEFFICIENT TABLE EXISTS, and it is decoded
 
 **The claim this replaces.** Two earlier readings concluded the vendor emits no
 per-channel coefficient table for a depthwise layer. Both searched the `.rknn`.
@@ -44,7 +88,7 @@ calibration set is generated too, so `in_scale` and `in_zp` are known:
 | fp16 table | `wt_sc[oc]` | corr 0.999997, ratio 1.00001 | corr 1.000000, ratio 0.99994 |
 | B (regular only) | `-wt_zp[oc]` | 32/32 exact | absent |
 
-⚠ **A needed no change.** `calculate_weight_sum()` already returns
+**A needed no change.** `calculate_weight_sum()` already returns
 `sum(w_q - wt_zp)`, so the derived expression IS `bias - (in_zp - 0x80) * sw`,
 which this driver has written all along. What was wrong was the record shape,
 the record count, and where the fp16 table and the `0x5024` operand land after
@@ -73,13 +117,13 @@ reproduces the stored bytes of the regular conv as a multiset, 9216 of 9216,
 where symmetric `/127` reaches 89.7 percent. The stored order is a shuffle, not
 OIHW, which is expected of a hardware layout.
 
-⚠ **The one thing 32 channels cannot pin**: eight records for 32 channels is
+**The one thing 32 channels cannot pin**: eight records for 32 channels is
 either twice the regular grouping or a padding of the channel count to 64, and
 this geometry gives eight either way. The doubling is what shipped, because it
 is the doubling this driver already applies to the depthwise channel atomic.
 `ROCKET_DW_RECS` overrides it so the board can decide.
 
-⚠ **numpy started dying with SIGILL** in its own `_sanity_check` on this VM;
+**numpy started dying with SIGILL** in its own `_sanity_check` on this VM;
 the bundled OpenBLAS picks a kernel the guest traps on. Pinned with a `.pth` in
 the venv setting `OPENBLAS_CORETYPE=ARMV8`. Nothing to do with the NPU, but it
 stops every offline script in this repo.
@@ -113,7 +157,7 @@ identical model twice:
 | `0x500..0x700` | 16/512 |
 | `0x700..0x0b00` | 33/1024 |
 
-⚠ **So `0x500..0x0b90` is not reproducible.** The toolkit writes different
+**So `0x500..0x0b90` is not reproducible.** The toolkit writes different
 content there on every build of the same model: about 46% zeros and the rest
 reading as leftover float data. **Rounds 26 and 27 measured that.** The "1682 of
 1936 bytes differ" and the "k=5 sparse, k=3 dense" block structure were compile
@@ -161,16 +205,16 @@ with `ROCKET_FS_FLOATS` restoring the old surface, `ROCKET_FS_REL` writing the
 scale relative to the largest channel, and `ROCKET_FS_ZERO` as the control that
 must fail. Built, not flashed.
 
-⚠ The k=5 versus k=3 divide is **not in the coefficient buffer**. That is the
+The k=5 versus k=3 divide is **not in the coefficient buffer**. That is the
 main thing this round changes about where to look next: it is in the weight
 buffer layout or in the registers.
 
-⚠ Deploy path, learned the hard way: copying `libteflon.so` into
+Deploy path, learned the hard way: copying `libteflon.so` into
 `buildroot/br-out/target/` does nothing, the rootfs build overwrites it from
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
-## ⚠ 2026-08-10 the fp16 table is PROPORTIONAL to the weight scale, not equal to it
+## 2026-08-10 the fp16 table is PROPORTIONAL to the weight scale, not equal to it
 
 Using the table's value as the per-channel quantisation scale on the known
 weights gives a range of **[-214, 191]**, which overflows int8 by 1.68x. So the
@@ -179,7 +223,7 @@ the "+0.998 against the scale implied by A" match says only that both are
 proportional to the same thing, since A's implied scale was derived from the
 same relation.
 
-⚠ That qualifies the round 52 reading. The table's **position and element type**
+That qualifies the round 52 reading. The table's **position and element type**
 are established, and writing `weight_tensor->scales` there passes every working
 shape, but the exact quantity is off by a constant factor of roughly 1.68 in the
 vendor's own model. Whether mesa's version is right or merely inside a tolerant
@@ -195,7 +239,7 @@ So the remaining unknowns are now three, and the first is new:
 2. the four-byte operand, `0x1004` for mesa against `0x0E0E` for the vendor,
 3. depthwise, which the whole coefficient chain does not touch.
 
-## ✅ 2026-08-10 round 53 RESULT: the derived layout is in, with no regressions
+## 2026-08-10 round 53 RESULT: the derived layout is in, with no regressions
 
 | model | new default | old arrangement |
 |---|---|---|
@@ -254,7 +298,7 @@ there is derived from the model except those four bytes.
 Round 53 runs every shape that already worked, on the new default and on the old
 path, plus depthwise where nothing is expected to change. Built, not flashed.
 
-## 🔑🔑 2026-08-10 round 52 THE LAYOUT IS ADOPTED (the vendor's arrangement works in mesa, and the magic word shrinks to one operand slot)
+## 2026-08-10 round 52 THE LAYOUT IS ADOPTED (the vendor's arrangement works in mesa, and the magic word shrinks to one operand slot)
 
 Baselines 128/128 at both ends.
 
@@ -288,7 +332,7 @@ derived from `weight_tensor->scales`.
 than living inside the scale table. That is also why it looked like a bitfield
 for six rounds: the sweep was writing into an operand, not a scale.
 
-⚠ Still unexplained: why that operand is `0x1004` for mesa and `0x0E0E` for the
+Still unexplained: why that operand is `0x1004` for mesa and `0x0E0E` for the
 vendor. And depthwise is untouched by any of this, 6 distinct values exactly as
 at baseline, so its cause remains elsewhere.
 
@@ -317,7 +361,7 @@ demonstrably accepts, with `ROCKET_OP2=0x0E0E` beside it as the variant that
 must fail. That separates the last two things still tangled together. Built,
 not flashed.
 
-## 🔑 2026-08-10 A confirmed exactly, and the untested combination identified
+## 2026-08-10 A confirmed exactly, and the untested combination identified
 
 Using the **exact** per-channel scale from the captured fp16 table, rather than
 the `max/127` approximation that misled several rounds:
@@ -350,7 +394,7 @@ aimed at it. Neither tested the vendor's actual arrangement.
 Round 51 runs `ROCKET_SCALE_TABLE_WT` together with `ROCKET_SCALE_PTR`, with the
 round 49 combination beside it for contrast. Built, not flashed.
 
-## ⚠ 2026-08-10 round 50 (VOID, and then closed properly: tflite per-axis forbids the very thing the vendor's B encodes)
+## 2026-08-10 round 50 (VOID, and then closed properly: tflite per-axis forbids the very thing the vendor's B encodes)
 
 Baselines 128/128. Per-channel B is harmless on the working shapes, all three
 still 128/128, and changed **nothing** on dwconv, mn_dw1 or mn_pw24, every count
@@ -384,7 +428,7 @@ writes.
 So this is a real difference between the two stacks that cannot be the cause of
 mesa's depthwise failure, and the third difference is still unlocated.
 
-## 🔑 2026-08-10 B is PER CHANNEL in the vendor, and mesa has never used the per-channel zero point
+## 2026-08-10 B is PER CHANNEL in the vendor, and mesa has never used the per-channel zero point
 
 Round 49 said the difference is elsewhere in the surface. Decoding the vendor's
 A/B/C table found it, in the one column nobody had looked at:
@@ -410,11 +454,11 @@ built, not flashed, running it on the shapes that work as a regression check and
 on depthwise and `mn_pw24`, which are the per-channel quantised ones where a
 missing per-channel zero point should show.
 
-⚠ Not claimed: that this fixes depthwise. It is one missing term, found by
+Not claimed: that this fixes depthwise. It is one missing term, found by
 decoding rather than guessing, in a table whose other two columns are already
 understood.
 
-## ⚠ 2026-08-10 round 49 (The vendor's own value produces an empty convolution in mesa. Same field, two configurations, two different acceptable contents.)
+## 2026-08-10 round 49 (The vendor's own value produces an empty convolution in mesa. Same field, two configurations, two different acceptable contents.)
 
 Baselines 128/128 at both ends.
 
@@ -446,7 +490,7 @@ Baseline 6 distinct values, 21 with `0x0E0E`, 28 with the scale table in round
 47. Depthwise reads it and the regular shapes tolerate a wide range, which is
 the opposite of how this looked when the field was thought to be a scale.
 
-## 🔑 2026-08-10 the magic word slot IS the second operand, and round 46 left it empty
+## 2026-08-10 the magic word slot IS the second operand, and round 46 left it empty
 
 Putting the capture's layout beside mesa's answers what the round 36 rule
 describes:
@@ -474,7 +518,7 @@ second-operand value, `0x0E0E`, where mesa's `0x5024` already points, with no
 layout change at all. Then the full vendor layout, scales at `groups*64`,
 `0x0E0E` at `groups*64 + oc*2`, pointer moved there. Built, not flashed.
 
-## ⚠🔑 2026-08-10 round 48 (The requant-multiplier reading is WITHDRAWN, and the round 36 rule turns out not to be the hardware's format either)
+## 2026-08-10 round 48 (The requant-multiplier reading is WITHDRAWN, and the round 36 rule turns out not to be the hardware's format either)
 
 Baselines 128/128 at both ends.
 
@@ -518,7 +562,7 @@ from the vendor's is chasing the artifact, and the real difference is elsewhere
 in the surface. `ROCKET_SCALE_PTR` alone also failed, so the pointer is not the
 whole of it either.
 
-## 🔑 2026-08-10 the slot holds the REQUANT MULTIPLIER, and the magic word finally has a meaning
+## 2026-08-10 the slot holds the REQUANT MULTIPLIER, and the magic word finally has a meaning
 
 Round 47 said the table failed and why: `conv2d-cal`'s weight scale is
 `3.9125464`, whose fp16 is `0x43d3`, a value round 28 already proved fails. So
@@ -578,7 +622,7 @@ scale for that model is four thousand times larger. That the output mirrors
 about the zero point, 128..255 becoming 0..128, is consistent with a magnitude
 far outside the usable window.
 
-⚠ So the +0.998 match between the captured table and the scale implied by A is
+So the +0.998 match between the captured table and the scale implied by A is
 about **the vendor's own quantisation**, where the weight scale really is small.
 It does not license writing mesa's `weight_tensor->scale` into the same slot,
 and round 46 assumed it did.
@@ -591,7 +635,7 @@ collapsing. Depthwise is per-channel quantised, so the table there is 32
 different values rather than one repeated, which is presumably why it does
 something for depthwise and harms the per-tensor shapes.
 
-## ⚠ 2026-08-10 round 46 (The real fp16 table regressed the working shapes, and I changed two things at once again)
+## 2026-08-10 round 46 (The real fp16 table regressed the working shapes, and I changed two things at once again)
 
 Baselines 128/128 at both ends, so the result is real.
 
@@ -605,7 +649,7 @@ Baselines 128/128 at both ends, so the result is real.
 distinct 256 means it ran and produced a full range of wrong values rather than
 collapsing, so the pipeline is alive and the arithmetic is wrong.
 
-⚠ **The round cannot be attributed, because it moved two things**: it wrote the
+**The round cannot be attributed, because it moved two things**: it wrote the
 fp16 table *and* moved `0x5024` past it. That is the exact mistake this file
 keeps recording, and I made it again one round after writing it down. They are
 two knobs now, `ROCKET_SCALE_TABLE` and `ROCKET_SCALE_PTR`, and round 47 runs
@@ -616,7 +660,7 @@ the vendor's `0x5024` target are 32 uint16 that read as fp16 and match the scale
 implied by A at +0.998. What round 46 failed to establish is which half of that
 mesa can adopt, and that is now a separable question.
 
-## ⚠ 2026-08-10 round 46 hung, and it was my bug not the hardware
+## 2026-08-10 round 46 hung, and it was my bug not the hardware
 
 The board stopped at step 2, the first use of `ROCKET_SCALE_TABLE`, with the
 step header printed and nothing after. Not a hardware hang: the `goto
@@ -631,7 +675,7 @@ Fixed by dropping the goto and using a flag to skip the constant word instead.
 A comment now says why, because the label being earlier in the function is not
 visible from the place the jump is written.
 
-## 🔑🔑 2026-08-10 THE SURFACE IS DECODED, and it explains the magic word
+## 2026-08-10 THE SURFACE IS DECODED, and it explains the magic word
 
 Following `0x5024` rather than guessing finished this. In both models it points
 at `0x0E0E` followed by zeros, identical, so the second operand is not the
@@ -662,7 +706,7 @@ vs max|w_c|/127: only +0.875              (the approximation that misled me)
 0x5024 -> 0x0E0E, then zeros
 ```
 
-⚠ **This explains the magic word, and retires it.** mesa's `0x5024` is
+**This explains the magic word, and retires it.** mesa's `0x5024` is
 `bias_addr + groups*64`, which lands **on** the fp16 scale table instead of past
 it, so rounds 32 to 37 were sweeping values into channel 0's scale slot. `0x1004`
 is fp16 `0.00049`, a small positive scale, and the rule `(w & 0x3f) == 0x04` with
@@ -676,7 +720,7 @@ one right is getting all of them right.
 `ROCKET_SCALE_TABLE` writes `oc` fp16 scales there and moves `0x5024` past them.
 Round 46 built, not flashed.
 
-## 🔑 2026-08-10 A and C are consistent with ONE per-channel scale, and mesa's formulas are the right shape
+## 2026-08-10 A and C are consistent with ONE per-channel scale, and mesa's formulas are the right shape
 
 Round 45 reported that the captured A and C do not match mesa's formulas. That
 reading was wrong, and the error was mine: I computed the per-channel scale as
@@ -700,7 +744,7 @@ So `C = 0x4000 * s_c / max(s_c)` is **exactly** mesa's existing formula, and A's
 shape, a multiple of the quantised weight sum, is mesa's too. For a tflite model
 mesa knows `s_c` exactly from `weight_tensor->scales`, so it can reproduce both.
 
-⚠ **What that does not explain**: round 45 wrote those formulas in 48-byte
+**What that does not explain**: round 45 wrote those formulas in 48-byte
 records and the output still collapsed to two distinct values. So with the
 values now understood, what remains for depthwise is the surface layout rather
 than the arithmetic. The region has content this work has not accounted for,
@@ -710,7 +754,7 @@ the table itself starts at `bo01+0x240`.
 Everything needed to settle that is on disk: `dirty/vendorcap-dw-2026-08-10/`
 and `sv_pairs.py dw`.
 
-## ⚠ 2026-08-10 round 45 (The 48-byte record alone is not the fix either, and the captured A and C do not match mesa's formulas)
+## 2026-08-10 round 45 (The 48-byte record alone is not the fix either, and the captured A and C do not match mesa's formulas)
 
 Baselines 128/128 at both ends and no leak: conv2d-cal and cal_k3 both stay at
 128/128 with the knob set.
@@ -745,7 +789,7 @@ changing only the record size collapsed the output.
 hand, so A and C can be solved rather than guessed. `dirty/vendorcap-dw-2026-08-10/`
 holds the dumps and `sv_pairs.py dw` regenerates the ground truth.
 
-## 🔑 2026-08-10 THE DEPTHWISE RECORD IS 48 BYTES, NOT 64 (and this corrects two earlier results of mine)
+## 2026-08-10 THE DEPTHWISE RECORD IS 48 BYTES, NOT 64 (and this corrects two earlier results of mine)
 
 Round 44 concluded depthwise takes a float32 bias. **That was wrong**, and what
 corrected it was reading the registers out of the capture instead of searching
@@ -777,7 +821,7 @@ drops B and packs the record into 48.** mesa writing 64 means every channel's A
 and C are read from the wrong offset, which is exactly why a depthwise layer
 fires and saturates rather than producing nothing.
 
-⚠ **This corrects the two entries above that said the vendor emits no
+**This corrects the two entries above that said the vendor emits no
 per-channel coefficient table for depthwise.** Both scans, the C-peak one and
 the ground-truth A-versus-weight-sum one, tried 64, 32 and 128 byte blocks and
 **never 48**. Two independent oracles agreeing meant only that they shared an
@@ -787,7 +831,7 @@ it either, because the control is a regular conv and 64 is correct there.
 `ROCKET_DW_REC48` writes A and C in 48-byte records for depthwise. Round 45
 built, not flashed, with the knob checked against a regular conv.
 
-## ⚠ 2026-08-10 round 44 (The float bias alone does NOT fix depthwise, and the number that looks like an improvement is not one.)
+## 2026-08-10 round 44 (The float bias alone does NOT fix depthwise, and the number that looks like an improvement is not one.)
 
 Baselines 128/128 at both ends, and the knob does not leak: conv2d-cal and
 cal_k3 are both 128/128 with `ROCKET_DW_FLOATBIAS` set.
@@ -798,7 +842,7 @@ cal_k3 are both 128/128 with `ROCKET_DW_FLOATBIAS` set.
 | mn_dw1 | 3/32, distinct 124, 19/32 constant | **5/32**, distinct **2**, **32/32 constant**, 26 at zp |
 | mn_conv0dw1 | 1/32 | 8/32, distinct 2, 32/32 constant |
 
-⚠ **The 3/32 to 5/32 is not an improvement.** The distinct count collapses from
+**The 3/32 to 5/32 is not an improvement.** The distinct count collapses from
 124 to **2** and every one of the 32 channels becomes constant. The extra
 "matching" channels are the ones where the CPU is also zero under ReLU, which is
 exactly the metric caveat that a passing model, `mn_pw2`, exposed in round 43.
@@ -823,7 +867,7 @@ already made.
 decoded properly against the known weights and bias before anything else is
 flashed.
 
-## 🔑 2026-08-10 THE DEPTHWISE FORMAT (A depthwise layer takes a float32 bias, not the int32 A/B/C table. Captured from the vendor runtime, with the control passing.)
+## 2026-08-10 THE DEPTHWISE FORMAT (A depthwise layer takes a float32 bias, not the int32 A/B/C table. Captured from the vendor runtime, with the control passing.)
 
 The pair is `sv_rgu` and `sv_dwu`, ic = oc = 32 at 112x112, k=3, s=1, one
 calibration set, only `groups` differing, biases known here exactly. Decoded
@@ -860,7 +904,7 @@ start of the buffer for depthwise layers. Round 44 built, not flashed, with the
 knob checked against a regular conv so a leak would show. Raw dumps kept in
 `dirty/vendorcap-dw-2026-08-10/`.
 
-## ⚠ 2026-08-10 a wasted flash, and what it cost
+## 2026-08-10 a wasted flash, and what it cost
 
 The first depthwise capture round never ran. `S98npucap` hardcodes
 `/opt/npu-cap/run-coefs.sh`, and the new script was injected as
@@ -880,7 +924,7 @@ depthwise round and calls the decoder, both models are present, `runner`,
 
 ## 2026-08-10 depthwise, the per-channel-scaled gap closed, and the capture prepared
 
-⚠ The full-file sweep used correlation, which is scale invariant, so it finds
+The full-file sweep used correlation, which is scale invariant, so it finds
 anything **proportional** to the bias. With per-channel weight quantisation
 `A_i = bias_i / (in_s * wt_sc_i)` is not proportional to `bias_i`, so that sweep
 could have missed it. Re-run with the per-channel-scaled references added,
@@ -903,10 +947,10 @@ forms. **`sv_rgu` runs first as the positive control** and must reproduce its
 `+0.9972` weight-sum hit before anything the depthwise capture says is readable.
 Both models are staged in `dirty/npu-cap/`.
 
-⚠ Needs `rock4d-spi-uboot-vendor.img` in SPI, and `rock4d-spi-uboot.img` back
+Needs `rock4d-spi-uboot-vendor.img` in SPI, and `rock4d-spi-uboot.img` back
 before rocket will run again.
 
-## 🔑 2026-08-09 offline depthwise, full-file sweep (There is no quantised per-channel coefficient anywhere in the vendor's depthwise model. The offline route is exhausted; this needs a runtime capture.)
+## 2026-08-09 offline depthwise, full-file sweep (There is no quantised per-channel coefficient anywhere in the vendor's depthwise model. The offline route is exhausted; this needs a runtime capture.)
 
 Not just the length-prefixed blobs this time, the **whole file**, byte by byte:
 int32, int16 and float32, strides 2, 4, 6, 8, 10, 16 and 64, every base offset,
@@ -948,7 +992,7 @@ questions cannot answer this one.
 
 **Next, and it needs the board**: capture the coefficient BO for a depthwise
 layer from the vendor runtime, the way the 8192-byte regular-conv buffer was
-captured. ⚠ That needs `rock4d-spi-uboot-vendor.img` in SPI, and
+captured. That needs `rock4d-spi-uboot-vendor.img` in SPI, and
 `rock4d-spi-uboot.img` back afterwards for rocket.
 
 ## 2026-08-09 offline depthwise, weight buffer (Where the per-channel data goes is still open. Three readings of the 576-byte buffer fail, and weight compression is not the explanation.)
@@ -984,7 +1028,7 @@ sv_dwu  51 vectors   C peaks at 0x4000:  NONE                (compress_weight=Fa
 The table is found in both regular builds, at the same offset and size, and in
 neither depthwise build.
 
-⚠ One scare along the way, recorded so it is not mistaken for a finding: the
+One scare along the way, recorded so it is not mistaken for a finding: the
 A-column oracle appeared to fail on `sv_rgu`, which would have voided the run.
 It was a scripting bug, the depthwise weight sum passed as the reference for
 both models. The C-peak oracle above is unaffected and fires correctly.
@@ -993,7 +1037,7 @@ both models. The C-peak oracle above is unaffected and fires correctly.
 live. Not the A/B/C table, and not the 576-byte weight buffer in any reading
 tried so far.
 
-## 🔑 2026-08-09 offline depthwise, second oracle (A per-channel coefficient table is absent from the vendor's depthwise model under two independent tests, one of which has a working positive control.)
+## 2026-08-09 offline depthwise, second oracle (A per-channel coefficient table is absent from the vendor's depthwise model under two independent tests, one of which has a working positive control.)
 
 The first oracle (C peaking at `0x4000`) only covered one grouping, so here is a
 second one built on ground truth. `sv_dw` and `sv_rg` were generated here, so
@@ -1008,7 +1052,7 @@ A column vs the known BIAS                   : corr -0.3608
 
 So the probe is the weight sum, not the bias, which is what
 `A[oc] = bias - (in_zp - 0x80) * sw` predicts when the weights are random: the
-`sw` term dominates. ⚠ A first attempt correlated against the bias and found
+`sw` term dominates. A first attempt correlated against the bias and found
 nothing anywhere, including in the model where the table is known to exist. A
 second attempt used a flat stride and also found nothing, for the same reason:
 the layout is **blocked**, channel `i` at `(i//8)*64 + (i%8)*4`, which no
@@ -1034,12 +1078,12 @@ depthwise weight buffer is the natural suspect, since 576 is `oc*k*k*2`, two
 bytes per tap for int8 weights. Correlating it against the known weights gives
 nothing, but that is expected because correlation is order-sensitive and the
 depthwise tap order is permuted. An order-insensitive multiset check gives 28.5%
-overlap, which looks like a miss but ⚠ **cannot conclude anything**: rknn picks
+overlap, which looks like a miss but **cannot conclude anything**: rknn picks
 its own quantisation scale, measured earlier at about 7% below `max/127`, so a
 different scale changes the multiset even if the weights are present. That test
 needs the toolkit's actual scale before it means anything.
 
-## 🔑 2026-08-09 offline depthwise coefficients (The vendor emits no A/B/C table for a depthwise layer, and mesa writes one anyway. That is the requant signature round 43 measured.)
+## 2026-08-09 offline depthwise coefficients (The vendor emits no A/B/C table for a depthwise layer, and mesa writes one anyway. That is the requant signature round 43 measured.)
 
 Using the single-variable pair from `sv_pairs.py dw`, ic = oc = 32 at 112x112,
 k=3, s=1, one calibration set, only `groups` moving.
@@ -1069,7 +1113,7 @@ sv_dw:  NO vector anywhere has a C column peaking at 0x4000
 Exactly one hit in the regular model, at the expected size of 8 bytes per
 channel, and none in the depthwise one.
 
-⚠ Scoped honestly: this rules out the 8-channels-per-64-bytes grouping. A
+Scoped honestly: this rules out the 8-channels-per-64-bytes grouping. A
 depthwise table with a different grouping would not be detected by that oracle.
 
 **So mesa hands the hardware a regular-conv A/B/C table for a depthwise layer
@@ -1095,7 +1139,7 @@ Both baselines 128/128 with 0 constant channels.
 | mn_pw24 | 256 | 358 of 1024, 354 at zp | |
 | **mn_pw2, works** | 256 | **8 of 64, all at zp** | |
 
-⚠ **The last row is a caveat on the metric itself.** `mn_pw2` is correct on
+**The last row is a caveat on the metric itself.** `mn_pw2` is correct on
 every channel and still has 8 channels pinned at the output zero point, because
 with ReLU and `out_zp = 0` a channel whose output is everywhere non-positive is
 legitimately constant. So "pinned at the zero point" is **not** evidence of a
@@ -1122,7 +1166,7 @@ path, but there is no specific enough hypothesis yet to be worth a flash, and
 the next step is to work out which of A, B, C and the OUT_CVT shift is wrong for
 depthwise, offline, the way the register question was settled.
 
-## ⚠ 2026-08-09 offline depthwise pair (Round 42's hypothesis is dead, killed without the board. And the registers are not the depthwise bug either.)
+## 2026-08-09 offline depthwise pair (Round 42's hypothesis is dead, killed without the board. And the registers are not the depthwise bug either.)
 
 Round 42 was built on `g_dw1` against `g_k3s1`, which differ in channels and
 spatial size as well as in being depthwise. 41 registers differed and nothing
@@ -1135,7 +1179,7 @@ only `groups`, leaves **15**:
 0x4050 0x40b0 0x40b4 0x40b8 0x501c 0x5044
 ```
 
-⚠ **`0x1018` and `0x1040` are not in that list.** They differed on geometry
+**`0x1018` and `0x1040` are not in that list.** They differed on geometry
 alone, so `ROCKET_DW_SPLITVALS` tests nothing and **round 42 should not be
 flashed**. The single-variable discipline paid for itself again.
 
@@ -1209,7 +1253,7 @@ words that all compute correctly elsewhere, plus the old float surface, and
 nothing moves either model by a single channel. They have their own causes, and
 those can now be attacked without the weight-bit coincidence in the way.
 
-⚠ **The constant is not a strict improvement.** The decision rule named this
+**The constant is not a strict improvement.** The decision rule named this
 case before the run, and it happened: at 1024 output channels the old per-weight
 float surface gets 408 channels right and the constant gets 297. Whatever is
 consumed there scales with something `mn_pw24` has more of, and the floats
@@ -1244,7 +1288,7 @@ Both baselines 128/128.
 all or nothing, so 297 of 1024 and 3 of 32 are signal. So is the fact that
 `mn_pw2` now works: pointwise from the real model, not a synthetic probe.
 
-⚠ `md011` printed its header and nothing after it, so something in that run
+`md011` printed its header and nothing after it, so something in that run
 died silently. Not attributed to the NPU until it is reproduced.
 
 **Round 40 applies the method that just worked to what still fails.** `0x1004`
@@ -1256,7 +1300,7 @@ same bug needing a different word, and the requirement is not a constant but
 something the driver has to compute. If nothing moves it, depthwise has a
 separate cause and the coefficient word is settled for it. Built, not flashed.
 
-## 🔑 2026-08-09 round 38 (Every regular convolution shape computes, with the constant as the default and no knobs set. 1x1 included, which was the last non-depthwise shape on the open list.)
+## 2026-08-09 round 38 (Every regular convolution shape computes, with the constant as the default and no knobs set. 1x1 included, which was the last non-depthwise shape on the open list.)
 
 | model | shape | channels |
 |---|---|---|
@@ -1283,7 +1327,7 @@ operations, and MobileNet, which has both. Those were also attributed to
 separate causes, so the question is whether they were the same coincidence.
 Built, not flashed.
 
-## 🔑 2026-08-09 round 37 (THE 3x3 KERNEL COMPUTES. The kernel size was never the dividing line, it was one weight-derived word landing in a bitfield.)
+## 2026-08-09 round 37 (THE 3x3 KERNEL COMPUTES. The kernel size was never the dividing line, it was one weight-derived word landing in a bitfield.)
 
 Both baselines 128/128.
 
@@ -1292,7 +1336,7 @@ Both baselines 128/128.
 | 2 | conv2d-cal | `0x1004`, smallest the rule allows, never run before | **128/128** |
 | 3 | conv2d-cal | `0x3fc4`, every free bit set | **128/128** |
 | 4 | conv2d-cal | `0x1005`, near miss | 0/128 |
-| 5 | conv2d-cal | `0x0fc4`, near miss | **128/128** ⚠ predicted to fail |
+| 5 | conv2d-cal | `0x0fc4`, near miss | **128/128** predicted to fail |
 | 7 | cal_s1 | `0x1004` | **128/128** |
 | 9 | cal_oc16, oc=16 | `0x1004` | **16/16** |
 | **10** | **cal_k3** | baseline, mesa's own word | **0/128** |
@@ -1309,7 +1353,7 @@ project going back months, was chasing that coincidence. It also explains the
 offline result that the vendor's coefficient buffer carries no kernel size
 dependence: there was never any to find.
 
-⚠ **The rule from round 36 was partly wrong and is refitted.** `0x0fc4` has bits
+**The rule from round 36 was partly wrong and is refitted.** `0x0fc4` has bits
 12 and 13 clear and was predicted to fail; it passes. Against all 24 words:
 
 ```
@@ -1357,7 +1401,7 @@ bit at once, and `0x1005` and `0x0fc4` are the near misses beside them that must
 fail. Then the same constant on `cal_s1`, `cal_oc16` and `cal_k3`, to see
 whether it is a constant or a function of the geometry.
 
-⚠ Fixed in the same build: the knobs wrote at a hardcoded `0x400`, which equals
+Fixed in the same build: the knobs wrote at a hardcoded `0x400`, which equals
 `groups*64` only because every model probed so far has oc=128. On `cal_oc16` it
 is `0x80`, so they would have been writing into the A/B/C table. They now use
 `groups*64`, which is what makes the other models testable at all.
@@ -1428,7 +1472,7 @@ ones, each upper field cleared in turn, and the low byte moved while everything
 above it is held. If `0x00000044` alone computes, this whole 197888 byte surface
 is one byte. Built, not flashed.
 
-## ⚠ 2026-08-09 round 33 (WITHDRAWN. The sweep swept the wrong values, and its own internal check is what caught it.)
+## 2026-08-09 round 33 (WITHDRAWN. The sweep swept the wrong values, and its own internal check is what caught it.)
 
 | step | channels |
 |---|---|
@@ -1446,7 +1490,7 @@ The pair `-109.55` and `0xc2db199a` agreed with each other, which was the
 control for the parser, so the knob reads its argument correctly. **What is
 wrong is my host computation of `fs[0]`**, which means every value in that
 sweep was a wrong value and the sweep says nothing about sign or magnitude.
-⚠ Do not cite round 33 for anything except this.
+Do not cite round 33 for anything except this.
 
 What still stands is round 32, which never depended on knowing the value: four
 bytes kept is enough, zero bytes is not.
@@ -1577,7 +1621,7 @@ The last two are this project's own fixes, and they land on the vendor's values.
 **So the configuration is not where the two differ**, and the round 29
 explanation has to be withdrawn as a hypothesis rather than carried forward.
 
-⚠ The audit's raw "38 different" line is an artifact and must not be quoted: for
+The audit's raw "38 different" line is an artifact and must not be quoted: for
 many registers mesa has a literal in the first-conv path and a computed
 expression in the general one, and the script reports the first literal it
 finds. `0x500c` shows this exactly, literal `0x6f` from the first-conv ladder
@@ -1619,7 +1663,7 @@ different formats in the same place, both working. A buffer cannot be read two
 ways by itself, so **the format and length of that surface must come from a
 register**, and that is where mesa and the vendor diverge, not in the bytes.
 
-⚠ So the pre-written rule's "go decode `0x500..0x0b90` offline" does not apply:
+So the pre-written rule's "go decode `0x500..0x0b90` offline" does not apply:
 offline already showed that region is filler in the vendor's files. **The next
 comparison is the DPU_RDMA register block, mesa's emitted stream against a
 vendor `.rknn` compiled at the same geometry**, which `extract_regcmd.py`
@@ -1647,7 +1691,7 @@ after, `table[0:8]` all `0x43d3`.
 `3.9125464` (it is a synthetic calibration model, output scale 32.0), and fp16
 of that really is `0x43d3`. mesa wrote what it was asked to write.
 
-⚠ **The round could not decide anything, and that is my error.** It changed two
+**The round could not decide anything, and that is my error.** It changed two
 things at once: it put the table at `0x400` **and** left everything after it
 zero. Round 27 zeroed both as well. So nothing so far separates
 
@@ -1703,7 +1747,7 @@ So the constant region really begins around `0x0b00`, and in the middle the 5x5
 capture is sparse where the 3x3 one is dense, which is the opposite of what a
 per-weight table would do.
 
-⚠ **1682 of the 1936 bytes differ between the two captures, and those two models
+**1682 of the 1936 bytes differ between the two captures, and those two models
 also differ in their weights**, because `gen_geom.py` gives each geometry its own
 random tensor. So nothing here separates "varies with the kernel" from "varies
 with the weights", and guessing at the format from two confounded samples is how
@@ -1715,7 +1759,7 @@ already does for tflite, so the shared taps are identical; and same kernel with
 different output channel counts. That is offline work on the model generator
 before any board time.
 
-## 2026-08-09 round 26 (⚠ mesa's 200 KB float surface is NOT NEEDED: a 5232-byte model-independent constant does the same job. And that refutes round 24's reading.)
+## 2026-08-09 round 26 (mesa's 200 KB float surface is NOT NEEDED: a 5232-byte model-independent constant does the same job. And that refutes round 24's reading.)
 
 Knob confirmed fired: `0x1600` reads `00 3c 00 3c ...`, `0x2000` onward is zero,
 **nonzero past 0x2000: 0 of 197888**.
@@ -1736,7 +1780,7 @@ the buffer goes from 206080 bytes to 8192, and the region that
 constant. That is a simplification worth having regardless of the open bug, and
 it removes the largest unexplained payload in the driver.
 
-⚠ **And it refutes what round 24 concluded.** That round read "a k-independent
+**And it refutes what round 24 concluded.** That round read "a k-independent
 table makes both kernel sizes agree" as locating the k-dependence in this region.
 With the tail grafted, both models now receive **byte-identical content from
 0x0b90 onward**, conv2d-cal is correct and cal_k3 is still flat at the zero
@@ -1782,14 +1826,14 @@ conv2d-cal is 204800 bytes. The vendor's whole buffer is around 8 KB and most of
 it is a constant that does not depend on the model at all. The float framing is
 not a detail that is unfilled, it is the wrong shape for the region.
 
-⚠ **Not claimed**: that writing the vendor's tail fixes anything. conv2d-cal
+**Not claimed**: that writing the vendor's tail fixes anything. conv2d-cal
 computes today *with* mesa's float surface, and zeroing that surface breaks it,
 so mesa's floats are doing something real for that model. The next experiment is
 to keep mesa's A/B/C and overlay the constant tail, with conv2d-cal as the
 control that must survive; `ROCKET_BIAS_FILE` already exists and loads a whole
 buffer from a file, so the mechanism is there.
 
-## 2026-08-09 round 25 (⚠ The sweep found nothing, and it exposes two errors of mine in round 24. Read this before acting on that entry.)
+## 2026-08-09 round 25 (The sweep found nothing, and it exposes two errors of mine in round 24. Read this before acting on that entry.)
 
 Twelve values from `0x0010` to `0x4000`, plus `0x2000`, all on `conv2d-cal` with
 the controls passing 2/2 at both ends. Every one of them: relu maxdiff 119 to
@@ -1824,7 +1868,7 @@ about the rest was an artifact of the dump length.
 Fixed in the capture patch, `hexlen` 2048 to 8192, so the whole dumped region is
 printed. Capture image rebuilt and verified to carry the rebuilt kernel.
 
-## 2026-08-09 round 24 (⚠ PARTLY WITHDRAWN by round 25 above: the region is load bearing, but "the k-dependence is found" was an over-reading. The coefficient tail is load bearing, and replacing mesa's float surface with the vendor's shape makes 5x5 and 3x3 agree.)
+## 2026-08-09 round 24 (PARTLY WITHDRAWN by round 25 above: the region is load bearing, but "the k-dependence is found" was an over-reading. The coefficient tail is load bearing, and replacing mesa's float surface with the vendor's shape makes 5x5 and 3x3 agree.)
 
 Controls first. The knob fired, coefficient buffer md5 `1beebc1f` to `84278999`,
 distinct 209 to 140. And the control could fail, and did:
@@ -1859,14 +1903,14 @@ control: the regcmd, the weight layout, the bias, the requant and A, B and C are
 all correct, and this was the only k-dependent payload left. It was mistaken for
 padding added to stop an out-of-bounds read.
 
-⚠ **The value is not known.** `0x1700` was the middle of the captured range and
+**The value is not known.** `0x1700` was the middle of the captured range and
 it over-scales, both models saturating to 255. The captured values ran 5400 to
 6400 across 128 channels of models whose per-channel weight scales differ; for a
 per-tensor model like conv2d-cal the correct table should be uniform, so a single
 constant can be right. Round 25 sweeps for it with conv2d-cal as the oracle: the
 value that returns it to 2/2, against its known scales, gives the formula.
 
-## 2026-08-09 VENDOR COEFFICIENT CAPTURE (⚠ the region mesa zeroes is not zero on the vendor: a 128-entry per-output-channel uint16 table.)
+## 2026-08-09 VENDOR COEFFICIENT CAPTURE (the region mesa zeroes is not zero on the vendor: a 128-entry per-output-channel uint16 table.)
 
 First attempt did not run: `rknn_init = -1` both models, because the vendor NPU
 driver never probed. With mainline U-Boot and TF-A in SPI the Rockchip SCMI
@@ -1891,7 +1935,7 @@ both BO dumps came out, the four-dumps-per-boot patch working as intended.
 So the region immediately after the A/B/C table holds a **per-output-channel
 16-bit multiplier that tracks the weight scale**.
 
-⚠ **CORRECTION, within an hour of writing the above.** I first said mesa "writes
+**CORRECTION, within an hour of writing the above.** I first said mesa "writes
 zeros there". It does not. `rkt_coefs.c` fills that region by default with a
 **float32 dequantised weight surface**, thousands of entries, sized
 `MAX2(ic*oc*k*k, 8192)` floats, and only zeroes it under `ROCKET_FS_ZERO`. So the
@@ -1906,7 +1950,7 @@ Same address, different element type, different length, different meaning. The
 TODO comment in that function is about the float content being unfilled, and the
 capture says the whole float framing is wrong.
 
-⚠ **A confound I built in**: `gen_geom.py` gives each geometry its own random
+**A confound I built in**: `gen_geom.py` gives each geometry its own random
 weights, so the k=5 and k=3 tables differ for that reason too. Nothing here
 attributes the difference between them to the kernel. The one thing this does
 establish is that **the vendor populates a region mesa leaves empty**, which is
@@ -1954,7 +1998,7 @@ the vendor side too and whatever depends on the kernel sits below everything
 either driver writes. If they differ, the difference is the answer and can be
 carried straight into mesa.
 
-⚠ This costs two flashes, to the capture image and back, and it is a different
+This costs two flashes, to the capture image and back, and it is a different
 image from the rocket rounds. Recorded because the last several rounds were
 flashed without a decision rule agreed first, twice with probes that could not
 have measured anything (rounds 18 and 19), which is a bad way to spend someone
@@ -2031,7 +2075,7 @@ the 32-channel grouping, the bias tensor, the requant, and A, B and C.
 
 Round 23 adds `ROCKET_FS_ELEMS` to override that element count, so the three
 models can be given a byte-identical coefficient buffer with only the kernel
-differing, and runs the constant input and a real input that way. ⚠ The control
+differing, and runs the constant input and a real input that way. The control
 is `conv2d-cal` with the count forced small: it computes today, so shrinking a
 region the hardware reads should change something, and if nothing moves anywhere
 in the round the knob is inert and the answer is elsewhere.
@@ -2073,7 +2117,7 @@ everything the driver writes. Different md5s would mean mesa is emitting
 different coefficients after all, and that difference is visible without any
 hardware at all.
 
-## 2026-08-08 round 20 (The probe finally works. ⚠ The spatial mapping is CORRECT at every kernel size, so the tap pairing theory is dead. What is wrong is the gain, and the baselines say it more simply.)
+## 2026-08-08 round 20 (The probe finally works. The spatial mapping is CORRECT at every kernel size, so the tap pairing theory is dead. What is wrong is the gain, and the baselines say it more simply.)
 
 An input impulse with the real kernel, so nothing has to cancel:
 
@@ -2090,7 +2134,7 @@ and the idea that 144 products cancel because of a mis-pairing is refuted. The
 fault is in the **gain**: against the CPU, k=3 is about 80x too small and k=1
 about 3.5x too large.
 
-⚠ **And the baselines are a much simpler failing case than the impulses.** The
+**And the baselines are a much simpler failing case than the impulses.** The
 baseline is a constant input at exactly `in_zp`, so `(in - 0x80)` is zero, the
 MAC is zero by construction, and the answer must be `requant(bias)`. `cal_k3`
 and `cal_k1` are conv2d-cal with only the kernel cropped, so all three carry the
@@ -2115,11 +2159,11 @@ the tap count: 400 against 144 against 16.
 
 Round 21 runs the constant input on all three kernel sizes with B as it is and
 with `ROCKET_B_VALUE=0`. If the three baselines converge with B removed, B is
-the term that does not belong. ⚠ The control is `conv2d-cal` with B forced to 0
+the term that does not belong. The control is `conv2d-cal` with B forced to 0
 on a real input: it computes correctly today, so removing a correction it needs
 must break it, and if it does not the knob never reached the hardware.
 
-## 2026-08-08 round 19 (⚠ VOID again, and the rescale was not the real fault. The impulse KERNEL is badly conditioned and fails at k=5 too.)
+## 2026-08-08 round 19 (VOID again, and the rescale was not the real fault. The impulse KERNEL is badly conditioned and fails at k=5 too.)
 
 | | NPU | CPU |
 |---|---|---|
@@ -2151,7 +2195,7 @@ NPU one in the same run, so a step that shows nothing on both sides is a broken
 probe rather than a hardware fact. Round 20 measures k=5 as the reference
 footprint, then k=3 and k=1.
 
-## 2026-08-08 round 18 (⚠ VOID, and its control is what caught it. Both impulse models returned a flat out_zp.)
+## 2026-08-08 round 18 (VOID, and its control is what caught it. Both impulse models returned a flat out_zp.)
 
 Step 2 was the control: the k=5 impulse, whose kernel size computes correctly,
 had to come back as an identity mapping. It did not. Every channel reported
@@ -2180,7 +2224,7 @@ span the full byte range with 200 or more distinct values per channel. And
 `taps.py` refuses to report a mapping when the NPU surface is flat, so this trap
 cannot be walked into silently again.
 
-⚠ That is the **third** control-design failure today, after the nonzero-versus-
+That is the **third** control-design failure today, after the nonzero-versus-
 distinct count in round 8 and the cannot-fail control in round 12. The
 difference here is that the control was built to fail and did, before anything
 was concluded. The rule that keeps holding: **state what the control's failing
@@ -2212,7 +2256,7 @@ the weight layout is verified including the 32-channel grouping, the weights are
 read, the coefficients are read, and the result is still `out_zp` plus a couple
 of counts.
 
-⚠ **The weight probe was weak and I am not reading magnitude into it.** Forcing
+**The weight probe was weak and I am not reading magnitude into it.** Forcing
 every weight to one value makes a box filter, and a box filter on a smooth ramp
 input produces a nearly constant output whether or not anything is wrong. The
 md5 change establishes the buffer is read; the small change in mean establishes
@@ -2227,7 +2271,7 @@ channel c matches the CPU's channel c' instead, and `taps.py` (new) recovers tha
 mapping. **A wrong pairing is exactly what makes 144 products cancel toward zero
 while every buffer is read correctly**, which is the state we are in.
 
-⚠ The control is the same probe at k=5, which computes correctly and therefore
+The control is the same probe at k=5, which computes correctly and therefore
 must come back as an identity mapping. If it does not, `taps.py` is wrong and the
 k=3 answer means nothing.
 
@@ -2314,7 +2358,7 @@ actually written. Together with round 16, where mesa's register delta across the
 kernel change is identical to the vendor's, **everything the driver produces for
 a 3x3 conv is now verified, and the MAC still nearly cancels.**
 
-⚠ Two probe-design faults on the way here, both caught before they became
+Two probe-design faults on the way here, both caught before they became
 findings: a filter that accepted 0 as an encoded value matched a block of zeros
 in both lane probes, and predicting the exact quantized bytes failed because the
 toolkit's weight quantization is not the symmetric max/127 rule assumed. Reading
@@ -2349,7 +2393,7 @@ So for k=3 the registers are right, the buffer size is right, and the MAC very
 nearly cancels. The remaining payload surface is the **order of bytes inside**
 the weight buffer, which has only ever been verified for 1x1.
 
-⚠ **The probe for that is not trustworthy yet, and I am not reporting its output
+**The probe for that is not trustworthy yet, and I am not reporting its output
 as a finding.** `posprobe_k.py` gives every weight a value depending only on
 (ky, kx) so each spatial plane becomes one repeated byte. It reports the first
 five 256 byte blocks holding planes 0, 2, 4, 6, 8, and the odd planes appearing
@@ -2388,12 +2432,12 @@ what "correct" means here: **the hardware applies a ReLU at the output zero
 point**, and above it the NPU agrees with the CPU exactly. That is why
 `test_model.py` compares against `max(cpu, zp)`.
 
-⚠ **This corrects round 14.** I described `cal_k3` and `cal_k1` as "computing a
+**This corrects round 14.** I described `cal_k3` and `cal_k1` as "computing a
 wrong answer" because their output varied with the input. `cal_k3` varies by 0
 to 2 counts above the zero point, which is a MAC that very nearly cancels, not a
 wrong convolution. `cal_k1` is the only one producing large wrong amplitudes.
 
-⚠ `job_log` was left out of round 15's script, so every `jobs=` column read 0.
+`job_log` was left out of round 15's script, so every `jobs=` column read 0.
 That meant nothing; it is back on in round 16.
 
 Round 16 dumps the regcmd for `cal_k3` and, as the pair, for `conv2d-cal`, which
@@ -2402,19 +2446,19 @@ both geometries (`g_cal_k3`, `g_cal`), so the round yields mesa against vendor a
 k=3, and mesa against mesa across the kernel change, which is the method that
 found both 0x1080 and 0x4050.
 
-⚠ Spotted in the vendor builds and worth checking in that diff: the vendor stages
+Spotted in the vendor builds and worth checking in that diff: the vendor stages
 a **kernel dependent number of input rows**. At 80x80 stride 2 it uses 79 rows
 for a 1x1 and 80 for a 3x3 and a 5x5 (`0x1028` high is `surf * rows`, `0x102c`
 low is `rows - 1`). Mesa always uses the full input height whatever the kernel.
 
-⚠ And a near miss to record: the vendor's `0x1080` for `g_cal_k3` reads
+And a near miss to record: the vendor's `0x1080` for `g_cal_k3` reads
 `00000101`, which looks wrong against mesa's `01010000` until you notice the
 vendor model is an ONNX with symmetric pad 1, giving before 1 and after 0, while
 tflite SAME at k=3 stride 2 on 80 gives a total of 1, so before 0 and after 1.
 Both are right for their own model. **Check a vendor register against that
 model's own padding, not against the tflite one.**
 
-## 2026-08-08 round 14 (⚠ It IS the kernel size, proven on the model that works. And the failures split into two different modes, which nothing had noticed.)
+## 2026-08-08 round 14 (It IS the kernel size, proven on the model that works. And the failures split into two different modes, which nothing had noticed.)
 
 `mutate_k.py` crops conv2d-cal's own kernel. Same file, same scales, same
 shapes, only the kernel. Controls passed at both ends.
@@ -2429,7 +2473,7 @@ shapes, only the kernel. Controls passed at both ends.
 So the kernel and the model are no longer confounded: **5x5 works, 3x3 and 1x1
 do not, on one and the same model.**
 
-⚠ **And the two families fail differently:**
+**And the two families fail differently:**
 
 | model | top1 across three inputs | stale |
 |---|---|---|
@@ -2451,7 +2495,7 @@ Round 15 tests that with `ROCKET_OUT_SHIFT_ADD`, and prints the first 64 outputs
 of `cal_k3` and `cal_k1` so the wrong-but-varying answers can drive an offline
 search over candidate weight orderings.
 
-⚠ **The kh/kw transpose is excluded without a board run**: conv2d-cal's 5x5
+**The kh/kw transpose is excluded without a board run**: conv2d-cal's 5x5
 kernel is not transpose symmetric, 40568 of 51200 bytes differ under it, and the
 model computes byte exact. Mesa's kernel ordering is right at 5x5.
 
@@ -2489,7 +2533,7 @@ So it is not 1x1 encoding, and the rewrite is not a workaround. The table:
 | 3x3 stride 1, 16 out | FAIL |
 | 1x1 stride 1, 16 and 128 out | FAIL |
 
-⚠ **But the kernel and the model are still confounded**, because every failing
+**But the kernel and the model are still confounded**, because every failing
 model came from somewhere other than `conv2d.tflite`. `mutate_k.py` (new) crops
 conv2d-cal's own kernel to the centre 3x3 and 1x1, which per-tensor quantization
 makes safe, and SAME padding holds the output at 40x40x128 either way. One
@@ -2504,7 +2548,7 @@ padding result.
 The second would be the more useful answer and it is the one that has never been
 checked.
 
-## 2026-08-08 round 12 (⚠ UNINTERPRETABLE. The control I wrote cannot tell "the rewrite did not help" from "the rewrite never ran".)
+## 2026-08-08 round 12 (UNINTERPRETABLE. The control I wrote cannot tell "the rewrite did not help" from "the rewrite never ran".)
 
 | step | result |
 |---|---|
@@ -2525,7 +2569,7 @@ exactly two tasks with two OUT_CVT lines, and `md003_80` at one, is what a knob
 that did not fire looks like. The code placement is right, the env plumbing in
 the script is right, and neither of those is evidence.
 
-⚠ This is the round 8 failure again: a control that cannot fail. Caught before
+This is the round 8 failure again: a control that cannot fail. Caught before
 drawing a conclusion this time, which is the only difference.
 
 The check is a size, not a value:
@@ -2591,7 +2635,7 @@ path that demonstrably works and every derived register follows.
 | `md003_80` computes | the answer is right, and most of MobileNet is pointwise |
 | `md003_80` stays at 127 | not the kernel encoding at all, and the 3x3 path cannot carry these values either |
 
-⚠ The control that can fail is `conv2d-cal` with the knob on: it is 5x5, so the
+The control that can fail is `conv2d-cal` with the knob on: it is 5x5, so the
 rewrite must leave it untouched. And `jobs=` and `task_count` matter in this
 round, because a 3x3 costs nine times the CBUF and may split where the 1x1 did
 not.
@@ -2628,7 +2672,7 @@ the output away from `out_zp`:
 | output moves off 127 | the DPU reads the coefficients and the write path is alive, and the dead stage is specifically the CNA feeding the CMAC |
 | output stays at 127 | the coefficient buffer is not read either, and the problem is upstream of the whole DPU input side |
 
-⚠ The control is `conv2d-cal` with the same knob. It computes correctly, so
+The control is `conv2d-cal` with the same knob. It computes correctly, so
 forcing A there **must** wreck its output. Round 8 shipped a control that could
 not fail and cost a round; this one can.
 
@@ -2664,7 +2708,7 @@ one retraction, in the A to B wall. Round 10 reads the RAW buffer instead, with
 `conv2d-cal` as the positive control for what a buffer the hardware definitely
 wrote looks like.
 
-## 2026-08-08 round 8 (The 1x1 conv ignores its weights and its A term. ⚠ But the control for that was worthless, so round 9 re-runs it with one that works.)
+## 2026-08-08 round 8 (The 1x1 conv ignores its weights and its A term. But the control for that was worthless, so round 9 re-runs it with one that works.)
 
 Controls held. Three runs of `md003_80` gave **byte identical output**:
 
@@ -2677,14 +2721,14 @@ Controls held. Three runs of `md003_80` gave **byte identical output**:
 Taken at face value: the CMAC does not read the weight buffer, and the A term is
 not what pins the output to a constant.
 
-⚠ **The control did not work.** It used `where.py`, which counts NONZERO bytes.
+**The control did not work.** It used `where.py`, which counts NONZERO bytes.
 0x7f is nonzero and so is nearly every real weight, so a forced buffer and a real
 one both read 100 percent, and the step could not tell whether the knob fired.
 This project has a written rule against exactly that, the rule is quoted in the
 same script, and the next line broke it. `bstat.py` (new) reports DISTINCT, which
 discriminates, and round 9 dumps the buffer both ways.
 
-⚠ **And a gap in the reasoning that got here.** 0x1018 and 0x1040 were called
+**And a gap in the reasoning that got here.** 0x1018 and 0x1040 were called
 inert on the strength of `mn_pw24`, which has 512 input channels at 7x7.
 `md003_80` has never been run with them at the vendor value: mesa gives it
 `40000505` and `14000000` where the vendor .rknn at that geometry has `40000404`
@@ -2705,7 +2749,7 @@ and close 0x1018 / 0x1040 on the model they are actually wrong for.
 | `md003_oc128`, 1x1 with 128 channels | 0/3 FAIL |
 | `cal_s1` | 2/2 OK, the padding fix holds |
 
-⚠ **A prediction missed**: `md003_80` was called fixed and is not. Its numbers
+**A prediction missed**: `md003_80` was called fixed and is not. Its numbers
 did move (raw 117 / relu 70 to 116 / 71), so 0x4050 reached it and something
 else is wrong too.
 
@@ -2740,7 +2784,7 @@ with a step that dumps the weight buffer to confirm the first knob fired,
 because a null result from a knob that did not fire has cost this project runs
 before.
 
-## 2026-08-08 round 6 (⚠ "It is the kernel" refuted by its own probes. The regcmd diff found the register instead: DPU 0x4050 depends on the output channel count.)
+## 2026-08-08 round 6 ("It is the kernel" refuted by its own probes. The regcmd diff found the register instead: DPU 0x4050 depends on the output channel count.)
 
 | step | result |
 |---|---|
@@ -2815,7 +2859,7 @@ filters, which per-tensor quantization makes safe, giving `cal_oc16` (the 5x5
 conv cut to 16 output channels) and `md003_oc128` (the 1x1 grown to 128). Those
 two separate it.
 
-⚠ **The register set is probably not where the 1x1 bug lives.** The vendor .rknn
+**The register set is probably not where the 1x1 bug lives.** The vendor .rknn
 compiled at exactly this geometry, 1x1 with 16 in and 16 out at 80x80, differs
 from the 5x5 one only in fields mesa already computes:
 
@@ -2868,7 +2912,7 @@ stops fitting one row window: 16 channels at 128x128 is one window and reads
 holding 80x80 while raising input channels flips at the same place (32 fits, 48
 splits).
 
-⚠ **But they tolerate being wrong.** `cal_s1` computes correctly with the
+**But they tolerate being wrong.** `cal_s1` computes correctly with the
 stride-keyed value where the vendor would use the other one. So this is a knob
 to A/B (`ROCKET_CBUF_DERIVE=1`), not a fix to ship, and the honest expectation
 is that it changes nothing.
@@ -2878,7 +2922,7 @@ Round 5 probes the 1x1 thread with `md003_80`, which is `md003` resized to 80x80
 row-window split and leaves the kernel as nearly the only difference from a
 model that computes, so it separates the first two threads from each other.
 
-## 2026-08-08 round 3 (⚠ SOLVED: CNA 0x1080 is the PADDING register and mesa hardcoded it. That is why exactly one geometry has ever computed.)
+## 2026-08-08 round 3 (SOLVED: CNA 0x1080 is the PADDING register and mesa hardcoded it. That is why exactly one geometry has ever computed.)
 
 Stride was refuted as a single variable (`cal_s1` failed as predicted, but
 `md003_s2` failed too). The regcmd diff it produced is what mattered.
@@ -2927,16 +2971,16 @@ The fix needs no new arithmetic: `rkt_split_tasks` already computes
 simply never read them. It does now. `ROCKET_PAD_LADDER=1` restores the old
 constants, so the round carries its own A/B.
 
-⚠ conv2d-cal's derived value is `0x02020101`, identical to the constant, so the
+conv2d-cal's derived value is `0x02020101`, identical to the constant, so the
 control is also a check that the change is a no-op where it was already right.
 
-⚠ **This does not fix the 1x1 convs.** Their padding is 0 either way, so
+**This does not fix the 1x1 convs.** Their padding is 0 either way, so
 `mn_pw2`, `mn_pw24` and `md003` should stay broken. Their bug is 0x1018 and
 0x1040, which a width sweep shows the vendor keys off whether the input fits the
 CBUF (`0404`/`10000000` up to 112x112x16, `0505`/`14000000` at 160x160 where the
 op tiles) while mesa keys them off the stride. That is the next thread.
 
-## 2026-08-08 round 2 (Both hypotheses refuted by their own probes. ⚠ The headline is simpler and worse: conv2d-cal is the ONLY convolution geometry this driver has ever computed correctly.)
+## 2026-08-08 round 2 (Both hypotheses refuted by their own probes. The headline is simpler and worse: conv2d-cal is the ONLY convolution geometry this driver has ever computed correctly.)
 
 Controls held at both ends of the round, 3/3 first and 2/2 last.
 
@@ -2980,13 +3024,13 @@ vendor comparison: the wall was broken by diffing an ordered register trace
 against the vendor's, not by guessing which knob mattered, and model-space
 bisection has now spent two rounds.
 
-⚠ Probe flaw to not repeat: both control steps ran the same model, so they wrote
+Probe flaw to not repeat: both control steps ran the same model, so they wrote
 the same `/dev/kmsg` marker and the second one's dmesg slice replayed the first
 one's `task_count` lines. The run lines themselves were fine. Markers are now
 per step, not per model.
 
 
-## 2026-08-08 round 1 (⚠ My own regime hypothesis is REFUTED, and what replaces it is much narrower: a plain 1x1 uint8 conv fails in one job.)
+## 2026-08-08 round 1 (My own regime hypothesis is REFUTED, and what replaces it is much narrower: a plain 1x1 uint8 conv fails in one job.)
 
 Control passed, hypothesis died, and the table got sharper.
 
@@ -3040,7 +3084,7 @@ MobileNet layers keep zp 0 and drop the task count:
 The CPU reference is recomputed from the same mutated file, so each probe asks
 "does this configuration compute", not "does it match the original model".
 
-⚠ `STALE` on `mn_dw1` and `mn_dw25` is not the wall coming back: their output is
+`STALE` on `mn_dw1` and `mn_dw25` is not the wall coming back: their output is
 a constant, so identical bytes across different inputs is what a constant looks
 like. `mn_pw2` and `mn_conv0` are not stale.
 
@@ -3137,7 +3181,7 @@ conv, computes correctly    cna=0000000c  core=0000000c  raw=30000000
 depthwise, stops at 1 atom  cna=00000005  core=00000005  raw=30000000
 ```
 
-⚠ Do not decode these with `rocket_registers.h`. That header is RK3588 derived
+Do not decode these with `rocket_registers.h`. That header is RK3588 derived
 and its field layout is already proven wrong for RK3576 on TASK_CON; it marks
 bits 2 to 15 of S_STATUS as reserved, and bits 2 and 3 are exactly where these
 two values differ. As speculation only: if RK3576 packs two bits per ping-pong
@@ -3157,7 +3201,7 @@ conv: `CNA/100c=1`, `1014`, `1018`, `1024`, `1040`, `CORE/3018`, `DPU/400c`,
 `4038`, `4044`, `4050`, `RDMA/501c`, `5044`. The depthwise branch is configuring
 the block the way the vendor does.
 
-⚠ **Do not read the vendor capture's zeros as differences.**
+**Do not read the vendor capture's zeros as differences.**
 `vendor-capture/vendor_dw_regcmd.txt` was extracted from a **static .rknn file**,
 where address registers are unpatched placeholders. That accounts for all of
 `CNA/1088`, `CNA/1110`, `DPU/4018`, `RDMA/5020` and `RDMA/5024` reading 0 on the
@@ -3190,14 +3234,14 @@ inference:
 **So the DPU writes exactly 256 bytes and stops.** 256 is one output atom on this
 block. The depthwise op starts, emits a single atom, and goes no further.
 
-⚠ **I got this wrong twice before dumping.** First I concluded "the op does not
+**I got this wrong twice before dumping.** First I concluded "the op does not
 run at all", from the fact that neither the weights nor the input change the
 output. Then I corrected that to "the DPU does write", from the output tensor
 holding 0 and the zero point rather than 128. Both were inferences from the
 readback. The buffer dump settles it: 256 bytes of 51200. Dump the buffer, do
 not reason about what the readback implies about it.
 
-⚠ The weight buffer being 576 bytes with 288 of them zero is **not** a bug. mesa
+The weight buffer being 576 bytes with 288 of them zero is **not** a bug. mesa
 documents block = DIV_ROUND_UP(channels, 2) * 4, which is 64 bytes for the
 32-channel layers in the comment and 32 bytes for our 16-channel model, so 9
 blocks is 288 bytes. The BO is allocated at 576 and `CNA/0x101c`, the weight
@@ -3237,7 +3281,7 @@ time out, which is what an op that never finishes looks like. The next thing to
 look at is the CNA and CORE depthwise-mode configuration, before any buffer is
 read.
 
-⚠ **The bandwidth counters failed their own control three times. Do not reuse
+**The bandwidth counters failed their own control three times. Do not reuse
 this instrument without fixing it first.** The plan was: a regular convolution
 computes correctly, so its `wt_rd` must be nonzero, and only then does a zero
 from depthwise mean anything.
@@ -3250,11 +3294,11 @@ from depthwise mean anything.
 
 Only `core +0x438` moves at all: 72 for the convolution, 0 for the depthwise. So
 something is being read, but not the mapping the fork's format string claims.
-⚠ `dmesg -C` does not clear the buffer on this busybox, which made the first two
+`dmesg -C` does not clear the buffer on this busybox, which made the first two
 attempts print the same line twice; use a marker written to `/dev/kmsg` and read
 what follows it.
 
-⚠ **Correction to a June reading.** The `0x2210` and `0x2410` writes
+**Correction to a June reading.** The `0x2210` and `0x2410` writes
 (`0x80000101` then `0x00000101`) that FINDINGS recorded as "two extra unit-enable
 pulses rocket issues and the vendor does not, and rocket NEEDS them, drop them
 and units do not engage even on op0" are **the bandwidth counter clear pulses**.
@@ -3298,12 +3342,12 @@ offsets so the two align without translation), diffed against
 guess: two guessed hypotheses the same evening, per-job IOMMU teardown and the
 vendor post-completion sequence, were both refuted first.
 
-⚠ **The fix already existed.** `kernel/0012` in the June fork carries it with a
+**The fix already existed.** `kernel/0012` in the June fork carries it with a
 full explanation. It was never carried into the upstream RFC series, so v1
 through v6 all shipped `0x7001`. Diff the fork patches against the series before
 concluding that anything is unexplained.
 
-⚠ **Igor Paunovic named the mechanism** on the v5 thread: "a counter that still
+**Igor Paunovic named the mechanism** on the v5 thread: "a counter that still
 reads non-zero on the walling submit would say the TASK_COUNT_CLEAR pulse that
 hw_submit issues on every submit is not landing on RK3576". Right mechanism; the
 register-level reason is the bit positions.
@@ -3322,7 +3366,7 @@ So "the DPU completion interrupt is armed exactly as on RK3588 but never reaches
 the GIC" is false. It reaches the GIC. It did not fire before because the PC
 believed it had 28672 tasks left and never finished the sequence.
 
-⚠ What DOES still time out is jobs that compute wrongly, which is coherent: the
+What DOES still time out is jobs that compute wrongly, which is coherent: the
 completion fires when the DPU finishes writing, and a misconfigured op never
 finishes. So a bounded poll is still worth having as a fallback, but the
 justification has to change from "the interrupt does not arrive" to "a job that
@@ -3354,7 +3398,7 @@ jobs do not". It is:
 STALE on runs 1 and 2 of every failing model means the output buffer is not
 rewritten across runs, which is what a job that never completes looks like.
 
-⚠ **Oracle bug in this run's first pass, third of its kind:** `test_model.py`
+**Oracle bug in this run's first pass, third of its kind:** `test_model.py`
 compared against the raw CPU output and reported conv2d-cal as failing at maxdiff
 128, when `test_once.py` had it byte exact. The hardware applies a ReLU at the
 output zero point, so the reference is `max(cpu, zp)`. The script now prints both
@@ -3388,11 +3432,11 @@ post-idle control repeated run 0's input and reproduced `01595b9e` exactly.
 
 **So the asymmetry is real: the vendor recomputes on every warm submit, rocket
 computes once per reset.** The wall is rocket specific, not normal behaviour for
-this block. ⚠ Note the verdict logic in `run-twosubmit.sh` had to be rewritten
+this block. Note the verdict logic in `run-twosubmit.sh` had to be rewritten
 too: with a varying input `all_equal` means the OPPOSITE of what it meant before,
 and left alone the script would have printed a confident wrong conclusion.
 
-⚠ **Infrastructure trap that cost a boot:** the vendor 6.1 kernel needs the
+**Infrastructure trap that cost a boot:** the vendor 6.1 kernel needs the
 Rockchip BL31 with OP-TEE, which serves the SCMI clock, power and reset
 protocols. The board boots from **SPI**, and with the mainline U-Boot there
 (TF-A v2.14.0, no OP-TEE) the vendor kernel gets `SCMI protocol 17 not active`,
@@ -3409,7 +3453,7 @@ when the domain changes and never detaches on completion, which makes
 consecutive submits from one fd look like the vendor's. Result: identical to the
 control, `20a556ae` / `20a556ae` / `dda67317` both ways. Not the wall.
 
-⚠ This also corrects a claim in the July PINNED-SPREAD record, which said pinning
+This also corrects a claim in the July PINNED-SPREAD record, which said pinning
 power removed the "IOMMU re-attach". It did not. Those two calls are in the JOB
 path, not the runtime PM path, and ran regardless.
 
@@ -3433,7 +3477,7 @@ rocket clears `0x1ffff` only, which does not reach bits 28 and 29, and never
 touches S_POINTER after a job. Replayed verbatim as `vendor_post=1`, with the
 parameter read back to confirm it applied: identical to the control.
 
-⚠ **`dirty/rocket_wt.trace` already shows the June fork issuing
+**`dirty/rocket_wt.trace` already shows the June fork issuing
 `0x1004 = 0x1000e / 0x1000f / 0x1000f` post-completion**, plus the DPU-side
 `0x4004` equivalents, and FINDINGS already recorded `pp_alt` as a true negative.
 The file was in the tree the whole time. This was proposed as unexplored without
@@ -3471,7 +3515,7 @@ suspend and resume restores it.
 **So only the first submit after a reset computes, and everything after it is a
 no-op that leaves the output buffer holding whatever was there before.**
 
-⚠ **This retires a whole line of evidence.** Every "re-running the same op is
+**This retires a whole line of evidence.** Every "re-running the same op is
 byte exact" measurement in this file since June fed the SAME input each time, so
 a stale buffer and a correct recomputation were indistinguishable. They were
 stale. Specifically:
@@ -3494,7 +3538,7 @@ BO latched once instead of following each submit, A's buffer is `20a556ae`
 before B's submit and `20a556ae` after it. The walled submit does not write the
 resident job's addresses either. It writes nothing anywhere.
 
-⚠ **Probe bug that made round 6 unreadable**: the stash followed every submit,
+**Probe bug that made round 6 unreadable**: the stash followed every submit,
 so after B the checksum was of B's own buffer, and the "change" from `20a556ae`
 to `25c7ae02` was just crc32 of 409600 zero bytes, an untouched BO. Latch the
 buffer once. Verified: `python3 -c "import zlib; print(hex(zlib.crc32(b'\0'*409600)))"`.
@@ -3505,7 +3549,7 @@ per reset". That is a much narrower question, it matches the interrupt
 behaviour already recorded here, and it means the mesa side was never the
 problem.
 
-## 2026-08-06 (⚠ QUALIFIER on the entry below: the no-op reading is UNFALSIFIED, not established. Igor Paunovic named an alternative that fits every measurement, and the probe built to separate them perturbed the system and failed its own control.)
+## 2026-08-06 (QUALIFIER on the entry below: the no-op reading is UNFALSIFIED, not established. Igor Paunovic named an alternative that fits every measurement, and the probe built to separate them perturbed the system and failed its own control.)
 
 Igor's point, from the v5 thread: marking the failing job's own output BO and
 finding it untouched shows the block did not write THERE. It does not show the
@@ -3530,7 +3574,7 @@ only node of that size is at **0xa5000**, so the two address spaces have identic
 layouts because the models are structurally identical and each fd gets a fresh
 allocator. So A's output iova and B's output iova are numerically the same. B's
 domain is attached during B's job, so a write to "A's output address" would land
-in B's output BO, which was measured 100% untouched. ⚠ The hole: rk_iommu has a
+in B's output BO, which was measured 100% untouched. The hole: rk_iommu has a
 TLB, this tree carries a `flush_iotlb_all` patch precisely because invalidation
 here has been a problem, and a stale entry could still translate 0xa5000 to A's
 physical pages. Not airtight, and it does not remove the need for the direct test.
@@ -3551,7 +3595,7 @@ A's own re-invoke did not clear its marker, so the check cannot see writes and
 step 5 says nothing. Note step 6: A came back WRONG, and `test_aba` in the SAME
 boot had A -> B -> A' with A' fine. **The probe broke A.**
 
-⚠ **Probe bug, third distinct kind, do not re-tread.** The first was looking in
+**Probe bug, third distinct kind, do not re-tread.** The first was looking in
 the wrong place, the second was a metric that could not fail, this one is
 **perturbing the system under test**. `mark_prev` wrote the BO then did
 `dma_sync_sgtable_for_device(DMA_TO_DEVICE)`, and `check_watch` read it after
@@ -3576,7 +3620,7 @@ whatever else is true. What is NOT established is that the walled submit does
 nothing at all, as opposed to re-running the resident configuration elsewhere.
 The v5 cover letter states the stronger claim; it needs correcting in v6.
 
-## 2026-08-05 (⚠ SEE THE QUALIFIER ABOVE, the headline claim here is unfalsified, not established. THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
+## 2026-08-05 (SEE THE QUALIFIER ABOVE, the headline claim here is unfalsified, not established. THE WALLED SUBMIT IS A COMPLETE NO-OP. It does not read its regcmd, does not compute, and does not write its output buffer. Both halves have a positive control that passed. Also a RETRACTION: the "zero point surface" we have reported since June was never written at all.)
 
 Igor Paunovic asked on the v4 thread whether the regcmd is read at all on the
 submits that fail, and pointed out that everything measured so far is either what
@@ -3616,7 +3660,7 @@ and cannot be confused with the zero point fill.
 it does not compute, and it never writes its output buffer, which means it does
 not even know where the output goes.
 
-⚠ **RETRACTION.** Every report since June, including the v3 and v4 cover letters
+**RETRACTION.** Every report since June, including the v3 and v4 cover letters
 on lore, described the walled output as the DPU "writing out a zero point
 surface", and read that as the MAC producing nothing. That is wrong. A fresh
 shmem BO is zeroed, `0x00` plus teflon's `+0x80` is 128, and 128 is exactly what
@@ -3671,13 +3715,13 @@ being believed.
 | fix | how it was verified |
 |---|---|
 | `rknn_core_1` was at 0x27710000 | vendor node is `reg = <0x27700000 0x8000>, <0x27708000 0x8000>` and its driver takes `base[i]` from those, so core 1 is at **0x27708000**. `rknn_mmu_1` at 0x2770a000 was right all along |
-| both cores had 5 reg entries incl. dpu/dpu_rdma | binding says `maxItems: 3`, and the driver maps three. ⚠ v3 validated the binding with `dt-doc-validate` but never ran `dtbs_check` on the DTS against it |
+| both cores had 5 reg entries incl. dpu/dpu_rdma | binding says `maxItems: 3`, and the driver maps three. v3 validated the binding with `dt-doc-validate` but never ran `dtbs_check` on the DTS against it |
 | `rknn_core_1` missing the CBUF clocks | the driver asks for six by name on RK3576, so it could never have probed |
 | one power domain per core | `dev_pm_domain_attach_list()` returns **-EEXIST** if the driver core already attached a single domain. It only ever worked because rk3576-rock-4d.dts overrode it. Both domains on each core now, board override dropped |
 | `rocket_job_fini()` left the poll timer and work running | use-after-free on unbind |
 | a queued poll work could finalise the next job | now carries the sequence number of the job it was started for |
 
-⚠ **Near miss worth recording:** a blanket replace of the single-domain line also
+**Near miss worth recording:** a blanket replace of the single-domain line also
 hit `rknn_mmu_0`, giving the IOMMU two domains. That would stop the driver-core
 auto-attach that `rk_iommu` depends on, since it never attaches a list itself, and
 the MMU would run on an unpowered domain. Caught by reading the diff before
@@ -3735,12 +3779,12 @@ cover the MMU. A difference confined to the roughly 1 ms the job is actually
 running would not show up here, and sampling that window means polling hard
 enough to perturb the timing being measured.
 
-⚠ A first attempt swept `0x27700000` to `0x27706000` as one contiguous range and
+A first attempt swept `0x27700000` to `0x27706000` as one contiguous range and
 wedged the board with RCU stalls. The culprit is `0x27702000`: mainline splits it
 out as `rknn_mmu_0` and `rk_iommu` owns it, so mapping over it is what hung the
 bus. DPU and RDMA were innocent and read fine once they got their own ioremap.
 
-⚠ Also learned from the vendor DT while checking this: **`rknn_core_1` in our
+Also learned from the vendor DT while checking this: **`rknn_core_1` in our
 rk3576.dtsi has the wrong address.** The vendor node is
 `reg = <0x27700000 0x8000>, <0x27708000 0x8000>` and its driver takes
 `base[i]` straight from those, so core 1 is at **0x27708000**, not the
@@ -3835,7 +3879,7 @@ identical was taken on what was effectively a first load, before we knew the
 failure needs a *second, different* configuration. Re-running that capture
 across an A -> B -> A sequence is the obvious next move and has not been done.
 
-## 2026-07-26 (⚠ RETRACTED 2026-08-06, SEE THE TOP ENTRY: it IS positional; the evidence below used a fixed input and was reading a stale buffer. THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
+## 2026-07-26 (RETRACTED 2026-08-06, SEE THE TOP ENTRY: it IS positional; the evidence below used a fixed input and was reading a stale buffer. THE WALL IS NOT POSITIONAL. The same op re-run six times in one power session is byte-exact every time. What fails is loading a DIFFERENT configuration, not being the second op.)
 
 Every experiment on this wall until now varied two things at once. Chained models
 run *different layers*, so "op1 is wrong" could be the position or could be that
@@ -4829,7 +4873,7 @@ conv0 and a standalone dw (first/only task) compute; dw1 (a later task) reads th
 does not MAC. **Wall = only the cold-start task after NPU-init arms the CMAC; data-independent.** Next
 lever is Stage-2 (rknpu init path / what one-time state the first task consumes), NOT coherency.
 
-## 2026-07-04 (★★ DIAGNOSTIC GAP CLOSED — the "empty MAC" verdict was a MEASUREMENT ARTIFACT. The all-tasks readback shows conv0 does a REAL MAC (distinct=242/244, full 0x00–0xff) in EVERY dispatch mode, including the task_number=N chain. conv0 is EXONERATED. The sole remaining wall: every layer AFTER conv0 reads its input but its CMAC never fires — only the cold-start/external-input layer computes.)
+## 2026-07-04 (DIAGNOSTIC GAP CLOSED — the "empty MAC" verdict was a MEASUREMENT ARTIFACT. The all-tasks readback shows conv0 does a REAL MAC (distinct=242/244, full 0x00–0xff) in EVERY dispatch mode, including the task_number=N chain. conv0 is EXONERATED. The sole remaining wall: every layer AFTER conv0 reads its input but its CMAC never fires — only the cold-start/external-input layer computes.)
 
 Board test of the all-tasks readback (kernel branch rk3576-readback-alltasks, fe66cfa59: the post-completion
 readback now loops over ALL `j->task_count` tasks and labels each `out` line with the real task index, instead
@@ -4848,7 +4892,7 @@ RUN2 nextptr+task_number=1 / RUN3 nextptr+task_number=N).
   are FALSE signals: `task=2 distinct=2` = values {00,80} = DPU wrote the requant zero-point, MAC contributed
   nothing; `task=3 distinct=3` = bytes `7f 80 7f 7f 0d 80 7f 80` **byte-identical across 8 inferences** =
   stale/constant, not a fresh MAC. Nothing past conv0 produces a real feature map in any mode.
-- **★ The wall, now confirmed on the RIGHT BO:** only the cold-start / external-input layer (conv0) does a real
+- **The wall, now confirmed on the RIGHT BO:** only the cold-start / external-input layer (conv0) does a real
   MAC; every chained layer reads its input yet its CMAC never fires. This is exactly the "only the COLD-START
   task does MACs" wall from the topic file — previously inferred, now DIRECTLY measured.
 - **Direction change.** Stop investigating conv0/requant/weight-layout (correct + done). The entire remaining
@@ -4868,7 +4912,7 @@ kernel branch rk3576-chain-tn1, d168a289a). RUN 2 (task_number=1) vs RUN 3 (task
   trailer chains).** The task's premise (port RK3588's task_number=1 + trailer) does not hold on RK3576. So
   trailer-follow (needs task_number=N) and single-task committing mode (task_number=1) are mutually exclusive
   here.
-- **★ Diagnostic gap — the "empty MAC" premise is UNCONFIRMED.** The whole-graph readback dumps the BOs of task
+- **Diagnostic gap — the "empty MAC" premise is UNCONFIRMED.** The whole-graph readback dumps the BOs of task
   `next_task_idx-1` = 28 (the LAST task, which never runs) — e.g. RUN 2's only output readback is
   `out task=28 iova=0xfe250000 distinct=1`. **conv0's own output BO has NEVER been read back in a chained
   submit.** So the earlier "conv0 commits (dt_wr=25088) but the MAC is empty (distinct=1)" was inferred from the
@@ -4877,7 +4921,7 @@ kernel branch rk3576-chain-tn1, d168a289a). RUN 2 (task_number=1) vs RUN 3 (task
   a completely different shape. NEXT (must do before more levers): fix the readback to dump the FIRST task's
   (conv0's) output BO in continuous mode, and settle real-vs-empty definitively.
 
-## 2026-07-04 (★ PARTIAL BREAKTHROUGH — the RK3576 PC DOES follow next-pointers. A task_number=N submit advanced past conv0 for the first time: the PC chained conv0→dw1 and loaded dw1's operands. This overturns the "iteration only / silicon wall" conclusion. The empty-MAC wall persists though, and the chain stalls after one hop.)
+## 2026-07-04 (PARTIAL BREAKTHROUGH — the RK3576 PC DOES follow next-pointers. A task_number=N submit advanced past conv0 for the first time: the PC chained conv0→dw1 and loaded dw1's operands. This overturns the "iteration only / silicon wall" conclusion. The empty-MAC wall persists though, and the chain stalls after one hop.)
 
 Board test of the next-pointer build (ROCKET_NEXTPTR trailer + wg_continuous task_number=29), RUN 2 vs the
 baseline seq-kick RUN 1:
@@ -6221,7 +6265,7 @@ table (`float[0] = -wt_sc`, then 128 varied per-channel floats — *not* the per
 not any clean function of the per-tensor quant params). It is produced by the vendor toolkit's
 per-channel quantiser, which lives in the compiled `librknnc.so` (rknn-toolkit2 2.3.2) — not in
 readable Python and not recoverable by swapping/fitting (proven exhaustively: A-alone, A+B/C-no-float,
-and every fixed-point model all fail on the board). 
+and every fixed-point model all fail on the board).
 
 **Net:** the conv2d defect is fully cornered — it is the per-channel SDP requant, two BS surfaces
 (`0x5020` int `[A|B|C]` + `0x5024` float), of which Mesa writes only the first and gets the `A`-term
@@ -6591,8 +6635,8 @@ there — before spending more on the surface.
 From the clean position-encoded captures, read the per-channel multiplier with the exact regcmd offset
 and validated the full ABC against the captured bytes (`pw_oc`, `pw_ic`):
 
-- **A[oc] = 0x80·(Σ_kernel wq[oc] + bias[oc])** — byte-exact. pw_oc: Σwq=16·255=4080 → A=0x80·4080=522240 ✓;
-  pw_ic: Σwq=2167 → A=0x80·2167=277376 ✓. This is **mesa's current formula** (rkt_coefs.c:423) — A was right.
+- **A[oc] = 0x80·(Σ_kernel wq[oc] + bias[oc])** — byte-exact. pw_oc: Σwq=16·255=4080 → A=0x80·4080=522240 confirmed;
+  pw_ic: Σwq=2167 → A=0x80·2167=277376 confirmed. This is **mesa's current formula** (rkt_coefs.c:423) — A was right.
 - **B[oc] = 0x80 − wt_zp** — constant, mesa already correct.
 - **C[oc] = round(2^14 · wt_sc[oc] / max_oc(wt_sc))** — the per-channel requant multiplier. Validated
   **256/256 exact** across pw_oc+pw_ic (`wt_sc[oc]=max|w[oc]|/127`). C is *relative* (normalised to the
