@@ -88,6 +88,21 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 46 hung, and it was my bug not the hardware
+
+The board stopped at step 2, the first use of `ROCKET_SCALE_TABLE`, with the
+step header printed and nothing after. Not a hardware hang: the `goto
+biases_done` I added for that path sits at line 846 while the label is at 739,
+so it jumps **backwards** and re-executes everything in between, forever.
+
+The two existing gotos, for `ROCKET_DW_REC48` and `ROCKET_DW_FLOATBIAS`, are at
+637 and 649 and jump forward to the same label, which is why rounds 44 and 45
+ran fine and this one did not.
+
+Fixed by dropping the goto and using a flag to skip the constant word instead.
+A comment now says why, because the label being earlier in the function is not
+visible from the place the jump is written.
+
 ## 🔑🔑 2026-08-10 THE SURFACE IS DECODED, and it explains the magic word
 
 Following `0x5024` rather than guessing finished this. In both models it points
