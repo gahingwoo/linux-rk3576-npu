@@ -2,48 +2,46 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 55. Attribute round 54, and pin the record count.
+# 2026-08-11 round 56. Make the depthwise metric honest before believing it.
 #
-# Round 54 moved depthwise for the first time: mn_dw1 went from 5 of 32
-# channels correct to 9, and from 23 constant channels to 8. But it moved TWO
-# things at once, which is the mistake this file keeps recording:
+# Round 55 attributed round 54 cleanly and moved depthwise a long way:
 #
-#   the coefficient table   48 byte [A|C] records, twice as many, fp16 after
-#   the weight buffer       the zero point lanes changed sign
+#   mn_dw1    3/32 on the round 53 baseline  ->  9/32
+#   mn_dw25   188/1024                       ->  432/1024
 #
-# and mn_dw1's weight zero point is 110, not 128, so the sign change was NOT a
-# no-op on it. Round 54's control only restored the first. The 2x2 below
-# restores each independently, and REC64 + ZP_POS together is the real round 53
-# baseline that everything else is measured against.
+# and settled that the record COUNT is inert: 4, 8 and 16 records on mn_dw1,
+# 128 against 256 on mn_dw25, all byte identical, even though each moves the
+# fp16 table and the 0x5024 operand with it. What is load bearing is the 48
+# byte record stride and the weight buffer's zero point lane.
 #
-# ⚠ The obvious next hypothesis was checked offline and is dead. mn_dw1's
-# correct channels are 0, 3, 8, 9, 14, 20, 22, 27, 30, scattered rather than in
-# groups of eight, which pointed at a per-channel value rather than the record
-# geometry, and the only per-channel value whose format this driver chose is C
-# (Q4 here, Q14 in the vendor). But mn_dw1 is per-TENSOR quantised: one scale,
-# one zero point, so every channel's C is identical and C cannot explain a
-# scattered pattern. Not built, not flashed.
+# ⚠ Then the offline read of WHICH channels matched came back suspicious.
+# Sorted by |A| the nine matching channels on mn_dw1 are the nine largest,
+# every one of them, and A is added to the MAC before the requant. An A large
+# enough saturates the whole surface to one value, and if the CPU reference
+# saturates too then the channel scores a match without one multiply having to
+# be right. mn_dw1 reported 8 constant channels and 5 pinned at the zero point,
+# which is the same order as the 9 it called correct.
 #
-# ⚠ dwconv is NOT a single depthwise op. It has six tensors and two more
-# quantisation steps after the conv, so it tests depthwise AND chaining at
-# once, and chaining is a separate open bug. mn_dw1 and mn_dw25 have four
-# tensors each and are the clean models. dwconv stays in only for continuity.
+# That is the proxy trap this project has been caught by before, so the count
+# gets split before another hypothesis is built on it. perch.py now reports
+# COMPUTED, meaning the channel matches AND the reference varies across it, and
+# trivial, meaning it matches a reference that is constant. Only the first is
+# evidence of arithmetic.
 #
-# mn_dw25 is the second thing this round is for. It is a single depthwise op
-# with 1024 channels and a weight zero point of 211, and 1024 channels is what
-# 32 could not do: the record count is either twice the regular grouping, 256
-# records, or the channel count padded to 64, 128 records. At 32 channels both
-# give eight. Here they differ, so ROCKET_DW_RECS=128 decides it.
+# Nothing in the driver changed this round. Same libteflon.so, same everything;
+# only the measurement.
 #
 # DECISION RULE, written before the run:
-#   1 beats 4                    round 54's gain is real
-#   2 == 1 and 3 == 4            the gain is the TABLE, the sign is inert
-#   2 == 4 and 3 == 1            the gain is the SIGN, the table is inert
-#   1 beats both 2 and 3         both contribute
-#   mn_dw25: 9 differs from 10   the record count is settled by whichever wins
-#   mn_dw25: 9 == 10             the count does not reach the output, and
-#                                oc=32 was never going to pin it
-#   regular shapes regress       stop, the depthwise path is leaking
+#   COMPUTED stays near 9 and 432   the gains are real and the next round goes
+#                                   after the remaining channels
+#   COMPUTED collapses to near 0    round 55's numbers were saturation, the
+#                                   real state is much worse than reported, and
+#                                   every conclusion drawn from the channel
+#                                   count has to be re-read
+#   COMPUTED on the baseline (4)    tells the same for the round 53 numbers, so
+#                                   the comparison stays valid either way
+#   regular shapes unchanged        they were 128/128 before and must still be,
+#                                   with COMPUTED equal to the match count
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -60,39 +58,34 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) mn_dw1, the 2x2 that attributes round 54 ====="
+	log "===== 1..2) mn_dw1: shipped, then the round 53 baseline ====="
 	p mn_dw1.tflite ""
-	p mn_dw1.tflite ROCKET_DW_ZP_POS=1
-	p mn_dw1.tflite ROCKET_DW_REC64=1
 	p mn_dw1.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
 
 	log ""
-	log "===== 5..6) mn_dw1, the record count ====="
-	p mn_dw1.tflite ROCKET_DW_RECS=4
-	p mn_dw1.tflite ROCKET_DW_RECS=16
-
-	log ""
-	log "===== 7) mn_dw1, the vendor's Q14 C (per-tensor, so C is constant) ====="
-	p mn_dw1.tflite ROCKET_DW_C14=1
-
-	log ""
-	log "===== 8..10) mn_dw25, 1024 channels: 256 records or 128? ====="
+	log "===== 3..4) mn_dw25: shipped, then the round 53 baseline ====="
 	p mn_dw25.tflite ""
-	p mn_dw25.tflite ROCKET_DW_RECS=128
 	p mn_dw25.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
 
 	log ""
-	log "===== 11) dwconv, which is a CHAIN, for continuity only ====="
-	p dwconv.tflite ""
+	log "===== 5) mn_dw1 with the zero point lane sign alone reverted ====="
+	p mn_dw1.tflite ROCKET_DW_ZP_POS=1
 
 	log ""
-	log "===== 12..13) REGULAR shapes, which must be untouched ====="
+	log "===== 6..8) REGULAR shapes: COMPUTED must equal the match count ====="
 	p conv2d-cal.tflite ""
 	p cal_k3.tflite ""
+	p cal_oc16.tflite ""
 
 	log ""
-	log "===== Compare 1 against 4 first. 4 is the round 53 baseline;    ====="
-	log "===== if 1 does not beat it, round 54's gain was not real.      ====="
+	log "===== 9) whole model, for the record ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Read the COMPUTED line, not the match count. A channel whose ====="
+	log "===== reference is constant can be matched by a saturated output.  ====="
 	sync
 }
 case "$1" in

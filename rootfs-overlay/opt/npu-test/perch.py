@@ -71,13 +71,35 @@ flat_ch = sum(1 for c in range(got.shape[2])
               if len(np.unique(got[:, :, c])) == 1)
 at_zp = sum(1 for c in range(got.shape[2])
             if len(np.unique(got[:, :, c])) == 1 and got[0, 0, c] == ozp)
+
+# ⚠ A matching channel is not necessarily a computed one.
+#
+# On mn_dw1 the nine channels reported as matching were exactly the nine with
+# the largest |A|, and a channel whose A is large enough saturates the requant
+# to a single value for the whole surface. If the CPU reference saturates too,
+# the two agree and the channel is scored correct without a single multiply
+# having to be right. Round 55's 9 of 32 could be almost entirely that.
+#
+# So split the count. A channel is only counted as COMPUTED if the reference
+# actually varies across it: then agreeing means reproducing a surface, which
+# no constant can do by accident.
+ref_flat = np.array([len(np.unique(ref[:, :, c])) == 1 for c in range(oc)])
+npu_flat = np.array([len(np.unique(got[:, :, c])) == 1 for c in range(oc)])
+good = np.array([c not in bad for c in range(oc)])
+computed = int((good & ~ref_flat).sum())
+trivial = int((good & ref_flat).sum())
 print(f"  {os.path.basename(model)} out{got.shape}: {oc - len(bad)}/{oc} "
       f"channels match (maxdiff <= 1)", flush=True)
+print(f"    of those, COMPUTED (reference varies): {computed}    "
+      f"trivial (reference is constant): {trivial}", flush=True)
 print(f"    npu distinct={len(np.unique(got))} min={got.min()} max={got.max()} "
       f"| cpu distinct={len(np.unique(ref))} | out_zp={ozp}", flush=True)
 print(f"    channels that are CONSTANT: {flat_ch}/{oc}, "
       f"of which pinned at out_zp: {at_zp}  "
       f"({'EMPTY conv' if at_zp == oc else 'not empty'})", flush=True)
+print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
+      f"    npu constant but reference varies: "
+      f"{int((npu_flat & ~ref_flat).sum())}", flush=True)
 if not bad:
     print("    every channel correct", flush=True)
 else:
@@ -92,6 +114,9 @@ else:
           f"{' ...' if len(runs) > 12 else ''}", flush=True)
     print(f"    first 8 channel maxdiffs: {worst[:8]}", flush=True)
     print(f"    channels 64..71 maxdiffs: {worst[64:72]}", flush=True)
+    okl = [c for c in range(oc) if c not in bad and not ref_flat[c]]
+    print(f"    COMPUTED-correct channels: {okl[:24]}"
+          f"{' ...' if len(okl) > 24 else ''}", flush=True)
 
 sys.stdout.flush()
 os._exit(0)
