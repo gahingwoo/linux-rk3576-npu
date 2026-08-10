@@ -88,6 +88,40 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 A and C are consistent with ONE per-channel scale, and mesa's formulas are the right shape
+
+Round 45 reported that the captured A and C do not match mesa's formulas. That
+reading was wrong, and the error was mine: I computed the per-channel scale as
+`max|w_c| / 127`, and the toolkit does not use that.
+
+Solving for the scale implied by the capture instead of assuming it:
+
+| | |
+|---|---|
+| implied `s_c` from A, as a fraction of `max|w_c|/127` | **0.5933 to 0.9988**, median 0.846, varying per channel |
+| take that implied scale and predict C | corr **+0.9982** |
+| take the scale implied by C and predict A | corr **+1.0000** |
+
+**A and C are mutually consistent under a single per-channel scale.** The
+0.59-to-0.99 spread is the toolkit's clipping-optimised quantiser, which is why
+a `max/127` approximation produced a per-channel varying ratio and looked like a
+mismatch. That is the same trap as the fp16 table months ago: an approximate
+reference makes a correct formula look wrong.
+
+So `C = 0x4000 * s_c / max(s_c)` is **exactly** mesa's existing formula, and A's
+shape, a multiple of the quantised weight sum, is mesa's too. For a tflite model
+mesa knows `s_c` exactly from `weight_tensor->scales`, so it can reproduce both.
+
+⚠ **What that does not explain**: round 45 wrote those formulas in 48-byte
+records and the output still collapsed to two distinct values. So with the
+values now understood, what remains for depthwise is the surface layout rather
+than the arithmetic. The region has content this work has not accounted for,
+including whatever `0x5024` points at, which for depthwise is `bo01+0x400` while
+the table itself starts at `bo01+0x240`.
+
+Everything needed to settle that is on disk: `dirty/vendorcap-dw-2026-08-10/`
+and `sv_pairs.py dw`.
+
 ## ⚠ 2026-08-10 round 45 (The 48-byte record alone is not the fix either, and the captured A and C do not match mesa's formulas)
 
 Baselines 128/128 at both ends and no leak: conv2d-cal and cal_k3 both stay at
