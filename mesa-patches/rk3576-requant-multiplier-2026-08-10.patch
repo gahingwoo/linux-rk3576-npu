@@ -1,0 +1,76 @@
+From 2d8f94abf34cebf7d7caaab552b45d6d84717fb4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 19:28:40 +1200
+Subject: [PATCH] rocket RK3576: the scale slot holds the requant multiplier,
+ not the weight scale
+
+Round 47 wrote weight_tensor->scale there and every working shape broke, because
+conv2d-cal's weight scale is 3.9125464 whose fp16 is 0x43d3, the value round 28
+already proved fails.
+
+Reading every word rounds 36 and 37 swept, as fp16, gives the window: passing
+values run 0.000474 to 0.008331, failing ones are 0.00013 and below or 2.13 and
+above. in_sc * wt_sc / out_sc for conv2d-cal is 0.00095521, inside it.
+
+So the slot is the per-channel requant multiplier. That explains the magic word,
+0x1004 being 0.00049 and the same order as the real value; the vendor's captured
+entries around 0.0012; the round 36 bitfield rule being the shape of fp16 values
+in that window; one word sufficing for a per-tensor model; and dwconv moving in
+round 47 because depthwise is per-channel and gets 32 different entries.
+
+ROCKET_SCALE_TABLE_WT keeps the weight-scale version so the comparison can be
+run side by side.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 31 ++++++++++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 82d2439..64324ae 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -843,13 +843,40 @@ biases_done:
+              * spins forever. It did, on the board, and looked like a hang.
+              * Write the table and skip the constant word with a flag instead.
+              */
++            /*
++             * The slot holds the per-channel REQUANT MULTIPLIER, in_sc *
++             * wt_sc[oc] / out_sc, as fp16. Not the weight scale.
++             *
++             * Round 47 wrote the weight scale and every working shape broke,
++             * because conv2d-cal's weight scale is 3.9125464 and fp16 of that
++             * is 0x43d3, the value round 28 already proved fails. Reading the
++             * words rounds 36 and 37 swept, as fp16, gives the window directly:
++             *
++             *   pass   0.000474 0.00049 0.000521 0.002937 0.003059 0.003181 0.008331
++             *   fail   0.00013 and below, 2.13 and above
++             *
++             * and in_sc * wt_sc / out_sc for conv2d-cal is 0.00095521, inside
++             * it, while wt_sc alone is far outside. That also explains the
++             * magic word: 0x1004 is 0.00049, the same order as the real
++             * multiplier, and the vendor's captured entries are around 0.0012.
++             *
++             * ROCKET_SCALE_TABLE_WT writes the weight scale instead, which is
++             * what round 47 tested and is kept only so the comparison can be
++             * repeated.
++             */
+             bool scale_table = getenv("ROCKET_SCALE_TABLE") != NULL;
+             if (scale_table) {
+                uint16_t *sc16 = (uint16_t *)(b8 + groups * 64);
+                const float *wsc = poperation->conv.weight_tensor->scales;
+                float wt_sc = poperation->conv.weight_tensor->scale;
+-               for (unsigned oc = 0; oc < output_channels; oc++)
+-                  sc16[oc] = _mesa_float_to_half(wsc ? wsc[oc] : wt_sc);
++               float in_sc = poperation->input_tensors[0]->scale;
++               float out_sc = poperation->output_tensors[0]->scale;
++               bool raw = getenv("ROCKET_SCALE_TABLE_WT") != NULL;
++               for (unsigned oc = 0; oc < output_channels; oc++) {
++                  float w = wsc ? wsc[oc] : wt_sc;
++                  sc16[oc] = _mesa_float_to_half(raw ? w
++                                                     : in_sc * w / out_sc);
++               }
+             }
+             unsigned cap = (bufsize - groups * 64) / sizeof(uint32_t);
+             const char *fill = getenv("ROCKET_FS_FILL");
+-- 
+2.43.0
+

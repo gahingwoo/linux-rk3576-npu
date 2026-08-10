@@ -88,6 +88,42 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑 2026-08-10 the slot holds the REQUANT MULTIPLIER, and the magic word finally has a meaning
+
+Round 47 said the table failed and why: `conv2d-cal`'s weight scale is
+`3.9125464`, whose fp16 is `0x43d3`, a value round 28 already proved fails. So
+the slot is not the weight scale. Reading **every** word rounds 36 and 37 swept,
+as fp16, gives the accepting window directly:
+
+```
+pass   0.000474  0.00049  0.000521  0.002937  0.003059  0.003181  0.008331
+fail   0.00013 and below,  2.13 and above
+```
+
+and for `conv2d-cal`
+
+```
+in_sc * wt_sc / out_sc  =  0.0078125 * 3.9125464 / 32  =  0.00095521    INSIDE
+wt_sc alone             =  3.9125464                   =  0x43d3, known to fail
+```
+
+**The slot holds the per-channel requant multiplier `in_sc * wt_sc[oc] /
+out_sc`, as fp16.** Everything lines up on that and nothing lines up on the
+weight scale:
+
+- the magic word `0x1004` is `0.00049`, the same order as the real multiplier,
+  which is why a single hand-swept constant worked at all;
+- the vendor's captured entries are around `0.0012` for its own model;
+- the "bitfield rule" from round 36 was the shape of fp16 values in that window;
+- one word sufficed for `conv2d-cal` because it is per-tensor quantised, so
+  every entry of the table is the same number;
+- and `dwconv` moved in round 47, from 6 distinct values to 28, precisely
+  because depthwise is per-channel and gets 32 different entries.
+
+Round 48 writes it, with the weight-scale version kept behind
+`ROCKET_SCALE_TABLE_WT` so round 47's failure can be reproduced side by side.
+Built, not flashed.
+
 ## 2026-08-10 round 47 (Separated at last. Neither half is adoptable as written, but depthwise moved for the first time.)
 
 Baselines 128/128 at both ends.
