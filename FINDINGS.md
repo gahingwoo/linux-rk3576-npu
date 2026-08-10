@@ -88,6 +88,31 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 the fp16 table is PROPORTIONAL to the weight scale, not equal to it
+
+Using the table's value as the per-channel quantisation scale on the known
+weights gives a range of **[-214, 191]**, which overflows int8 by 1.68x. So the
+entries are proportional to the weight scale, not the weight scale itself, and
+the "+0.998 against the scale implied by A" match says only that both are
+proportional to the same thing, since A's implied scale was derived from the
+same relation.
+
+⚠ That qualifies the round 52 reading. The table's **position and element type**
+are established, and writing `weight_tensor->scales` there passes every working
+shape, but the exact quantity is off by a constant factor of roughly 1.68 in the
+vendor's own model. Whether mesa's version is right or merely inside a tolerant
+range is not established, and the passing shapes cannot distinguish those.
+
+The depthwise weight buffer still does not decode under it either: as int8 the
+multiset overlap with the 288 quantised weights is 41%, near chance; as int16 it
+is 0%; and per-channel 18-byte blocks match 0 of 32.
+
+So the remaining unknowns are now three, and the first is new:
+
+1. the constant factor between the fp16 table and the weight scale,
+2. the four-byte operand, `0x1004` for mesa against `0x0E0E` for the vendor,
+3. depthwise, which the whole coefficient chain does not touch.
+
 ## ✅ 2026-08-10 round 53 RESULT: the derived layout is in, with no regressions
 
 | model | new default | old arrangement |
