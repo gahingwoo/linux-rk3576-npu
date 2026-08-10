@@ -100,6 +100,37 @@ print(f"    channels that are CONSTANT: {flat_ch}/{oc}, "
 print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
       f"    npu constant but reference varies: "
       f"{int((npu_flat & ~ref_flat).sum())}", flush=True)
+# WHERE in the surface the error is, which the channel view cannot show.
+#
+# The impulse run decoded 27 of 32 channels to exactly the right tap of exactly
+# the right input plane at correlation +1.000, the same answer the CPU gives,
+# and the other five are the decoder aliasing on a ramp rather than the
+# hardware. Yet the same run is 0 of 32 on maxdiff, with the hardware's value
+# range identical to the reference's. Perfect correlation on an interior crop
+# plus a large maxdiff over the whole surface means the error is somewhere the
+# crop did not look.
+#
+# The row profile says where. mesa splits these depthwise layers into TWO
+# tasks, visible as two OUT_CVT lines in the log, while conv2d-cal emits one,
+# so a seam between row windows is a candidate no coefficient sweep could have
+# reached.
+rowerr = np.abs(got - ref).max(axis=(1, 2))
+colerr = np.abs(got - ref).max(axis=(0, 2))
+nzr = np.nonzero(rowerr)[0]
+nzc = np.nonzero(colerr)[0]
+print(f"    rows with any error: {len(nzr)}/{got.shape[0]}"
+      + (f", first {nzr[:6].tolist()} last {nzr[-6:].tolist()}" if len(nzr) else ""),
+      flush=True)
+print(f"    cols with any error: {len(nzc)}/{got.shape[1]}"
+      + (f", first {nzc[:6].tolist()} last {nzc[-6:].tolist()}" if len(nzc) else ""),
+      flush=True)
+if len(nzr):
+    print(f"    row maxdiff profile, every 8th: "
+          f"{rowerr[::8].tolist()}", flush=True)
+    inner = np.abs(got[1:-1, 1:-1] - ref[1:-1, 1:-1]).max()
+    print(f"    maxdiff excluding the outer ring: {int(inner)}"
+          f"    whole surface: {int(np.abs(got - ref).max())}", flush=True)
+
 if not bad:
     print("    every channel correct", flush=True)
 else:
