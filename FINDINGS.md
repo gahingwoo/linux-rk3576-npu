@@ -88,6 +88,50 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠🔑 2026-08-10 round 48 (The requant-multiplier reading is WITHDRAWN, and the round 36 rule turns out not to be the hardware's format either)
+
+Baselines 128/128 at both ends.
+
+| | distinct | range |
+|---|---|---|
+| baseline, the magic word | 128 | 128..255 |
+| **the derived multiplier** | **1** | **all 128**, an empty convolution |
+| the weight scale | 129 | 0..128 |
+| cal_k3, cal_k1 with the multiplier | 1 | all 128 |
+
+**Why, and it is my own circularity**: `fp16(0.00095521)` is `0x13d3`, whose low
+six bits are `0x13`, which **violates** the round 36 rule. And the "magnitude
+window" I read off the passing set in round 48 was circular, because from round
+35 onward **I only ever swept words I had constructed with low six bits `0x04`**:
+
+```
+0x1004 0x1044 0x2044 0x3fc4 0x0fc4 0x1a44 0x1a04 0x1a84   all  w & 0x3f == 0x04
+```
+
+A set selected for a bit pattern cannot be used to infer a magnitude range. So
+the requant-multiplier reading is **withdrawn**; it explained the window, and the
+window was an artifact of my own sweep.
+
+**But the vendor settles what the rule actually is**, and it is not what round
+36 thought. Checking the vendor's own 32 captured entries against it:
+
+```
+sv_dwu (depthwise)  low 6 bits == 0x04 for  0/32
+sv_rgu (regular)    low 6 bits == 0x04 for  2/32     (chance is 0.5/32)
+```
+
+**The vendor violates the rule in essentially every entry and its models
+compute.** So `(w & 0x3f) == 0x04` is not the hardware's format. It is a
+property of *mesa's current configuration*: under whatever mesa is doing to that
+surface, only those bit patterns happen to work, and `0x1004` works by
+satisfying an artifact rather than by being correct.
+
+That re-frames rounds 32 to 37. They characterised a symptom very precisely.
+Chasing the right value for that slot while the rest of mesa's setup differs
+from the vendor's is chasing the artifact, and the real difference is elsewhere
+in the surface. `ROCKET_SCALE_PTR` alone also failed, so the pointer is not the
+whole of it either.
+
 ## 🔑 2026-08-10 the slot holds the REQUANT MULTIPLIER, and the magic word finally has a meaning
 
 Round 47 said the table failed and why: `conv2d-cal`'s weight scale is
