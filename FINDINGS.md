@@ -88,6 +88,34 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-10 depthwise, the per-channel-scaled gap closed, and the capture prepared
+
+⚠ The full-file sweep used correlation, which is scale invariant, so it finds
+anything **proportional** to the bias. With per-channel weight quantisation
+`A_i = bias_i / (in_s * wt_sc_i)` is not proportional to `bias_i`, so that sweep
+could have missed it. Re-run with the per-channel-scaled references added,
+`bias/wt_sc_c`, `sw/wt_sc_c`, `1/wt_sc_c` and `wt_sc_c`:
+
+```
+sv_dwu:  off 0x06018  float32 stride 4 +0  vs bias  corr +1.0000    (the raw float bias again)
+         nothing else above 0.98
+```
+
+Still only the unquantised source bias. **The conclusion holds and is now tested
+against the assumption that would have broken it.**
+
+**The capture is prepared rather than left as a note.** `run-dwcoef.sh` captures
+the vendor runtime's buffers for `sv_rgu` and `sv_dwu`, the single-variable pair
+whose weights and biases are known here exactly, and `dwcoef_decode.py` applies
+the same oracle to the captured bytes: every per-channel column, flat and
+blocked layouts, against the bias, the weight sum and the per-channel-scaled
+forms. **`sv_rgu` runs first as the positive control** and must reproduce its
+`+0.9972` weight-sum hit before anything the depthwise capture says is readable.
+Both models are staged in `dirty/npu-cap/`.
+
+⚠ Needs `rock4d-spi-uboot-vendor.img` in SPI, and `rock4d-spi-uboot.img` back
+before rocket will run again.
+
 ## 🔑 2026-08-09 offline depthwise, full-file sweep (There is no quantised per-channel coefficient anywhere in the vendor's depthwise model. The offline route is exhausted; this needs a runtime capture.)
 
 Not just the length-prefixed blobs this time, the **whole file**, byte by byte:
