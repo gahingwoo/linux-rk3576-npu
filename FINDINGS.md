@@ -88,6 +88,44 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 🔑🔑 2026-08-10 round 52 THE LAYOUT IS ADOPTED (the vendor's arrangement works in mesa, and the magic word shrinks to one operand slot)
+
+Baselines 128/128 at both ends.
+
+| | channels |
+|---|---|
+| **fp16 weight-scale table, pointer moved past it, operand `0x1004`** | **conv2d-cal 128/128, cal_k3 128/128, cal_k1 128/128** |
+| the same with the vendor's `0x0E0E` as the operand | 0/128, as it must |
+| dwconv | 0/16, distinct 6, unchanged |
+
+**Every failure from rounds 46 to 51 had one cause**: each time the pointer
+moved, the new target was given the vendor's `0x0E0E`, and round 49 had already
+shown that word alone empties the convolution under mesa's configuration.
+Content, layout and operand value were tangled together across six rounds.
+Separated, the layout passes immediately.
+
+mesa's surface is now the vendor's:
+
+```
+0x5020 -> [A/B/C table]              A, B and C all checked against the capture
+          [oc x fp16 weight scale]   a derived table where there was nothing
+0x5024 -> operand                    the only constant left, four bytes
+```
+
+The A/B/C formulas are verified: A is `bias_q - (in_zp - 0x80)*sw` and matches
+the capture at 128 x swq once the int8-versus-uint8 input zero point is
+accounted for, B is `0x80 - wt_zp` and the vendor's per-channel variant cannot
+arise under tflite, C is `0x4000 * s_c / max(s_c)`. The fp16 scale table is
+derived from `weight_tensor->scales`.
+
+**So the magic word is now isolated to a single four-byte operand slot** rather
+than living inside the scale table. That is also why it looked like a bitfield
+for six rounds: the sweep was writing into an operand, not a scale.
+
+⚠ Still unexplained: why that operand is `0x1004` for mesa and `0x0E0E` for the
+vendor. And depthwise is untouched by any of this, 6 distinct values exactly as
+at baseline, so its cause remains elsewhere.
+
 ## 2026-08-10 round 51 (The vendor's arrangement fails too, and the two failures have one cause)
 
 Baselines 128/128 at both ends.
