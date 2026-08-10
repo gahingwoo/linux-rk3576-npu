@@ -88,6 +88,31 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 46 (The real fp16 table regressed the working shapes, and I changed two things at once again)
+
+Baselines 128/128 at both ends, so the result is real.
+
+| | |
+|---|---|
+| conv2d-cal with the scale table | **0/128**, distinct 256 |
+| cal_k3, cal_k1 | 0/128 |
+| dwconv | 0/16 |
+| mn_pw24 | 297/1024, unchanged |
+
+distinct 256 means it ran and produced a full range of wrong values rather than
+collapsing, so the pipeline is alive and the arithmetic is wrong.
+
+⚠ **The round cannot be attributed, because it moved two things**: it wrote the
+fp16 table *and* moved `0x5024` past it. That is the exact mistake this file
+keeps recording, and I made it again one round after writing it down. They are
+two knobs now, `ROCKET_SCALE_TABLE` and `ROCKET_SCALE_PTR`, and round 47 runs
+each alone and both together against the same baseline.
+
+**The decode is not in doubt** and does not depend on this: the 64 bytes before
+the vendor's `0x5024` target are 32 uint16 that read as fp16 and match the scale
+implied by A at +0.998. What round 46 failed to establish is which half of that
+mesa can adopt, and that is now a separable question.
+
 ## ⚠ 2026-08-10 round 46 hung, and it was my bug not the hardware
 
 The board stopped at step 2, the first use of `ROCKET_SCALE_TABLE`, with the
