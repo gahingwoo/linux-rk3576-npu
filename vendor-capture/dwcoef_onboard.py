@@ -52,12 +52,18 @@ def corr(x, y):
 
 
 def layouts(n=32):
-    """(label, index list) for every per-channel column worth trying.
+    """(label, elem, index list) for every per-channel column worth trying.
 
-    The blocked one is what the regular conv actually uses, channel i at
-    (i//8)*64 + (i%8)*4; a flat stride never reaches it, which is one of the
-    two bugs the positive control caught on the host.
+    ⚠ ORDER MATTERS. The regular capture decodes at block 64, group 8, elem 4,
+    base 0, which is mesa's own A/B/C layout, so that one goes FIRST: if the
+    depthwise buffer holds a table in the same shape, the answer prints within
+    seconds instead of after the whole sweep. The first version tried 300
+    layouts in an arbitrary order and printed nothing until all of them
+    finished, which on a slow core is a quarter of an hour that looks exactly
+    like a hang.
     """
+    yield ("block 64 group 8 elem 4 +0  (the layout the control decodes in)",
+           4, [(i // 8) * 64 + (i % 8) * 4 for i in range(n)])
     for block, G in ((64, 8), (64, 16), (32, 8), (128, 16)):
         for elem in (2, 4):
             if G * elem > block:
@@ -94,18 +100,30 @@ def scan(path, which):
             print(f"    (skip {fn}, {len(raw)} bytes)", flush=True)
             continue
         print(f"    scanning {fn}, {len(raw)} bytes ...", flush=True)
-        for label, elem, idx in layouts():
+        lay = list(layouts())
+        for li, (label, elem, idx) in enumerate(lay):
             span = idx[-1] + elem
             fmt = "<i" if elem == 4 else "<h"
+            if li % 40 == 0:
+                print(f"      layout {li}/{len(lay)} ...", flush=True)
             for start in range(0, len(raw) - span, 4):
                 try:
                     vals = [struct.unpack_from(fmt, raw, start + o)[0]
                             for o in idx]
                 except struct.error:
                     break
+                # A constant window correlates with nothing and is most of a
+                # mostly-zero buffer, so reject it before touching the refs.
+                v0 = vals[0]
+                if all(v == v0 for v in vals):
+                    continue
                 for rn, rv in refs.items():
                     c = corr(vals, rv)
                     if abs(c) > 0.98:
+                        # Print immediately. The answer should not wait for the
+                        # rest of the sweep to finish.
+                        print(f"    HIT {fn} @0x{start:05x}  {label}  "
+                              f"vs {rn}  corr {c:+.4f}", flush=True)
                         hits.append((abs(c), fn, start, label, rn, c))
     hits.sort(reverse=True)
     return hits
