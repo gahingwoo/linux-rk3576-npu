@@ -2,43 +2,48 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 54. The depthwise coefficient table, decoded offline.
+# 2026-08-11 round 55. Attribute round 54, and pin the record count.
 #
-# Every earlier depthwise probe looked for the vendor's per-channel table in
-# the .rknn and did not find one, and concluded there was none. There is one:
-# librknnrt builds it at load time, and the runtime capture of sv_dwu has it
-# in plain sight. sv_dwu's 0x5020 points immediately past its 576 byte weight
-# buffer and its 0x5024 448 bytes later, and those 448 bytes are
+# Round 54 moved depthwise for the first time: mn_dw1 went from 5 of 32
+# channels correct to 9, and from 23 constant channels to 8. But it moved TWO
+# things at once, which is the mistake this file keeps recording:
 #
-#     8 records of 48 bytes   [A 8 x int32][C 8 x int16], no B
-#     32 fp16 weight scales
+#   the coefficient table   48 byte [A|C] records, twice as many, fp16 after
+#   the weight buffer       the zero point lanes changed sign
 #
-# against the regular conv's 4 records of 64 and the same 32 fp16 entries. All
-# of it reproduces with nothing fitted: C is round(0x4000 * wt_sc / max wt_sc)
-# for 32 of 32 channels, and A is this driver's own existing expression,
-# bias - (in_zp - 0x80) * sum(w - wt_zp), for 32 of 32 channels of BOTH models.
+# and mn_dw1's weight zero point is 110, not 128, so the sign change was NOT a
+# no-op on it. Round 54's control only restored the first. The 2x2 below
+# restores each independently, and REC64 + ZP_POS together is the real round 53
+# baseline that everything else is measured against.
 #
-# So A was right all along and three other things were wrong at once, which is
-# why changing any one of them alone never moved anything:
+# ⚠ The obvious next hypothesis was checked offline and is dead. mn_dw1's
+# correct channels are 0, 3, 8, 9, 14, 20, 22, 27, 30, scattered rather than in
+# groups of eight, which pointed at a per-channel value rather than the record
+# geometry, and the only per-channel value whose format this driver chose is C
+# (Q4 here, Q14 in the vendor). But mn_dw1 is per-TENSOR quantised: one scale,
+# one zero point, so every channel's C is identical and C cannot explain a
+# scattered pattern. Not built, not flashed.
 #
-#     the record is 48 bytes, not 64
-#     there are twice as many records as a regular conv has
-#     the fp16 table, and the 0x5024 operand past it, both move with that
+# ⚠ dwconv is NOT a single depthwise op. It has six tensors and two more
+# quantisation steps after the conv, so it tests depthwise AND chaining at
+# once, and chaining is a separate open bug. mn_dw1 and mn_dw25 have four
+# tensors each and are the clean models. dwconv stays in only for continuity.
 #
-# The weight buffer is now checked too: mesa's depthwise packing reproduces the
-# vendor's 288 weight lanes exactly, so it was never the problem.
+# mn_dw25 is the second thing this round is for. It is a single depthwise op
+# with 1024 channels and a weight zero point of 211, and 1024 channels is what
+# 32 could not do: the record count is either twice the regular grouping, 256
+# records, or the channel count padded to 64, 128 records. At 32 channels both
+# give eight. Here they differ, so ROCKET_DW_RECS=128 decides it.
 #
 # DECISION RULE, written before the run:
-#   dwconv/mn_dw1 improve            the depthwise table was the bug
-#   dwconv unchanged at 6 distinct   the table is not enough; the record count
-#                                    is the one part this geometry could not
-#                                    pin, so try 8 and 4 with ROCKET_DW_RECS
-#   a REGULAR shape regresses        the table-size change leaked into the
-#                                    regular path, which it must not
-#
-# ROCKET_DW_REC64 restores the old 64 byte depthwise record. It is the control:
-# it has to reproduce the old depthwise behaviour exactly, or the comparison
-# above is not measuring what it claims.
+#   1 beats 4                    round 54's gain is real
+#   2 == 1 and 3 == 4            the gain is the TABLE, the sign is inert
+#   2 == 4 and 3 == 1            the gain is the SIGN, the table is inert
+#   1 beats both 2 and 3         both contribute
+#   mn_dw25: 9 differs from 10   the record count is settled by whichever wins
+#   mn_dw25: 9 == 10             the count does not reach the output, and
+#                                oc=32 was never going to pin it
+#   regular shapes regress       stop, the depthwise path is leaking
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -55,40 +60,39 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) DEPTHWISE on the derived table, no knobs ====="
-	p dwconv.tflite ""
+	log "===== 1..4) mn_dw1, the 2x2 that attributes round 54 ====="
 	p mn_dw1.tflite ""
-
-	log ""
-	log "===== 3..4) the CONTROL: the old 64 byte record ====="
-	p dwconv.tflite ROCKET_DW_REC64=1
+	p mn_dw1.tflite ROCKET_DW_ZP_POS=1
 	p mn_dw1.tflite ROCKET_DW_REC64=1
+	p mn_dw1.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
 
 	log ""
-	log "===== 5..6) the record count, the one part 32 channels cannot pin ====="
-	p dwconv.tflite ROCKET_DW_RECS=4
-	p dwconv.tflite ROCKET_DW_RECS=16
+	log "===== 5..6) mn_dw1, the record count ====="
+	p mn_dw1.tflite ROCKET_DW_RECS=4
+	p mn_dw1.tflite ROCKET_DW_RECS=16
 
 	log ""
-	log "===== 7) the vendor's Q14 C instead of this driver's Q4 ====="
-	p dwconv.tflite ROCKET_DW_C14=1
+	log "===== 7) mn_dw1, the vendor's Q14 C (per-tensor, so C is constant) ====="
+	p mn_dw1.tflite ROCKET_DW_C14=1
 
 	log ""
-	log "===== 8..11) REGULAR shapes, which must be untouched ====="
+	log "===== 8..10) mn_dw25, 1024 channels: 256 records or 128? ====="
+	p mn_dw25.tflite ""
+	p mn_dw25.tflite ROCKET_DW_RECS=128
+	p mn_dw25.tflite "ROCKET_DW_REC64=1 ROCKET_DW_ZP_POS=1"
+
+	log ""
+	log "===== 11) dwconv, which is a CHAIN, for continuity only ====="
+	p dwconv.tflite ""
+
+	log ""
+	log "===== 12..13) REGULAR shapes, which must be untouched ====="
 	p conv2d-cal.tflite ""
 	p cal_k3.tflite ""
-	p cal_k1.tflite ""
-	p cal_oc16.tflite ""
 
 	log ""
-	log "===== 12) whole model, for the record ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Read 3 and 4 first. If the control does not reproduce the  ====="
-	log "===== old depthwise behaviour, 1 and 2 are not a comparison.     ====="
+	log "===== Compare 1 against 4 first. 4 is the round 53 baseline;    ====="
+	log "===== if 1 does not beat it, round 54's gain was not real.      ====="
 	sync
 }
 case "$1" in
