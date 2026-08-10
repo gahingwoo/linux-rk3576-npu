@@ -88,6 +88,41 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## ⚠ 2026-08-10 round 45 (The 48-byte record alone is not the fix either, and the captured A and C do not match mesa's formulas)
+
+Baselines 128/128 at both ends and no leak: conv2d-cal and cal_k3 both stay at
+128/128 with the knob set.
+
+| | 64-byte record | 48-byte record |
+|---|---|---|
+| dwconv | 0/16, distinct 6 | 0/16, distinct **2** |
+| mn_dw1 | 3/32, distinct 124 | 2/32, distinct **2** |
+| mn_conv0dw1 | 8/32 | **0/32** |
+
+The output collapses to two values again, the same way the float bias did. So
+the record size is not sufficient on its own, and the decision rule's second
+branch applies: compare the values themselves against the capture.
+
+**Both terms disagree with what mesa computes**, checked against `sv_dwu`'s known
+weights and bias:
+
+| | |
+|---|---|
+| captured A vs the **quantised** per-channel weight sum | corr **+0.9891**, so it is built from that |
+| but `A / swq` per channel | ranges **127.0 to 215.8**, median 151.5, **not a constant** |
+| best linear fit `A = 170.55*swq - 0.03*bias_q` | residual up to 18376 on a range of +-93649 |
+| the bias term | contributes essentially nothing, coefficient -0.03 |
+| captured C vs mesa's `0x4000 * wt_sc/max` | corr **+0.8752**, close but **not equal** |
+
+So A is derived from the quantised weight sum with a per-channel factor this
+work has not identified, and C is near mesa's relative-scale formula without
+matching it. That is two unknowns on top of the record size, which is why
+changing only the record size collapsed the output.
+
+**Next, and it needs no board**: the capture and the exact inputs are both in
+hand, so A and C can be solved rather than guessed. `dirty/vendorcap-dw-2026-08-10/`
+holds the dumps and `sv_pairs.py dw` regenerates the ground truth.
+
 ## 🔑 2026-08-10 THE DEPTHWISE RECORD IS 48 BYTES, NOT 64 (and this corrects two earlier results of mine)
 
 Round 44 concluded depthwise takes a float32 bias. **That was wrong**, and what
