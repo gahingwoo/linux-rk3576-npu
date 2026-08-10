@@ -2,36 +2,31 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-10 round 51. The one combination the capture says is right and that
-# has never been run.
+# 2026-08-10 round 52. Move the pointer, keep mesa's own operand value.
 #
-# A is now confirmed exactly. Using the EXACT per-channel scale from the
-# captured fp16 table rather than an approximation, A / swq is 127.5 to 133.7
-# and the fit is A = 127.993*swq with a maximum error of 572 over a range of
-# +-196872. That is mesa's own formula, A = bias_q - (in_zp - 0x80)*sw, with
-# in_zp = 0, and rknn quantises its input as int8 zp 0 while these tflite models
-# are uint8 zp 128. So A agrees, B was closed last round, C is mesa's formula.
+# Round 51 ran the combination the capture calls the vendor's arrangement, the
+# weight scale in the table with the pointer moved past it, and it failed with
+# distinct 1, an empty convolution. The round 49 combination beside it failed
+# identically. So the table CONTENT is not the issue and the POINTER MOVE is.
 #
-# What is left is the LAYOUT, and the combination that matters was never run:
+# And that is consistent rather than mysterious. When the pointer moves, the new
+# target gets 0x0E0E, the vendor's own operand value, and round 49 already
+# showed that exact word produces an empty convolution in the slot mesa's 0x5024
+# already points at. Same word, same failure, once directly and once after
+# moving the pointer to it.
 #
-#   round 47   the WEIGHT SCALE in the table, pointer NOT moved
-#   round 49   the REQUANT MULTIPLIER in the table, pointer moved
-#   never      the WEIGHT SCALE in the table, pointer moved
-#
-# The capture says the table holds the weight scale: those entries match the
-# scale implied by A at +0.998. Round 49 moved the pointer with the wrong
-# content in the table, and round 47 had the right content with the pointer
-# still aimed at it. ROCKET_SCALE_TABLE_WT plus ROCKET_SCALE_PTR is the vendor's
-# actual arrangement.
+# So the operand value is what is wrong in both, not the move. Move the pointer
+# and keep 0x1004, which mesa's configuration demonstrably accepts.
 #
 # DECISION RULE, written before the run:
-#   2 is 128/128            the vendor's layout is adoptable and the surface is
-#                           derived end to end; the magic word retires
-#   2 fails, 3 (multiplier
-#     + pointer) also fails  the content is not the issue and the layout move
-#                           itself is wrong, so stop moving the pointer
-#   depthwise moves on 4     the layout matters there even if the regular
-#                           shapes are indifferent
+#   2 is 128/128            the layout is adoptable with mesa's operand value,
+#                           the fp16 table is in place, and only the operand
+#                           content still differs from the vendor
+#   2 fails too             the move itself is wrong regardless of the value,
+#                           and mesa's surface differs from the vendor's in a
+#                           way the pointer cannot express; stop moving it
+#   4 moves depthwise       the table matters for depthwise even where the
+#                           regular shapes are indifferent
 #   1 or 9 not 128/128      the build is wrong, stop
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
@@ -40,6 +35,7 @@ log() { echo "$@" > "$C"; }
 p() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
+V="ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
 
 start() {
 	i=0
@@ -53,27 +49,28 @@ start() {
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE UNTESTED ONE: weight scale in the table, pointer moved ====="
-	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
-	p cal_k3.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
+	log "===== 2) pointer moved, operand kept at mesa's 0x1004 ====="
+	p conv2d-cal.tflite "$V"
+	p cal_k3.tflite "$V"
+	p cal_k1.tflite "$V"
 
 	log ""
-	log "===== 3) for contrast, the multiplier with the pointer, round 49 ====="
-	p conv2d-cal.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_PTR=1"
+	log "===== 3) the same but with the vendor's 0x0E0E, which must FAIL ====="
+	p conv2d-cal.tflite "$V ROCKET_OP2=0x0E0E"
 
 	log ""
-	log "===== 4) the vendor arrangement on depthwise ====="
-	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
-	p mn_dw1.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1"
-	p dwconv.tflite "ROCKET_SCALE_TABLE=1 ROCKET_SCALE_TABLE_WT=1 ROCKET_SCALE_PTR=1 ROCKET_DW_REC48=1"
+	log "===== 4) the arrangement on depthwise ====="
+	p dwconv.tflite "$V"
+	p mn_dw1.tflite "$V"
+	p dwconv.tflite "$V ROCKET_DW_REC48=1"
 
 	log ""
 	log "===== 9) CONTROL that can fail: baseline again ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 9, then 2. This is the vendor's own arrangement:  ====="
-	log "===== weight scale in the table, second operand past it.           ====="
+	log "===== Read 1 and 9, then 2 against 3. If 2 passes and 3 fails, the ====="
+	log "===== layout is fine and only the operand value is still mesa's.   ====="
 	sync
 }
 case "$1" in

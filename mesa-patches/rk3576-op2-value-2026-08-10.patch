@@ -1,0 +1,51 @@
+From af3b1d278858af94a66a7f6229a13c914646dc04 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 10 Aug 2026 20:03:54 +1200
+Subject: [PATCH] rocket RK3576: keep mesa's operand value when moving the
+ pointer, and add ROCKET_OP2
+
+Round 51 ran the weight scale in the table with the pointer moved and it failed
+with an empty convolution, as did the requant multiplier with the pointer. So
+the table content is not the issue. But neither is the move: when the pointer
+moves, the new target got 0x0E0E, and round 49 already showed that word produces
+an empty convolution in the slot mesa's 0x5024 already points at. The move was
+never tested separately from the value.
+
+Write 0x1004 at the new target instead, which mesa's configuration accepts, with
+ROCKET_OP2 to override it.
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 7291622..bfeef7a 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -913,9 +913,23 @@ biases_done:
+                 * the new target, so the DPU read zeros. Write it.
+                 */
+                if (getenv("ROCKET_SCALE_PTR")) {
++                  /*
++                   * ⚠ The operand VALUE stays mesa's, not the vendor's.
++                   *
++                   * Round 49 wrote the vendor's 0x0E0E into the slot mesa's
++                   * 0x5024 already points at and got an empty convolution,
++                   * because 0x0E0E violates the round 36 rule that mesa's
++                   * configuration imposes. Round 51 then moved the pointer with
++                   * 0x0E0E at the new target and failed identically, whichever
++                   * content the table held. Same failure, same cause.
++                   *
++                   * So move the pointer but keep a value mesa's own
++                   * configuration accepts. ROCKET_OP2 overrides it.
++                   */
++                  const char *o2 = getenv("ROCKET_OP2");
+                   uint32_t *op2 = (uint32_t *)(b8 + groups * 64 +
+                                                output_channels * 2);
+-                  op2[0] = 0x0E0E;
++                  op2[0] = o2 ? (uint32_t)strtoul(o2, NULL, 0) : 0x1004;
+                }
+             }
+             unsigned cap = (bufsize - groups * 64) / sizeof(uint32_t);
+-- 
+2.43.0
+

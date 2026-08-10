@@ -88,6 +88,31 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-10 round 51 (The vendor's arrangement fails too, and the two failures have one cause)
+
+Baselines 128/128 at both ends.
+
+| | distinct |
+|---|---|
+| weight scale in the table, pointer moved | 1, empty |
+| the requant multiplier with the pointer, for contrast | 1, empty |
+| dwconv, vendor arrangement | 21, still 0/16 |
+
+Both combinations fail identically, so the decision rule's second branch
+applies: **the table content is not the issue.**
+
+But it is not the pointer move either, and the two failures have one cause.
+When the pointer moves, the new target gets `0x0E0E`, the vendor's own operand
+value, and round 49 already showed that exact word gives an empty convolution in
+the slot mesa's `0x5024` already points at. Same word, same failure, once
+written in place and once written at a moved pointer. The move was never tested
+separately from the value.
+
+Round 52 moves the pointer and keeps `0x1004`, the value mesa's configuration
+demonstrably accepts, with `ROCKET_OP2=0x0E0E` beside it as the variant that
+must fail. That separates the last two things still tangled together. Built,
+not flashed.
+
 ## 🔑 2026-08-10 A confirmed exactly, and the untested combination identified
 
 Using the **exact** per-channel scale from the captured fp16 table, rather than
