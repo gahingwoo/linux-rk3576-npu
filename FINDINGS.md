@@ -88,6 +88,43 @@ buffer layout or in the registers.
 `rootfs-overlay/usr/lib/libteflon.so`. Verify by dumping the file back out of
 `images/rootfs.ext2` and grepping it for the knob names.
 
+## 2026-08-10 round 47 (Separated at last. Neither half is adoptable as written, but depthwise moved for the first time.)
+
+Baselines 128/128 at both ends.
+
+| | distinct | range |
+|---|---|---|
+| baseline | 128 | **128..255** |
+| **TABLE alone** | 129 | **0..128** |
+| PTR alone | 256 | 0..255 |
+| both | 256 | 0..255 |
+| **dwconv, TABLE alone** | **28** (baseline 6) | **0..245** (baseline 0..128) |
+
+**Why TABLE alone fails, and it is not a mystery**: `conv2d-cal`'s
+`weight_tensor->scale` is `3.9125464`, and `fp16(3.9125464)` is **`0x43d3`**,
+which is exactly the value round 28 wrote and which failed then too. Writing
+tflite's weight scale into that slot reproduces a known-bad round.
+
+So the slot does not hold `weight_tensor->scale`. The vendor's entries are
+around `0.0012` for a model whose weights peak at `0.19`, and `0x1004`, which
+works, is `0.00049`. It wants a small positive fp16, and this driver's weight
+scale for that model is four thousand times larger. That the output mirrors
+about the zero point, 128..255 becoming 0..128, is consistent with a magnitude
+far outside the usable window.
+
+⚠ So the +0.998 match between the captured table and the scale implied by A is
+about **the vendor's own quantisation**, where the weight scale really is small.
+It does not license writing mesa's `weight_tensor->scale` into the same slot,
+and round 46 assumed it did.
+
+**The result worth keeping is depthwise.** `dwconv` with the table alone goes
+from 6 distinct values to **28**, and its maximum from 128 to 245 against a
+reference with 101 distinct. That is the first substantial movement depthwise
+has shown from any change, and it moves toward the reference rather than
+collapsing. Depthwise is per-channel quantised, so the table there is 32
+different values rather than one repeated, which is presumably why it does
+something for depthwise and harms the per-tensor shapes.
+
 ## ⚠ 2026-08-10 round 46 (The real fp16 table regressed the working shapes, and I changed two things at once again)
 
 Baselines 128/128 at both ends, so the result is real.
