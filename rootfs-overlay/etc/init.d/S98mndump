@@ -2,55 +2,48 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 77. conv0, which has never worked and was never measured.
+# 2026-08-11 round 78. Which half of round 52 emptied conv0's MAC?
 #
-# Round 76 was going to test chaining and could not. mn_conv0 FAILS ON ITS OWN,
-# 0 of 32 with all 32 channels constant and every row at 129, so mn_conv0dw1's
-# 5 of 32 says nothing about the handoff. By the rule written before that run,
-# conv0 comes first.
+# Round 77 settled two things about conv0 and one of them is my own regression.
 #
-# It is not a regression from this week's work: the logs of 2026-08-08 and
-# 2026-08-09 show the same failure. conv0 was simply never in the regression
-# set being run, which is a gap in how this has been measured, and it is in the
-# set from now on.
+# The MAC is EMPTY. Sweeping the output shift from 22 down to 6, an
+# amplification of 2^16, leaves the output bit for bit identical: distinct 1,
+# min and max both 126, every channel constant. Changing the scale from 0x5391
+# to 0x76be changes nothing either. Only the OFFSET moves it, from 126 at -2 to
+# 0 at -128, so the output is exactly 128 plus the offset and the accumulator
+# contributes nothing. The requant literals are innocent, and the comment
+# beside them stands.
 #
-# Four things were checked OFFLINE before building anything, by compiling the
-# vendor's own first conv at the same geometry and diffing:
+# And ROCKET_SCALE_OFF=1 brings the MAC BACK: distinct 60, min 126 max 185, 10
+# of 32 channels constant instead of 32. That arrangement is the one this
+# driver used before round 52. So round 52 took conv0 from computing something
+# wrong to computing nothing, and it was invisible because conv0 was not in the
+# regression set. That is my mistake twice over: the change and the gap that
+# hid it.
 #
-#   22 of 22 hardcoded registers    IDENTICAL to the vendor
-#   the ARGB weight layout          864 of 864 lanes, exact
-#   0x104c and 0x1050               differ only because the compiled model's
-#                                   calibration spans 0..250; the field is
-#                                   2^14 * 255 / span, and mn_conv0's input is
-#                                   full range, so mesa's 0x4000 is right for it
-#   the requant literals            NOT claimed as the bug, see below
+# Round 52 did two things at once, which is the mistake this log keeps
+# recording, and they were split then for the shapes that pass but never
+# retested on conv0:
 #
-# So the register stream and the weight buffer are both vendor-exact, and conv0
-# still writes a constant per channel.
+#   the fp16 table      oc entries of the per-channel weight scale, written at
+#                       the end of the A/B/C records
+#   the second operand  0x5024 moved past that table, with 0x1004 written at
+#                       the new target
 #
-# The requant is the one place a difference is visible: in_sc*wt_sc/out_sc for
-# mn_conv0 gives scale 0x76be at shift 22, while the code writes 0x5391 at
-# shift 25, which is 11 times smaller. But the comment beside those literals
-# says they came from a live vendor conv0 capture on this board and that the
-# computed pair is wrong, and the first conv also enables a CNA CVT pre-scale,
-# 0x104c = 0x4000 against the generic path's bypass, which the ratio ignores.
-# So it is a QUESTION here, not a fix.
-#
-# ROCKET_OUT_SHIFT_ABS is the knob that separates the two ways a constant
-# happens: a real MAC crushed by too small a requant lights up as the shift
-# drops, an empty MAC stays flat across the whole sweep. That is the first
-# thing to know about conv0 and it has never been asked.
+# ROCKET_SCALE_OFF turns off both. This round separates them on conv0, and asks
+# whether the operand VALUE matters there, since 0x1004 was fitted on a regular
+# conv and conv0 takes a different path through everything else.
 #
 # DECISION RULE, written before the run:
-#   conv0 lights up as the shift     the MAC is real and the requant is the
-#     drops                          problem; the literals go
-#   flat across the whole sweep      the MAC is empty and the requant is
-#                                    innocent; the next round goes at the CNA
-#                                    input path for a 3 channel surface
-#   the computed pair fixes it       the comment beside the literals was
-#                                    written before this week's fixes and is
-#                                    now stale
-#   anything else regresses          that comes first
+#   the table alone empties it     conv0 reads the region the fp16 entries now
+#                                  occupy, and it needs its own layout
+#   the operand alone empties it   the pointer move is what conv0 cannot take
+#   a different operand value      the value is fitted, not derived, and conv0
+#     revives it                   wants another one
+#   nothing but SCALE_OFF works    the two are not separable and conv0 needs
+#                                  the whole old arrangement until it is
+#                                  understood
+#   any other model regresses      that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -67,38 +60,35 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) conv0 as it stands ====="
+	log "===== 1..2) conv0: the two end points ====="
 	p mn_conv0.tflite ""
-
-	log ""
-	log "===== 2..6) crushed MAC or empty MAC? drop the output shift ====="
-	p mn_conv0.tflite ROCKET_FC_SHIFT=22
-	p mn_conv0.tflite ROCKET_FC_SHIFT=18
-	p mn_conv0.tflite ROCKET_FC_SHIFT=14
-	p mn_conv0.tflite ROCKET_FC_SHIFT=10
-	p mn_conv0.tflite ROCKET_FC_SHIFT=6
-
-	log ""
-	log "===== 7) the COMPUTED pair, which the code comment calls wrong ====="
-	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22 ROCKET_FC_OFFSET=0xffffff80"
-
-	log ""
-	log "===== 8) the computed scale with the captured offset ====="
-	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22"
-
-	log ""
-	log "===== 9) the coefficient arrangement from before round 52 ====="
 	p mn_conv0.tflite ROCKET_SCALE_OFF=1
 
 	log ""
-	log "===== 10..12) REGRESSION: depthwise and regular must not move ====="
-	p mn_dw1.tflite ""
-	p mn_dw25.tflite ""
-	p conv2d-cal.tflite ""
+	log "===== 3..5) the operand VALUE, with everything else as it is ====="
+	p mn_conv0.tflite ROCKET_OP2=0x0e0e
+	p mn_conv0.tflite ROCKET_OP2=0
+	p mn_conv0.tflite ROCKET_OP2=0x3fc4
 
 	log ""
-	log "===== Read 2 to 6 as a sweep. A constant that never moves as the  ====="
-	log "===== requant is amplified is an empty MAC, not a crushed one.    ====="
+	log "===== 6) the fp16 table holding the requant multiplier instead ====="
+	p mn_conv0.tflite ROCKET_SCALE_MUL=1
+
+	log ""
+	log "===== 7..8) the old float surface, for the record ====="
+	p mn_conv0.tflite ROCKET_FS_FLOATS=1
+	p mn_conv0.tflite ROCKET_FS_ZERO=1
+
+	log ""
+	log "===== 9..12) REGRESSION: nothing else may move ====="
+	p conv2d-cal.tflite ""
+	p cal_k3.tflite ""
+	p mn_dw1.tflite ""
+	p mn_dw25.tflite ""
+
+	log ""
+	log "===== Compare 1 and 2 first, then find which single knob between  ====="
+	log "===== them reproduces 2. That names the half that emptied conv0.  ====="
 	sync
 }
 case "$1" in
