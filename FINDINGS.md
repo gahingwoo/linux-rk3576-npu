@@ -1,6 +1,63 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-11 round 69 RESULT: **THE 1024 CHANNEL DEPTHWISE COMPUTES.** The weight buffer is channel groups of 64
+
+| model | before | after |
+|---|---|---|
+| `mn_dw25` (7x7, 1024 ch) | 432/1024, **2** COMPUTED | **992/1024, 413 COMPUTED** |
+| `dw25_t4` / `dw25_t0` / `dw25_imp` | 0 to 112 / 1024 | **992/1024, every one COMPUTED** |
+| live channels, one tap everywhere | 448..575 | **0..991, one run** |
+| `mn_dw1`, `dw1_t4`, `conv2d-cal` | correct | unchanged, whole model 2/2 |
+
+**The control passes**: `ROCKET_DW_GROUP=1024` reproduces the old numbers
+exactly, 432/1024 with 2 COMPUTED and the same 448..575 window.
+
+**The bug.** The depthwise weight buffer is **channel groups of 64**, each group
+tap major inside itself and the groups laid end to end. mesa wrote one group of
+C. A group of C puts a channel's nine taps `2C` bytes apart, 2048 at 1024
+channels; a group of 64 puts them 128 apart whatever C is. **The two are
+identical up to 64 channels**, which is why every depthwise in this project had
+been byte exact and this one had not.
+
+**How the board found it.** Nine models, each with the live tap at the same
+position in every channel, gave nine contiguous live runs that moved with the
+tap:
+
+| tap | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| from | 0 | 64 | 192 | 320 | 448 | 512 | 640 | 768 | 896 |
+| to | 127 | 255 | 383 | 511 | 575 | 703 | 831 | 959 | 991 |
+
+Inverted: **each output channel could reach only one or two of its nine spatial
+blocks**, advancing one tap every 128 channels. A depthwise needs all nine.
+
+**How the layout was settled: offline, no board.** The depthwise weights are in
+the `.rknn` even though the coefficient table is not, so vendor models were
+compiled at 32, 128, 256 and 1024 channels with weights generated on the host,
+which makes the comparison exact rather than a correlation:
+
+| layout | 32 ch | 128 ch | 256 ch | 1024 ch |
+|---|---|---|---|---|
+| **channel groups of 64** | 288/288 | **1152/1152** | **2304/2304** | **9208/9216** |
+| one group of C (mesa's) | 288/288 | 4/1152 | 15/2304 | 367/9216 |
+
+The eight lanes that miss at 1024 are all **one channel**, whose kernel the
+quantiser treated differently; 1023 of 1024 channels are exact.
+
+The total size does not change, 16 groups of 9 x 128 being the same 18432
+bytes, so the CNA weight byte count at `0x101c` is untouched.
+
+**Still open**: channels 992..1023 are constant in all three 1024 channel
+models, exactly 32 of them, in a layer of 16 whole groups. Not a partial group.
+
+**Withdrawn along the way**: round 63's reading that the hardware used tap
+`(-p) mod 9`. Writing that permutation made things worse, and round 65 showed
+why: the tap the decoder reports for a channel whose output is wrong is
+meaningless, spread flat across all nine offsets, while the 32 channel control
+resolves every channel to offset 0.
+
+
 ## 2026-08-11 round 62 RESULT: **DEPTHWISE IS SOLVED.** The overlap rows were staged twice
 
 | model | before | after |
