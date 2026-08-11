@@ -2,41 +2,41 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 75. DEPTHWISE IS DONE. A full regression, with every control.
+# 2026-08-11 round 76. Chaining, with both halves now known good.
 #
-# Round 74 closed it. The derived DPU 0x4050 alone takes the 1024 channel layer
-# to 1024 of 1024, with no workaround on top:
+# Round 75 closed depthwise. Every default passed and every control failed in
+# exactly the way it was recorded to:
 #
-#   dw25_t4, derived 0x4050            1024/1024, every one COMPUTED
-#   mn_dw25, derived 0x4050            1024/1024
-#   dw25_t4, old constant 0x00013133    992/1024, live 0..991
-#   mn_dw1, dw1_t4, conv2d-cal, cal_oc16, whole model    all unchanged
+#   defaults   dw 32ch 32/32 x3, dw 1024ch 1024/1024 x4, six regular shapes,
+#              whole model 2/2
+#   controls   STAGE_ALL 0/32 with 1 x12 then 200,200
+#              DW_GROUP=1024 0/1024 with live 448..575
+#              DW_OW_CFG old constant 992/1024 with live 0..991
+#              DW_REC64 5/32 with 0 COMPUTED and every row at 255
 #
-# So the +1 on DPU 0x4030 was masking this, and it is gone: it disagreed with
-# the vendor, which writes oc-1 there at every channel count.
+# So chaining is the last thing between this driver and MobileNet, and it can
+# now be tested properly for the first time, because until yesterday one half
+# of every chain was broken on its own and nothing could be attributed.
 #
-# Three separate bugs were behind depthwise, all found in the last two days:
+# mn_conv0dw1 is the ladder: it is exactly CONV_2D then DEPTHWISE_CONV_2D, and
+# both operators are in this run on their own as mn_conv0 and mn_dw1. If both
+# halves pass alone and the chain does not, the fault is the handoff between
+# them and nothing else, which is a much smaller thing than "chaining is
+# broken".
 #
-#   the coefficient record    48 bytes, [A|C] and no B, twice as many records
-#                             as a regular conv, with the fp16 table after it
-#   the row window staging    a window overlapping the previous one by a row
-#                             was staging those rows a SECOND time, so every
-#                             row after the overlap convolved input two rows
-#                             late
-#   the weight buffer, and    channel groups of 64, not one group of C, and
-#     DPU 0x4050              SIZE_E_2 = (DIV_ROUND_UP(oc,16) - 1) & 3 rather
-#                             than the hardcoded 32 channel case
+# dwconv and conv2x are longer chains, six and nine tensors, and are here for
+# context rather than attribution.
 #
-# This round changes nothing. It runs everything that has ever passed, plus
-# every control, in one boot, so the state is one log rather than a memory of
-# fifteen.
+# Nothing in the driver changed this round.
 #
 # DECISION RULE, written before the run:
-#   every default passes and every    depthwise is finished at both channel
-#     control fails as recorded       sizes and the next target is chaining
-#   any default regresses             that comes first
-#   any control PASSES                it is not testing what it claims and the
-#                                     result it was guarding is not evidence
+#   the chain passes              chaining works now and MobileNet is next
+#   both halves pass, chain does   the handoff is the fault: the intermediate
+#     not                         buffer, its layout, or the second task's
+#                                 input address
+#   mn_conv0 alone fails          it is not chaining, and that comes first
+#   mn_dw1 alone fails            the depthwise close regressed, and that comes
+#                                 first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,47 +53,37 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== DEPTHWISE, 32 channels ====="
+	log "===== 1..2) the two halves, each on its own ====="
+	p mn_conv0.tflite ""
 	p mn_dw1.tflite ""
-	p dw1_t4.tflite ""
-	p dw_imp.tflite ""
 
 	log ""
-	log "===== DEPTHWISE, 1024 channels ====="
-	p mn_dw25.tflite ""
-	p dw25_t4.tflite ""
-	p dw25_t0.tflite ""
-	p dw25_imp.tflite ""
+	log "===== 3) the same two, chained ====="
+	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== REGULAR convolutions ====="
+	log "===== 4..5) longer chains, for context ====="
+	p dwconv.tflite ""
+	p conv2x.tflite ""
+
+	log ""
+	log "===== 6..7) regular shapes, so a regression cannot hide ====="
 	p conv2d-cal.tflite ""
-	p cal_k3.tflite ""
-	p cal_k1.tflite ""
-	p cal_s1.tflite ""
-	p cal_oc16.tflite ""
 	p mn_pw2.tflite ""
 
 	log ""
-	log "===== THE CONTROLS, each must FAIL in its own way ====="
-	log "-- staging: the overlap rows twice, expect 200s past row 90"
-	p dw_imp.tflite ROCKET_STAGE_ALL=1
-	log "-- weight layout: one group of C, expect 0/1024"
-	p dw25_t4.tflite ROCKET_DW_GROUP=1024
-	log "-- 0x4050: the old constant, expect 992/1024"
-	p dw25_t4.tflite ROCKET_DW_OW_CFG=0x00013133
-	log "-- the coefficient record: 64 bytes, expect depthwise to fall apart"
-	p mn_dw1.tflite ROCKET_DW_REC64=1
+	log "===== 8) the 1024 channel depthwise, likewise ====="
+	p mn_dw25.tflite ""
 
 	log ""
-	log "===== whole model ====="
+	log "===== 9) whole model ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Every default must pass and every control must fail. A     ====="
-	log "===== control that passes means its result was never evidence.   ====="
+	log "===== Read 1 and 2 before 3. A chain whose halves do not pass    ====="
+	log "===== separately says nothing about chaining.                    ====="
 	sync
 }
 case "$1" in
