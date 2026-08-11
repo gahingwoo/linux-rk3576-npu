@@ -149,5 +149,26 @@ else:
     print(f"    COMPUTED-correct channels: {okl[:48]}"
           f"{' ...' if len(okl) > 24 else ''}", flush=True)
 
+    # WHICH channels are alive, as runs.
+    #
+    # With one tap at the same position in every channel, exactly 128 of 1024
+    # produce anything at all and 896 are flat, and that count does not change
+    # when the tap moves from the centre to the corner. 128 is 1024/8. Whether
+    # those 128 are a contiguous block or spread evenly is the difference
+    # between a truncated weight fetch and a strided one, and nothing else in
+    # this report can tell them apart.
+    live = [c for c in range(oc) if not npu_flat[c]]
+    if live and len(live) < oc:
+        runs, st = [], live[0]
+        for i in range(1, len(live)):
+            if live[i] != live[i - 1] + 1:
+                runs.append((st, live[i - 1])); st = live[i]
+        runs.append((st, live[-1]))
+        txt = ", ".join(f"{a}" if a == b else f"{a}..{b}" for a, b in runs[:10])
+        print(f"    channels whose output VARIES ({len(live)}), as runs: {txt}"
+              f"{' ...' if len(runs) > 10 else ''}", flush=True)
+        print(f"      {len(runs)} runs; first live {live[0]}, last {live[-1]}",
+              flush=True)
+
 sys.stdout.flush()
 os._exit(0)
