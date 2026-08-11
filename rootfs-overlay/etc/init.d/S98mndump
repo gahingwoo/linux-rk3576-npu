@@ -2,42 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 67. Which 128 channels are alive?
+# 2026-08-11 round 68. Nine taps, nine live ranges, one addressing law.
 #
-# Round 66's control passed and the answer is sharp:
+# Round 67 answered "which 128" and the answer is a CONTIGUOUS RUN that MOVES
+# WITH THE TAP:
 #
-#   dw1_t4    32 ch, one tap everywhere    32/32 correct,    0 flat
-#   dw25_t4   1024 ch, centre tap          0/1024 correct, 896 flat
-#   dw25_t0   1024 ch, corner tap          0/1024 correct, 896 flat
-#   dw25_imp  1024 ch, tap = c mod 9     112/1024 correct,  89 flat
+#   dw25_t0   live channels    0..127     one run
+#   dw25_t4   live channels  448..575     one run
 #
-# With ONE tap at the same position in every channel, exactly 128 of 1024
-# channels produce anything at all, and moving that tap from the centre to the
-# corner does not change the count. 128 is 1024/8.
+# 128 wide either way. So the weight fetch is not truncated and not strided: for
+# a given output channel the hardware reads a WINDOW of the weight buffer, and
+# which channels see a live byte depends on where that window falls. Only 128
+# channels of 1024 can reach any one spatial block.
 #
-# That also finishes off the "fixed tap per group of 64" story from round 65:
-# under it, dw25_t4 would light up whole groups whose tap is 4 and flatten the
-# rest, in blocks of 64. 896 flat is not a multiple-of-64 pattern of groups, it
-# is seven eighths of everything.
+# The 32 channel case never shows this because its whole weight buffer is 576
+# bytes: every channel reaches every block, which is why it has always worked
+# and why nothing found here in fifteen rounds of coefficient work applied to
+# it.
 #
-# The one thing needed now is WHICH 128. A contiguous block means the weight
-# fetch is truncated, and 128 channels is exactly 512 bytes of each 2048 byte
-# spatial block. Evenly spread means it is strided, and the stride names the
-# unit. Nothing else in the report can tell those apart, so perch.py now prints
-# the live channels as runs.
+# Two points do not determine a law. Fitting them already produced two
+# candidates that each explain one point and miss the other by 64 channels, so
+# this round measures all nine instead. Each model puts the live tap at the same
+# position in every channel, so the live bytes are exactly one 2048 byte spatial
+# block of mesa's buffer, and the live channel range says which channels can
+# address that block.
+#
+# What the shape will mean:
+#
+#   start = k*p, width 128        a linear address map; k is the channels per
+#                                 block, and mesa's block stride and the
+#                                 hardware's disagree by 2048/k bytes per
+#                                 channel
+#   width changes with p          the window is not uniform, and the ends will
+#                                 say whether it wraps
+#   some taps light nothing       those blocks are outside every channel's
+#                                 window, and the count of dead taps says by
+#                                 how much the buffer overruns
 #
 # Nothing in the driver changed this round.
 #
 # DECISION RULE, written before the run:
-#   live = 0..127, one run           the weight fetch is truncated at 512 bytes
-#                                    per spatial block, and the next round is
-#                                    about the byte count
-#   live = every 8th channel         it is strided, and the stride is the unit
-#                                    the block is addressed in
-#   live = 128 spread in 64 runs     it follows the pair packing, two channels
-#                                    of every sixteen
-#   the 32 channel case has none     it never truncates because 32 channels fit
-#     flat                           whole, which is why it has always worked
+#   nine starts fall on a line     read the slope, fix the stride, done
+#   they do not                    the window is not affine and the next step
+#                                  is the CNA weight registers rather than the
+#                                  buffer
+#   any run is not contiguous      the fetch is strided after all and round 67
+#                                  saw two contiguous ones by luck
+#   dw1_t4 not 32/32               the control failed, read nothing else
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -54,33 +65,32 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) one tap everywhere at 1024: WHICH 128 are alive? ====="
-	p dw25_t4.tflite ""
+	log "===== the nine taps, in order. Read the VARIES run of each ====="
 	p dw25_t0.tflite ""
+	p dw25_t1.tflite ""
+	p dw25_t2.tflite ""
+	p dw25_t3.tflite ""
+	p dw25_t4.tflite ""
+	p dw25_t5.tflite ""
+	p dw25_t6.tflite ""
+	p dw25_t7.tflite ""
+	p dw25_t8.tflite ""
 
 	log ""
-	log "===== 3) the per-channel-tap model, for its 89 flat ones ====="
-	p dw25_imp.tflite ""
-
-	log ""
-	log "===== 4) the real 1024 channel layer, same question ====="
-	p mn_dw25.tflite ""
-
-	log ""
-	log "===== 5) CONTROL: 32 channels, one tap everywhere, nothing flat ====="
+	log "===== CONTROL: 32 channels, one tap everywhere, must be 32/32 ====="
 	p dw1_t4.tflite ""
 
 	log ""
-	log "===== 6) REGRESSION: the real 112x112 depthwise ====="
+	log "===== REGRESSION: the real 112x112 depthwise ====="
 	p mn_dw1.tflite ""
 
 	log ""
-	log "===== 7) a regular shape, which must be untouched ====="
+	log "===== a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read the runs line in tests 1 and 2. One run beginning at 0 ====="
-	log "===== is a truncated fetch; many short runs is a stride.          ====="
+	log "===== Nine starts. If they fall on a line, the slope is the number ====="
+	log "===== of channels that fit in one spatial block, and that is it.   ====="
 	sync
 }
 case "$1" in
