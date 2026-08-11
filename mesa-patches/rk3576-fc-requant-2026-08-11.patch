@@ -1,0 +1,121 @@
+From 6c213940e2bbb2266ff9986884c73d4809142f34 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 20:01:03 +1200
+Subject: [PATCH] rocket RK3576: derive the first conv's requant, with four
+ more bits of shift
+
+The literals were offset -2, scale 0x5391 and shift 25, and the comment above
+them said computing them instead gives offset -128, scale 0x76be and shift 22,
+which is wrong for conv0. Two thirds of that is backwards.
+
+With an impulse first conv, whose output decodes to exactly the right input
+plane and tap on all 32 channels, the map from the hardware's surface to the
+reference is affine and identical for every channel. Fitted over unclipped
+pixels only:
+
+    shift 25   a 0.7096   b  -89.34    b/a = -125.90
+    shift 26   a 1.4197   b -178.84    b/a = -125.97
+    shift 27   a 2.8369   b -357.38    b/a = -125.98
+    shift 28   a 5.6522   b -711.90    b/a = -125.95
+
+correlation 0.9999, and a doubles with every halving of the multiplier, so it
+is the ratio between what is written and what is wanted and it survived being
+halved three times.
+
+The multiplier wanted is 0.000452413 while in_sc * wt_sc / out_sc is
+0.007247427, a ratio of 16.02: the generic computation with four more bits of
+shift, presumably because this path enables the CNA CVT, 0x104c = 0x4000
+against the generic bypass, leaving the accumulator four bits hot. And b/a is a
+constant -126, exactly the gap between the offset written, -2, and the generic
+out_zp - 0x80 of -128.
+
+So the offset and the scale in that comment were right and the shift was short
+by four; reading the three together as one captured triple is what kept conv0
+broken. conv0 now gets scale 0x76be at shift 26 with offset -128, 0.12 percent
+from the measured multiplier.
+
+ROCKET_FC_OFFSET, ROCKET_FC_SCALE and ROCKET_FC_SHIFT still override so the old
+triple can be put back as a control.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 62 ++++++++++++++++++++-----
+ 1 file changed, 51 insertions(+), 11 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 317c609..acd5469 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -260,18 +260,58 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    R_DPU(0x40a4, 0x80000000);
+    R_DPU(0x40a8, 0x7fffffff);
+    /*
+-    * OUT_CVT requant for conv0, vendor-exact. A register-by-register diff of
+-    * the live vendor RK3576 conv0 regcmd against this encoder showed these three
+-    * are this conv0's real captured values (offset -2, scale 0x5391, shift 25) --
+-    * NOT, as a previous comment guessed, leftovers from a random-weight conv.
+-    * Computing them instead (the block that used to live here) put offset -128 /
+-    * scale 0x76be / shift 22, which is wrong for conv0. The output saturation we
+-    * chased to here was actually the CNA FC_CON1=0x777 feature-offset bug below;
+-    * with that fixed these vendor values are the correct requant.
++    * OUT_CVT requant for the first conv: the generic computation with the
++    * shift four larger.
++    *
++    * The literals here were offset -2, scale 0x5391 and shift 25, and the
++    * comment that stood above them said computing them instead gives offset
++    * -128, scale 0x76be and shift 22, "which is wrong for conv0". Two thirds
++    * of that is now measured to be backwards.
++    *
++    * With an impulse first conv, whose output decodes to exactly the right
++    * input plane and tap on all 32 channels, the map from the hardware's
++    * surface to the reference is affine and the same for every channel. Fitted
++    * over unclipped pixels only:
++    *
++    *   shift 25   a 0.7096   b  -89.34     b/a = -125.90
++    *   shift 26   a 1.4197   b -178.84     b/a = -125.97
++    *   shift 27   a 2.8369   b -357.38     b/a = -125.98
++    *   shift 28   a 5.6522   b -711.90     b/a = -125.95
++    *
++    * correlation 0.9999, and a doubles with every halving of the multiplier,
++    * so a IS the ratio between the multiplier written and the one wanted, and
++    * it survived being halved three times.
++    *
++    * Two things fall out of it. The multiplier wanted is 0.000452413, and
++    * in_sc * wt_sc / out_sc is 0.007247427, a ratio of 16.02: the generic
++    * value with FOUR more bits of shift. And b/a is a constant -126 at every
++    * shift, which is the hardware adding 126, which is exactly the gap between
++    * the offset written here, -2, and the generic out_zp - 0x80, -128.
++    *
++    * So the old comment had the offset and the scale right and the shift short
++    * by four, and reading the three together as "the captured values" is what
++    * kept conv0 broken. The 16 is presumably the CNA CVT this path enables,
++    * 0x104c = 0x4000 against the generic path's bypass, leaving the
++    * accumulator four bits hot.
++    *
++    * ROCKET_FC_OFFSET, ROCKET_FC_SCALE and ROCKET_FC_SHIFT still override, so
++    * the old triple can be put back as a control.
+     */
+-   R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", 0xfffffffe)); /* OUT_CVT offset */
+-   R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", 0x00005391));  /* OUT_CVT requant scale */
+-   R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", 0x00000019));  /* OUT_CVT shift */
++   {
++      float conv_scale =
++         (task->input_scale * task->weights_scale) / task->output_scale;
++      uint32_t sb = fui(conv_scale);
++      /* The generic path computes this then emits shift - 1; keep both. */
++      unsigned fc_shift = 127 + 31 - 32 - (sb >> 23) + 16 - 1 + 4;
++      unsigned fc_scale = ((sb >> 9) & 0x7fff) + 1;
++      if (fc_scale < (1 << 14))
++         fc_scale |= (1 << 14);
++      int32_t fc_off = (int32_t)task->output_zero_point - 0x80;
++
++      R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", (uint32_t)fc_off));
++      R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", fc_scale));
++      R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", fc_shift));
++   }
+    R_DPU(0x40b8, 0x00003100); /* out_w*out_h */
+    R_DPU(0x40bc, 0x00000000);
+    R_DPU(0x40c0, 0x04440100);
+-- 
+2.43.0
+

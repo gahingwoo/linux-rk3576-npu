@@ -2,47 +2,54 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 85. Make the affine fit mean something, then read it.
+# 2026-08-11 round 86. conv0's requant, measured rather than swept.
 #
-# Round 84's pad value change is INERT. fc_imp gives a 0.3446 against 0.3445
-# with the control and correlation 0.8897 either way, identical to four
-# decimals, and conv0 barely moves.
+# Round 85 fixed the instrument and the instrument then answered. Fitting only
+# unclipped pixels, on the impulse first conv:
 #
-# ⚠ AND THAT KILLS ROUND 83'S READING, WHICH WAS MINE AND WAS WRONG. That round
-# saw the decode report correlation 1.000 on a 32x32 interior crop while the
-# affine fit over the whole 112x112 reached only 0.89, and called the
-# difference a border error. It is not. With pad_top and pad_left at 0 the
-# padding touches ONE row and ONE column, 1.8 percent of the surface, which
-# cannot pull a correlation from 1.000 to 0.89.
+#   shift 25   a 0.7096   b  -89.34    b/a = -125.90
+#   shift 26   a 1.4197   b -178.84    b/a = -125.97
+#   shift 27   a 2.8369   b -357.38    b/a = -125.98
+#   shift 28   a 5.6522   b -711.90    b/a = -125.95
 #
-# The real cause is the instrument. perch.py's reference is max(cpu, out_zp),
-# ReLU clipped, and both surfaces saturate at 255. A straight line fitted
-# between two DIFFERENTLY clipped shapes cannot reach correlation 1 however
-# right the underlying map is, and the NPU's clipping differs from the
-# reference's precisely because its scale is wrong. The 0.89 was the clipping
-# all along.
+# correlation 0.9999 and a identical across all 32 channels to four decimals,
+# so the map is affine and per layer. a DOUBLES with every halving of the
+# multiplier, which is what makes it the ratio between what is written and what
+# is wanted rather than a number that happens to fit: it survived being halved
+# three times.
 #
-# So the fit now excludes any pixel where either surface is at the floor or the
-# ceiling. On the unclipped remainder a and b are the real affine map, and the
-# multiplier being written is 0x5391 / 2^25 while the one wanted is a times
-# that.
+# Two things fall out.
 #
-# The pad value change stays. It is derived the same way the generic path
-# derives it, it matches the vendor for a zero point of 0, and it affects one
-# row and one column here, which is too little for this measurement to resolve
-# either way. It is correct by derivation and unproven by experiment, and it is
-# recorded as that rather than as a fix.
+#   the multiplier wanted is 0.000452413, and in_sc * wt_sc / out_sc is
+#   0.007247427, a ratio of 16.02. That is the generic computation with FOUR
+#   more bits of shift, presumably because this path enables the CNA CVT,
+#   0x104c = 0x4000 against the generic bypass, leaving the accumulator four
+#   bits hot.
+#
+#   b/a is a constant -126 at every shift, so the hardware adds 126, which is
+#   exactly the gap between the offset this path wrote, -2, and the generic
+#   out_zp - 0x80, which is -128.
+#
+# The comment that stood over those literals said computing them gives offset
+# -128, scale 0x76be and shift 22, "which is wrong for conv0". The offset and
+# the scale were right and the shift was short by four, and reading the three
+# together as one captured triple is what kept conv0 broken.
+#
+# conv0 now gets scale 0x76be at shift 26 with offset -128, a multiplier of
+# 0.000452965 against the 0.000452413 measured, 0.12 percent out.
+#
+# ⚠ One slip of mine, caught before flashing: the first version wrote shift 27,
+# because the generic path computes a shift and then emits shift - 1, and I
+# copied the pre-decrement value.
 #
 # DECISION RULE, written before the run:
-#   correlation goes to 1.000 and     the map is affine after all and a names
-#     a is consistent across          the requant; write it and be done
-#     channels
-#   correlation rises but a varies     it is per channel, not per layer, and
-#     per channel                      the coefficient buffer is the target
-#   correlation stays near 0.89        the error is not affine at all and the
-#                                      window, not the scaling, is still wrong
-#   conv2d-cal's fit is not a=1 b=0    the fit itself is broken; nothing else
-#     where it has wrong channels      can be read
+#   a goes to 1.00 and b to 0        the derivation is right; whether conv0 is
+#                                    then COMPUTED says if anything else remains
+#   conv0 COMPUTED                   conv0 is fixed
+#   a stays near 0.71                the change did not reach the hardware
+#   a is 2 or 0.5                    the shift is out by one and the sign says
+#                                    which way
+#   any other model moves            the first conv path is leaking
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -59,28 +66,41 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the impulse model, where the map should be exact ====="
+	log "===== 1) the impulse model: a must be 1.00 and b must be 0 ====="
 	p fc_imp.tflite ""
 
 	log ""
-	log "===== 2..4) and at three shifts: a must track the multiplier now ====="
-	p fc_imp.tflite ROCKET_FC_SHIFT=26
-	p fc_imp.tflite ROCKET_FC_SHIFT=27
-	p fc_imp.tflite ROCKET_FC_SHIFT=28
-
-	log ""
-	log "===== 5) conv0 with its real weights ====="
+	log "===== 2) conv0 with its real weights ====="
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 6..8) REGRESSION, and cal_k1 has a wrong channel to fit ====="
+	log "===== 3) the CONTROL: the old triple, which must put a back to 0.71 ====="
+	p fc_imp.tflite "ROCKET_FC_OFFSET=0xfffffffe ROCKET_FC_SCALE=0x5391 ROCKET_FC_SHIFT=25"
+
+	log ""
+	log "===== 4..5) one bit either way, so the shift is pinned not guessed ====="
+	p fc_imp.tflite ROCKET_FC_SHIFT=25
+	p fc_imp.tflite ROCKET_FC_SHIFT=27
+
+	log ""
+	log "===== 6) the chain that needs conv0 ====="
+	p mn_conv0dw1.tflite ""
+
+	log ""
+	log "===== 7..9) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== If a is about 0.34 and halving the multiplier doubles it,   ====="
-	log "===== the shift is short by log2(1/a) and that is the whole fix.  ====="
+	log "===== 10) whole model ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== a = 1.00 and b = 0 on test 1 is the prediction. Tests 4 and ====="
+	log "===== 5 must give a = 0.5 and a = 2, or the shift is not pinned.  ====="
 	sync
 }
 case "$1" in
