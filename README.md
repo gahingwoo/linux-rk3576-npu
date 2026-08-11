@@ -202,8 +202,41 @@ profile**, which put an error at a task boundary in one line of output. Every
 round since has been written with its decision rule and a control that can
 fail, and two readings were withdrawn that way.
 
-**What still does not compute**: chained operations, and MobileNet, which needs
-them.
+## The first convolution: four literals
+
+conv0 had never worked, and it was never in the regression set, so it was not
+measured until 2026-08-11. It takes its own code path whose register values are
+literals from a single capture. Four were wrong, each found by a different
+instrument and each with a control that reproduces it:
+
+| what | was | is |
+|---|---|---|
+| the coefficient region | the fp16 scale table | left zero for a first conv |
+| `CNA 0x1080`, padding amounts | `0x00000101`, symmetric 1 | derived from the layer |
+| `CNA 0x1084`, pad value | `0x00808080` | `in_zp - 0x80`, replicated |
+| `DPU 0x40ac/b0/b4`, requant | offset -2, `0x5391`, shift 25 | `out_zp - 0x80`, `0x76be`, shift 26 |
+
+The coefficient region was an address collision: `0x5024` points at
+`bias_addr + 0x100` on this path, and the table this driver started writing in
+an earlier round is 256 bytes for 32 output channels, so it landed exactly on
+the second operand. The padding was symmetric one on every side, which is what
+a `padding=1` convolution asks for; tflite SAME padding on a 224 to 112 stride
+2 layer needs one pad in total, so it belongs on the other corner. An impulse
+first conv decoded to the input shifted one pixel up and left, on all 32
+channels at correlation 1.000, which is what named it.
+
+The requant is the one worth reading twice. The comment above those literals
+said computing them gives offset -128, scale `0x76be` and shift 22, "which is
+wrong for conv0". The offset and the scale were right and the shift was short
+by four; treating the three as one captured triple, to be accepted or rejected
+together, is what kept conv0 broken.
+
+An impulse first conv is now byte exact. The real conv0 is 99.5 percent of
+pixels exact, with the remainder at the saturation boundary plus a 0.3 percent
+tail.
+
+**What still does not compute**: the last half percent of conv0, chained
+operations, and MobileNet, which needs them.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
 retractions.

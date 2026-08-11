@@ -36,7 +36,7 @@ remains is at the saturation boundary plus a 0.3 percent tail. `ROCKET_CVT_DOWN`
 does not touch it, so it is not the int32 overflow the generic path carries that
 knob for.
 
-⚠ **Two readings of mine were withdrawn on the way**, both because a measurement
+**Two readings of mine were withdrawn on the way**, both because a measurement
 was taken in a state that could not answer:
 
 - Round 77 swept the requant with an EMPTY MAC, saw nothing move, and concluded
