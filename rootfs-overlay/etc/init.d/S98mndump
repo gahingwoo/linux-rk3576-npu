@@ -2,48 +2,42 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 90. The last 0.12 percent of conv0's multiplier.
+# 2026-08-11 round 91. Twelve lanes per channel carrying a weight of -23.
 #
-# Round 89's void check worked and its answer was negative. T=20 wrecks conv0,
-# within 1 falling to 42.3 percent, and T=10 degrades it to 59.5, so the knob
-# reaches. T=2, 4 and 6 change NOTHING: 99.5, 99.5, 99.6, 99.7 and 7.9 percent
-# at a rail, identical at every one. So the requant multiply is not wrapping
-# int32 and that hypothesis is dead, killed with a control that demonstrably
-# bites.
+# Round 90 excluded the multiplier's magnitude. The far values bite hard,
+# 0x7000 giving 48.8 percent within 1 and 0x7fff 47.2, so the knob works, and
+# the fitted a moved exactly as computed, 0.9991 at 0x76be and 0.9999 at
+# 0x7699. The residual did not move at all: 99.5, 99.5, 99.6, 99.7 and 7.9
+# percent at a rail, identical at every scale in the sweep.
 #
-# A second thing died offline. The nine channels conv0 gets right are exactly
-# the nine with a NEGATIVE bias, whose reference is ReLU clipped flat to zero,
-# which is why perch counts all nine as trivial and none as COMPUTED. So "the
-# wrong channels have larger biases" is an artefact of which references are
-# constant, not a per-channel fault: every channel whose reference varies is
-# wrong.
+# So the 0.12 percent is not what costs the half percent, and what survives is
+# the per-channel spread, whose minimum sits at 0.949 whatever the global scale
+# is. A per-channel multiplicative error cannot come from a global multiplier.
 #
-# conv0 is therefore uniformly slightly off rather than broken in a few places,
-# and the one number left is the multiplier. The affine fit measured the need
-# as 0.000452413, precise to about 0.014 percent since a itself is good to
-# 0.0001, and the derived value writes 0.000452965, which is 0.122 percent
-# high. In counts that is 0.31 of an LSB at full scale, enough to push a pixel
-# already near a boundary over it, and 0.5 percent of pixels are off by more
-# than one.
+# It comes from the weight buffer. Each 16 byte unit is three [R,G,B,pad]
+# groups and a FOURTH group that no kx ever reaches, because kx runs 0 to 2.
+# Those four bytes keep whatever the memset left, which was zero. A stored byte
+# is w - 0x80 and the hardware subtracts the weight zero point through B, so a
+# lane's effective weight is stored - (wt_zp - 0x80). Zero is therefore not
+# nothing: for conv0, whose weight zero point is 151, it is -23. Twelve lanes
+# per output channel, three ky by four bytes, multiply real input data by -23.
 #
-#   0x7699 at shift 26   0.000452414   the measured need, to six digits
-#   0x76be at shift 26   0.000452965   what the generic mantissa gives
-#
-# The generic formula truncates the float mantissa and adds one, which lands on
-# 0x76be. Whether the remaining gap is that truncation or something structural
-# is what this asks: if 0x7699 improves the residual, the multiplier wants
-# rounding rather than truncation and it is derivable; if it does not, the
-# gap is not what is costing the 0.5 percent.
+# The neutral value is pad, exactly what the alpha lane beside them already
+# gets. This is the same mistake the depthwise weight buffer had in its zero
+# point lanes, and it hides on any per-axis tensor because there the zero point
+# is 0 and the two agree. conv0 is the only per-TENSOR weight tensor in this
+# project with a zero point that is not 128.
 #
 # DECISION RULE, written before the run:
-#   0x7699 improves the residual     the multiplier is the last of it, and
-#                                    rounding the mantissa is the fix
-#   no scale in the sweep helps      0.12 percent is not what costs the half
-#                                    percent, and the next question is the
-#                                    rounding MODE of the requant rather than
-#                                    its magnitude
-#   the sweep does not move at all   the knob is not reaching, which the two
-#                                    far values in it are there to disprove
+#   the residual improves            those lanes were it, and the fix is one
+#                                    memset
+#   COMPUTED channels appear         conv0 is fixed
+#   nothing changes                  the hardware ignores that fourth group
+#                                    after all, and the half percent is
+#                                    elsewhere
+#   ROCKET_FC_ZERO_PAD restores      the control; it must put the old residual
+#     the old numbers                back exactly
+#   any other model moves            the first conv path is leaking
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -60,37 +54,38 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) conv0 as it stands, 0x76be ====="
+	log "===== 1..2) conv0 with the neutral fill, and the control ====="
 	p mn_conv0.tflite ""
+	p mn_conv0.tflite ROCKET_FC_ZERO_PAD=1
 
 	log ""
-	log "===== 2..4) the measured need and its neighbours ====="
+	log "===== 3) and with the measured multiplier as well ====="
 	p mn_conv0.tflite ROCKET_FC_SCALE=0x7699
-	p mn_conv0.tflite ROCKET_FC_SCALE=0x7698
-	p mn_conv0.tflite ROCKET_FC_SCALE=0x76a8
 
 	log ""
-	log "===== 5..6) far either way, so the knob is proved to bite ====="
-	p mn_conv0.tflite ROCKET_FC_SCALE=0x7000
-	p mn_conv0.tflite ROCKET_FC_SCALE=0x7fff
+	log "===== 4..5) the impulse models, which have the same lanes ====="
+	p fc_imp.tflite ""
+	p fc_allw.tflite ""
 
 	log ""
-	log "===== 7) the impulse model at the measured need ====="
-	p fc_imp.tflite ROCKET_FC_SCALE=0x7699
+	log "===== 6) the chain ====="
+	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 8) the chain ====="
-	p mn_conv0dw1.tflite ROCKET_FC_SCALE=0x7699
-
-	log ""
-	log "===== 9..11) REGRESSION ====="
+	log "===== 7..9) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Read the residual line, not the channel count: a channel    ====="
-	log "===== fails on one pixel out of 12544, so within-1 is the signal. ====="
+	log "===== 10) whole model ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Compare 1 with 2. The control must put the old 99.5 percent ====="
+	log "===== back, or test 1 is not measuring the fill.                  ====="
 	sync
 }
 case "$1" in

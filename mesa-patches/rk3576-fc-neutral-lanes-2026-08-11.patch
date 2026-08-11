@@ -1,0 +1,69 @@
+From 0df8e82b3b958cadcea1c3e2a18667030ba88314 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 20:46:15 +1200
+Subject: [PATCH] rocket RK3576: fill the first conv's unreached weight lanes
+ with the neutral value
+
+Each 16 byte unit of the ARGB layout is three [R,G,B,pad] groups and a fourth
+group that no kx reaches, because kx runs 0 to 2. Those four bytes kept
+whatever the memset left, which was zero.
+
+A stored byte is w - 0x80 and the hardware subtracts the weight zero point
+through B, so a lane's effective weight is stored - (wt_zp - 0x80). Zero is
+therefore not nothing: for conv0, whose weight zero point is 151, it is -23.
+Twelve lanes per output channel, three ky by four bytes, multiply real input
+data by -23.
+
+The neutral value is pad, which is exactly what the alpha lane beside them
+already gets. This is the same mistake the depthwise weight buffer had in its
+zero point lanes, and it hides on any per-axis tensor because there the zero
+point is 0 and the two agree; conv0 is the only per-tensor weight tensor in
+this project whose zero point is not 128.
+
+Found by exclusion: the multiplier's magnitude was swept and moved the fitted a
+exactly as computed while leaving the residual identical at every scale, so
+what remained was a per-channel multiplicative error, which a global multiplier
+cannot produce.
+
+ROCKET_FC_ZERO_PAD restores the zero fill as a control.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index cdd2444..265b0b0 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -297,7 +297,26 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       uint8_t pad = zero_point - 0x80;
+       unsigned oc_n = output_channels_real;
+ 
+-      memset(weights_out, 0, weights_size);
++      /*
++       * Fill with the NEUTRAL weight, not with zero.
++       *
++       * Each 16 byte unit holds three [R,G,B,pad] groups and a fourth group
++       * that no kx reaches, so those four bytes keep whatever the memset left.
++       * A stored byte is w - 0x80 and the hardware subtracts the weight zero
++       * point through B, so the effective weight of a lane is
++       * stored - (wt_zp - 0x80). Zero therefore means -(wt_zp - 0x80), which
++       * is -23 for conv0 whose weight zero point is 151, not nothing: twelve
++       * lanes per output channel multiply real input data by -23.
++       *
++       * The neutral value is pad, which is exactly what the alpha lane beside
++       * them already gets. This is the same mistake the depthwise buffer had
++       * in its zero point lanes, and it hides on any per-axis tensor because
++       * there the zero point is 0 and the two agree.
++       *
++       * ROCKET_FC_ZERO_PAD restores the memset to zero as the control.
++       */
++      memset(weights_out, getenv("ROCKET_FC_ZERO_PAD") ? 0 : pad,
++             weights_size);
+ 
+       for (int ky = 0; ky < weights_width; ky++) {
+          for (unsigned oc = 0; oc < oc_n; oc++) {
+-- 
+2.43.0
+
