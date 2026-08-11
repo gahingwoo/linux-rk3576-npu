@@ -2,51 +2,48 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 89. conv0's last half percent: the requant multiply wraps.
+# 2026-08-11 round 90. The last 0.12 percent of conv0's multiplier.
 #
-# Round 88 re-ran identically, digit for digit, so the numbers are stable:
+# Round 89's void check worked and its answer was negative. T=20 wrecks conv0,
+# within 1 falling to 42.3 percent, and T=10 degrades it to 59.5, so the knob
+# reaches. T=2, 4 and 6 change NOTHING: 99.5, 99.5, 99.6, 99.7 and 7.9 percent
+# at a rail, identical at every one. So the requant multiply is not wrapping
+# int32 and that hypothesis is dead, killed with a control that demonstrably
+# bites.
 #
-#   fc_imp     within 1 100.0%
-#   fc_allw    within 1  99.6%   of the failures 100.0% at a rail
-#   fc_impb    within 1  99.8%   of the failures  16.7% at a rail
-#   mn_conv0   within 1  99.5%   of the failures   7.9% at a rail
+# A second thing died offline. The nine channels conv0 gets right are exactly
+# the nine with a NEGATIVE bias, whose reference is ReLU clipped flat to zero,
+# which is why perch counts all nine as trivial and none as COMPUTED. So "the
+# wrong channels have larger biases" is an artefact of which references are
+# constant, not a per-channel fault: every channel whose reference varies is
+# wrong.
 #
-# conv0's tail is NOT clipping: 92 percent of what it gets wrong is away from
-# both rails, and 0.3 percent of pixels are off by more than 8, which rounding
-# cannot do.
+# conv0 is therefore uniformly slightly off rather than broken in a few places,
+# and the one number left is the multiplier. The affine fit measured the need
+# as 0.000452413, precise to about 0.014 percent since a itself is good to
+# 0.0001, and the derived value writes 0.000452965, which is 0.122 percent
+# high. In counts that is 0.31 of an LSB at full scale, enough to push a pixel
+# already near a boundary over it, and 0.5 percent of pixels are off by more
+# than one.
 #
-# ⚠ AND ROUND 88'S CVT_DOWN TEST WAS VOID, WHICH IS MY MISTAKE AND THE THIRD OF
-# ITS KIND. ROCKET_CVT_DOWN lives in the generic emitter; conv0 goes through
-# fill_regcmd_firstconv, which never reads it. Round 50 was void for a knob
-# that did not apply to the model, round 57 for a knob that did not apply to
-# the path, and now this. The rule that catches it is the one this file keeps
-# writing down: before believing a sweep, check the knob reaches the thing
-# being swept.
+#   0x7699 at shift 26   0.000452414   the measured need, to six digits
+#   0x76be at shift 26   0.000452965   what the generic mantissa gives
 #
-# The arithmetic says a wrap is the right size. The OUT_CVT computes
-# (accumulator * cvt_scale) >> shift in signed int32. conv0's accumulator
-# reaches 27 * 128 * 151, which is 2^19, and cvt_scale is 0x76be at 2^14.9, so
-# the product is 2^33.9 and wraps for any accumulator above 70646. Scaling the
-# multiplier down by T bits and the shift by T is arithmetically identical and
-# keeps the product in range:
-#
-#   T=0  product 2^33.9  overflows      T=4  product 2^29.9  fits
-#   T=2  product 2^31.9  overflows      T=6  product 2^27.9  fits
-#
-# So 2 would not have been enough even if it had reached, which is why that
-# void test is void twice over.
+# The generic formula truncates the float mantissa and adds one, which lands on
+# 0x76be. Whether the remaining gap is that truncation or something structural
+# is what this asks: if 0x7699 improves the residual, the multiplier wants
+# rounding rather than truncation and it is derivable; if it does not, the
+# gap is not what is costing the 0.5 percent.
 #
 # DECISION RULE, written before the run:
-#   the tail collapses at T=4 or 6    the wrap was it; pick the smallest T that
-#                                     fits and derive it rather than sweep
-#   T=2 already helps                 the overflow model is wrong about where
-#                                     the boundary is
-#   nothing changes at any T          the knob still does not reach, or the
-#                                     tail is not a wrap; check that a large T
-#                                     visibly damages the output before
-#                                     believing either
-#   fc_allw's rail failures move      they should not: those are clipping, and
-#                                     T is arithmetically neutral
+#   0x7699 improves the residual     the multiplier is the last of it, and
+#                                    rounding the mantissa is the fix
+#   no scale in the sweep helps      0.12 percent is not what costs the half
+#                                    percent, and the next question is the
+#                                    rounding MODE of the requant rather than
+#                                    its magnitude
+#   the sweep does not move at all   the knob is not reaching, which the two
+#                                    far values in it are there to disprove
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -63,35 +60,37 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..5) conv0, the multiplier scaled down by T bits ====="
+	log "===== 1) conv0 as it stands, 0x76be ====="
 	p mn_conv0.tflite ""
-	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=2
-	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=4
-	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=6
-	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=10
 
 	log ""
-	log "===== 6) VOID CHECK: a big T must visibly damage the output ====="
-	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=20
+	log "===== 2..4) the measured need and its neighbours ====="
+	p mn_conv0.tflite ROCKET_FC_SCALE=0x7699
+	p mn_conv0.tflite ROCKET_FC_SCALE=0x7698
+	p mn_conv0.tflite ROCKET_FC_SCALE=0x76a8
 
 	log ""
-	log "===== 7..8) the impulse models at the winner ====="
-	p fc_imp.tflite ROCKET_FC_CVT_DOWN=4
-	p fc_allw.tflite ROCKET_FC_CVT_DOWN=4
+	log "===== 5..6) far either way, so the knob is proved to bite ====="
+	p mn_conv0.tflite ROCKET_FC_SCALE=0x7000
+	p mn_conv0.tflite ROCKET_FC_SCALE=0x7fff
 
 	log ""
-	log "===== 9) the chain ====="
-	p mn_conv0dw1.tflite ROCKET_FC_CVT_DOWN=4
+	log "===== 7) the impulse model at the measured need ====="
+	p fc_imp.tflite ROCKET_FC_SCALE=0x7699
 
 	log ""
-	log "===== 10..12) REGRESSION ====="
+	log "===== 8) the chain ====="
+	p mn_conv0dw1.tflite ROCKET_FC_SCALE=0x7699
+
+	log ""
+	log "===== 9..11) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Read test 6 first. If T=20 does not wreck conv0, the knob   ====="
-	log "===== is not reaching it and tests 2 to 5 mean nothing.           ====="
+	log "===== Read the residual line, not the channel count: a channel    ====="
+	log "===== fails on one pixel out of 12544, so within-1 is the signal. ====="
 	sync
 }
 case "$1" in
