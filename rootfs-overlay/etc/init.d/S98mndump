@@ -2,54 +2,47 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 86. conv0's requant, measured rather than swept.
+# 2026-08-11 round 87. What does conv0 have that the impulse does not?
 #
-# Round 85 fixed the instrument and the instrument then answered. Fitting only
-# unclipped pixels, on the impulse first conv:
+# Round 86's prediction landed exactly:
 #
-#   shift 25   a 0.7096   b  -89.34    b/a = -125.90
-#   shift 26   a 1.4197   b -178.84    b/a = -125.97
-#   shift 27   a 2.8369   b -357.38    b/a = -125.98
-#   shift 28   a 5.6522   b -711.90    b/a = -125.95
+#   fc_imp                  32/32, EVERY ONE COMPUTED
+#   shift 25, one bit low   a = 0.5000, min and max both 0.5000
+#   shift 27, one bit high  a = 1.9993
+#   control, old triple     a back to 0.7096, 0/32
+#   mn_conv0dw1             12/32 with 1 COMPUTED, the first non-zero
+#   regression              conv2d-cal, mn_dw1, mn_dw25, whole model unchanged
 #
-# correlation 0.9999 and a identical across all 32 channels to four decimals,
-# so the map is affine and per layer. a DOUBLES with every halving of the
-# multiplier, which is what makes it the ratio between what is written and what
-# is wanted rather than a number that happens to fit: it survived being halved
-# three times.
+# So the requant is derived, not fitted: one bit either way gives exactly half
+# and exactly double, which is what pins a shift rather than guessing it. An
+# impulse first conv is now byte exact.
 #
-# Two things fall out.
+# mn_conv0 with its real weights is not: 9 of 32 matching, all trivial, a
+# 0.9991 and b +0.14 with correlation 0.9994. So the affine map is right and a
+# small residual is left, and the per-channel a spreads 0.9486 to 1.0009, which
+# a per-layer error cannot do.
 #
-#   the multiplier wanted is 0.000452413, and in_sc * wt_sc / out_sc is
-#   0.007247427, a ratio of 16.02. That is the generic computation with FOUR
-#   more bits of shift, presumably because this path enables the CNA CVT,
-#   0x104c = 0x4000 against the generic bypass, leaving the accumulator four
-#   bits hot.
+# fc_imp and mn_conv0 differ in exactly two things, so this round separates
+# them rather than reasoning about which it is:
 #
-#   b/a is a constant -126 at every shift, so the hardware adds 126, which is
-#   exactly the gap between the offset this path wrote, -2, and the generic
-#   out_zp - 0x80, which is -128.
+#   fc_allw    every tap live, bias still zero. The accumulator sums 27 terms
+#              instead of 1, so anything per-tap, and the weight zero point
+#              compensation is per tap, shows up here and not in fc_imp.
+#   fc_impb    one live tap, but the model's REAL bias. Isolates the bias and
+#              the A term.
 #
-# The comment that stood over those literals said computing them gives offset
-# -128, scale 0x76be and shift 22, "which is wrong for conv0". The offset and
-# the scale were right and the shift was short by four, and reading the three
-# together as one captured triple is what kept conv0 broken.
-#
-# conv0 now gets scale 0x76be at shift 26 with offset -128, a multiplier of
-# 0.000452965 against the 0.000452413 measured, 0.12 percent out.
-#
-# ⚠ One slip of mine, caught before flashing: the first version wrote shift 27,
-# because the generic path computes a shift and then emits shift - 1, and I
-# copied the pre-decrement value.
+# conv0's weight zero point is 151, not 128, so the compensation is not a no-op
+# for it the way it is for a per-axis tensor.
 #
 # DECISION RULE, written before the run:
-#   a goes to 1.00 and b to 0        the derivation is right; whether conv0 is
-#                                    then COMPUTED says if anything else remains
-#   conv0 COMPUTED                   conv0 is fixed
-#   a stays near 0.71                the change did not reach the hardware
-#   a is 2 or 0.5                    the shift is out by one and the sign says
-#                                    which way
-#   any other model moves            the first conv path is leaking
+#   fc_allw wrong, fc_impb right     it is per tap: the weight zero point
+#                                    compensation, B or the weight sum in A
+#   fc_impb wrong, fc_allw right     it is the bias term in A
+#   both wrong                       both, and the sizes say in what proportion
+#   both right                       neither, and what conv0 has that these do
+#                                    not is the real weight VALUES, so the
+#                                    weight buffer is next
+#   fc_imp regresses                 that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -66,41 +59,40 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the impulse model: a must be 1.00 and b must be 0 ====="
+	log "===== 1) the baseline that is exact ====="
 	p fc_imp.tflite ""
 
 	log ""
-	log "===== 2) conv0 with its real weights ====="
+	log "===== 2) every tap live, zero bias: per-tap effects only ====="
+	p fc_allw.tflite ""
+
+	log ""
+	log "===== 3) one tap, real bias: the bias term only ====="
+	p fc_impb.tflite ""
+
+	log ""
+	log "===== 4) conv0 itself, which has both ====="
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 3) the CONTROL: the old triple, which must put a back to 0.71 ====="
-	p fc_imp.tflite "ROCKET_FC_OFFSET=0xfffffffe ROCKET_FC_SCALE=0x5391 ROCKET_FC_SHIFT=25"
-
-	log ""
-	log "===== 4..5) one bit either way, so the shift is pinned not guessed ====="
-	p fc_imp.tflite ROCKET_FC_SHIFT=25
-	p fc_imp.tflite ROCKET_FC_SHIFT=27
-
-	log ""
-	log "===== 6) the chain that needs conv0 ====="
+	log "===== 5) the chain ====="
 	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 7..9) REGRESSION ====="
+	log "===== 6..8) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 10) whole model ====="
+	log "===== 9) whole model ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== a = 1.00 and b = 0 on test 1 is the prediction. Tests 4 and ====="
-	log "===== 5 must give a = 0.5 and a = 2, or the shift is not pinned.  ====="
+	log "===== Test 1 must stay 32/32. Then 2 against 3 says whether what  ====="
+	log "===== conv0 has extra is per tap or the bias.                     ====="
 	sync
 }
 case "$1" in

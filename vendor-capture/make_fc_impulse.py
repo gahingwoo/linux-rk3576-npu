@@ -44,6 +44,14 @@ def main():
         "../rootfs-overlay/opt/npu-test/mn_conv0.tflite"
     dst = sys.argv[2] if len(sys.argv) > 2 else \
         "../rootfs-overlay/opt/npu-test/fc_imp.tflite"
+    # mode: "imp" one live tap per channel and a zero bias, the default;
+    #       "all" every tap live, zero bias, so the accumulator sums 27 terms
+    #             and any per-tap zero point compensation error shows up;
+    #       "bias" one live tap but the model's REAL bias kept.
+    #
+    # fc_imp is byte exact and mn_conv0 is not, and the two differ in exactly
+    # those two things, so this separates them.
+    mode = sys.argv[3] if len(sys.argv) > 3 else "imp"
 
     b = bytearray(open(src, "rb").read())
     root = T(b, struct.unpack_from("<I", b, 0)[0])
@@ -98,12 +106,14 @@ def main():
             for kx in range(KW):
                 for c in range(IC):
                     idx = woff + ((o * KH + ky) * KW + kx) * IC + c
-                    on = (c == want_ic) and (ky * KW + kx == want_p)
+                    on = ((c == want_ic) and (ky * KW + kx == want_p)
+                          if mode != "all" else True)
                     b[idx] = v if on else w_zp
-    b[boff:boff + blen] = b"\x00" * blen
+    if mode != "bias":
+        b[boff:boff + blen] = b"\x00" * blen
 
     open(dst, "wb").write(bytes(b))
-    print(f"\n  wrote {dst}")
+    print(f"\n  wrote {dst}  (mode {mode})")
     print("  output channel c should equal input plane c mod 3, shifted by "
           "tap (c/3) mod 9")
     print("  first 8: " + ", ".join(
