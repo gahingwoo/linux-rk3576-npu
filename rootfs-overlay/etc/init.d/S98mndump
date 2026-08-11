@@ -2,43 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 83. Measure conv0's requant instead of sweeping for it.
+# 2026-08-11 round 84. The first conv's PAD VALUE, the third literal.
 #
-# Round 82 confirmed the padding fix and its control:
+# Round 83 fitted the affine map instead of sweeping for it, and the fit itself
+# pointed somewhere better than its own numbers.
 #
-#   impulse decode, fixed      CPU 32/32, hardware 32/32, plane 32/32,
-#                              correlation +1.000 on every channel
-#   control, old padding       hardware 0/32, plane 25/32, the shift is back
-#   conv0 row maxdiff          163 to 200 and varying, from 255 pinned
+# On fc_imp the fit gives a about 0.345 with b about -20, tightly clustered
+# across channels, 0.3376 to 0.3449, so it is per layer rather than per
+# channel. But its correlation is 0.89, while fcimp.py's decode of the SAME run
+# reports 1.000. The difference is where each looks: the decode uses a 32x32
+# interior crop, the fit uses the whole 112x112 surface. Interior perfect,
+# whole surface not, is a BORDER error.
 #
-# So the window is right now. conv0 is still 0 COMPUTED.
+# ⚠ The fitted a is also not trustworthy on its own. As the shift drops the
+# output saturates, npu distinct falling 242, 122, 32, 17, and a fitted slope
+# over a clipped surface is not the multiplier. That is why a moves 0.345,
+# 0.246, 0.196, 0.189 rather than doubling with each shift. The fit named the
+# border; it did not name the requant.
 #
-# The impulse model says what is left, and says it precisely: fc_imp decodes to
-# exactly the right plane and tap on all 32 channels at correlation 1.000, and
-# matches nothing. A perfect correlation with wrong values is an AFFINE error,
-# a scale and an offset, and that is the requant.
+# And the border is a third hardcoded literal in the same function. The CMAC
+# sees the input with 0x80 subtracted, so a padded tap has to read in_zp - 0x80
+# to contribute nothing, replicated over the three input lanes:
 #
-# Round 80 swept the requant and learned only that the output moves. Sweeping
-# costs a flash per point and cannot land on a value it does not try. perch.py
-# now FITS the affine map instead: ref = a * npu + b, per channel, over the
-# channels that disagree, reported as a median so one saturated channel cannot
-# drag it. On fc_imp, where the correlation is 1.000, a and b are exact.
+#     R_CNA(0x1084, 0x00808080)
 #
-# Then the arithmetic is one step. The driver writes scale S at shift T, so the
-# multiplier is S / 2^T; if the reference is a times the hardware's output, the
-# multiplier wanted is a times what is being written, and a says whether it is
-# a clean power of two, the ratio between the captured and computed pairs, or
-# something else entirely.
+# is that byte for an input whose zero point is 0, a plain image tensor, which
+# is what the capture this function came from used. MobileNet's conv0 has zero
+# point 128 and wants 0x00000000. The generic path already carries this fix and
+# its comment records the symptom in as many words: the output border ring is
+# wrong and everything inside it is right.
+#
+# That is the third literal in fill_regcmd_firstconv found wrong this way, after
+# the padding amounts and the coefficient region collision. All three were
+# correct for the single model the function was written from.
 #
 # DECISION RULE, written before the run:
-#   a is a clean power of two      the shift alone is wrong, and by log2(a)
-#   a matches 0x76be/2^22 over     the computed pair is right and the captured
-#     0x5391/2^25, which is 11.4   literals are from another model after all
-#   a varies per channel           it is not a per-layer requant at all and the
-#                                  next question is per-channel
-#   b is far from zero             the OUT_CVT offset is wrong too, and by b
-#   conv2d-cal or the depthwise    that comes first
-#     models move
+#   conv0 gets COMPUTED channels     the border was the last of it
+#   the affine correlation rises     the border is fixed and a smaller thing
+#     toward 1.000 but 0 COMPUTED    remains; the fit is then trustworthy and
+#                                    names the requant directly
+#   nothing changes                  in_zp - 0x80 is not what this register
+#                                    wants for a first conv
+#   ROCKET_FC_PAD_VAL=0x00808080     the control: it must put the old border
+#                                    back
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -55,32 +61,40 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the impulse model: a and b are exact here ====="
+	log "===== 1..2) the impulse model and its control ====="
 	p fc_imp.tflite ""
+	p fc_imp.tflite ROCKET_FC_PAD_VAL=0x00808080
 
 	log ""
-	log "===== 2) conv0 with its real weights ====="
+	log "===== 3..4) conv0 and its control ====="
 	p mn_conv0.tflite ""
+	p mn_conv0.tflite ROCKET_FC_PAD_VAL=0x00808080
 
 	log ""
-	log "===== 3..5) and at three shifts, so a can be checked against them ====="
-	p fc_imp.tflite ROCKET_FC_SHIFT=24
-	p fc_imp.tflite ROCKET_FC_SHIFT=22
-	p fc_imp.tflite ROCKET_FC_SHIFT=21
+	log "===== 5) the decode, which should still be 32/32 both sides ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
 
 	log ""
-	log "===== 6) the computed pair on the impulse model ====="
-	p fc_imp.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22"
+	log "===== 6) the chain that needs conv0 ====="
+	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 7..9) REGRESSION, and the fit must read a=1 b=0 there ====="
+	log "===== 7..9) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Read a and b on test 1. The multiplier being written is     ====="
-	log "===== 0x5391 / 2^25; the one wanted is a times that.              ====="
+	log "===== 10) whole model ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Watch the affine correlation on test 1. If the border was   ====="
+	log "===== it, that number goes to 1.000 and then a means something.   ====="
 	sync
 }
 case "$1" in

@@ -1,0 +1,69 @@
+From f9a742e7670451f64bccc207a60b092071f037a1 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 17:05:53 +1200
+Subject: [PATCH] rocket RK3576: derive the first conv's pad value instead of
+ hardcoding it
+
+A padded tap has to contribute nothing, which means reading as the input zero
+point. The CMAC sees the input with 0x80 subtracted, so the byte to write is
+in_zp - 0x80, replicated across the three input lanes. 0x00808080 is that byte
+for an input whose zero point is 0, a plain image tensor, which is what the
+capture this function came from used. MobileNet's conv0 has zero point 128 and
+wants 0x00000000.
+
+The generic path already carries this fix and its comment records the symptom:
+the output border ring is wrong and everything inside it is right. conv0 shows
+exactly that. Its impulse decodes to the right plane and tap at correlation
+1.000 on a 32x32 interior crop while an affine fit over the whole 112x112
+surface reaches only 0.89.
+
+Third literal in fill_regcmd_firstconv found wrong this way, after the padding
+amounts and the coefficient region collision. All three were correct for the
+single model the function was written from.
+
+ROCKET_FC_PAD_VAL forces a value and 0x00808080 restores the literal.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 9def453..317c609 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -181,7 +181,30 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x1080, rkt_env_u32("ROCKET_FC_PAD",
+                              (task->pad_right << 24) | (task->pad_bottom << 16) |
+                              (task->pad_left << 8) | task->pad_top));
+-   R_CNA(0x1084, 0x00808080);
++   /*
++    * The PAD VALUE, derived rather than hardcoded, for the same reason 0x1080
++    * above is.
++    *
++    * A padded tap must contribute nothing, which means it has to read as the
++    * input zero point. The CMAC sees the input with 0x80 subtracted, so the
++    * byte to write is in_zp - 0x80, replicated across the three input lanes.
++    * 0x00808080 is that byte for an input whose zero point is 0, which is what
++    * a plain image tensor has and what the capture this function came from
++    * used. MobileNet's conv0 has zero point 128 and wants 0x00000000.
++    *
++    * The generic path already carries this fix, and its comment records the
++    * symptom: the output border ring is wrong, everything inside it is right.
++    * That is exactly what conv0 shows. Its impulse decodes to the right plane
++    * and tap at correlation 1.000 on a 32x32 interior crop, while an affine
++    * fit over the whole 112x112 surface only reaches 0.89.
++    *
++    * ROCKET_FC_PAD_VAL forces a value, and 0x00808080 restores the literal.
++    */
++   {
++      uint32_t pv = (uint32_t)(((int32_t)task->input_zero_point - 0x80) & 0xff);
++      R_CNA(0x1084, rkt_env_u32("ROCKET_FC_PAD_VAL",
++                                (pv << 16) | (pv << 8) | pv));
++   }
+    R_CNA(0x1088, feature_addr); /* input feature base addr */
+    R_CNA(0x108c, 0x000f000f);
+    R_CNA(0x1090, 0x0000002a);   /* CBUF input line-stride = ceil(224/16)*3 */
+-- 
+2.43.0
+
