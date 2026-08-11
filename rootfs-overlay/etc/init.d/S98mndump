@@ -2,53 +2,54 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 68. Nine taps, nine live ranges, one addressing law.
+# 2026-08-11 round 69. The depthwise weight buffer is CHANNEL GROUPS OF 64.
 #
-# Round 67 answered "which 128" and the answer is a CONTIGUOUS RUN that MOVES
-# WITH THE TAP:
+# Round 68 measured the fault exactly. With the live tap at the same position
+# in every channel, the channels that produce anything are one contiguous run
+# that moves with the tap:
 #
-#   dw25_t0   live channels    0..127     one run
-#   dw25_t4   live channels  448..575     one run
+#   tap   0    1    2    3    4    5    6    7    8
+#   from  0   64  192  320  448  512  640  768  896
+#   to  127  255  383  511  575  703  831  959  991
 #
-# 128 wide either way. So the weight fetch is not truncated and not strided: for
-# a given output channel the hardware reads a WINDOW of the weight buffer, and
-# which channels see a live byte depends on where that window falls. Only 128
-# channels of 1024 can reach any one spatial block.
+# Inverted, each output channel can reach only ONE OR TWO of its nine spatial
+# blocks. A depthwise needs all nine, so nothing computes.
 #
-# The 32 channel case never shows this because its whole weight buffer is 576
-# bytes: every channel reaches every block, which is why it has always worked
-# and why nothing found here in fifteen rounds of coefficient work applied to
-# it.
+# Then the layout was settled OFFLINE, with no board. The depthwise weights are
+# in the .rknn even though the coefficient table is not, so vendor models were
+# compiled at 32, 128, 256 and 1024 channels with weights generated on the host,
+# which makes the test exact rather than a correlation:
 #
-# Two points do not determine a law. Fitting them already produced two
-# candidates that each explain one point and miss the other by 64 channels, so
-# this round measures all nine instead. Each model puts the live tap at the same
-# position in every channel, so the live bytes are exactly one 2048 byte spatial
-# block of mesa's buffer, and the live channel range says which channels can
-# address that block.
+#   group of 64        288/288, 1152/1152, 2304/2304, 9208/9216 weight lanes
+#   one group of C     288/288 at 32 channels, about 4 in 1000 above it
 #
-# What the shape will mean:
+# The eight lanes that miss at 1024 are all ONE channel, whose kernel the
+# quantiser treated differently; 1023 of 1024 channels are exact.
 #
-#   start = k*p, width 128        a linear address map; k is the channels per
-#                                 block, and mesa's block stride and the
-#                                 hardware's disagree by 2048/k bytes per
-#                                 channel
-#   width changes with p          the window is not uniform, and the ends will
-#                                 say whether it wraps
-#   some taps light nothing       those blocks are outside every channel's
-#                                 window, and the count of dead taps says by
-#                                 how much the buffer overruns
+# So the buffer is channel groups of 64, each group tap major inside itself,
+# groups laid end to end. A group of C, which this driver wrote, puts a
+# channel's nine taps 2C bytes apart, 2048 at 1024 channels; a group of 64 puts
+# them 128 apart whatever C is. The two are identical up to 64 channels, which
+# is exactly why every depthwise here has been byte exact and the 1024 channel
+# one has not.
 #
-# Nothing in the driver changed this round.
+# The total size does not change: 16 groups of 9 x 128 is the same 18432 bytes,
+# so the CNA weight byte count at 0x101c is untouched.
+#
+# ROCKET_DW_GROUP overrides the group size, and setting it to the channel count
+# restores the old single group. That is the control: it has to reproduce the
+# old breakage.
 #
 # DECISION RULE, written before the run:
-#   nine starts fall on a line     read the slope, fix the stride, done
-#   they do not                    the window is not affine and the next step
-#                                  is the CNA weight registers rather than the
-#                                  buffer
-#   any run is not contiguous      the fetch is strided after all and round 67
-#                                  saw two contiguous ones by luck
-#   dw1_t4 not 32/32               the control failed, read nothing else
+#   mn_dw25 COMPUTED jumps          the depthwise weight layout is solved and
+#                                   the remaining wrongness, if any, is a
+#                                   different question
+#   dw25_t4 lights every channel    the nine taps are all reachable now, which
+#                                   is the direct form of the same claim
+#   ROCKET_DW_GROUP=1024 restores   the control passes and the comparison is
+#     the old numbers                real
+#   mn_dw1 or conv2d-cal regress    a group of 64 is not identical to a group
+#                                   of 32 after all, and that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -65,32 +66,41 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== the nine taps, in order. Read the VARIES run of each ====="
-	p dw25_t0.tflite ""
-	p dw25_t1.tflite ""
-	p dw25_t2.tflite ""
-	p dw25_t3.tflite ""
-	p dw25_t4.tflite ""
-	p dw25_t5.tflite ""
-	p dw25_t6.tflite ""
-	p dw25_t7.tflite ""
-	p dw25_t8.tflite ""
-
-	log ""
-	log "===== CONTROL: 32 channels, one tap everywhere, must be 32/32 ====="
+	log "===== 1..2) REGRESSION FIRST: 32 channels must be unchanged ====="
+	p mn_dw1.tflite ""
 	p dw1_t4.tflite ""
 
 	log ""
-	log "===== REGRESSION: the real 112x112 depthwise ====="
-	p mn_dw1.tflite ""
+	log "===== 3) the real 1024 channel depthwise, on groups of 64 ====="
+	p mn_dw25.tflite ""
 
 	log ""
-	log "===== a regular shape, which must be untouched ====="
+	log "===== 4..5) one tap everywhere: are all nine reachable now? ====="
+	p dw25_t4.tflite ""
+	p dw25_t0.tflite ""
+
+	log ""
+	log "===== 6) the per-channel-tap impulse at 1024 ====="
+	p dw25_imp.tflite ""
+
+	log ""
+	log "===== 7..8) the CONTROL: one group of C, the old behaviour ====="
+	p mn_dw25.tflite ROCKET_DW_GROUP=1024
+	p dw25_t4.tflite ROCKET_DW_GROUP=1024
+
+	log ""
+	log "===== 9) a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Nine starts. If they fall on a line, the slope is the number ====="
-	log "===== of channels that fit in one spatial block, and that is it.   ====="
+	log "===== 10) whole model, for the record ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Read tests 1 and 2 first: a group of 64 must be identical to ====="
+	log "===== a group of 32 when there are only 32 channels.               ====="
 	sync
 }
 case "$1" in

@@ -1,0 +1,132 @@
+From c5e9ec398f9920ed89b13369584ce10848748e82 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 14:49:55 +1200
+Subject: [PATCH] rocket RK3576: the depthwise weight buffer is channel groups
+ of 64
+
+Established offline against vendor .rknn files compiled at 32, 128, 256 and
+1024 channels, with weights generated on the host so the test is exact rather
+than a correlation:
+
+    group of 64      288/288, 1152/1152, 2304/2304, 9208/9216 weight lanes
+    one group of C   288/288 at 32 channels, about 4 in 1000 above it
+
+The eight lanes that miss at 1024 are all one channel, whose kernel the
+quantiser treated differently; 1023 of 1024 channels are exact.
+
+So the buffer is channel groups of 64, each group tap major inside itself and
+the groups laid end to end. A single group of C, which this file wrote, puts a
+channel's nine taps 2C bytes apart, 2048 at 1024 channels; a group of 64 puts
+them 128 apart whatever C is. The two are identical up to 64 channels, which is
+why every depthwise in this project has been byte exact and the 1024 channel
+one has not.
+
+It matches what the board measured, too. With one live tap in every channel the
+channels that produced anything were a contiguous run that moved with the tap,
+and inverting the nine runs showed each output channel could reach only one or
+two of its nine spatial blocks.
+
+The total size is unchanged, 16 groups of 9 x 128 being the same 18432 bytes,
+so the CNA weight byte count at 0x101c is untouched.
+
+ROCKET_DW_GROUP overrides the group size; setting it to the channel count
+restores the old single group as a control. ROCKET_DW_TAPREV is dropped: it was
+built to test a reading of round 63 that rounds 64 and 65 both refuted.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 70 +++++++++++++++++---------
+ 1 file changed, 46 insertions(+), 24 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 5efe963..1a8861f 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -194,38 +194,60 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       uint8_t pad = zero_point - 0x80;
+       uint8_t zplane = getenv("ROCKET_DW_ZP_POS") ? pad : (uint8_t)(-(int8_t)pad);
+       unsigned npos = weights_width * weights_height;
+-      unsigned block = DIV_ROUND_UP(channels, 2) * 4;
+       /*
+-       * ROCKET_DW_TAPREV: write the spatial blocks in reverse cyclic order.
++       * The buffer is CHANNEL GROUPS of 64, each group tap major inside
++       * itself, and the groups laid end to end.
+        *
+-       * The 1024 channel impulse decodes to a perfect single tap of the right
+-       * input plane, correlation +1.000 on every channel and 897 of 1024
+-       * reading their OWN plane, but the WRONG tap: measured against the tap
+-       * the impulse was placed at, the hardware uses (-p) mod 9. At 32
+-       * channels the same buffer and the same code give a byte-exact surface,
+-       * so the order cannot be globally wrong. This writes the permutation the
+-       * board reported, which turns the observation into a test rather than a
+-       * story: if it makes the 1024 channel case correct and breaks the 32
+-       * channel one, the traversal depends on something and the next question
+-       * is what.
++       * Established offline against vendor .rknn files compiled at 32, 128,
++       * 256 and 1024 channels, whose weights are generated on the host so the
++       * test is exact rather than a correlation: a group of 64 reproduces
++       * 288/288, 1152/1152, 2304/2304 and 9208/9216 weight lanes, and the
++       * eight that miss at 1024 are all one channel whose kernel the quantiser
++       * treated differently. One group of C, which is what this file used to
++       * write, reproduces 288/288 at 32 channels and about 4 in 1000 above it.
++       *
++       * The two agree exactly up to 64 channels, which is why every depthwise
++       * in this project has been byte exact and the 1024 channel one has not.
++       *
++       * It also matches what the board measured. With one live tap in every
++       * channel, the channels that produced anything were a contiguous run
++       * that moved with the tap, and inverting the nine runs showed each
++       * output channel could reach only ONE OR TWO of its nine spatial blocks:
++       * a group of C puts them 2C bytes apart, 2048 at 1024 channels, while a
++       * group of 64 puts them 128 apart whatever C is.
++       *
++       * ROCKET_DW_GROUP overrides the group size. Setting it to the channel
++       * count restores the old single group and is the control.
+        */
+-      bool taprev = getenv("ROCKET_DW_TAPREV") != NULL;
++      unsigned group = MIN2(channels, 64u);
++      const char *gs = getenv("ROCKET_DW_GROUP");
++      if (gs) {
++         unsigned v = (unsigned)strtoul(gs, NULL, 0);
++         if (v)
++            group = MIN2(channels, v);
++      }
++
++      unsigned block = DIV_ROUND_UP(group, 2) * 4;
++      unsigned gsize = npos * block;
+ 
+       for (int y = 0; y < weights_width; y++) {        /* ky (dims[1]) */
+          for (int x = 0; x < weights_height; x++) {     /* kx (dims[2]) */
+             unsigned pos = y * weights_height + x;
+-            uint8_t *blk =
+-               weights_out + (taprev ? (npos - pos) % npos : pos) * block;
+-            unsigned n = 0;
+-
+-            for (unsigned g = 0; g < DIV_ROUND_UP(channels, 2); g++) {
+-               for (unsigned s = 0; s < 2; s++) {
+-                  unsigned c = g * 2 + s;
+-                  blk[n++] =
+-                     c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
++
++            for (unsigned c0 = 0; c0 < channels; c0 += group) {
++               uint8_t *blk =
++                  weights_out + (c0 / group) * gsize + pos * block;
++               unsigned n = 0;
++
++               for (unsigned g = 0; g < DIV_ROUND_UP(group, 2); g++) {
++                  for (unsigned s = 0; s < 2; s++) {
++                     unsigned c = c0 + g * 2 + s;
++                     blk[n++] =
++                        c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
++                  }
++                  blk[n++] = zplane;
++                  blk[n++] = zplane;
+                }
+-               blk[n++] = zplane;
+-               blk[n++] = zplane;
+             }
+          }
+       }
+-- 
+2.43.0
+
