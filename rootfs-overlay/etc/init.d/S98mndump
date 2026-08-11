@@ -2,47 +2,42 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 87. What does conv0 have that the impulse does not?
+# 2026-08-11 round 88. How big is what is left of conv0, and where?
 #
-# Round 86's prediction landed exactly:
+# Round 87 separated the two things conv0 has that the exact impulse does not:
 #
-#   fc_imp                  32/32, EVERY ONE COMPUTED
-#   shift 25, one bit low   a = 0.5000, min and max both 0.5000
-#   shift 27, one bit high  a = 1.9993
-#   control, old triple     a back to 0.7096, 0/32
-#   mn_conv0dw1             12/32 with 1 COMPUTED, the first non-zero
-#   regression              conv2d-cal, mn_dw1, mn_dw25, whole model unchanged
+#   fc_imp    1 tap, no bias      32/32, every one COMPUTED
+#   fc_allw   27 taps, no bias     0/32, but a = 1.0003 with min AND max both
+#                                  1.0003 across 32 channels, b -0.04,
+#                                  correlation 1.0000
+#   fc_impb   1 tap, real bias    26/32 with 25 COMPUTED
+#   mn_conv0  both                 9/32 with 0 COMPUTED, a 0.9991, spread
+#                                  0.9486 to 1.0009, correlation 0.9994
 #
-# So the requant is derived, not fitted: one bit either way gives exactly half
-# and exactly double, which is what pins a shift rather than guessing it. An
-# impulse first conv is now byte exact.
+# So the bias path works, 25 channels of fc_impb compute exactly. And fc_allw
+# fails every channel while its affine map is PERFECT: a identical to four
+# decimals across all 32 and correlation 1.0000. That is not a wrong
+# computation. It is a small residual, or a difference in where the two
+# saturate, and 0.0003 of a 255 range is 0.08 of a count, which cannot fail a
+# maxdiff of 1 on its own.
 #
-# mn_conv0 with its real weights is not: 9 of 32 matching, all trivial, a
-# 0.9991 and b +0.14 with correlation 0.9994. So the affine map is right and a
-# small residual is left, and the per-channel a spreads 0.9486 to 1.0009, which
-# a per-layer error cannot do.
+# A maxdiff cannot tell those apart. A surface uniformly two counts out and a
+# surface exact apart from a handful of wild pixels both score the same and
+# need completely different next steps, so perch.py now prints the residual
+# distribution and how much of it sits at a rail.
 #
-# fc_imp and mn_conv0 differ in exactly two things, so this round separates
-# them rather than reasoning about which it is:
-#
-#   fc_allw    every tap live, bias still zero. The accumulator sums 27 terms
-#              instead of 1, so anything per-tap, and the weight zero point
-#              compensation is per tap, shows up here and not in fc_imp.
-#   fc_impb    one live tap, but the model's REAL bias. Isolates the bias and
-#              the A term.
-#
-# conv0's weight zero point is 151, not 128, so the compensation is not a no-op
-# for it the way it is for a per-axis tensor.
+# Nothing in the driver changed this round.
 #
 # DECISION RULE, written before the run:
-#   fc_allw wrong, fc_impb right     it is per tap: the weight zero point
-#                                    compensation, B or the weight sum in A
-#   fc_impb wrong, fc_allw right     it is the bias term in A
-#   both wrong                       both, and the sizes say in what proportion
-#   both right                       neither, and what conv0 has that these do
-#                                    not is the real weight VALUES, so the
-#                                    weight buffer is next
-#   fc_imp regresses                 that comes first
+#   nearly all pixels within 1 and    the arithmetic is right and the failure
+#     the rest at a rail              is saturation; the accumulator overflows
+#                                     before the requant, which the generic
+#                                     path has ROCKET_CVT_DOWN for
+#   a broad spread with few at a      the multiplier is quantised too coarsely,
+#     rail                            and the scale field is 15 bits
+#   bimodal, most exact and a few     a per-channel term is wrong for those
+#     channels far out                channels only
+#   fc_imp regresses                  that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -59,40 +54,30 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the baseline that is exact ====="
+	log "===== 1..4) the ladder, with the residual distribution ====="
 	p fc_imp.tflite ""
-
-	log ""
-	log "===== 2) every tap live, zero bias: per-tap effects only ====="
 	p fc_allw.tflite ""
-
-	log ""
-	log "===== 3) one tap, real bias: the bias term only ====="
 	p fc_impb.tflite ""
-
-	log ""
-	log "===== 4) conv0 itself, which has both ====="
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 5) the chain ====="
+	log "===== 5..6) if it is overflow, scaling the multiplier down helps ====="
+	p fc_allw.tflite ROCKET_CVT_DOWN=2
+	p mn_conv0.tflite ROCKET_CVT_DOWN=2
+
+	log ""
+	log "===== 7) the chain ====="
 	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 6..8) REGRESSION ====="
+	log "===== 8..10) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 9) whole model ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Test 1 must stay 32/32. Then 2 against 3 says whether what  ====="
-	log "===== conv0 has extra is per tap or the bias.                     ====="
+	log "===== Read the residual line on test 2. Almost all within 1 with  ====="
+	log "===== the rest at a rail is saturation, not arithmetic.           ====="
 	sync
 }
 case "$1" in

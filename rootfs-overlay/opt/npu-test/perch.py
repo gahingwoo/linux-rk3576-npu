@@ -171,6 +171,23 @@ if bad:
         print(f"      b median {np.median(bb):+.2f}    correlation median "
               f"{np.median(rr):+.4f}", flush=True)
 
+# HOW the residual is distributed, which a maxdiff cannot say.
+#
+# fc_allw fails every channel while its affine map is perfect, a identical
+# across all 32 channels at correlation 1.0000, and mn_conv0 sits at a 0.9991
+# with 0 COMPUTED. A surface that is uniformly two counts out and a surface
+# that is exact apart from a handful of wild pixels both score maxdiff > 1 and
+# need completely different next steps.
+d = np.abs(got - ref)
+tot = d.size
+print(f"    residual: within 1 {100.0 * (d <= 1).sum() / tot:5.1f}%   "
+      f"within 2 {100.0 * (d <= 2).sum() / tot:5.1f}%   "
+      f"within 4 {100.0 * (d <= 4).sum() / tot:5.1f}%   "
+      f"within 8 {100.0 * (d <= 8).sum() / tot:5.1f}%", flush=True)
+sat = ((got >= 255) | (got <= ozp)) & (d > 1)
+print(f"      of the pixels off by more than 1, {100.0 * sat.sum() / max(1, (d > 1).sum()):5.1f}% "
+      f"are at a rail of the hardware output", flush=True)
+
 if not bad:
     print("    every channel correct", flush=True)
 else:
