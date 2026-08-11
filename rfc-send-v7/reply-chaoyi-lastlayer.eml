@@ -1,0 +1,30 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v6 7/9] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com>
+References: <20260806063413.350184-1-gahing@gahingwoo.com>
+ <20260806063413.350184-8-gahing@gahingwoo.com>
+ <20260807211629.1573228-1-gahing@gahingwoo.com>
+ <4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com>
+
+Hi Chaoyi,
+
+> I think it should be for every submit. That is, when you set
+> task_count_clear, you should also set task_last_layer_clear at the same
+> time.
+
+That is what the driver does, and now it does it on purpose rather than by
+inheritance. v7 writes
+
+  PC_TASK_CON_TASK_LAST_LAYER_CLEAR |
+  PC_TASK_CON_TASK_COUNT_CLEAR |
+  PC_TASK_CON_TASK_PP_EN |
+  PC_TASK_CON_TASK_NUMBER(n)
+
+per submit, with the three RK3576 bits at 16, 17 and 18 and the RK3588 ones at
+12 and 13 beside them.
+
+Thank you for both answers. The layout settles a register this driver had only
+been able to reach by comparing traces, and the bit at 18 is one it was setting
+without knowing what it was.
+
+Jiaxing

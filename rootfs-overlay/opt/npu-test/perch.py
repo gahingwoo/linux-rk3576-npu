@@ -146,7 +146,7 @@ else:
     print(f"    first 8 channel maxdiffs: {worst[:8]}", flush=True)
     print(f"    channels 64..71 maxdiffs: {worst[64:72]}", flush=True)
     okl = [c for c in range(oc) if c not in bad and not ref_flat[c]]
-    print(f"    COMPUTED-correct channels: {okl[:24]}"
+    print(f"    COMPUTED-correct channels: {okl[:48]}"
           f"{' ...' if len(okl) > 24 else ''}", flush=True)
 
 sys.stdout.flush()

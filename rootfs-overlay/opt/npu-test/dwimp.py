@@ -116,9 +116,52 @@ for c in range(C):
 print(f"  CONTROL, the CPU decodes to its own impulse: {hits_cpu}/{C}")
 print(f"  hardware decodes to the same impulse:        {hits_npu}/{C}")
 print(f"  hardware reads its OWN input channel:        {same_ch}/{C}")
+
+# The decoded tap AS A FUNCTION OF CHANNEL, which is the thing that was missing.
+#
+# At 1024 channels the channels that come out right are 9 apart, and the
+# residue they share is constant over long stretches and changes near multiples
+# of 64. Every mechanism that fits that contradicts another number in the same
+# log, so print the law instead of guessing at it: the tap offset per channel,
+# a histogram of it, and the same per group of 64.
+off = []
+poff = []
+for c, want, rc, gc in rows:
+    if gc[1] is None:
+        off.append(None)
+        poff.append(None)
+    else:
+        off.append((gc[1][1] * 3 + gc[1][2] - (want[0] * 3 + want[1])) % 9)
+        poff.append((gc[1][0] - c) % C)
+
+hist = {}
+for v in off:
+    hist[v] = hist.get(v, 0) + 1
+print(f"  tap offset (npu tap - wanted tap) mod 9, over all {C} channels:")
+for k in sorted(hist, key=lambda x: (x is None, x)):
+    print(f"    offset {str(k):5s}: {hist[k]:5d}")
+
+ph = {}
+for v in poff:
+    ph[v] = ph.get(v, 0) + 1
+top = sorted(((n, k) for k, n in ph.items()), reverse=True)[:6]
+print(f"  plane offset (npu plane - own) counts, top 6: "
+      + ", ".join(f"{k}:{n}" for n, k in top))
+
+if C > 64:
+    print("  per group of 64: the tap offsets seen in it")
+    for g in range(0, C, 64):
+        seen = {}
+        for v in off[g:g + 64]:
+            seen[v] = seen.get(v, 0) + 1
+        s6 = sorted(((n, k) for k, n in seen.items()), reverse=True)[:3]
+        print(f"    {g:5d}..{g+63:5d}  "
+              + ", ".join(f"offset {k} x{n}" for n, k in s6))
+
+step = max(1, C // 24)
 print("  ch  want      cpu says            npu says            corr")
-for c, want, rc, gc in rows[:16]:
-    print(f"  {c:3d} {str(want):9s} {str(rc[1]):19s} {str(gc[1]):19s} "
+for c, want, rc, gc in rows[::step][:24]:
+    print(f"  {c:4d} {str(want):9s} {str(rc[1]):19s} {str(gc[1]):19s} "
           f"{gc[0]:+.3f}")
 sys.stdout.flush()
 os._exit(0)
