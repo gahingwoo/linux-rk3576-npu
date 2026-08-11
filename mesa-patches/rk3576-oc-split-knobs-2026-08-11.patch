@@ -1,0 +1,107 @@
+From 9358524a36631a3e9da2afc166b040821d02027f Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 15:18:06 +1200
+Subject: [PATCH] rocket RK3576: split the output channel count knob per
+ register
+
+Rounds 71 and 72 moved CORE 0x3020, DPU 0x402c, DPU 0x4030 and RDMA 0x5014
+together, so nothing they measured says which register the hardware reads
+short. What they did establish: at 1024 channels the count has to read 1024 and
+not 1023, one extra is enough and every larger value works too, a 32 channel
+depthwise does NOT tolerate the same addition, and regular convs are unaffected.
+
+0x4030 packs the count at bit 16 beside a mode field while the other three
+carry it alone, and 1023 is a ten bit field exactly full, so the packed one is
+the candidate that explains both the tail and why one extra closes it.
+
+ROCKET_OC_CORE_ADD, ROCKET_OC_DPU_ADD, ROCKET_OC_CUBE_ADD and
+ROCKET_OC_RDMA_ADD move one register each; ROCKET_OC_OUT_ADD still moves all
+four.
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 41 ++++++++++++++++++++++---
+ 1 file changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index b157851..bc4b70c 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -41,6 +41,13 @@ rkt_env_u32(const char *name, uint32_t def)
+    return s ? (uint32_t)strtoul(s, NULL, 0) : def;
+ }
+ 
++static int
++rkt_env_i32(const char *name, int def)
++{
++   const char *s = getenv(name);
++   return s ? atoi(s) : def;
++}
++
+ static void
+ emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
+          uint32_t value)
+@@ -324,8 +331,32 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     * is an off-by-a-group there or somewhere that does not take a count at
+     * all.
+     */
++   /*
++    * ROCKET_OC_OUT_ADD moves all four together; the four per-register knobs
++    * move one at a time.
++    *
++    * Rounds 71 and 72 changed all four at once, which is the mistake this
++    * driver's history keeps recording, so the result needs splitting before it
++    * can be turned into a rule. What those rounds did establish:
++    *
++    *   1024 channels, +0    992 of 1024, the last 32 flat
++    *   1024 channels, +1   1024 of 1024, and every larger value too
++    *     32 channels, +0     32 of 32
++    *     32 channels, +32     0 of 32
++    *   regular convs, +32   unchanged at 128/128 and 16/16
++    *
++    * So the minimum is ONE, not a group of 32: at 1024 channels the count has
++    * to read 1024 rather than 1023. That is a boundary, and 1023 is 0x3ff,
++    * which is exactly a ten bit field full. Whether the field that matters is
++    * the one packed at bit 16 of 0x4030 or one of the three that carry the
++    * count on its own is what these knobs separate.
++    */
+    const char *oca = getenv("ROCKET_OC_OUT_ADD");
+-   unsigned oc_out = oca ? (unsigned)((int)oc + atoi(oca)) : oc;
++   int oc_all = oca ? atoi(oca) : 0;
++   unsigned oc_core = (unsigned)((int)oc + oc_all + rkt_env_i32("ROCKET_OC_CORE_ADD", 0));
++   unsigned oc_dpu = (unsigned)((int)oc + oc_all + rkt_env_i32("ROCKET_OC_DPU_ADD", 0));
++   unsigned oc_cube = (unsigned)((int)oc + oc_all + rkt_env_i32("ROCKET_OC_CUBE_ADD", 0));
++   unsigned oc_rdma = (unsigned)((int)oc + oc_all + rkt_env_i32("ROCKET_OC_RDMA_ADD", 0));
+    bool dw = operation->depthwise;
+ 
+    /*
+@@ -606,7 +637,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    /* CORE */
+    R_CORE(0x3018, 0x10000000 | (dw ? 0x0a : 0x01));
+    R_CORE(0x301c, (dpu_lines << 16) | (ow - 1));
+-   R_CORE(0x3020, oc_out - 1);
++   R_CORE(0x3020, oc_core - 1);
+    R_CORE(0x3024, 0x00000000);
+ 
+    /* DPU */
+@@ -618,8 +649,8 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_DPU(0x4020, ow - 1);
+    R_DPU(0x4024, dpu_lines);
+    R_DPU(0x4028, 0x00000000);
+-   R_DPU(0x402c, oc_out - 1);
+-   R_DPU(0x4030, ((oc_out - 1) << 16) | (dw ? 0x0310 : 0x0710));
++   R_DPU(0x402c, oc_dpu - 1);
++   R_DPU(0x4030, ((oc_cube - 1) << 16) | (dw ? 0x0310 : 0x0710));
+    R_DPU(0x4034, (dpu_lines << 16) | (ow - 1));
+    R_DPU(0x4038, dw ? 0x00100092 : 0x00120080);
+    R_DPU(0x403c, 0x00000000);
+@@ -721,7 +752,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    /* DPU_RDMA */
+    R_RDMA(0x500c, ow - 1);
+    R_RDMA(0x5010, dpu_lines);
+-   R_RDMA(0x5014, oc_out - 1);
++   R_RDMA(0x5014, oc_rdma - 1);
+    R_RDMA(0x5018, 0x00000000);
+    if (getenv("ROCKET_RK3588_SDP")) {
+       /*
+-- 
+2.43.0
+
