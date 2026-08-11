@@ -131,6 +131,32 @@ if len(nzr):
     print(f"    maxdiff excluding the outer ring: {int(inner)}"
           f"    whole surface: {int(np.abs(got - ref).max())}", flush=True)
 
+# When a channel correlates but disagrees, NAME THE AFFINE MAP.
+#
+# fc_imp decodes to exactly the right input plane and tap on all 32 channels at
+# correlation 1.000 and still matches nothing, which can only be a scale and an
+# offset. Sweeping blindly for those wastes a flash each time; fitting them
+# from the two surfaces says what to write. ref = a * npu + b, per channel,
+# reported as the median so one saturated channel cannot move it.
+if bad:
+    aa, bb, rr = [], [], []
+    for c in bad:
+        u = got[:, :, c].ravel().astype(float)
+        v = ref[:, :, c].ravel().astype(float)
+        if u.std() == 0 or v.std() == 0:
+            continue
+        a = float(np.cov(u, v)[0, 1] / np.var(u))
+        aa.append(a)
+        bb.append(float(v.mean() - a * u.mean()))
+        rr.append(float(np.corrcoef(u, v)[0, 1]))
+    if aa:
+        aa, bb, rr = np.array(aa), np.array(bb), np.array(rr)
+        print(f"    affine fit over {len(aa)} wrong channels, ref = a*npu + b:"
+              f"  a median {np.median(aa):.4f} (min {aa.min():.4f} max "
+              f"{aa.max():.4f})", flush=True)
+        print(f"      b median {np.median(bb):+.2f}    correlation median "
+              f"{np.median(rr):+.4f}", flush=True)
+
 if not bad:
     print("    every channel correct", flush=True)
 else:

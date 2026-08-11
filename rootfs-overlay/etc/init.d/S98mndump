@@ -2,48 +2,43 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 82. conv0 was reading one pixel up and to the left.
+# 2026-08-11 round 83. Measure conv0's requant instead of sweeping for it.
 #
-# Round 81's impulse decode, with the CPU control doing exactly its job:
+# Round 82 confirmed the padding fix and its control:
 #
-#   CPU control decodes to its own impulse    0/32
-#   hardware decodes to the same impulse     32/32
-#   hardware reads the right input plane     32/32
-#   correlation on every row                 +1.000
+#   impulse decode, fixed      CPU 32/32, hardware 32/32, plane 32/32,
+#                              correlation +1.000 on every channel
+#   control, old padding       hardware 0/32, plane 25/32, the shift is back
+#   conv0 row maxdiff          163 to 200 and varying, from 255 pinned
 #
-# A control at 0 of 32 normally voids a round. This one voided the DECODER and
-# named the bug while doing it. Every CPU channel came back at want + (1, 1),
-# because the decoder assumed a pad of 1 on every side. tflite SAME padding
-# here is not symmetric: 224 to 112 at stride 2 with a 3x3 kernel needs ONE pad
-# in total, so pad_top and pad_left are 0 and pad_bottom and pad_right are 1.
+# So the window is right now. conv0 is still 0 COMPUTED.
 #
-# The hardware matched the decoder's WRONG convention on all 32 channels at
-# correlation 1.000, and the CPU matches the right one. So the hardware is
-# reading the input one pixel up and to the left, and every value is wrong
-# because of where it reads, not what it computes. That is why no requant value
-# in round 80 could rescue it.
+# The impulse model says what is left, and says it precisely: fc_imp decodes to
+# exactly the right plane and tap on all 32 channels at correlation 1.000, and
+# matches nothing. A perfect correlation with wrong values is an AFFINE error,
+# a scale and an offset, and that is the requant.
 #
-# The cause is in the source, not inferred. fill_regcmd_firstconv writes
+# Round 80 swept the requant and learned only that the output moves. Sweeping
+# costs a flash per point and cannot land on a value it does not try. perch.py
+# now FITS the affine map instead: ref = a * npu + b, per channel, over the
+# channels that disagree, reported as a median so one saturated channel cannot
+# drag it. On fc_imp, where the correlation is 1.000, a and b are exact.
 #
-#     R_CNA(0x1080, 0x00000101)      pad_left = 1, pad_top = 1
-#
-# which is symmetric padding of one, what a torch conv with padding=1 asks for
-# and what the capture this function was written from contained. MobileNet's
-# conv0 wants 0x01010000, the opposite corner. The generic path has derived
-# this register since the round that found out what it was; the first conv kept
-# the literal.
-#
-# Both are now fixed: the driver derives 0x1080 from the task's padding, and
-# the decoder derives its pad offset instead of assuming one.
+# Then the arithmetic is one step. The driver writes scale S at shift T, so the
+# multiplier is S / 2^T; if the reference is a times the hardware's output, the
+# multiplier wanted is a times what is being written, and a says whether it is
+# a clean power of two, the ratio between the captured and computed pairs, or
+# something else entirely.
 #
 # DECISION RULE, written before the run:
-#   CPU control 32/32 and hardware   the padding was the whole of it and conv0
-#     32/32, and conv0 COMPUTED      is fixed
-#   both decode 32/32 but conv0      the window is right now and something
-#     still 0 COMPUTED               else is wrong; the requant sweep is worth
-#                                    redoing once more, with a correct window
-#   ROCKET_FC_PAD=0x00000101         the control: it has to put the shift back
-#   anything else moves              that comes first
+#   a is a clean power of two      the shift alone is wrong, and by log2(a)
+#   a matches 0x76be/2^22 over     the computed pair is right and the captured
+#     0x5391/2^25, which is 11.4   literals are from another model after all
+#   a varies per channel           it is not a per-layer requant at all and the
+#                                  next question is per-channel
+#   b is far from zero             the OUT_CVT offset is wrong too, and by b
+#   conv2d-cal or the depthwise    that comes first
+#     models move
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -60,45 +55,32 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the impulse decode, with both sides fixed ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
-
-	log ""
-	log "===== 2) the CONTROL: put the old padding back, expect the shift ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FC_PAD=0x00000101 \
-		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
-
-	log ""
-	log "===== 3..4) the impulse model and conv0 through the usual metric ====="
+	log "===== 1) the impulse model: a and b are exact here ====="
 	p fc_imp.tflite ""
+
+	log ""
+	log "===== 2) conv0 with its real weights ====="
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 5) conv0 with the old padding, which must be worse ====="
-	p mn_conv0.tflite ROCKET_FC_PAD=0x00000101
+	log "===== 3..5) and at three shifts, so a can be checked against them ====="
+	p fc_imp.tflite ROCKET_FC_SHIFT=24
+	p fc_imp.tflite ROCKET_FC_SHIFT=22
+	p fc_imp.tflite ROCKET_FC_SHIFT=21
 
 	log ""
-	log "===== 6) the chain that needs conv0 ====="
-	p mn_conv0dw1.tflite ""
+	log "===== 6) the computed pair on the impulse model ====="
+	p fc_imp.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22"
 
 	log ""
-	log "===== 7..9) REGRESSION ====="
+	log "===== 7..9) REGRESSION, and the fit must read a=1 b=0 there ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 10) whole model ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== The CPU control must be 32/32 this time. If it is not, the  ====="
-	log "===== decoder is still wrong and nothing else here can be read.   ====="
+	log "===== Read a and b on test 1. The multiplier being written is     ====="
+	log "===== 0x5391 / 2^25; the one wanted is a times that.              ====="
 	sync
 }
 case "$1" in
