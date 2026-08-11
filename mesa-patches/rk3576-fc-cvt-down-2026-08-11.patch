@@ -1,0 +1,66 @@
+From e810b24311bb67b8ad99b5c9344c3c9e4d4b27d8 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 20:30:12 +1200
+Subject: [PATCH] rocket RK3576: a first-conv knob for the requant multiply
+ overflowing int32
+
+The OUT_CVT computes (accumulator * cvt_scale) >> shift in signed int32.
+conv0's accumulator reaches 27 * 128 * 151, which is 2^19, and cvt_scale is
+0x76be at 2^14.9, so the product is 2^33.9 and wraps for any accumulator above
+70646. Scaling the multiplier down by T bits and the shift by T is
+arithmetically identical and keeps the product in range: T=4 is the first value
+that fits.
+
+conv0 measures 99.5 percent of pixels exact with a tail off by more than 8, and
+only 8 percent of its failures sit at an output rail, so the tail is not
+clipping. A wrap on the largest accumulators is the right size and shape for it.
+
+The generic path's ROCKET_CVT_DOWN does not reach the first conv: it lives in
+the generic emitter and conv0 goes through fill_regcmd_firstconv. Sweeping it
+against conv0 measures nothing, and 2 would not have been enough in any case.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 26 +++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index acd5469..b20a65c 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -308,6 +308,32 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+          fc_scale |= (1 << 14);
+       int32_t fc_off = (int32_t)task->output_zero_point - 0x80;
+ 
++      /*
++       * ROCKET_FC_CVT_DOWN, the same trade the generic path makes.
++       *
++       * The OUT_CVT computes (accumulator * cvt_scale) >> shift in signed
++       * int32. conv0's accumulator reaches 27 * 128 * 151, which is 2^19, and
++       * cvt_scale is 0x76be, 2^14.9, so the product is 2^33.9 and wraps for
++       * every accumulator above 70646. Scaling the multiplier down by T bits
++       * and the shift by T is arithmetically identical and keeps the product
++       * in range.
++       *
++       * Measured: conv0 is 99.5 percent of pixels exact with a tail off by
++       * more than 8, and only 8 percent of the failures sit at an output rail,
++       * so the tail is not clipping. A wrap on the largest accumulators is the
++       * right size and the right shape for it.
++       *
++       * The generic path's ROCKET_CVT_DOWN does NOT reach here: it lives in
++       * the generic emitter and this is fill_regcmd_firstconv. Round 88 swept
++       * it against conv0 and measured nothing, twice over, because 2 would not
++       * have been enough either.
++       */
++      unsigned fc_down = rkt_env_u32("ROCKET_FC_CVT_DOWN", 0);
++      if (fc_down > fc_shift)
++         fc_down = fc_shift;
++      fc_scale >>= fc_down;
++      fc_shift -= fc_down;
++
+       R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", (uint32_t)fc_off));
+       R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", fc_scale));
+       R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", fc_shift));
+-- 
+2.43.0
+

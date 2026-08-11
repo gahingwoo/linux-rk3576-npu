@@ -2,42 +2,51 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 88. How big is what is left of conv0, and where?
+# 2026-08-11 round 89. conv0's last half percent: the requant multiply wraps.
 #
-# Round 87 separated the two things conv0 has that the exact impulse does not:
+# Round 88 re-ran identically, digit for digit, so the numbers are stable:
 #
-#   fc_imp    1 tap, no bias      32/32, every one COMPUTED
-#   fc_allw   27 taps, no bias     0/32, but a = 1.0003 with min AND max both
-#                                  1.0003 across 32 channels, b -0.04,
-#                                  correlation 1.0000
-#   fc_impb   1 tap, real bias    26/32 with 25 COMPUTED
-#   mn_conv0  both                 9/32 with 0 COMPUTED, a 0.9991, spread
-#                                  0.9486 to 1.0009, correlation 0.9994
+#   fc_imp     within 1 100.0%
+#   fc_allw    within 1  99.6%   of the failures 100.0% at a rail
+#   fc_impb    within 1  99.8%   of the failures  16.7% at a rail
+#   mn_conv0   within 1  99.5%   of the failures   7.9% at a rail
 #
-# So the bias path works, 25 channels of fc_impb compute exactly. And fc_allw
-# fails every channel while its affine map is PERFECT: a identical to four
-# decimals across all 32 and correlation 1.0000. That is not a wrong
-# computation. It is a small residual, or a difference in where the two
-# saturate, and 0.0003 of a 255 range is 0.08 of a count, which cannot fail a
-# maxdiff of 1 on its own.
+# conv0's tail is NOT clipping: 92 percent of what it gets wrong is away from
+# both rails, and 0.3 percent of pixels are off by more than 8, which rounding
+# cannot do.
 #
-# A maxdiff cannot tell those apart. A surface uniformly two counts out and a
-# surface exact apart from a handful of wild pixels both score the same and
-# need completely different next steps, so perch.py now prints the residual
-# distribution and how much of it sits at a rail.
+# ⚠ AND ROUND 88'S CVT_DOWN TEST WAS VOID, WHICH IS MY MISTAKE AND THE THIRD OF
+# ITS KIND. ROCKET_CVT_DOWN lives in the generic emitter; conv0 goes through
+# fill_regcmd_firstconv, which never reads it. Round 50 was void for a knob
+# that did not apply to the model, round 57 for a knob that did not apply to
+# the path, and now this. The rule that catches it is the one this file keeps
+# writing down: before believing a sweep, check the knob reaches the thing
+# being swept.
 #
-# Nothing in the driver changed this round.
+# The arithmetic says a wrap is the right size. The OUT_CVT computes
+# (accumulator * cvt_scale) >> shift in signed int32. conv0's accumulator
+# reaches 27 * 128 * 151, which is 2^19, and cvt_scale is 0x76be at 2^14.9, so
+# the product is 2^33.9 and wraps for any accumulator above 70646. Scaling the
+# multiplier down by T bits and the shift by T is arithmetically identical and
+# keeps the product in range:
+#
+#   T=0  product 2^33.9  overflows      T=4  product 2^29.9  fits
+#   T=2  product 2^31.9  overflows      T=6  product 2^27.9  fits
+#
+# So 2 would not have been enough even if it had reached, which is why that
+# void test is void twice over.
 #
 # DECISION RULE, written before the run:
-#   nearly all pixels within 1 and    the arithmetic is right and the failure
-#     the rest at a rail              is saturation; the accumulator overflows
-#                                     before the requant, which the generic
-#                                     path has ROCKET_CVT_DOWN for
-#   a broad spread with few at a      the multiplier is quantised too coarsely,
-#     rail                            and the scale field is 15 bits
-#   bimodal, most exact and a few     a per-channel term is wrong for those
-#     channels far out                channels only
-#   fc_imp regresses                  that comes first
+#   the tail collapses at T=4 or 6    the wrap was it; pick the smallest T that
+#                                     fits and derive it rather than sweep
+#   T=2 already helps                 the overflow model is wrong about where
+#                                     the boundary is
+#   nothing changes at any T          the knob still does not reach, or the
+#                                     tail is not a wrap; check that a large T
+#                                     visibly damages the output before
+#                                     believing either
+#   fc_allw's rail failures move      they should not: those are clipping, and
+#                                     T is arithmetically neutral
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -54,30 +63,35 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) the ladder, with the residual distribution ====="
-	p fc_imp.tflite ""
-	p fc_allw.tflite ""
-	p fc_impb.tflite ""
+	log "===== 1..5) conv0, the multiplier scaled down by T bits ====="
 	p mn_conv0.tflite ""
+	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=2
+	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=4
+	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=6
+	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=10
 
 	log ""
-	log "===== 5..6) if it is overflow, scaling the multiplier down helps ====="
-	p fc_allw.tflite ROCKET_CVT_DOWN=2
-	p mn_conv0.tflite ROCKET_CVT_DOWN=2
+	log "===== 6) VOID CHECK: a big T must visibly damage the output ====="
+	p mn_conv0.tflite ROCKET_FC_CVT_DOWN=20
 
 	log ""
-	log "===== 7) the chain ====="
-	p mn_conv0dw1.tflite ""
+	log "===== 7..8) the impulse models at the winner ====="
+	p fc_imp.tflite ROCKET_FC_CVT_DOWN=4
+	p fc_allw.tflite ROCKET_FC_CVT_DOWN=4
 
 	log ""
-	log "===== 8..10) REGRESSION ====="
+	log "===== 9) the chain ====="
+	p mn_conv0dw1.tflite ROCKET_FC_CVT_DOWN=4
+
+	log ""
+	log "===== 10..12) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Read the residual line on test 2. Almost all within 1 with  ====="
-	log "===== the rest at a rail is saturation, not arithmetic.           ====="
+	log "===== Read test 6 first. If T=20 does not wreck conv0, the knob   ====="
+	log "===== is not reaching it and tests 2 to 5 mean nothing.           ====="
 	sync
 }
 case "$1" in
