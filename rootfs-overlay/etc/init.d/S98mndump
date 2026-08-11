@@ -2,47 +2,39 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 92. Name the channel that is five percent out.
+# 2026-08-11 round 93. Is it the third kernel column?
 #
-# Round 91's neutral fill is INERT. It and its control are byte for byte the
-# same: a median 0.9991, minimum 0.9486, maximum 1.0009, residual 99.5, 99.5,
-# 99.6, 99.7 and 7.9 percent at a rail, both ways. So the hardware does not
-# read the fourth group of each 16 byte unit and that hypothesis is dead. The
-# change stays because it removes a -23 weight from a lane that should be
-# neutral, but it is recorded as verified inert, not as a fix.
+# Round 92 named the outliers and they are stable: two identical runs of conv0
+# give the same three, channels 5, 25 and 6 at a 0.9486, 0.9614 and 0.9786,
+# and the measured multiplier keeps them in the same order. Not fit noise.
 #
-# conv0's structural surface is now exhausted. All of these are excluded, each
-# with a control or a vendor comparison:
+# The cross reference is the find. fc_impb, one live tap per channel plus the
+# real bias, fails exactly channels 6, 7, 15, 17, 25 and 26. Its tap is
+# (c / 3) mod 9, so those are taps 2, 2, 5, 5, 8 and 8, and with p = ky*3 + kx
+# every one of them is kx = 2. Nine of the 32 channels are in that group and
+# six of them are the only failures; the other 23 channels have none.
 #
-#   22 of 22 hardcoded registers    identical to the vendor
-#   the ARGB weight layout          864 of 864 lanes
-#   the padding amounts             fixed, confirmed by the impulse decode
-#   the pad value                   derived, inert here
-#   the requant offset and shift    derived, confirmed by predicting a = 1
-#   the multiplier's magnitude      swept, moves a exactly, residual unmoved
-#   the int32 overflow              swept with a control that bites, unmoved
-#   the unreached weight lanes      swept, byte for byte unmoved
+# And fc_imp, the SAME taps with no bias, is 32 of 32. So the bias is not the
+# fault. It lifts the output clear of the ReLU clip, and the fault becomes
+# visible where before it was clipped away.
 #
-# What is left is not global. Through every one of those the fit has held a
-# median of 0.9991 with a MINIMUM of 0.9486: one channel five percent out while
-# the rest sit at 1.000. A global multiplier cannot do that, and none of the
-# knobs above touched it.
+# ⚠ It is NOT the right edge, which was the first thing that came to mind. With
+# pad_left 0 and stride 2, kx = 2 reads input column 2*xout + 2, in range for
+# 111 of the 112 output columns, and conv0's error covers all 112 rows and all
+# 112 columns.
 #
-# The report has never said WHICH channel. perch.py now prints the three
-# lowest and three highest per-channel a with their b, which is the only way to
-# ask what is special about that channel's weights or bias, and mn_conv0.tflite
-# is on the host so the answer is offline once the number is known.
-#
-# Nothing in the driver changed this round.
+# So this round asks the column directly: three models, every channel's live
+# tap in one kernel column, the real bias kept in all three.
 #
 # DECISION RULE, written before the run:
-#   one channel far out, the rest    look at its weights and bias offline; a
-#     tight                          single channel is a data question, not a
-#                                    register one
-#   a spread of channels             it is not one bad channel but a gradient,
-#                                    and the ordering will say along what
-#   the extremes move run to run     it is noise in the fit, not a property of
-#                                    the model
+#   kx2 fails and kx0, kx1 pass     the third column is the fault, and the
+#                                   weight buffer's third group at byte 8 of
+#                                   each 16 byte unit is where to look
+#   all three fail                  it is not the column; the association in
+#                                   fc_impb was the bias values coinciding
+#   all three pass                  a single column is fine and the fault needs
+#                                   more than one live column at a time
+#   the failing set is not by kx    read the new grouping off the channels
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -59,26 +51,22 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) conv0: which channels are the outliers? ====="
-	p mn_conv0.tflite ""
+	log "===== 1..3) one kernel column at a time, real bias in all three ====="
+	p fc_kx0.tflite ""
+	p fc_kx1.tflite ""
+	p fc_kx2.tflite ""
 
 	log ""
-	log "===== 2) the same, twice, so the extremes can be checked stable ====="
-	p mn_conv0.tflite ""
-
-	log ""
-	log "===== 3) with the measured multiplier, which shifts a but not the ====="
-	log "=====    spread, so the outlier should keep its place            ====="
-	p mn_conv0.tflite ROCKET_FC_SCALE=0x7699
-
-	log ""
-	log "===== 4..5) the impulse models, which have no bias and one tap ====="
+	log "===== 4) the mixed-tap model that started this ====="
 	p fc_impb.tflite ""
-	p fc_allw.tflite ""
 
 	log ""
-	log "===== 6) the chain ====="
-	p mn_conv0dw1.tflite ""
+	log "===== 5) and the no-bias one, which is exact ====="
+	p fc_imp.tflite ""
+
+	log ""
+	log "===== 6) conv0 itself ====="
+	p mn_conv0.tflite ""
 
 	log ""
 	log "===== 7..9) REGRESSION ====="
@@ -87,8 +75,8 @@ start() {
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Tests 1 and 2 are the same run twice. If the outlier moves  ====="
-	log "===== between them it is noise in the fit, not a bad channel.     ====="
+	log "===== Compare 1, 2 and 3. If only kx2 fails, the third group of   ====="
+	log "===== each 16 byte weight unit is the place to look.              ====="
 	sync
 }
 case "$1" in

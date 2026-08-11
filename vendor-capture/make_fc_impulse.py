@@ -99,9 +99,17 @@ def main():
         return
 
     # tflite conv weights are [oc, ky, kx, ic]
+    # mode "kx0".."kx2": every channel's live tap in ONE kernel column, with
+    # the real bias kept. fc_impb's six wrong channels are exactly six of the
+    # nine whose tap is kx = 2, and fc_imp with the same taps and no bias is
+    # 32/32, so the bias is not the fault: it lifts the output clear of the
+    # ReLU clip where the fault is visible. These isolate the column.
+    kxfix = int(mode[2:]) if mode.startswith("kx") else None
     for o in range(OC):
         want_ic = o % IC
         want_p = (o // IC) % (KH * KW)
+        if kxfix is not None:
+            want_p = ((o // IC) % KH) * KW + kxfix
         for ky in range(KH):
             for kx in range(KW):
                 for c in range(IC):
@@ -109,7 +117,7 @@ def main():
                     on = ((c == want_ic) and (ky * KW + kx == want_p)
                           if mode != "all" else True)
                     b[idx] = v if on else w_zp
-    if mode != "bias":
+    if mode != "bias" and kxfix is None:
         b[boff:boff + blen] = b"\x00" * blen
 
     open(dst, "wb").write(bytes(b))
