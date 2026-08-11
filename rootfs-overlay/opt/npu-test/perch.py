@@ -143,6 +143,19 @@ if bad:
     for c in bad:
         u = got[:, :, c].ravel().astype(float)
         v = ref[:, :, c].ravel().astype(float)
+        # ⚠ Fit only where NEITHER surface is clipped.
+        #
+        # The reference is max(cpu, out_zp) and both surfaces saturate at 255,
+        # so a fit over everything compares two differently clipped shapes and
+        # cannot reach correlation 1 however right the underlying map is. That
+        # is what made round 83 read 0.89 and call it a border error: with
+        # pad_top and pad_left at 0 the padding touches one row and one column,
+        # 1.8 percent of the surface, which cannot move a correlation that far.
+        # Excluding clipped pixels is what makes a and b mean anything.
+        keep = (v > ozp) & (v < 255) & (u > ozp) & (u < 255)
+        if keep.sum() < 64:
+            continue
+        u, v = u[keep], v[keep]
         if u.std() == 0 or v.std() == 0:
             continue
         a = float(np.cov(u, v)[0, 1] / np.var(u))
@@ -151,7 +164,8 @@ if bad:
         rr.append(float(np.corrcoef(u, v)[0, 1]))
     if aa:
         aa, bb, rr = np.array(aa), np.array(bb), np.array(rr)
-        print(f"    affine fit over {len(aa)} wrong channels, ref = a*npu + b:"
+        print(f"    affine fit over {len(aa)} wrong channels, unclipped "
+              f"pixels only, ref = a*npu + b:"
               f"  a median {np.median(aa):.4f} (min {aa.min():.4f} max "
               f"{aa.max():.4f})", flush=True)
         print(f"      b median {np.median(bb):+.2f}    correlation median "

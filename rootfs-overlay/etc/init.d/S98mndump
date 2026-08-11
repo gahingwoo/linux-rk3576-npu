@@ -2,49 +2,47 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 84. The first conv's PAD VALUE, the third literal.
+# 2026-08-11 round 85. Make the affine fit mean something, then read it.
 #
-# Round 83 fitted the affine map instead of sweeping for it, and the fit itself
-# pointed somewhere better than its own numbers.
+# Round 84's pad value change is INERT. fc_imp gives a 0.3446 against 0.3445
+# with the control and correlation 0.8897 either way, identical to four
+# decimals, and conv0 barely moves.
 #
-# On fc_imp the fit gives a about 0.345 with b about -20, tightly clustered
-# across channels, 0.3376 to 0.3449, so it is per layer rather than per
-# channel. But its correlation is 0.89, while fcimp.py's decode of the SAME run
-# reports 1.000. The difference is where each looks: the decode uses a 32x32
-# interior crop, the fit uses the whole 112x112 surface. Interior perfect,
-# whole surface not, is a BORDER error.
+# ⚠ AND THAT KILLS ROUND 83'S READING, WHICH WAS MINE AND WAS WRONG. That round
+# saw the decode report correlation 1.000 on a 32x32 interior crop while the
+# affine fit over the whole 112x112 reached only 0.89, and called the
+# difference a border error. It is not. With pad_top and pad_left at 0 the
+# padding touches ONE row and ONE column, 1.8 percent of the surface, which
+# cannot pull a correlation from 1.000 to 0.89.
 #
-# ⚠ The fitted a is also not trustworthy on its own. As the shift drops the
-# output saturates, npu distinct falling 242, 122, 32, 17, and a fitted slope
-# over a clipped surface is not the multiplier. That is why a moves 0.345,
-# 0.246, 0.196, 0.189 rather than doubling with each shift. The fit named the
-# border; it did not name the requant.
+# The real cause is the instrument. perch.py's reference is max(cpu, out_zp),
+# ReLU clipped, and both surfaces saturate at 255. A straight line fitted
+# between two DIFFERENTLY clipped shapes cannot reach correlation 1 however
+# right the underlying map is, and the NPU's clipping differs from the
+# reference's precisely because its scale is wrong. The 0.89 was the clipping
+# all along.
 #
-# And the border is a third hardcoded literal in the same function. The CMAC
-# sees the input with 0x80 subtracted, so a padded tap has to read in_zp - 0x80
-# to contribute nothing, replicated over the three input lanes:
+# So the fit now excludes any pixel where either surface is at the floor or the
+# ceiling. On the unclipped remainder a and b are the real affine map, and the
+# multiplier being written is 0x5391 / 2^25 while the one wanted is a times
+# that.
 #
-#     R_CNA(0x1084, 0x00808080)
-#
-# is that byte for an input whose zero point is 0, a plain image tensor, which
-# is what the capture this function came from used. MobileNet's conv0 has zero
-# point 128 and wants 0x00000000. The generic path already carries this fix and
-# its comment records the symptom in as many words: the output border ring is
-# wrong and everything inside it is right.
-#
-# That is the third literal in fill_regcmd_firstconv found wrong this way, after
-# the padding amounts and the coefficient region collision. All three were
-# correct for the single model the function was written from.
+# The pad value change stays. It is derived the same way the generic path
+# derives it, it matches the vendor for a zero point of 0, and it affects one
+# row and one column here, which is too little for this measurement to resolve
+# either way. It is correct by derivation and unproven by experiment, and it is
+# recorded as that rather than as a fix.
 #
 # DECISION RULE, written before the run:
-#   conv0 gets COMPUTED channels     the border was the last of it
-#   the affine correlation rises     the border is fixed and a smaller thing
-#     toward 1.000 but 0 COMPUTED    remains; the fit is then trustworthy and
-#                                    names the requant directly
-#   nothing changes                  in_zp - 0x80 is not what this register
-#                                    wants for a first conv
-#   ROCKET_FC_PAD_VAL=0x00808080     the control: it must put the old border
-#                                    back
+#   correlation goes to 1.000 and     the map is affine after all and a names
+#     a is consistent across          the requant; write it and be done
+#     channels
+#   correlation rises but a varies     it is per channel, not per layer, and
+#     per channel                      the coefficient buffer is the target
+#   correlation stays near 0.89        the error is not affine at all and the
+#                                      window, not the scaling, is still wrong
+#   conv2d-cal's fit is not a=1 b=0    the fit itself is broken; nothing else
+#     where it has wrong channels      can be read
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -61,40 +59,28 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) the impulse model and its control ====="
+	log "===== 1) the impulse model, where the map should be exact ====="
 	p fc_imp.tflite ""
-	p fc_imp.tflite ROCKET_FC_PAD_VAL=0x00808080
 
 	log ""
-	log "===== 3..4) conv0 and its control ====="
+	log "===== 2..4) and at three shifts: a must track the multiplier now ====="
+	p fc_imp.tflite ROCKET_FC_SHIFT=26
+	p fc_imp.tflite ROCKET_FC_SHIFT=27
+	p fc_imp.tflite ROCKET_FC_SHIFT=28
+
+	log ""
+	log "===== 5) conv0 with its real weights ====="
 	p mn_conv0.tflite ""
-	p mn_conv0.tflite ROCKET_FC_PAD_VAL=0x00808080
 
 	log ""
-	log "===== 5) the decode, which should still be 32/32 both sides ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
-
-	log ""
-	log "===== 6) the chain that needs conv0 ====="
-	p mn_conv0dw1.tflite ""
-
-	log ""
-	log "===== 7..9) REGRESSION ====="
+	log "===== 6..8) REGRESSION, and cal_k1 has a wrong channel to fit ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 10) whole model ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Watch the affine correlation on test 1. If the border was   ====="
-	log "===== it, that number goes to 1.000 and then a means something.   ====="
+	log "===== If a is about 0.34 and halving the multiplier doubles it,   ====="
+	log "===== the shift is short by log2(1/a) and that is the whole fix.  ====="
 	sync
 }
 case "$1" in
