@@ -2,43 +2,46 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 80. Re-ask the requant question, now that conv0's MAC is on.
+# 2026-08-11 round 81. Ask conv0 which input plane it is reading.
 #
-# Round 79 un-regressed conv0. Leaving the coefficient region zero for a first
-# conv gives distinct 254 with 4 of 32 channels constant, the control
-# ROCKET_FC_SCALE_TABLE reproduces the old distinct 1 with all 32 constant, and
-# nothing else moved: conv2d-cal, cal_k3, cal_k1, cal_oc16, mn_dw1, mn_dw25 and
-# the whole model are all exactly as they were.
+# Round 80 re-ran the requant sweep with the accumulator alive, which round 77
+# could not. The output MOVES now, distinct 254, 218, 252, 256, 231, 114 across
+# shifts 25, 27, 26, 24, 22, 20, so the sweep is live where the earlier one was
+# meaningless. And COMPUTED stays 0 at every point. The match counts that rise,
+# 4 then 8 then 9, are all TRIVIAL, and the constant channel count rises with
+# them, 10 then 19 then 20: that is channels saturating, not channels computing.
 #
-# ⚠ AND ROUND 77'S CONCLUSION HAS TO BE WITHDRAWN. That round swept the OUT_CVT
-# shift over 2^16, saw the output never move, and concluded the requant
-# literals were innocent. But it ran while the MAC was EMPTY. An output of
-# 128 plus the offset cannot respond to a requant sweep no matter what the
-# requant is, because there is nothing to scale. The sweep proved the MAC was
-# empty, which was worth knowing, and proved NOTHING about the requant.
+# So no requant value lands near correct, and the accumulator is wrong rather
+# than its scaling. What is left, and has never been checked, is the INPUT.
 #
-# So ask it again with the accumulator alive. conv0 now produces a full range
-# output, distinct 254 against the reference's 253, that disagrees everywhere,
-# which is what a wrong requant multiplier looks like as much as anything else.
+# Everything else about conv0 already matches the vendor. Its 22 hardcoded
+# registers are identical for the same geometry, and its ARGB weight layout
+# reproduces the vendor's bytes 864 of 864. A first conv has THREE channels and
+# the CNA reads four byte groups with an alpha lane, while mesa hands the
+# tflite tensor over exactly as it is, three bytes per pixel. If the hardware
+# wants four, every pixel after the first is read from the wrong address.
 #
-# The two candidates are on the table:
+# fc_imp.tflite gives output channel c a single live tap at input channel
+# c mod 3 and tap (c / 3) mod 9. conv0 is stride 2, so the correct output is
+# in[2y + ky - 1][2x + kx - 1][c mod 3], and fcimp.py scores every output
+# channel against all three planes and all nine taps.
 #
-#   captured   scale 0x5391, shift 25, offset -2, which the comment beside them
-#              says came from a live vendor conv0 capture on this board
-#   computed   in_sc * wt_sc / out_sc = 0.007247 gives scale 0x76be at shift
-#              22, the same expression the generic path uses for every other
-#              shape, all of which are byte exact
+# ⚠ The impulse code had to be clamped. An effective weight of one would need
+# code 289 and the field is a byte, so it uses 255, an effective 0.75. The
+# response is still a single tap and the CPU reference comes from the same
+# patched file, so nothing about the comparison changes.
 #
 # DECISION RULE, written before the run:
-#   a sweep point makes conv0        the requant was it after all, and round
-#     COMPUTED anywhere              77's withdrawal was necessary
-#   the output moves but never       the requant is wrong AND something else
-#     becomes correct                is too; the shape of the best point says
-#                                    which direction
-#   the output does not move at all  the requant really is innocent, this time
-#                                    measured with a live MAC, and the next
-#                                    round goes at the ARGB input path
-#   any other model moves            that comes first
+#   CPU control not near 32/32     void, the model or the decoder is wrong
+#   hardware reads the right       the input path is fine and the fault is
+#     plane and tap                further in
+#   the plane is offset by a       three channels are being read as four, or
+#     constant                     the reverse, and the offset says which
+#   the plane wanders with c       the pixel stride is wrong, and how fast it
+#                                  wanders gives the stride
+#   nothing fits any single tap    the accumulator is summing several taps and
+#                                  the weight buffer is not being consumed the
+#                                  way its layout says
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -55,36 +58,28 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) conv0 as it stands, the baseline for this sweep ====="
+	log "===== 1) the first-conv impulse decode ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
+
+	log ""
+	log "===== 2) the same model through the ordinary metric ====="
+	p fc_imp.tflite ""
+
+	log ""
+	log "===== 3) conv0 with its real weights, for comparison ====="
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 2..6) the SHIFT, with the MAC alive this time ====="
-	p mn_conv0.tflite ROCKET_FC_SHIFT=27
-	p mn_conv0.tflite ROCKET_FC_SHIFT=26
-	p mn_conv0.tflite ROCKET_FC_SHIFT=24
-	p mn_conv0.tflite ROCKET_FC_SHIFT=22
-	p mn_conv0.tflite ROCKET_FC_SHIFT=20
-
-	log ""
-	log "===== 7..8) the computed pair, and it with the captured offset ====="
-	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22"
-	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22 ROCKET_FC_OFFSET=0xffffff80"
-
-	log ""
-	log "===== 9..10) the offset on its own ====="
-	p mn_conv0.tflite ROCKET_FC_OFFSET=0
-	p mn_conv0.tflite ROCKET_FC_OFFSET=0xffffff80
-
-	log ""
-	log "===== 11..13) REGRESSION ====="
+	log "===== 4..6) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Round 77 swept this with an EMPTY MAC and concluded nothing ====="
-	log "===== could be concluded. This is the same sweep, done properly.  ====="
+	log "===== Read the CONTROL line first: the CPU must decode to its own ====="
+	log "===== impulse, or the hardware column says nothing.               ====="
 	sync
 }
 case "$1" in
