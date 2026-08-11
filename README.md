@@ -143,68 +143,67 @@ This also explains a negative result that had been puzzling: compiling vendor
 `.rknn` files on the host and comparing them shows the vendor's coefficient
 buffer carries **no kernel size dependence at all**. There was none to find.
 
-## Depthwise: the overlap rows were staged twice
+## Depthwise: three bugs, all closed
 
-Fixed 2026-08-11. A MobileNet depthwise layer is now correct on every output
-channel:
+Fixed 2026-08-11. Every depthwise layer tested is now correct on every output
+channel, at both channel counts this project has models for:
 
 | model | before | after |
 |---|---|---|
-| impulse, 112x112, 32 channels | 0 / 32 | **32 / 32** |
 | MobileNet dw1, 112x112, 32 channels | 9 / 32, of which 1 real | **32 / 32** |
-| row maxdiff, sampled every 8th row | `1 x12, 200, 200` | **`1` everywhere** |
+| MobileNet dw25, 7x7, 1024 channels | 432 / 1024, of which 2 real | **1024 / 1024** |
+| impulse models at both sizes | 0 | **all channels** |
 
-A 112 wide layer does not fit in the CBUF at once, so it is dispatched as row
-windows, 90 output rows then 22. Each window overlaps the one before it by a
-row on each side, and those rows are **already staged**: the reuse base at
-`CNA 0x103c` points back at them, and this driver computed that correctly.
-`rkt_split_tasks` then staged them **again**, writing them a second time at the
-next free CBUF row, so every row after the overlap sat two rows late and the
-window convolved shifted input.
+Three separate faults were behind it, each with a control that reproduces it.
 
-The vendor's capture of the same layer writes **two different row counts** for
-its second window where this driver wrote one:
-
-| register | vendor | means | this driver was |
-|---|---|---|---|
-| `0x102c` | 23 | rows the window **spans** | 23, correct |
-| `0x1028` | 21 | rows it **stages** | 23, wrong |
-| `0x1078` | 21 | the same | 23, wrong |
-| `0x1098` | 21 | the same | 23, wrong |
-
-The fix is not tuned to one boundary: with the seam moved to 46 rows, giving
-three windows, and to 64, giving two, the surface is still correct everywhere.
-`ROCKET_STAGE_ALL=1` restores the old behaviour and reproduces the breakage
-exactly.
-
-**Why it hid for months.** Every regular model in this project is 80x80 or
-smaller and takes the single task path. Nothing that tiled was ever correct and
-nothing that was correct ever tiled, so no comparison between the two cases
-existed, and every sweep of the coefficient buffer came back flat because the
-coefficients were already right.
-
-Three instruments made it findable, in order. A channel that matches is not
-necessarily a channel that computed: an output saturated by a large bias
-matches a reference that is also saturated, and reporting those separately took
-one model from an apparent 9 of 32 to a real 1 of 32. Then an **impulse model**,
-one live tap per channel so the correct output is the input shifted by a known
-amount, which ruled the wiring out. Then the **per row maxdiff profile**, which
-put the error at a task boundary in one line of output.
-
-**Also corrected**: earlier notes here said a vendor `.rknn` compiled as
-depthwise carries no per channel coefficient table. It carries none because
-librknnrt builds it at load time. Resolving a runtime capture's address
-registers back into the captured buffers finds it immediately, 48 byte records
-of `[A 8 x int32][C 8 x int16]` with no B, and both terms reproduce from the
+**The coefficient record.** A depthwise uses a 48 byte record, `[A 8 x int32]
+[C 8 x int16]` with no B, and twice as many records as a regular conv, with the
+per-channel fp16 weight scale after them. This driver wrote the regular conv's
+64 byte record. The table is not in the `.rknn` at all, which is why earlier
+searches of the model file concluded there was none: librknnrt builds it at
+load time, and resolving a runtime capture's address registers back into the
+captured buffers finds it immediately. Both `A` and `C` then reproduce from the
 model with nothing fitted, for all 32 channels of a depthwise and a regular
 layer that differ only in `groups`.
 
-**What still does not compute**: a depthwise at 1024 channels, chained
-operations, and MobileNet, which contains both. The 1024 channel case is not
-the same bug and is now well characterised: the impulse decodes to a perfect
-single tap of the **right input plane**, correlation 1.000, and the **wrong
-tap**, by `(-p) mod 9`. It is the one depthwise shape small enough not to be row
-windowed, and a layer that does not window is given different CNA words.
+**The row window staging.** A 112 wide layer does not fit in the CBUF at once,
+so it is dispatched as row windows, 90 output rows then 22. Each window
+overlaps the one before it by a row on each side, and those rows are already
+staged; the reuse base at `CNA 0x103c` points back at them and this driver
+computed it correctly. `rkt_split_tasks` then staged them **again**, so every
+row after the overlap sat two rows late and the window convolved shifted input.
+The vendor writes two different row counts there where this driver wrote one:
+`0x102c` carries the rows the window spans, `0x1028`, `0x1078` and `0x1098` the
+rows it stages.
+
+**The weight buffer, and one register.** The buffer is **channel groups of
+64**, each group laid out spatially inside itself, not one group of C. A group
+of C puts a channel's nine taps `2C` bytes apart, 2048 at 1024 channels, and
+the hardware could reach only one or two of the nine; a group of 64 puts them
+128 apart whatever C is. The two are identical up to 64 channels, which is why
+every depthwise here had been byte exact and the 1024 channel one had not. And
+`DPU 0x4050` is not a constant for depthwise: its `SIZE_E_2` field counts
+16-channel atomics,
+
+```
+SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
+```
+
+verified against vendor models compiled at ten channel counts from 16 to 1024,
+three of them predicted before being compiled.
+
+**How they were separated.** A channel that matches is not necessarily a
+channel that computed: an output saturated by a large bias matches a reference
+that is also saturated, and counting those separately took one model from an
+apparent 9 of 32 to a real 1 of 32. Then **impulse models**, one live tap per
+channel so the correct output is the input shifted by a known amount, which
+ruled the wiring out and later located the reach. Then the **per row maxdiff
+profile**, which put an error at a task boundary in one line of output. Every
+round since has been written with its decision rule and a control that can
+fail, and two readings were withdrawn that way.
+
+**What still does not compute**: chained operations, and MobileNet, which needs
+them.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
 retractions.

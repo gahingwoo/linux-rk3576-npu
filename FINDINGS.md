@@ -1,6 +1,50 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-11 round 74 RESULT: **DEPTHWISE IS DONE.** DPU 0x4050's depthwise value is not a constant
+
+| model | result |
+|---|---|
+| `mn_dw25`, 7x7 x 1024 | **1024/1024** |
+| `dw25_t4` / `dw25_t0` / `dw25_imp` | **1024/1024, every one COMPUTED** |
+| `mn_dw1`, `dw1_t4`, `dw_imp`, 32 ch | 32/32, unchanged |
+| `conv2d-cal`, `cal_oc16`, whole model | 128/128, 16/16, 2/2 |
+| control: old constant `0x00013133` | **992/1024, live 0..991** |
+
+`DPU 0x4050`'s `SIZE_E_2` field, bits 10 to 8, counts 16-channel atomics:
+
+| channels | 16 | 32 | 48 | 64 | 80 | 96 | 112 | 128 | 256 | 1024 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| SIZE_E_2 | 0 | 1 | 2 | 3 | 0 | 1 | 2 | 3 | 3 | 3 |
+
+```
+SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
+```
+
+Seven points were fitted and **three were predicted before being compiled**: 16
+and 80 give 0, a value none of the fitted points showed, and 112 gives 2. Ten
+of ten. mesa hardcoded `0x00013133`, the 32 channel case, and every depthwise
+in this project has 32 channels except the one that did not work.
+
+**A workaround was found first and thrown away.** Adding 1 to the packed
+channel field of `DPU 0x4030` also closes the tail, and splitting the four
+channel-count registers showed it is the only one that does. But the vendor
+writes `oc-1` there at every channel count, 0x001f0310 through 0x03ff0310, and
+mesa already matched. So it disagreed with the vendor and was masking `0x4050`.
+It is gone. This project shipped a constant fitted to one capture before, in
+`CNA 0x1080`, and it stood wrong for months.
+
+**Three separate bugs were behind depthwise**, all found in two days:
+
+| | |
+|---|---|
+| the coefficient record | 48 bytes, `[A|C]` and no B, twice as many records as a regular conv, fp16 table after it |
+| the row window staging | a window overlapping the previous one by a row staged those rows a **second** time, so everything after the overlap convolved input two rows late |
+| the weight buffer, and `0x4050` | channel **groups of 64**, not one group of C, and `SIZE_E_2` derived rather than hardcoded |
+
+**Still open**: chained operations, and MobileNet, which needs them.
+
+
 ## 2026-08-11 round 69 RESULT: **THE 1024 CHANNEL DEPTHWISE COMPUTES.** The weight buffer is channel groups of 64
 
 | model | before | after |

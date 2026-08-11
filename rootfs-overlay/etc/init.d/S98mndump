@@ -2,47 +2,41 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 74. DPU 0x4050's depthwise value is not a constant.
+# 2026-08-11 round 75. DEPTHWISE IS DONE. A full regression, with every control.
 #
-# Round 73 found which register the +1 was acting on. Adding one to the packed
-# channel field of DPU 0x4030 closes the 1024 channel tail and leaves a 32
-# channel layer alone, while the same addition on CORE 0x3020, DPU 0x402c or
-# RDMA 0x5014 does nothing at 1024 and breaks 32 channels outright.
+# Round 74 closed it. The derived DPU 0x4050 alone takes the 1024 channel layer
+# to 1024 of 1024, with no workaround on top:
 #
-# Then the .rknn said not to ship it. Reading the vendor's own registers for a
-# depthwise compiled at 32, 128, 256 and 1024 channels, 0x4030 carries oc-1 at
-# every size: 0x001f0310, 0x007f0310, 0x00ff0310, 0x03ff0310. mesa writes
-# exactly that. So +1 is a WORKAROUND that disagrees with the vendor, and this
-# project has shipped a fitted constant before and paid for it for months.
+#   dw25_t4, derived 0x4050            1024/1024, every one COMPUTED
+#   mn_dw25, derived 0x4050            1024/1024
+#   dw25_t4, old constant 0x00013133    992/1024, live 0..991
+#   mn_dw1, dw1_t4, conv2d-cal, cal_oc16, whole model    all unchanged
 #
-# The same comparison found a register mesa really does get wrong. DPU 0x4050
-# for a depthwise, from ten compiled channel counts:
+# So the +1 on DPU 0x4030 was masking this, and it is gone: it disagreed with
+# the vendor, which writes oc-1 there at every channel count.
 #
-#   channels    16   32   48   64   80   96  112  128  256 1024
-#   SIZE_E_2     0    1    2    3    0    1    2    3    3    3
+# Three separate bugs were behind depthwise, all found in the last two days:
 #
-#     SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
+#   the coefficient record    48 bytes, [A|C] and no B, twice as many records
+#                             as a regular conv, with the fp16 table after it
+#   the row window staging    a window overlapping the previous one by a row
+#                             was staging those rows a SECOND time, so every
+#                             row after the overlap convolved input two rows
+#                             late
+#   the weight buffer, and    channel groups of 64, not one group of C, and
+#     DPU 0x4050              SIZE_E_2 = (DIV_ROUND_UP(oc,16) - 1) & 3 rather
+#                             than the hardcoded 32 channel case
 #
-# Seven of those were fitted and THREE WERE PREDICTED before being compiled:
-# 16 and 80 give 0, a value none of the fitted points showed, and 112 gives 2.
-# Ten of ten.
-#
-# mesa hardcoded 0x00013133, which is the 32 channel case. So every depthwise
-# whose channel count is not 32, 96, 160 and so on was configured with the
-# wrong one, and mn_dw1 has 32 channels, which is why it never showed.
-#
-# The derived value is now the default and the +1 knobs are left at zero. If
-# 0x4050 alone closes the tail, the workaround was masking this and can go.
+# This round changes nothing. It runs everything that has ever passed, plus
+# every control, in one boot, so the state is one log rather than a memory of
+# fifteen.
 #
 # DECISION RULE, written before the run:
-#   1024 closes with no OC knob     0x4050 was the bug; drop the workaround
-#   1024 still 992, and +1 on       the two are independent and 0x4030 needs
-#     0x4030 still closes it        its own explanation before anything ships
-#   1024 gets worse                 the formula is wrong somewhere the ten
-#                                   points did not reach
-#   mn_dw1 changes at all           it must not: 32 channels gives back
-#                                   exactly 0x00013133, so any change there is
-#                                   a bug in the expression
+#   every default passes and every    depthwise is finished at both channel
+#     control fails as recorded       sizes and the next target is chaining
+#   any default regresses             that comes first
+#   any control PASSES                it is not testing what it claims and the
+#                                     result it was guarding is not evidence
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -59,41 +53,47 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) REGRESSION: 32 channels must be bit for bit unchanged ====="
+	log "===== DEPTHWISE, 32 channels ====="
 	p mn_dw1.tflite ""
 	p dw1_t4.tflite ""
+	p dw_imp.tflite ""
 
 	log ""
-	log "===== 3..4) 1024 channels on the derived 0x4050, no other knob ====="
-	p dw25_t4.tflite ""
+	log "===== DEPTHWISE, 1024 channels ====="
 	p mn_dw25.tflite ""
+	p dw25_t4.tflite ""
+	p dw25_t0.tflite ""
+	p dw25_imp.tflite ""
 
 	log ""
-	log "===== 5) the CONTROL: force the old constant back ====="
-	p dw25_t4.tflite ROCKET_DW_OW_CFG=0x00013133
-
-	log ""
-	log "===== 6) and the old workaround on top, to see if it still adds ====="
-	p dw25_t4.tflite ROCKET_OC_CUBE_ADD=1
-
-	log ""
-	log "===== 7) old constant plus the workaround, which used to give 1024 ====="
-	p dw25_t4.tflite "ROCKET_DW_OW_CFG=0x00013133 ROCKET_OC_CUBE_ADD=1"
-
-	log ""
-	log "===== 8..9) regular shapes, which take the other branch ====="
+	log "===== REGULAR convolutions ====="
 	p conv2d-cal.tflite ""
+	p cal_k3.tflite ""
+	p cal_k1.tflite ""
+	p cal_s1.tflite ""
 	p cal_oc16.tflite ""
+	p mn_pw2.tflite ""
 
 	log ""
-	log "===== 10) whole model, for the record ====="
+	log "===== THE CONTROLS, each must FAIL in its own way ====="
+	log "-- staging: the overlap rows twice, expect 200s past row 90"
+	p dw_imp.tflite ROCKET_STAGE_ALL=1
+	log "-- weight layout: one group of C, expect 0/1024"
+	p dw25_t4.tflite ROCKET_DW_GROUP=1024
+	log "-- 0x4050: the old constant, expect 992/1024"
+	p dw25_t4.tflite ROCKET_DW_OW_CFG=0x00013133
+	log "-- the coefficient record: 64 bytes, expect depthwise to fall apart"
+	p mn_dw1.tflite ROCKET_DW_REC64=1
+
+	log ""
+	log "===== whole model ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read 3 against 5. If the derived value closes the tail and  ====="
-	log "===== the old constant reopens it, 0x4050 was the bug all along.  ====="
+	log "===== Every default must pass and every control must fail. A     ====="
+	log "===== control that passes means its result was never evidence.   ====="
 	sync
 }
 case "$1" in
