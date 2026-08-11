@@ -2,54 +2,44 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 69. The depthwise weight buffer is CHANNEL GROUPS OF 64.
+# 2026-08-11 round 71. The last 32 channels are an output side count.
 #
-# Round 68 measured the fault exactly. With the live tap at the same position
-# in every channel, the channels that produce anything are one contiguous run
-# that moves with the tap:
+# Round 70 localised the tail by elimination, and both knobs came back inert:
 #
-#   tap   0    1    2    3    4    5    6    7    8
-#   from  0   64  192  320  448  512  640  768  896
-#   to  127  255  383  511  575  703  831  959  991
+#   ROCKET_DW_GROUP=32    live 0..991, values wrong (wrong layout, expected)
+#   ROCKET_DW_GROUP=128   live 0..991, values wrong
+#   ROCKET_DW_RECS=256    992/1024 all COMPUTED, identical to the default
+#   ROCKET_DW_RECS=512    992/1024 all COMPUTED, identical to the default
 #
-# Inverted, each output channel can reach only ONE OR TWO of its nine spatial
-# blocks. A depthwise needs all nine, so nothing computes.
+# The dead tail is 992..1023 whatever the weight group size is and whatever the
+# coefficient table holds. So neither buffer owns it, which by the rule written
+# before that run puts it on the output side.
 #
-# Then the layout was settled OFFLINE, with no board. The depthwise weights are
-# in the .rknn even though the coefficient table is not, so vendor models were
-# compiled at 32, 128, 256 and 1024 channels with weights generated on the host,
-# which makes the test exact rather than a correlation:
+# And 992 is 1023 with its low five bits cleared: 0x3ff becomes 0x3e0. That is
+# the shape of a channel count being rounded DOWN to a multiple of 32
+# somewhere, losing the last partial group of 32.
 #
-#   group of 64        288/288, 1152/1152, 2304/2304, 9208/9216 weight lanes
-#   one group of C     288/288 at 32 channels, about 4 in 1000 above it
+# ROCKET_OC_OUT_ADD adds to the value written into the four registers that
+# carry the output channel count, CORE 0x3020, DPU 0x402c, DPU 0x4030 and RDMA
+# 0x5014, and to nothing else. If the tail is an off-by-a-group in one of
+# those, +32 closes it. If it is somewhere that does not take a count at all,
+# the sweep does nothing and the next round goes to the output surface
+# geometry.
 #
-# The eight lanes that miss at 1024 are all ONE channel, whose kernel the
-# quantiser treated differently; 1023 of 1024 channels are exact.
-#
-# So the buffer is channel groups of 64, each group tap major inside itself,
-# groups laid end to end. A group of C, which this driver wrote, puts a
-# channel's nine taps 2C bytes apart, 2048 at 1024 channels; a group of 64 puts
-# them 128 apart whatever C is. The two are identical up to 64 channels, which
-# is exactly why every depthwise here has been byte exact and the 1024 channel
-# one has not.
-#
-# The total size does not change: 16 groups of 9 x 128 is the same 18432 bytes,
-# so the CNA weight byte count at 0x101c is untouched.
-#
-# ROCKET_DW_GROUP overrides the group size, and setting it to the channel count
-# restores the old single group. That is the control: it has to reproduce the
-# old breakage.
+# The 32 channel layers are the control in both directions: they must be
+# unchanged at +0, and they must BREAK at -32, or the knob is not reaching the
+# hardware and the sweep is void.
 #
 # DECISION RULE, written before the run:
-#   mn_dw25 COMPUTED jumps          the depthwise weight layout is solved and
-#                                   the remaining wrongness, if any, is a
-#                                   different question
-#   dw25_t4 lights every channel    the nine taps are all reachable now, which
-#                                   is the direct form of the same claim
-#   ROCKET_DW_GROUP=1024 restores   the control passes and the comparison is
-#     the old numbers                real
-#   mn_dw1 or conv2d-cal regress    a group of 64 is not identical to a group
-#                                   of 32 after all, and that comes first
+#   +32 gives live 0..1023        the count was short by one group of 32, and
+#                                 the fix is to round it up
+#   -32 gives live 0..959         the knob works and the tail tracks it, so
+#                                 even if +32 does not close it the register is
+#                                 the right place to look
+#   nothing moves at all          the knob is inert and the tail is not a
+#                                 channel count; go to the output surface
+#                                 stride and the surfaces-per-row
+#   mn_dw1 breaks at +0           regression, that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -66,31 +56,28 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) REGRESSION FIRST: 32 channels must be unchanged ====="
+	log "===== 1..2) REGRESSION at +0: 32 channels and a regular conv ====="
 	p mn_dw1.tflite ""
-	p dw1_t4.tflite ""
-
-	log ""
-	log "===== 3) the real 1024 channel depthwise, on groups of 64 ====="
-	p mn_dw25.tflite ""
-
-	log ""
-	log "===== 4..5) one tap everywhere: are all nine reachable now? ====="
-	p dw25_t4.tflite ""
-	p dw25_t0.tflite ""
-
-	log ""
-	log "===== 6) the per-channel-tap impulse at 1024 ====="
-	p dw25_imp.tflite ""
-
-	log ""
-	log "===== 7..8) the CONTROL: one group of C, the old behaviour ====="
-	p mn_dw25.tflite ROCKET_DW_GROUP=1024
-	p dw25_t4.tflite ROCKET_DW_GROUP=1024
-
-	log ""
-	log "===== 9) a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== 3) the baseline: live 0..991 ====="
+	p dw25_t4.tflite ""
+
+	log ""
+	log "===== 4..6) sweep the output channel count ====="
+	p dw25_t4.tflite ROCKET_OC_OUT_ADD=32
+	p dw25_t4.tflite ROCKET_OC_OUT_ADD=64
+	p dw25_t4.tflite ROCKET_OC_OUT_ADD=-32
+
+	log ""
+	log "===== 7) VOID CHECK: the knob must break a 32 channel layer ====="
+	p mn_dw1.tflite ROCKET_OC_OUT_ADD=-16
+
+	log ""
+	log "===== 8..9) the real 1024 channel layer, at +0 and at the winner ====="
+	p mn_dw25.tflite ""
+	p mn_dw25.tflite ROCKET_OC_OUT_ADD=32
 
 	log ""
 	log "===== 10) whole model, for the record ====="
@@ -99,8 +86,8 @@ start() {
 		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
 
 	log ""
-	log "===== Read tests 1 and 2 first: a group of 64 must be identical to ====="
-	log "===== a group of 32 when there are only 32 channels.               ====="
+	log "===== Read test 7 first: if a 32 channel layer is unmoved at -16, ====="
+	log "===== the knob is inert and tests 4 to 6 mean nothing.            ====="
 	sync
 }
 case "$1" in

@@ -1,0 +1,84 @@
+From 3d39dd886d646b3c5b9f0ee7fbbf8a20fd3fa308 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 15:04:36 +1200
+Subject: [PATCH] rocket RK3576: a knob for what the output side is told the
+ channel count is
+
+With the depthwise weight buffer in groups of 64, a 1024 channel layer computes
+992 of its channels and the last 32 come out constant. The tail does not move
+when the weight group size changes from 32 to 64 to 128, and it does not move
+when the coefficient table grows, so neither buffer owns it. 992 is 1023 with
+its low five bits cleared, which is the shape of a channel count rounded down
+to a multiple of 32.
+
+ROCKET_OC_OUT_ADD adds to the value written into the four registers that carry
+the output channel count, CORE 0x3020, DPU 0x402c, DPU 0x4030 and RDMA 0x5014,
+and to nothing else, so a sweep separates an off-by-a-group there from
+something that does not take a count at all.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 26 +++++++++++++++++++++----
+ 1 file changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 54cc90c..b157851 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -308,6 +308,24 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     */
+    unsigned ic = task->input_channels_real;
+    unsigned oc = task->output_channels_real;
++   /*
++    * ROCKET_OC_OUT_ADD: what the OUTPUT side is told the channel count is.
++    *
++    * With the depthwise weight buffer laid out in groups of 64, a 1024 channel
++    * layer computes 992 of its 1024 channels and the last 32 come out
++    * constant. The dead tail does not move when the weight group size changes
++    * from 32 to 64 to 128, and it does not move when the coefficient table
++    * grows, so neither buffer owns it, and 992 is 1023 with its low five bits
++    * cleared. That is the shape of a channel count the output side rounds DOWN
++    * to a multiple of 32.
++    *
++    * This adds to the value written into the four registers that carry the
++    * output channel count, and nothing else, so a sweep says whether the tail
++    * is an off-by-a-group there or somewhere that does not take a count at
++    * all.
++    */
++   const char *oca = getenv("ROCKET_OC_OUT_ADD");
++   unsigned oc_out = oca ? (unsigned)((int)oc + atoi(oca)) : oc;
+    bool dw = operation->depthwise;
+ 
+    /*
+@@ -588,7 +606,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    /* CORE */
+    R_CORE(0x3018, 0x10000000 | (dw ? 0x0a : 0x01));
+    R_CORE(0x301c, (dpu_lines << 16) | (ow - 1));
+-   R_CORE(0x3020, oc - 1);
++   R_CORE(0x3020, oc_out - 1);
+    R_CORE(0x3024, 0x00000000);
+ 
+    /* DPU */
+@@ -600,8 +618,8 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_DPU(0x4020, ow - 1);
+    R_DPU(0x4024, dpu_lines);
+    R_DPU(0x4028, 0x00000000);
+-   R_DPU(0x402c, oc - 1);
+-   R_DPU(0x4030, ((oc - 1) << 16) | (dw ? 0x0310 : 0x0710));
++   R_DPU(0x402c, oc_out - 1);
++   R_DPU(0x4030, ((oc_out - 1) << 16) | (dw ? 0x0310 : 0x0710));
+    R_DPU(0x4034, (dpu_lines << 16) | (ow - 1));
+    R_DPU(0x4038, dw ? 0x00100092 : 0x00120080);
+    R_DPU(0x403c, 0x00000000);
+@@ -703,7 +721,7 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    /* DPU_RDMA */
+    R_RDMA(0x500c, ow - 1);
+    R_RDMA(0x5010, dpu_lines);
+-   R_RDMA(0x5014, oc - 1);
++   R_RDMA(0x5014, oc_out - 1);
+    R_RDMA(0x5018, 0x00000000);
+    if (getenv("ROCKET_RK3588_SDP")) {
+       /*
+-- 
+2.43.0
+
