@@ -1,0 +1,69 @@
+From 74ece4487d67461367e3c32c1e0ee4d57382cb98 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 15:26:45 +1200
+Subject: [PATCH] rocket RK3576: derive DPU 0x4050 for depthwise instead of
+ hardcoding it
+
+Its SIZE_E_2 field, bits 10 to 8, counts 16-channel atomics. Compiling vendor
+.rknn files at ten channel counts and reading 0x4050 out of each gives
+
+    channels    16   32   48   64   80   96  112  128  256 1024
+    SIZE_E_2     0    1    2    3    0    1    2    3    3    3
+
+    SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
+
+Seven of those were fitted and three were predicted before being compiled: 16
+and 80 give 0, a value none of the fitted points showed, and 112 gives 2.
+
+This file hardcoded 0x00013133, which is the 32 channel case, so every
+depthwise whose channel count is not 32, 96, 160 and so on was configured with
+the wrong one. Every depthwise this project tests has 32 channels except the
+1024 channel layer that does not work, which is why it never showed.
+
+ROCKET_DW_OW_CFG forces a value; setting it to 0x00013133 restores the old
+constant as a control. At 32 channels the expression gives back exactly that,
+so the layers that already pass cannot move.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index bc4b70c..192cc58 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -668,7 +668,29 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     * conv2d-cal and wrong for every conv with 16, 48, 80, 112 or 144 output
+     * channels. ROCKET_DPU4050_CONST=1 restores it as a control.
+     */
+-   R_DPU(0x4050, dw ? 0x00013133
++   /*
++    * The depthwise value is NOT a constant either: its SIZE_E_2 field, bits
++    * 10 to 8, counts 16-channel atomics.
++    *
++    * Compiling vendor .rknn files at ten channel counts from 16 to 1024 and
++    * reading 0x4050 out of each gives 0, 1, 2, 3, 0, 1, 2, 3, 3, 3 in that
++    * field for 16, 32, 48, 64, 80, 96, 112, 128, 256 and 1024, which is
++    *
++    *     SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
++    *
++    * on all ten. Seven of those were fitted and three were PREDICTED before
++    * being compiled: 16 and 80 give 0, a value the fitted points never showed,
++    * and 112 gives 2. This driver hardcoded 0x00013133, which is the 32
++    * channel case, so every depthwise with a channel count outside 32, 96, 160
++    * and so on was configured with the wrong one.
++    *
++    * ROCKET_DW_OW_CFG forces a value, and setting it to 0x00013133 restores
++    * the old constant as the control.
++    */
++   uint32_t dw_ow = 0x00013033 |
++                    ((uint32_t)((DIV_ROUND_UP(oc, 16) - 1) & 3) << 8);
++
++   R_DPU(0x4050, dw ? rkt_env_u32("ROCKET_DW_OW_CFG", dw_ow)
+                     : (getenv("ROCKET_DPU4050_CONST") || (oc % 32) == 0
+                           ? 0x80011111 : 0x80011011));
+    /*
+-- 
+2.43.0
+

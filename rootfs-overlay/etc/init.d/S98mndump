@@ -2,41 +2,47 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 73. Which ONE of the four registers wants the extra channel?
+# 2026-08-11 round 74. DPU 0x4050's depthwise value is not a constant.
 #
-# Round 72 gave three facts and exposed one flaw of mine.
+# Round 73 found which register the +1 was acting on. Adding one to the packed
+# channel field of DPU 0x4030 closes the 1024 channel tail and leaves a 32
+# channel layer alone, while the same addition on CORE 0x3020, DPU 0x402c or
+# RDMA 0x5014 does nothing at 1024 and breaks 32 channels outright.
 #
-#   1024 channels, +1     1024/1024, and every larger value too
-#     32 channels, +32       0/32, from 32/32
-#   regular convs, +32    unchanged, 128/128 and 16/16
+# Then the .rknn said not to ship it. Reading the vendor's own registers for a
+# depthwise compiled at 32, 128, 256 and 1024 channels, 0x4030 carries oc-1 at
+# every size: 0x001f0310, 0x007f0310, 0x00ff0310, 0x03ff0310. mesa writes
+# exactly that. So +1 is a WORKAROUND that disagrees with the vendor, and this
+# project has shipped a fitted constant before and paid for it for months.
 #
-# So the minimum is ONE, not a group of 32: at 1024 channels the count has to
-# read 1024 and not 1023. It is a boundary, and 1023 is 0x3ff, a ten bit field
-# exactly full. A 32 channel depthwise does NOT tolerate the same addition, so
-# no unconditional "add 32" rule can be right, and the fix must not be a
-# constant fitted to one shape. That is how CNA 0x1080's padding constant stood
-# wrong for months.
+# The same comparison found a register mesa really does get wrong. DPU 0x4050
+# for a depthwise, from ten compiled channel counts:
 #
-# The flaw: rounds 71 and 72 moved FOUR registers at once. CORE 0x3020, DPU
-# 0x402c, DPU 0x4030 and RDMA 0x5014 all carry the output channel count, and
-# nothing so far says which of them the hardware is reading short. This round
-# splits them.
+#   channels    16   32   48   64   80   96  112  128  256 1024
+#   SIZE_E_2     0    1    2    3    0    1    2    3    3    3
 #
-# 0x4030 is the interesting one because the count is PACKED there, at bit 16
-# beside a mode field, while the other three carry it alone. If the packed
-# field is ten bits then 1023 fills it and 1024 spills into the next bit, which
-# would explain both why the tail exists and why one extra is enough.
+#     SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
+#
+# Seven of those were fitted and THREE WERE PREDICTED before being compiled:
+# 16 and 80 give 0, a value none of the fitted points showed, and 112 gives 2.
+# Ten of ten.
+#
+# mesa hardcoded 0x00013133, which is the 32 channel case. So every depthwise
+# whose channel count is not 32, 96, 160 and so on was configured with the
+# wrong one, and mn_dw1 has 32 channels, which is why it never showed.
+#
+# The derived value is now the default and the +1 knobs are left at zero. If
+# 0x4050 alone closes the tail, the workaround was masking this and can go.
 #
 # DECISION RULE, written before the run:
-#   exactly one knob closes the tail   that register is the one, and its field
-#                                      width explains the boundary
-#   several do                         they are redundant copies and the fix
-#                                      can use whichever is cleanest
-#   none does alone                    the hardware needs them consistent, so
-#                                      the fix moves all four together and the
-#                                      32 channel case says what the rule is
-#   the same knob at 32 channels       whichever register it is, its rule has
-#     breaks mn_dw1                    to depend on the channel count
+#   1024 closes with no OC knob     0x4050 was the bug; drop the workaround
+#   1024 still 992, and +1 on       the two are independent and 0x4030 needs
+#     0x4030 still closes it        its own explanation before anything ships
+#   1024 gets worse                 the formula is wrong somewhere the ten
+#                                   points did not reach
+#   mn_dw1 changes at all           it must not: 32 channels gives back
+#                                   exactly 0x00013133, so any change there is
+#                                   a bug in the expression
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,39 +59,41 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) REGRESSION and the baseline ====="
+	log "===== 1..2) REGRESSION: 32 channels must be bit for bit unchanged ====="
 	p mn_dw1.tflite ""
+	p dw1_t4.tflite ""
+
+	log ""
+	log "===== 3..4) 1024 channels on the derived 0x4050, no other knob ====="
 	p dw25_t4.tflite ""
+	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 3..6) one register at a time, +1, at 1024 channels ====="
-	p dw25_t4.tflite ROCKET_OC_CORE_ADD=1
-	p dw25_t4.tflite ROCKET_OC_DPU_ADD=1
+	log "===== 5) the CONTROL: force the old constant back ====="
+	p dw25_t4.tflite ROCKET_DW_OW_CFG=0x00013133
+
+	log ""
+	log "===== 6) and the old workaround on top, to see if it still adds ====="
 	p dw25_t4.tflite ROCKET_OC_CUBE_ADD=1
-	p dw25_t4.tflite ROCKET_OC_RDMA_ADD=1
 
 	log ""
-	log "===== 7) all four, which is known to work, for comparison ====="
-	p dw25_t4.tflite ROCKET_OC_OUT_ADD=1
+	log "===== 7) old constant plus the workaround, which used to give 1024 ====="
+	p dw25_t4.tflite "ROCKET_DW_OW_CFG=0x00013133 ROCKET_OC_CUBE_ADD=1"
 
 	log ""
-	log "===== 8..11) the same four at 32 channels, which must not break ====="
-	p mn_dw1.tflite ROCKET_OC_CORE_ADD=1
-	p mn_dw1.tflite ROCKET_OC_DPU_ADD=1
-	p mn_dw1.tflite ROCKET_OC_CUBE_ADD=1
-	p mn_dw1.tflite ROCKET_OC_RDMA_ADD=1
-
-	log ""
-	log "===== 12) the real 1024 layer with whichever knob wins, all four ====="
-	p mn_dw25.tflite ROCKET_OC_OUT_ADD=1
-
-	log ""
-	log "===== 13) a regular shape, untouched ====="
+	log "===== 8..9) regular shapes, which take the other branch ====="
 	p conv2d-cal.tflite ""
+	p cal_oc16.tflite ""
 
 	log ""
-	log "===== Compare 3 to 6 against 2. Then check the same knob in 8 to  ====="
-	log "===== 11: a fix that closes 1024 and breaks 32 is not a fix.      ====="
+	log "===== 10) whole model, for the record ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Read 3 against 5. If the derived value closes the tail and  ====="
+	log "===== the old constant reopens it, 0x4050 was the bug all along.  ====="
 	sync
 }
 case "$1" in
