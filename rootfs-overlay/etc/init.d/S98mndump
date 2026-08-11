@@ -2,54 +2,60 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 65. Measure the tap law instead of guessing at it.
+# 2026-08-11 round 66. One tap for every channel, which no other story survives.
 #
-# Round 64 killed both candidates and one of them died informatively.
+# Round 65 measured the law. Two things came out of it.
 #
-#   ROCKET_DW_SPLITVALS   completely inert. dw25_imp 112/1024 and mn_dw25
-#                         432/1024 COMPUTED 2, byte identical to the default,
-#                         and the impulse decode identical too. So the two CNA
-#                         words that a row-windowed layer gets and an
-#                         unwindowed one does not are not the difference.
+# The tap the decoder reports for a WRONG channel is meaningless: over 1024
+# channels the offsets are 112, 107, 99, 97, 104, 106, 99, 104, 107 and 89
+# dead, which is flat. The 32 channel control is the opposite, offset 0 for all
+# 27 channels the decoder can resolve, so the decoder works when the output is
+# right and says nothing when it is not. Round 63's "the hardware uses tap
+# (-p) mod 9" is withdrawn; round 64 had already shown that writing that
+# permutation does not cancel it.
 #
-#   ROCKET_DW_TAPREV      WORSE, not better: dw25_imp 112 -> 82 and the dead
-#                         channels 89 -> 160, and it takes the working 112x112
-#                         case from 32/32 to 4/32 with maxdiff 218. Writing the
-#                         permutation the decode reported does not cancel it,
-#                         so the decode was not identifying a tap the hardware
-#                         then applies.
+# What is real, because it comes from maxdiff and not from the decoder, is
+# WHICH channels are right. Per group of 64:
 #
-# The 112x112 regression passed at the top of that round and passes here.
+#     0.. 63   8 channels   residue 0 mod 9
+#    64..127   7 channels   residue 5
+#   128..191   7 channels   residue 5
+#   192..255  14 channels   residues 1 and 5
+#   256..319   7 channels   residue 1
+#   320..383   0 channels   none
+#   384..447   5 channels   residue 6
 #
-# What round 64 did leave is a pattern in WHICH channels come out right:
+# Exactly one residue mod 9 per group of 64, and 7 of 64 is exactly one ninth.
+# That is the shape of a fixed tap per group: only the channels whose impulse
+# happens to sit at that tap agree.
 #
-#   0 9 18 27 36 45 54 63   68 77 86 95 104 113 122 131 ... 194   199
-#   |___ c = 0 mod 9 ___|   |________ c = 5 mod 9 ________|   c = 1 mod 9
+# It is stated here as a measurement, not a mechanism, because the mechanism it
+# suggests contradicts another number in the same log. If a group really used
+# one tap, every channel in it whose impulse is elsewhere would read a zero
+# weight and come out CONSTANT, and only 89 of 1024 are constant.
 #
-# nine apart within a run, and the residue changes near 64 and near 192. Every
-# mechanism that fits that contradicts another number in the same log. "One tap
-# for a whole group of channels" fits the residue exactly, but it predicts that
-# every channel whose impulse is not at that tap reads a zero weight and comes
-# out CONSTANT, and only 89 of 1024 are constant.
+# So build the model that separates them. dw25_t4 and dw25_t0 put the live tap
+# at the SAME position for every channel, the centre and the top left corner.
+# A fixed tap per group then has to light up WHOLE GROUPS of 64 at once and
+# leave the others flat, which is a signature nothing else produces, and the
+# groups that light up name the tap directly. dw1_t4 is the same model at 32
+# channels, where the layer is already byte exact, as the control.
 #
-# So stop fitting. dwimp.py now prints the law: the tap offset per channel as a
-# histogram, the same per group of 64, the plane offset distribution, and rows
-# sampled across the whole range instead of the first sixteen. perch.py prints
-# 48 correct channels instead of 24.
-#
-# Nothing in the driver changed this round.
+# Nothing in the driver changed. dwimp.py's per-group summary crashed on the
+# dead channels last round and is fixed.
 #
 # DECISION RULE, written before the run:
-#   one tap offset dominates            it is a fixed rotation and the group
-#                                       table says where it changes
-#   the offset tracks the channel       the weight buffer is being addressed
-#     index                             with the wrong per-channel stride, and
-#                                       the slope names it
-#   the offsets are spread evenly       the decode is aliasing on a 7x7 ramp
-#                                       and the whole tap reading goes, along
-#                                       with the pattern above
-#   plane offsets are not all 0         the channel map is wrong too, which the
-#                                       32 channel case says it is not
+#   dw25_t4 correct in whole 64 groups   fixed tap per group, and the group
+#     and flat elsewhere                 table maps it
+#   dw25_t4 correct at one residue       impossible for a model with one tap
+#                                        everywhere, so the group reading is
+#                                        wrong and the 9 periodicity is
+#                                        something else entirely
+#   dw25_t4 all correct                  the fault needs several taps present,
+#                                        so it is in how taps are combined
+#   dw25_t4 all wrong, t0 all correct    the tap position itself is the
+#                                        variable
+#   dw1_t4 not 32/32                     the control failed, read nothing else
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -69,28 +75,33 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) REGRESSION: the 112x112 depthwise must still be exact ====="
-	p mn_dw1.tflite ""
+	log "===== 1) CONTROL: one tap everywhere at 32 channels, must be 32/32 ====="
+	p dw1_t4.tflite ""
 
 	log ""
-	log "===== 2) the law: tap offset per channel, at 1024 channels ====="
-	d dw25_imp.tflite
+	log "===== 2..3) one tap everywhere at 1024 channels: centre, then corner ====="
+	p dw25_t4.tflite ""
+	p dw25_t0.tflite ""
 
 	log ""
-	log "===== 3) the same law at 32 channels, where the answer is known ====="
-	d dw_imp.tflite
-
-	log ""
-	log "===== 4) the correct-channel list, 48 of them ====="
+	log "===== 4) the per-channel-tap model again, for the group table ====="
 	p dw25_imp.tflite ""
 
 	log ""
-	log "===== 5) a regular shape, which must be untouched ====="
+	log "===== 5) and its decode, with the per-group summary fixed ====="
+	d dw25_imp.tflite
+
+	log ""
+	log "===== 6) REGRESSION: the real 112x112 depthwise ====="
+	p mn_dw1.tflite ""
+
+	log ""
+	log "===== 7) a regular shape, which must be untouched ====="
 	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read test 3 first: at 32 channels the tap offset must be 0 ====="
-	log "===== for every channel, or the decoder itself is the problem.    ====="
+	log "===== Read test 1 first. Then compare 2 with 4: one tap everywhere ====="
+	log "===== cannot come out right at one residue in nine.                ====="
 	sync
 }
 case "$1" in

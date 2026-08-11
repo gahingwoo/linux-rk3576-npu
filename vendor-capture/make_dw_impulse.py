@@ -101,6 +101,13 @@ def main():
         "../rootfs-overlay/opt/npu-test/mn_dw1.tflite"
     dst = sys.argv[2] if len(sys.argv) > 2 else \
         "../rootfs-overlay/opt/npu-test/dw_imp.tflite"
+    # A third argument fixes the live tap for EVERY channel instead of using
+    # c mod 9. That is the discriminator for the 1024 channel case: the correct
+    # channels there are exactly one residue mod 9 per group of 64, 7 or 8 of
+    # 64 each, which is what a fixed tap per group looks like. With every
+    # channel carrying the same tap, a fixed tap per group must light up whole
+    # groups at once and leave the rest flat, and nothing else does.
+    fixed = int(sys.argv[3]) if len(sys.argv) > 3 else None
 
     b = bytearray(open(src, "rb").read())
     root = T(b, struct.unpack_from("<I", b, 0)[0])
@@ -158,14 +165,18 @@ def main():
         for kx in range(kw):
             for c in range(C):
                 idx = woff + (ky * kw + kx) * C + c
-                on = (c % 9) == (ky * 3 + kx)
+                on = (fixed if fixed is not None else c % 9) == \
+                     (ky * 3 + kx)
                 b[idx] = v if on else w_zp
     b[boff:boff + blen] = b"\x00" * blen
 
     open(dst, "wb").write(bytes(b))
     print(f"\n  wrote {dst}")
-    print(f"  tap per channel (ky, kx), first 10: "
-          f"{[((c % 9) // 3, (c % 9) % 3) for c in range(10)]}")
+    if fixed is None:
+        print(f"  tap per channel (ky, kx), first 10: "
+              f"{[((c % 9) // 3, (c % 9) % 3) for c in range(10)]}")
+    else:
+        print(f"  tap FIXED for every channel: {(fixed // 3, fixed % 3)}")
     print("  channel c reads the input at (y - ky + 1, x - kx + 1), so channel "
           "4 is the identity")
 

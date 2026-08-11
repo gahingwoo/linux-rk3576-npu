@@ -144,9 +144,10 @@ for k in sorted(hist, key=lambda x: (x is None, x)):
 ph = {}
 for v in poff:
     ph[v] = ph.get(v, 0) + 1
-top = sorted(((n, k) for k, n in ph.items()), reverse=True)[:6]
+top = sorted(((n, -1 if k is None else k) for k, n in ph.items()),
+             reverse=True)[:6]
 print(f"  plane offset (npu plane - own) counts, top 6: "
-      + ", ".join(f"{k}:{n}" for n, k in top))
+      + ", ".join(f"{'dead' if k < 0 else k}:{n}" for n, k in top))
 
 if C > 64:
     print("  per group of 64: the tap offsets seen in it")
@@ -154,9 +155,11 @@ if C > 64:
         seen = {}
         for v in off[g:g + 64]:
             seen[v] = seen.get(v, 0) + 1
-        s6 = sorted(((n, k) for k, n in seen.items()), reverse=True)[:3]
+        s6 = sorted(((n, -1 if k is None else k) for k, n in seen.items()),
+                    reverse=True)[:3]
         print(f"    {g:5d}..{g+63:5d}  "
-              + ", ".join(f"offset {k} x{n}" for n, k in s6))
+              + ", ".join(f"offset {'dead' if k < 0 else k} x{n}"
+                          for n, k in s6))
 
 step = max(1, C // 24)
 print("  ch  want      cpu says            npu says            corr")
