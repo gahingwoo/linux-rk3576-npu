@@ -1,0 +1,88 @@
+From dc313e0eee439a9f1ecbd286f43662e9601cd9ef Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 16:30:39 +1200
+Subject: [PATCH] rocket RK3576: do not write the scale table over the first
+ conv's operand
+
+fill_regcmd_firstconv points 0x5024, the second SDP operand, at
+bias_addr + 0x100 and always has, while the generic path computes it. For 32
+output channels rkt_coef_table_bytes() is 4 * 64 = 256, which is 0x100, so the
+fp16 scale entries were being written exactly on top of the first conv's
+operand.
+
+Measured on conv0: the round 52 arrangement gives distinct 1 with all 32
+channels constant and an output of exactly 128 plus the OUT_CVT offset, with
+no accumulator contribution at all, while both knobs that skip the block,
+ROCKET_FS_ZERO and ROCKET_FS_FLOATS, give distinct 254 with 4 constant
+channels and give it identically. The operand value is inert there, 0x0e0e, 0
+and 0x3fc4 all dead alike, so it is the write and not the content.
+
+A first conv now leaves that region zero and does not get the single constant
+word either. ROCKET_FC_SCALE_TABLE forces the table back on as a control.
+
+This does not make conv0 correct; it un-regresses it to computing something
+wrong rather than nothing, which is where it was before round 52.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 37 ++++++++++++++++++++++++--
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 1a8861f..cdd2444 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -1036,7 +1036,40 @@ biases_done:
+              *
+              * ROCKET_SCALE_OFF restores the single word at groups*64.
+              */
+-            bool scale_table = getenv("ROCKET_SCALE_OFF") == NULL;
++            /*
++             * The FIRST CONV wants this region left ZERO.
++             *
++             * conv0 is 32 of 32 channels constant with the arrangement round
++             * 52 made the default, and its output is exactly 128 plus the
++             * OUT_CVT offset with no accumulator contribution at all: sweeping
++             * the output shift over 2^16 does not move a bit of it. Both knobs
++             * that skip this block entirely, ROCKET_FS_ZERO and
++             * ROCKET_FS_FLOATS, bring the MAC back and bring it back
++             * IDENTICALLY, distinct 254 with 4 constant channels, so the
++             * content of the region is irrelevant and only writing to it is
++             * not. ROCKET_SCALE_OFF, which still writes one word there, sits
++             * in between at distinct 60.
++             *
++             * The mechanism is an address collision. fill_regcmd_firstconv
++             * points 0x5024, the second SDP operand, at bias_addr + 0x100 and
++             * always has, while the generic path computes it. For 32 output
++             * channels rkt_coef_table_bytes() is 4 * 64 = 256, which IS 0x100,
++             * so round 52 began writing the fp16 scale entries exactly on top
++             * of the first conv's operand.
++             *
++             * Round 52 changed this for every operation and was regression
++             * tested only on the shapes that already passed. conv0 was not
++             * among them, so this went unseen; it is in the regression set
++             * permanently now.
++             *
++             * ROCKET_FC_SCALE_TABLE forces the table on for a first conv, as
++             * the control.
++             */
++            bool first_conv = rkt_screen(pcontext->screen)->soc == RKT_SOC_RK3576 &&
++                              !rkt_is_depthwise(poperation) &&
++                              poperation->input_tensors[0]->dims[3] <= 4;
++            bool scale_table = getenv("ROCKET_SCALE_OFF") == NULL &&
++                               (!first_conv || getenv("ROCKET_FC_SCALE_TABLE"));
+             if (scale_table) {
+                uint16_t *sc16 = (uint16_t *)(b8 + table_bytes);
+                const float *wsc = poperation->conv.weight_tensor->scales;
+@@ -1093,7 +1126,7 @@ biases_done:
+             unsigned n = fill ? strtoul(fill, NULL, 0) : 1;
+             if (n == 0 || n > cap)
+                n = cap;
+-            if (!scale_table)
++            if (!scale_table && !first_conv)
+                for (unsigned i = 0; i < n; i++)
+                   fs32[i] = 0x1004;
+          } else if (getenv("ROCKET_FS_FLOATS") ||
+-- 
+2.43.0
+

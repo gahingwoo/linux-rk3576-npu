@@ -2,48 +2,46 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 78. Which half of round 52 emptied conv0's MAC?
+# 2026-08-11 round 79. Give the first conv its operand back.
 #
-# Round 77 settled two things about conv0 and one of them is my own regression.
+# Round 78 bisected my own regression cleanly. On conv0:
 #
-# The MAC is EMPTY. Sweeping the output shift from 22 down to 6, an
-# amplification of 2^16, leaves the output bit for bit identical: distinct 1,
-# min and max both 126, every channel constant. Changing the scale from 0x5391
-# to 0x76be changes nothing either. Only the OFFSET moves it, from 126 at -2 to
-# 0 at -128, so the output is exactly 128 plus the offset and the accumulator
-# contributes nothing. The requant literals are innocent, and the comment
-# beside them stands.
+#   default, the round 52 block   distinct 1, 32 of 32 constant, output is
+#                                 exactly 128 + the OUT_CVT offset
+#   ROCKET_SCALE_OFF, one word     distinct 60, 10 of 32 constant
+#   ROCKET_FS_ZERO                 distinct 254, 4 of 32 constant
+#   ROCKET_FS_FLOATS               distinct 254, 4 of 32 constant, IDENTICAL
 #
-# And ROCKET_SCALE_OFF=1 brings the MAC BACK: distinct 60, min 126 max 185, 10
-# of 32 channels constant instead of 32. That arrangement is the one this
-# driver used before round 52. So round 52 took conv0 from computing something
-# wrong to computing nothing, and it was invisible because conv0 was not in the
-# regression set. That is my mistake twice over: the change and the gap that
-# hid it.
+# The operand VALUE is inert on conv0: 0x0e0e, 0 and 0x3fc4 all give the same
+# dead output. So does changing what the table holds. Only whether the region
+# is written at all matters, and the two knobs that skip it entirely agree to
+# the digit.
 #
-# Round 52 did two things at once, which is the mistake this log keeps
-# recording, and they were split then for the shapes that pass but never
-# retested on conv0:
+# The mechanism is an address collision, and it is checkable in the source
+# rather than inferred. fill_regcmd_firstconv points 0x5024, the second SDP
+# operand, at bias_addr + 0x100 and always has, while the generic path computes
+# it. For 32 output channels rkt_coef_table_bytes() is 4 * 64 = 256, which IS
+# 0x100. So round 52 began writing the fp16 scale entries exactly on top of the
+# first conv's operand.
 #
-#   the fp16 table      oc entries of the per-channel weight scale, written at
-#                       the end of the A/B/C records
-#   the second operand  0x5024 moved past that table, with 0x1004 written at
-#                       the new target
+# So the first conv now leaves that region zero, and does not get the single
+# constant word either. ROCKET_FC_SCALE_TABLE forces the table back on as the
+# control.
 #
-# ROCKET_SCALE_OFF turns off both. This round separates them on conv0, and asks
-# whether the operand VALUE matters there, since 0x1004 was fitted on a regular
-# conv and conv0 takes a different path through everything else.
+# This does not make conv0 CORRECT. Its best state is 1 of 32 with 0 COMPUTED,
+# a full range output that disagrees with the reference. It un-regresses it
+# from computing nothing to computing something wrong, which is where it was
+# before round 52 and is a state that can be debugged.
 #
 # DECISION RULE, written before the run:
-#   the table alone empties it     conv0 reads the region the fp16 entries now
-#                                  occupy, and it needs its own layout
-#   the operand alone empties it   the pointer move is what conv0 cannot take
-#   a different operand value      the value is fitted, not derived, and conv0
-#     revives it                   wants another one
-#   nothing but SCALE_OFF works    the two are not separable and conv0 needs
-#                                  the whole old arrangement until it is
-#                                  understood
-#   any other model regresses      that comes first
+#   conv0 reaches distinct 254     the collision was it, and conv0's remaining
+#     with 4 constant              wrongness is the older separate problem
+#   conv0 stays at distinct 1      the gate is not reaching the first conv, and
+#                                  the detection of it is wrong
+#   ROCKET_FC_SCALE_TABLE gives    the control passes and the comparison is
+#     back distinct 1              real
+#   any other model moves          the gate is catching operations it should
+#                                  not, and that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -60,35 +58,32 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) conv0: the two end points ====="
+	log "===== 1..2) conv0 with the region left zero, and the control ====="
 	p mn_conv0.tflite ""
-	p mn_conv0.tflite ROCKET_SCALE_OFF=1
+	p mn_conv0.tflite ROCKET_FC_SCALE_TABLE=1
 
 	log ""
-	log "===== 3..5) the operand VALUE, with everything else as it is ====="
-	p mn_conv0.tflite ROCKET_OP2=0x0e0e
-	p mn_conv0.tflite ROCKET_OP2=0
-	p mn_conv0.tflite ROCKET_OP2=0x3fc4
+	log "===== 3) and the two-op chain that needs conv0 ====="
+	p mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 6) the fp16 table holding the requant multiplier instead ====="
-	p mn_conv0.tflite ROCKET_SCALE_MUL=1
-
-	log ""
-	log "===== 7..8) the old float surface, for the record ====="
-	p mn_conv0.tflite ROCKET_FS_FLOATS=1
-	p mn_conv0.tflite ROCKET_FS_ZERO=1
-
-	log ""
-	log "===== 9..12) REGRESSION: nothing else may move ====="
+	log "===== 4..9) REGRESSION: everything that passes must keep passing ====="
 	p conv2d-cal.tflite ""
 	p cal_k3.tflite ""
+	p cal_k1.tflite ""
+	p cal_oc16.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Compare 1 and 2 first, then find which single knob between  ====="
-	log "===== them reproduces 2. That names the half that emptied conv0.  ====="
+	log "===== 10) whole model ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== Test 2 must reproduce distinct 1 and 32 constant channels,  ====="
+	log "===== or test 1 is not measuring the gate.                        ====="
 	sync
 }
 case "$1" in
