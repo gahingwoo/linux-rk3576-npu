@@ -1,6 +1,53 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-11 rounds 76 to 88: **conv0 goes from an empty MAC to 99.5 percent pixel-exact.** Four literals
+
+conv0 had never worked, in any log going back to 2026-08-08, and it was never
+in the regression set, so round 76 was the first time anyone measured it. It
+takes its own code path, `fill_regcmd_firstconv`, whose values are literals
+taken from one capture. Four of them were wrong, each found by a different
+instrument and each with a control that reproduces it:
+
+| what | was | is | how it was found |
+|---|---|---|---|
+| the coefficient region | the fp16 scale table | left zero for a first conv | `0x5024` points at `bias_addr + 0x100`, and `rkt_coef_table_bytes()` is 256 for 32 channels, so round 52 wrote the table exactly on top of the operand |
+| `0x1080`, padding amounts | `0x00000101`, symmetric 1 | derived from the task | an impulse decoded to the input shifted one pixel up and left, on all 32 channels at correlation 1.000 |
+| `0x1084`, pad value | `0x00808080` | `in_zp - 0x80` replicated | derived; affects one row and one column here, too little for this measurement to resolve |
+| `0x40ac/b0/b4`, requant | offset -2, `0x5391`, shift 25 | `out_zp - 0x80`, `0x76be`, shift 26 | an affine fit over unclipped pixels, validated by halving the multiplier three times |
+
+**The requant is the one to read twice.** The comment above those literals said
+computing them gives offset -128, scale `0x76be` and shift 22, "which is wrong
+for conv0". The offset and the scale were right and the shift was short by
+four; reading the three together as one captured triple is what kept conv0
+broken. The four bits are presumably the CNA CVT this path enables, `0x104c` =
+`0x4000` against the generic path's bypass.
+
+The fit that found it had to be repaired first. Fitted over the whole surface
+it read correlation 0.89, because the reference is ReLU-clipped and both
+surfaces saturate, so a line between two differently clipped shapes cannot
+reach 1. Excluding clipped pixels took it to 0.9999, and then `a` was identical
+across all 32 channels and **doubled with every halving of the multiplier**,
+which is what makes it a ratio rather than a number that happens to fit.
+
+**Where it stands.** An impulse first conv is byte exact, 32 of 32 COMPUTED.
+`mn_conv0` with its real weights is 99.5 percent of pixels exact, and what
+remains is at the saturation boundary plus a 0.3 percent tail. `ROCKET_CVT_DOWN`
+does not touch it, so it is not the int32 overflow the generic path carries that
+knob for.
+
+⚠ **Two readings of mine were withdrawn on the way**, both because a measurement
+was taken in a state that could not answer:
+
+- Round 77 swept the requant with an EMPTY MAC, saw nothing move, and concluded
+  the requant was innocent. An output of `128 + offset` cannot respond to a
+  requant sweep. The sweep proved the MAC was empty and nothing else.
+- Round 83 saw the decode report 1.000 on an interior crop while the whole
+  surface fit read 0.89, and called it a border error. With `pad_top` and
+  `pad_left` at 0 the padding touches one row and one column, 1.8 percent of
+  the surface, which cannot move a correlation that far. It was the clipping.
+
+
 ## 2026-08-11 round 74 RESULT: **DEPTHWISE IS DONE.** DPU 0x4050's depthwise value is not a constant
 
 | model | result |
