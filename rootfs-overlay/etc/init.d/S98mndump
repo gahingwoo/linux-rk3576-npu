@@ -2,41 +2,55 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 76. Chaining, with both halves now known good.
+# 2026-08-11 round 77. conv0, which has never worked and was never measured.
 #
-# Round 75 closed depthwise. Every default passed and every control failed in
-# exactly the way it was recorded to:
+# Round 76 was going to test chaining and could not. mn_conv0 FAILS ON ITS OWN,
+# 0 of 32 with all 32 channels constant and every row at 129, so mn_conv0dw1's
+# 5 of 32 says nothing about the handoff. By the rule written before that run,
+# conv0 comes first.
 #
-#   defaults   dw 32ch 32/32 x3, dw 1024ch 1024/1024 x4, six regular shapes,
-#              whole model 2/2
-#   controls   STAGE_ALL 0/32 with 1 x12 then 200,200
-#              DW_GROUP=1024 0/1024 with live 448..575
-#              DW_OW_CFG old constant 992/1024 with live 0..991
-#              DW_REC64 5/32 with 0 COMPUTED and every row at 255
+# It is not a regression from this week's work: the logs of 2026-08-08 and
+# 2026-08-09 show the same failure. conv0 was simply never in the regression
+# set being run, which is a gap in how this has been measured, and it is in the
+# set from now on.
 #
-# So chaining is the last thing between this driver and MobileNet, and it can
-# now be tested properly for the first time, because until yesterday one half
-# of every chain was broken on its own and nothing could be attributed.
+# Four things were checked OFFLINE before building anything, by compiling the
+# vendor's own first conv at the same geometry and diffing:
 #
-# mn_conv0dw1 is the ladder: it is exactly CONV_2D then DEPTHWISE_CONV_2D, and
-# both operators are in this run on their own as mn_conv0 and mn_dw1. If both
-# halves pass alone and the chain does not, the fault is the handoff between
-# them and nothing else, which is a much smaller thing than "chaining is
-# broken".
+#   22 of 22 hardcoded registers    IDENTICAL to the vendor
+#   the ARGB weight layout          864 of 864 lanes, exact
+#   0x104c and 0x1050               differ only because the compiled model's
+#                                   calibration spans 0..250; the field is
+#                                   2^14 * 255 / span, and mn_conv0's input is
+#                                   full range, so mesa's 0x4000 is right for it
+#   the requant literals            NOT claimed as the bug, see below
 #
-# dwconv and conv2x are longer chains, six and nine tensors, and are here for
-# context rather than attribution.
+# So the register stream and the weight buffer are both vendor-exact, and conv0
+# still writes a constant per channel.
 #
-# Nothing in the driver changed this round.
+# The requant is the one place a difference is visible: in_sc*wt_sc/out_sc for
+# mn_conv0 gives scale 0x76be at shift 22, while the code writes 0x5391 at
+# shift 25, which is 11 times smaller. But the comment beside those literals
+# says they came from a live vendor conv0 capture on this board and that the
+# computed pair is wrong, and the first conv also enables a CNA CVT pre-scale,
+# 0x104c = 0x4000 against the generic path's bypass, which the ratio ignores.
+# So it is a QUESTION here, not a fix.
+#
+# ROCKET_OUT_SHIFT_ABS is the knob that separates the two ways a constant
+# happens: a real MAC crushed by too small a requant lights up as the shift
+# drops, an empty MAC stays flat across the whole sweep. That is the first
+# thing to know about conv0 and it has never been asked.
 #
 # DECISION RULE, written before the run:
-#   the chain passes              chaining works now and MobileNet is next
-#   both halves pass, chain does   the handoff is the fault: the intermediate
-#     not                         buffer, its layout, or the second task's
-#                                 input address
-#   mn_conv0 alone fails          it is not chaining, and that comes first
-#   mn_dw1 alone fails            the depthwise close regressed, and that comes
-#                                 first
+#   conv0 lights up as the shift     the MAC is real and the requant is the
+#     drops                          problem; the literals go
+#   flat across the whole sweep      the MAC is empty and the requant is
+#                                    innocent; the next round goes at the CNA
+#                                    input path for a 3 channel surface
+#   the computed pair fixes it       the comment beside the literals was
+#                                    written before this week's fixes and is
+#                                    now stale
+#   anything else regresses          that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -53,37 +67,38 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) the two halves, each on its own ====="
+	log "===== 1) conv0 as it stands ====="
 	p mn_conv0.tflite ""
+
+	log ""
+	log "===== 2..6) crushed MAC or empty MAC? drop the output shift ====="
+	p mn_conv0.tflite ROCKET_FC_SHIFT=22
+	p mn_conv0.tflite ROCKET_FC_SHIFT=18
+	p mn_conv0.tflite ROCKET_FC_SHIFT=14
+	p mn_conv0.tflite ROCKET_FC_SHIFT=10
+	p mn_conv0.tflite ROCKET_FC_SHIFT=6
+
+	log ""
+	log "===== 7) the COMPUTED pair, which the code comment calls wrong ====="
+	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22 ROCKET_FC_OFFSET=0xffffff80"
+
+	log ""
+	log "===== 8) the computed scale with the captured offset ====="
+	p mn_conv0.tflite "ROCKET_FC_SCALE=0x76be ROCKET_FC_SHIFT=22"
+
+	log ""
+	log "===== 9) the coefficient arrangement from before round 52 ====="
+	p mn_conv0.tflite ROCKET_SCALE_OFF=1
+
+	log ""
+	log "===== 10..12) REGRESSION: depthwise and regular must not move ====="
 	p mn_dw1.tflite ""
-
-	log ""
-	log "===== 3) the same two, chained ====="
-	p mn_conv0dw1.tflite ""
-
-	log ""
-	log "===== 4..5) longer chains, for context ====="
-	p dwconv.tflite ""
-	p conv2x.tflite ""
-
-	log ""
-	log "===== 6..7) regular shapes, so a regression cannot hide ====="
-	p conv2d-cal.tflite ""
-	p mn_pw2.tflite ""
-
-	log ""
-	log "===== 8) the 1024 channel depthwise, likewise ====="
 	p mn_dw25.tflite ""
+	p conv2d-cal.tflite ""
 
 	log ""
-	log "===== 9) whole model ====="
-	sleep 2
-	env TEFLON_LIB=/usr/lib/libteflon.so \
-		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
-
-	log ""
-	log "===== Read 1 and 2 before 3. A chain whose halves do not pass    ====="
-	log "===== separately says nothing about chaining.                    ====="
+	log "===== Read 2 to 6 as a sweep. A constant that never moves as the  ====="
+	log "===== requant is amplified is an empty MAC, not a crushed one.    ====="
 	sync
 }
 case "$1" in
