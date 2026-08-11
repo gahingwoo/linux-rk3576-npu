@@ -170,6 +170,24 @@ if bad:
               f"{aa.max():.4f})", flush=True)
         print(f"      b median {np.median(bb):+.2f}    correlation median "
               f"{np.median(rr):+.4f}", flush=True)
+        # WHICH channels are the outliers, so they can be looked at offline.
+        #
+        # conv0's fit has sat at a median 0.9991 with a minimum of 0.9486
+        # through every change of the global multiplier, the overflow knob and
+        # the weight fill. One channel five percent out while the rest are at
+        # 1.000 is per channel, and naming it is the only way to ask what is
+        # special about its weights or its bias.
+        ch = np.array([c for c in bad
+                       if not (np.std(got[:, :, c]) == 0
+                               or np.std(ref[:, :, c]) == 0)])
+        if len(ch) == len(aa):
+            order = np.argsort(aa)
+            worst = [(int(ch[i]), round(float(aa[i]), 4),
+                      round(float(bb[i]), 1)) for i in order[:3]]
+            best = [(int(ch[i]), round(float(aa[i]), 4),
+                     round(float(bb[i]), 1)) for i in order[-3:]]
+            print(f"      lowest a: {worst}", flush=True)
+            print(f"      highest a: {best}", flush=True)
 
 # HOW the residual is distributed, which a maxdiff cannot say.
 #
