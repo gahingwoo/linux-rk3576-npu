@@ -50,14 +50,24 @@ OH, OW, OC = got.shape
 S = IH // OH
 
 
+# ⚠ The pad offset is DERIVED, not assumed. The first version of this decoder
+# hardcoded a pad of 1, which is symmetric padding, and its CPU control came
+# back 0 of 32 with every channel decoding to want + (1, 1). tflite SAME
+# padding here is asymmetric: 224 to 112 at stride 2 with a 3x3 kernel needs
+# one pad in total, so pad_top and pad_left are 0. The control caught it, which
+# is what the control is for.
+PAD_ALONG = max((OH - 1) * S + 3 - IH, 0)
+PAD_TOP = PAD_ALONG // 2
+
+
 def tapped(plane, ky, kx):
     """The stride-2 view of a plane that the tap at (ky, kx) sees."""
     out = np.zeros((OH, OW), dtype=np.int64)
     for y in range(OH):
-        sy = S * y + ky - 1
+        sy = S * y + ky - PAD_TOP
         if not (0 <= sy < IH):
             continue
-        xs = S * np.arange(OW) + kx - 1
+        xs = S * np.arange(OW) + kx - PAD_TOP
         ok = (xs >= 0) & (xs < IW)
         out[y, ok] = plane[sy, xs[ok]]
     return out
@@ -84,7 +94,8 @@ def decode(surface):
     return best
 
 
-print(f"  {os.path.basename(model)} out{got.shape} in{x.shape} stride {S}")
+print(f"  {os.path.basename(model)} out{got.shape} in{x.shape} stride {S}"
+      f"  pad_along {PAD_ALONG}, pad_top {PAD_TOP}")
 print(f"  npu distinct={len(np.unique(got))}  cpu distinct={len(np.unique(ref))}")
 
 hits_cpu = hits_npu = plane_ok = 0

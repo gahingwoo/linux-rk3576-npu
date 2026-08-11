@@ -2,46 +2,48 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-11 round 81. Ask conv0 which input plane it is reading.
+# 2026-08-11 round 82. conv0 was reading one pixel up and to the left.
 #
-# Round 80 re-ran the requant sweep with the accumulator alive, which round 77
-# could not. The output MOVES now, distinct 254, 218, 252, 256, 231, 114 across
-# shifts 25, 27, 26, 24, 22, 20, so the sweep is live where the earlier one was
-# meaningless. And COMPUTED stays 0 at every point. The match counts that rise,
-# 4 then 8 then 9, are all TRIVIAL, and the constant channel count rises with
-# them, 10 then 19 then 20: that is channels saturating, not channels computing.
+# Round 81's impulse decode, with the CPU control doing exactly its job:
 #
-# So no requant value lands near correct, and the accumulator is wrong rather
-# than its scaling. What is left, and has never been checked, is the INPUT.
+#   CPU control decodes to its own impulse    0/32
+#   hardware decodes to the same impulse     32/32
+#   hardware reads the right input plane     32/32
+#   correlation on every row                 +1.000
 #
-# Everything else about conv0 already matches the vendor. Its 22 hardcoded
-# registers are identical for the same geometry, and its ARGB weight layout
-# reproduces the vendor's bytes 864 of 864. A first conv has THREE channels and
-# the CNA reads four byte groups with an alpha lane, while mesa hands the
-# tflite tensor over exactly as it is, three bytes per pixel. If the hardware
-# wants four, every pixel after the first is read from the wrong address.
+# A control at 0 of 32 normally voids a round. This one voided the DECODER and
+# named the bug while doing it. Every CPU channel came back at want + (1, 1),
+# because the decoder assumed a pad of 1 on every side. tflite SAME padding
+# here is not symmetric: 224 to 112 at stride 2 with a 3x3 kernel needs ONE pad
+# in total, so pad_top and pad_left are 0 and pad_bottom and pad_right are 1.
 #
-# fc_imp.tflite gives output channel c a single live tap at input channel
-# c mod 3 and tap (c / 3) mod 9. conv0 is stride 2, so the correct output is
-# in[2y + ky - 1][2x + kx - 1][c mod 3], and fcimp.py scores every output
-# channel against all three planes and all nine taps.
+# The hardware matched the decoder's WRONG convention on all 32 channels at
+# correlation 1.000, and the CPU matches the right one. So the hardware is
+# reading the input one pixel up and to the left, and every value is wrong
+# because of where it reads, not what it computes. That is why no requant value
+# in round 80 could rescue it.
 #
-# ⚠ The impulse code had to be clamped. An effective weight of one would need
-# code 289 and the field is a byte, so it uses 255, an effective 0.75. The
-# response is still a single tap and the CPU reference comes from the same
-# patched file, so nothing about the comparison changes.
+# The cause is in the source, not inferred. fill_regcmd_firstconv writes
+#
+#     R_CNA(0x1080, 0x00000101)      pad_left = 1, pad_top = 1
+#
+# which is symmetric padding of one, what a torch conv with padding=1 asks for
+# and what the capture this function was written from contained. MobileNet's
+# conv0 wants 0x01010000, the opposite corner. The generic path has derived
+# this register since the round that found out what it was; the first conv kept
+# the literal.
+#
+# Both are now fixed: the driver derives 0x1080 from the task's padding, and
+# the decoder derives its pad offset instead of assuming one.
 #
 # DECISION RULE, written before the run:
-#   CPU control not near 32/32     void, the model or the decoder is wrong
-#   hardware reads the right       the input path is fine and the fault is
-#     plane and tap                further in
-#   the plane is offset by a       three channels are being read as four, or
-#     constant                     the reverse, and the offset says which
-#   the plane wanders with c       the pixel stride is wrong, and how fast it
-#                                  wanders gives the stride
-#   nothing fits any single tap    the accumulator is summing several taps and
-#                                  the weight buffer is not being consumed the
-#                                  way its layout says
+#   CPU control 32/32 and hardware   the padding was the whole of it and conv0
+#     32/32, and conv0 COMPUTED      is fixed
+#   both decode 32/32 but conv0      the window is right now and something
+#     still 0 COMPUTED               else is wrong; the requant sweep is worth
+#                                    redoing once more, with a correct window
+#   ROCKET_FC_PAD=0x00000101         the control: it has to put the shift back
+#   anything else moves              that comes first
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -58,28 +60,45 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) the first-conv impulse decode ====="
+	log "===== 1) the impulse decode, with both sides fixed ====="
 	sleep 2
 	env TEFLON_LIB=/usr/lib/libteflon.so \
 		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
 
 	log ""
-	log "===== 2) the same model through the ordinary metric ====="
-	p fc_imp.tflite ""
+	log "===== 2) the CONTROL: put the old padding back, expect the shift ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_FC_PAD=0x00000101 \
+		python3 "$NPU_DIR/fcimp.py" > "$C" 2>&1
 
 	log ""
-	log "===== 3) conv0 with its real weights, for comparison ====="
+	log "===== 3..4) the impulse model and conv0 through the usual metric ====="
+	p fc_imp.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 4..6) REGRESSION ====="
+	log "===== 5) conv0 with the old padding, which must be worse ====="
+	p mn_conv0.tflite ROCKET_FC_PAD=0x00000101
+
+	log ""
+	log "===== 6) the chain that needs conv0 ====="
+	p mn_conv0dw1.tflite ""
+
+	log ""
+	log "===== 7..9) REGRESSION ====="
 	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== Read the CONTROL line first: the CPU must decode to its own ====="
-	log "===== impulse, or the hardware column says nothing.               ====="
+	log "===== 10) whole model ====="
+	sleep 2
+	env TEFLON_LIB=/usr/lib/libteflon.so \
+		python3 "$NPU_DIR/test_model.py" "$NPU_DIR/conv2d-cal.tflite" 2 > "$C" 2>&1
+
+	log ""
+	log "===== The CPU control must be 32/32 this time. If it is not, the  ====="
+	log "===== decoder is still wrong and nothing else here can be read.   ====="
 	sync
 }
 case "$1" in

@@ -1,0 +1,67 @@
+From 1a92a6f86fefb402f8d8c23d389b46c04a028fb4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 11 Aug 2026 16:54:46 +1200
+Subject: [PATCH] rocket RK3576: derive the first conv's padding instead of
+ hardcoding it
+
+fill_regcmd_firstconv wrote 0x1080 = 0x00000101, pad_left 1 and pad_top 1,
+which is symmetric padding of one. That is what a torch conv with padding=1
+asks for and what the capture this function was written from contained.
+MobileNet's conv0 is tflite SAME padding, which for 224 to 112 at stride 2 with
+a 3x3 kernel needs ONE pad in total: pad_top and pad_left are 0, pad_bottom and
+pad_right are 1, which is 0x01010000, the opposite corner.
+
+Measured with an impulse first conv, one live tap per output channel: the
+hardware decodes to the input shifted one pixel up and to the left of where the
+CPU puts it, on all 32 channels at correlation 1.000. Every value is then wrong
+because of where it reads rather than what it computes, which is why sweeping
+the requant moved the output everywhere without making one channel correct.
+
+The generic path has derived this register since the round that established
+what it was; the first conv kept the literal. ROCKET_FC_PAD forces a value and
+0x00000101 restores the old one as a control.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 82060c7..9def453 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -157,7 +157,30 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x1074, 0x00000000);
+    R_CNA(0x1078, 0x002900df);
+    R_CNA(0x107c, 0x00000002);
+-   R_CNA(0x1080, 0x00000101);
++   /*
++    * The PADDING register, derived rather than hardcoded.
++    *
++    * 0x00000101 is pad_left = 1 and pad_top = 1, which is symmetric padding of
++    * one on every side. That is what a torch conv with padding=1 asks for, and
++    * it is what the capture this function was written from contained. tflite
++    * SAME padding on MobileNet's conv0 is NOT symmetric: 224 to 112 at stride 2
++    * with a 3x3 kernel needs one pad in total, so pad_top and pad_left are 0
++    * and pad_bottom and pad_right are 1, which is 0x01010000, the opposite
++    * corner.
++    *
++    * Measured: an impulse first conv, one live tap per output channel, decodes
++    * on hardware to exactly the input shifted one pixel UP AND LEFT of where
++    * the CPU puts it, on all 32 channels at correlation 1.000. Every value is
++    * then wrong and no requant can rescue it, which is what the sweep in round
++    * 80 found.
++    *
++    * The generic path has derived this since the round that found CNA 0x1080
++    * was a padding register at all; the first conv kept the literal.
++    * ROCKET_FC_PAD forces a value, and 0x00000101 restores the old one.
++    */
++   R_CNA(0x1080, rkt_env_u32("ROCKET_FC_PAD",
++                             (task->pad_right << 24) | (task->pad_bottom << 16) |
++                             (task->pad_left << 8) | task->pad_top));
+    R_CNA(0x1084, 0x00808080);
+    R_CNA(0x1088, feature_addr); /* input feature base addr */
+    R_CNA(0x108c, 0x000f000f);
+-- 
+2.43.0
+
