@@ -53,6 +53,13 @@ cpu.invoke()
 ref = np.maximum(cpu.get_tensor(co["index"])[0].astype(int),
                  int(co["quantization"][1]))
 
+# A classifier's output is (N,) not (H, W, C), and indexing it as a surface
+# threw an IndexError that ended the run before the regression got to print.
+# Treat it as a one pixel surface so every metric below still means something.
+if got.ndim == 1:
+    got = got.reshape(1, 1, -1)
+    ref = ref.reshape(1, 1, -1)
+
 oc = got.shape[2]
 bad = []
 worst = []
@@ -250,6 +257,8 @@ print(f"      of the pixels off by more than 1, {100.0 * sat.sum() / max(1, (d >
 # pass mark and always was. What this print is still good for is a CHANGE: if a
 # model's figure moves after a driver change, something real moved.
 gi, ri = got[1:-1, 1:-1], ref[1:-1, 1:-1]
+if gi.size == 0:          # a 1x1 surface has no interior; use the whole thing
+    gi, ri = got, ref
 di = ri - gi
 one = np.abs(di) == 1
 n1 = int(one.sum())

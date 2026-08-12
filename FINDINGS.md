@@ -1,6 +1,52 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-12 rounds 102 to 103: **chaining works**, and MobileNet's first defect is localised
+
+`mn_conv0dw1`, conv0 into dw1, came out 28 of 32 with maxdiff 3. Modelling both
+operators offline with the hardware's own arithmetic on one side and tflite's
+on the other reproduces the board exactly: 28/32, maxdiff 3, interior exact
+89.31 percent, 41054 off by one, 99.3 percent low, and the same four wrong
+channels 1, 4, 7 and 19. Those four are op0's reference artifact spread through
+op1's 3x3 window. Both controls, the two halves on their own, stayed 32 of 32.
+
+So the long standing "chained operations fail on op2" was the individual
+operators failing, and it went away when they were fixed. Nothing was done to
+the chain itself.
+
+**Two corrections to my own round 102 script.** `conv2x` is not a two operator
+chain: it has four operators, two of them builtin code 114, and it is int8 with
+per-axis weights, a regime MobileNet never uses. Its constant output is a
+different question. And perch.py died with an IndexError on the full model's
+(1, 1001) output, so that round printed no MobileNet number at all.
+
+**The ladder.** A tflite subgraph's output list is a length and one tensor
+index, four bytes, so pointing it at an intermediate tensor is a byte patch.
+`mn_L00` through `mn_L26` are MobileNet itself with the output moved to the end
+of that operator. Walking them against the offline chain simulation:
+
+| op | kind | ic -> oc | stride | model | board |
+|---|---|---|---|---|---|
+| 0 | first conv | 3 -> 32 | 2 | 32/32 md 1 | **32/32 md 1** |
+| 1 | depthwise | 32 | 1 | 28/32 md 3 | **28/32 md 3** |
+| 2 | pointwise | 32 -> 64 | 1 | 22/64 md 6 | **22/64 md 6** |
+| 4 | pointwise | 64 -> 128 | 1 | 18/128 md 14 | 1/128 md 255 |
+| 6 | pointwise | 128 -> 128 | 1 | 4/128 md 23 | 0/128 md 255 |
+| 8 | pointwise | 128 -> 256 | 1 | 34/256 md 7 | 0/256 md 255 |
+
+Through op2 the hardware is exactly what correct hardware produces, and the
+rising maxdiff is the reference artifact compounding, not a defect. `mn_pw24`'s
+297 of 1024 is downstream of the same thing rather than a target of its own.
+
+The first real divergence is op3 or op4, and op3 is a **depthwise at stride 2**.
+Every depthwise verified here is stride 1. A stride 2 SAME layer pads before 0
+and after 1, which is the asymmetric trailing padding that round 98 found the
+hardware feeds a raw zero on the first conv path, and the generic path has
+never been asked for it: conv2d-cal, mn_dw1 and mn_dw25 are all stride 1 with
+symmetric padding.
+
+
+
 ## 2026-08-12 rounds 99 to 101: the off-by-one is the REFERENCE, and a reading of mine is withdrawn
 
 The instrument added in round 97 showed every model carrying a one sided

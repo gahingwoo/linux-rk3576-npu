@@ -2,40 +2,52 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 101. Solve the requant instead of guessing at bits.
+# 2026-08-12 round 104. Name the first broken operator.
 #
-# Round 100 tested DPU 0x4044 and it does nothing. mn_dw1 with the bit set is
-# byte identical to mn_dw1 without it, 85.50% and 56125 either way, and
-# conv2d-cal with the bit CLEARED is byte identical to conv2d-cal with it set,
-# 99.99% and 10 either way. The control predicted a drop to about 75% and did
-# not fire, which is what makes this a clean negative: the bit is written, in
-# both directions, on both paths, and the output does not care.
+# Round 103's ladder walked MobileNet itself, output moved to each layer by a
+# four byte patch of the subgraph's output index. Its two controls held: L00
+# reproduced mn_conv0's file exactly and L01 reproduced mn_conv0dw1's exactly,
+# so the patch is what it claims to be.
 #
-# Six registers still differ between the depthwise and regular emissions:
-# 0x400c bit 3, 0x4030 bit 10, 0x4038 in two bytes, 0x4050, and RDMA 0x501c
-# and 0x5044. That is six more flashes to sweep one at a time, for a question
-# that does not need them.
+# Then the whole chain was simulated offline with the hardware's own
+# arithmetic on one side and tflite's on the other, and the two agree layer by
+# layer until they suddenly do not:
 #
-# The offline model reproduces the CPU reference exactly from the model file
-# and the same ramp perch.py feeds: 9 constant channels of 32 for mn_dw1, 5 at
-# the zero point, 256 distinct values, and 10 constant channels and 253
-# distinct for mn_conv0. So given the hardware's own outputs at known
-# coordinates, the map from accumulator to output can be SOLVED. perch.py now
-# prints two rows of sixteen raw values from the worst channel, with the
-# reference beside them, at fixed coordinates.
+#   op0 conv0  3->32   s2   model 32/32  md 1     board 32/32  md 1
+#   op1 dw     32      s1   model 28/32  md 3     board 28/32  md 3
+#   op2 pw     32->64  s1   model 22/64  md 6     board 22/64  md 6
+#   op4 pw     64->128 s1   model 18/128 md 14    board  1/128 md 255
+#   op6 pw    128->128 s1   model  4/128 md 23    board  0/128 md 255
+#   op8 pw    128->256 s1   model 34/256 md  7    board  0/256 md 255
 #
-# DECISION RULE, written before the run:
-#   the samples fit (acc*S) >> SH exactly
-#                         the depthwise truncates and the search is for what
-#                         turns rounding on, with the arithmetic confirmed
-#   they fit with a different S or SH than mesa emits
-#                         it is not the rounding at all, it is the multiplier,
-#                         and the offline fit says what to write
-#   they fit neither      the accumulator entering the OUT_CVT is not the one
-#                         the model computes, and the BS stage is next
+# So through op2 the hardware is EXACTLY what correct hardware produces. The
+# rising maxdiff there is the tflite reference artifact compounding through the
+# chain, not a defect, and mn_pw24's 297 of 1024 is downstream of the same
+# thing rather than a target of its own.
 #
-# The rest of the round is the standing regression, because a solved map is
-# worth nothing if conv0 or the regular path moved while it was measured.
+# The first real divergence is op3 or op4, and op3 is the interesting one: a
+# DEPTHWISE at stride 2. Everything depthwise that has ever been verified here
+# is stride 1, mn_dw1 and mn_dw25 both. A stride 2 SAME layer, 112 to 56, pads
+# before 0 and after 1, which is the asymmetric trailing padding that round 98
+# found the hardware feeds a raw zero on the first conv path. The generic path
+# has never once been asked for it: conv2d-cal, mn_dw1 and mn_dw25 are all
+# stride 1 with symmetric padding.
+#
+# L03, L05 and L07 are new probes so the ladder has no gaps from op0 to op8.
+#
+# DECISION RULE, written before the run, with the model's number for each:
+#   op    model      if the board matches      if the board is far below
+#   L03   21/64  md13   op3 is correct, and op4 is the first defect
+#   L04   18/128 md14   op4 correct too, and the cliff is later
+#   L05    9/128 md13
+#   L06    4/128 md23
+#   L07    7/128 md10
+#   L08   34/256 md 7
+#
+# The first L whose board number falls far below its model number is the
+# operator to fix, and its kind, stride and channel counts name the case. L00,
+# L01 and L02 are the control: all three matched their model last round and
+# must do so again, or this build moved something and nothing here can be read.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -52,29 +64,42 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) mn_dw1, the one to solve ====="
+	log "===== 1..3) CONTROL: must reproduce 32/32 md1, 28/32 md3, 22/64 md6 ====="
+	p mn_L00.tflite ""
+	p mn_L01.tflite ""
+	p mn_L02.tflite ""
+
+	log ""
+	log "===== 4) op3, DEPTHWISE AT STRIDE 2. Model says 21/64 maxdiff 13 ====="
+	p mn_L03.tflite ""
+
+	log ""
+	log "===== 5) op4, pw 64->128.  Model says 18/128 maxdiff 14 ====="
+	p mn_L04.tflite ""
+
+	log ""
+	log "===== 6) op5, dw 128 s1.   Model says 9/128 maxdiff 13 ====="
+	p mn_L05.tflite ""
+
+	log ""
+	log "===== 7) op6, pw 128->128. Model says 4/128 maxdiff 23 ====="
+	p mn_L06.tflite ""
+
+	log ""
+	log "===== 8) op7, dw 128 s2.   Model says 7/128 maxdiff 10 ====="
+	p mn_L07.tflite ""
+
+	log ""
+	log "===== 9) op8, pw 128->256. Model says 34/256 maxdiff 7 ====="
+	p mn_L08.tflite ""
+
+	log ""
+	log "===== 10..11) REGRESSION ====="
+	p conv2d-cal.tflite ""
 	p mn_dw1.tflite ""
 
 	log ""
-	log "===== 2) conv2d-cal, the same instrument on a path that is right ====="
-	p conv2d-cal.tflite ""
-
-	log ""
-	log "===== 3) mn_dw25, depthwise but nearly exact ====="
-	p mn_dw25.tflite ""
-
-	log ""
-	log "===== 4) conv0, half-up by the model and 0.2% low on the board ====="
-	p mn_conv0.tflite ""
-
-	log ""
-	log "===== 5) fc_kx2, which must stay 32 of 32 ====="
-	p fc_kx2.tflite ""
-
-	log ""
-	log "===== The RAW lines in 1 and 2 are the round. Everything else is  ====="
-	log "===== the regression that says the map was measured on a good     ====="
-	log "===== build.                                                      ====="
+	log "===== The first L far below its model number is the operator.     ====="
 	sync
 }
 case "$1" in
