@@ -2,49 +2,35 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 121. Three windows, and odd widths, asked separately.
+# 2026-08-12 v7 VERIFICATION. Not a round; this checks the upstream series.
 #
-# Round 120's control failed and that was the useful part. dw64w110 is EVEN,
-# over budget, and it fails, which the rule written before the run had already
-# named as the outcome that refutes parity. Computing the actual window split
-# for every result then separates two faults cleanly:
+# The v7 branch has never been run. What has been run is the fork with
+# task_con16=1 and no_poll=1, which is the same code by inspection and not the
+# same tree. The cover letter says "Tested on a Radxa ROCK 4D" and every claim
+# under "Where it stands" has to be true of THIS kernel:
 #
-#   model      entries/row  window  windows          result
-#   dw64w72        36         71    2  [71, 3]        pass
-#   dw64w96        48         53    2  [53, 45]       pass
-#   dw32w110       28         91    2  [91, 21]       pass
-#   mn_dw1         28         91    2  [91, 23]       pass
-#   dw32w109       28         91    2  [91, 20]       FAIL, odd width
-#   dw32w111       28         91    2  [91, 22]       FAIL, odd width
-#   dw64w110       55         46    3  [46, 46, 22]   FAIL
-#   dw64           56         45    3  [45, 45, 26]   FAIL
-#   dw64_s2        56         45    3  [45, 45, 24]   FAIL
+#   the NPU probes with the two domain list and no attach failure
+#   a convolution submitted three times with three DIFFERENT inputs is byte
+#     exact each time, no reset in between, nothing retiring it but the IRQ
+#   /proc/interrupts counts up
+#   unbind and rebind is clean with no warning
 #
-# Every one and two window layer passes except the odd widths, and every three
-# window layer fails. mn_L03 is three windows, which is why the budget fix left
-# it at 1 of 64.
+# It also answers a question the series does not: the fork carries patches that
+# v7 does not, including the rk_iommu flush_iotlb_all, which is neither
+# upstream nor in this series. If the NPU only works with those, the cover
+# letter's tested claim is wrong and the series is incomplete.
 #
-# Neither needs a new model to ask. dw64w96 passes at its derived 53 row window
-# and shrinking the window turns the SAME model into three and four windows,
-# with nothing else changed. And 71 and 72 are an odd and an even width that
-# both fit one window, so odd can be asked with no split in the way.
+# perch.py takes ROCKET_SEED now, so the three submits differ in their input.
+# Every earlier "byte exact N times in a row" figure fed the same input and
+# could not tell a recomputation from an untouched output buffer. This can.
 #
-# DECISION RULE, written before the run:
-#   dw64w96 passes at 53 and fails at 40 and 32
-#           three windows is the fault, on a model that is correct at two, and
-#           the cumulative fields are where to look: cbuf_input_row_start is a
-#           running sum of staged rows and cbuf_reuse_row is in_lo
-#   it passes at all three
-#           the window count is innocent and the three failures share something
-#           else, most likely being over budget before the split
-#   dw32w71 fails and dw32w72 passes
-#           odd width is broken outright, with no split involved
-#   both pass
-#           odd width is only broken once it is split, which points at the
-#           window arithmetic rounding rather than the line stride
-#
-# Test 1 is the control for the whole round: dw64w96 at its default must still
-# be 64 of 64, or the build moved and nothing here can be read.
+# WHAT WOULD SINK IT:
+#   any of the three runs not 128/128        the series does not compute here
+#   the interrupt count not rising           something still retires jobs
+#                                            without the interrupt
+#   an attach failure or a probe warning     the domain list move broke probe
+#   a warning on unbind or rebind            the teardown lost something with
+#                                            the poll
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -58,39 +44,56 @@ start() {
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) CONTROL: dw64w96 as it stands, 2 windows, must be 64/64 ====="
+	log "===== kernel and probe ====="
+	uname -r > "$C"
+	dmesg | grep -iE "rocket|rknn|npu" | tail -12 > "$C"
+	log ""
+	log "===== power domains and clocks ====="
+	dmesg | grep -iE "power domain|attach" | tail -6 > "$C"
+
+	log ""
+	log "===== interrupts BEFORE ====="
+	grep -iE "npu|rknn|rocket" /proc/interrupts > "$C" 2>/dev/null || \
+		log "  no NPU line in /proc/interrupts yet"
+
+	log ""
+	log "===== three submits, three DIFFERENT inputs, no reset between ====="
+	p conv2d-cal.tflite "ROCKET_SEED=7"
+	p conv2d-cal.tflite "ROCKET_SEED=11"
+	p conv2d-cal.tflite "ROCKET_SEED=13"
+
+	log ""
+	log "===== interrupts AFTER. This must have risen ====="
+	grep -iE "npu|rknn|rocket" /proc/interrupts > "$C" 2>/dev/null
+
+	log ""
+	log "===== the rest of the standing set, on this kernel ====="
+	p mn_conv0.tflite ""
+	p mn_dw1.tflite ""
+	p mn_dw25.tflite ""
 	p dw64w96.tflite ""
 
 	log ""
-	log "===== 2..3) the SAME model at 3 and 4 windows ====="
-	p dw64w96.tflite "ROCKET_ROWWIN=40"
-	p dw64w96.tflite "ROCKET_ROWWIN=32"
+	log "===== unbind and rebind ====="
+	D=$(ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep -E "^[0-9a-f]+\." | head -1)
+	if [ -n "$D" ]; then
+		echo "$D" > /sys/bus/platform/drivers/rocket/unbind 2>"$C"
+		sleep 1
+		echo "$D" > /sys/bus/platform/drivers/rocket/bind 2>"$C"
+		sleep 1
+		dmesg | tail -8 > "$C"
+	else
+		log "  could not find the platform device to unbind"
+	fi
 
 	log ""
-	log "===== 4..5) odd and even width, both in ONE window ====="
-	p dw32w71.tflite ""
-	p dw32w72.tflite ""
+	log "===== dmesg WARN/BUG, which must be empty ====="
+	dmesg | grep -iE "WARNING|BUG:|call trace|refcount" | tail -10 > "$C"
 
 	log ""
-	log "===== 6) odd width once it is split, for comparison ====="
-	p dw32w109.tflite ""
-
-	log ""
-	log "===== 7) and a two-window layer forced to three ====="
-	p dw32w110.tflite "ROCKET_ROWWIN=40"
-
-	log ""
-	log "===== 8..11) REGRESSION ====="
-	p mn_dw1.tflite ""
-	p dw64w72.tflite ""
-	p conv2d-cal.tflite ""
-	p mn_dw25.tflite ""
-
-	log ""
-	log "===== 1 vs 2 vs 3 is the window count. 4 vs 5 is the odd width.   ====="
+	log "===== v7 verification done ====="
 	sync
 }
 case "$1" in

@@ -1,0 +1,174 @@
+From 28839ab8f4b9d43186a922d7800bbfe4aa73cfdb Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 12 Aug 2026 21:39:09 +1200
+Subject: [PATCH v7 00/10] accel/rocket: RK3576 NPU (RKNN) enablement
+
+Based on Igor Paunovic's "[PATCH v2] accel/rocket: request the core
+clocks by name", as v6 was:
+
+  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
+
+Tested on a Radxa ROCK 4D, on next-20260730.
+
+The thing this series has been describing as unsolved since v3 is solved,
+and it was one register write. That changes the cover letter more than it
+changes the patches, so the correction comes first.
+
+The claim I have to withdraw
+============================
+
+Every version of this series from v1 to v6 has said that the RK3576's
+completion interrupt is armed exactly as on RK3588 and never reaches the
+GIC, and v6 shipped an hrtimer that samples INTERRUPT_RAW_STATUS instead
+of waiting for it. That is not true. The interrupt works.
+
+It never fired because the block believed it had 28672 tasks left to
+run, so the job was never complete. PC_TASK_CON packs the task number
+with three controls above it, and the field widths are not the same on
+both SoCs:
+
+  RK3588   BIT[11:0] task_number, BIT[12] pp_en, BIT[13] count_clear
+  RK3576   BIT[15:0] task_number, BIT[16] pp_en, BIT[17] count_clear,
+           BIT[18] last_layer_clear
+
+rocket_registers.h is generated from the RK3588 description, so writing
+it unchanged on an RK3576 asks for task_number 0x7001, that is 28673
+tasks, and puts TASK_COUNT_CLEAR on a bit that does nothing. The counter
+was then only ever cleared by a reset, which is precisely the "one task
+per reset" shape v6 reported, and it is why every completion path I
+added looked necessary.
+
+It was found by taking an ordered trace of every register write during
+one submit and diffing it against the same trace from the vendor driver
+on the same board. Exactly one value differed.
+
+Robin and Diederik, my apologies for the thread that premise cost you.
+Robin's shortlist for an interrupt that never arrives was an extra clock
+or power domain in the path, a masking control that had been overlooked,
+a wrong description, or terminally broken hardware. It was none of those,
+because the interrupt was not the thing that was wrong.
+
+Chaoyi Chen of Rockchip confirmed the layout on the list, including the
+fourth control at BIT(18) that the trace could not have named:
+
+  https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
+
+I sent a correction to the list when this landed rather than leaving it
+until now:
+
+  https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/
+
+So v7 drops the poll entirely. There is no hrtimer, no poll work, no
+second completion path and no arbitration between two of them. A job is
+retired by its interrupt, the way it is on RK3588.
+
+Changes in v7
+=============
+
+  * accel/rocket: PC_TASK_CON is written with the RK3576 field layout.
+    The defines are in rocket_job.c rather than in rocket_registers.h,
+    which is generated and says not to edit it by hand.
+
+  * accel/rocket: the completion poll and everything supporting it is
+    gone: poll_completion, the hrtimer, the work, poll_seq and its
+    mirror, poll_dying, the teardown ordering in rocket_job_fini() and
+    the arbitration in rocket_job_handle_irq(). 7/9 in v6 was 142 added
+    lines in rocket_job.c and 8/10 here is 90, most of which is the
+    comment explaining the register.
+
+  * accel/rocket: the job_lock fix is its own patch now, 1/10, with a
+    Fixes tag. It is an RK3588 bug and it was buried in the middle of a
+    preparation patch in v6, where nobody could backport it.
+
+  * accel/rocket: the power domain list is attached before
+    iommu_group_get() rather than after rocket_job_init(). In v6 a
+    failure there returned without unwinding either of them. Igor caught
+    it. Moving the call is better than adding an unwind path, since
+    everything before that point is devres managed and a plain return is
+    then correct. It also keeps commit f509a081f6a2
+    ("accel/rocket: fix unwinding in error path in rocket_core_init")
+    from having a second copy of itself to keep in step.
+
+  * accel/rocket: struct rocket_core's clks[] no longer grows in 7/10.
+    Igor pointed out that 7/10 claimed nothing changes for RK3588 while
+    growing the array there, with the two extra names only arriving in
+    8/10. The array now grows in the patch that adds the names.
+
+  * The series is 10 patches rather than 9 because of the split above.
+    Nothing else moved.
+
+What this means for the split in 7/10 and 8/10
+==============================================
+
+Diederik asked for the enablement to be split and Igor seconded it, and
+v6 did that. The split survives v7 unchanged: 7/10 is the soc_data
+plumbing with RK3588 keeping four clocks and two resets, and 8/10 is the
+RK3576 enablement. What changed is that 8/10 is now much smaller.
+
+Where it stands
+===============
+
+With every debug knob off, on a ROCK 4D:
+
+  * the NPU probes with the two domain list and no attach failure;
+  * a convolution submitted three times with three different inputs is
+    byte exact against the CPU reference each time, with no reset in
+    between and with nothing retiring the job but the interrupt;
+  * the NPU's line in /proc/interrupts goes from zero to three across
+    those three submits, one each and no more;
+  * unbind and rebind is clean with no warning;
+  * every patch builds on its own;
+  * dt_binding_check is clean on all three bindings the series touches.
+
+The measurement in v6 that could not tell a recomputation from an
+untouched output buffer has been replaced by one that can: the inputs
+differ between submits, so a stale buffer cannot pass.
+
+That was run on this branch with nothing else applied. The out of tree
+work this hardware has needed for the userspace investigation, including
+an rk_iommu flush_iotlb_all that is neither upstream nor in this series,
+is not present, and the userspace results below are the same without it.
+
+The userspace side is a separate matter and is not part of this series.
+It runs regular convolutions, depthwise convolutions and the first
+convolution of MobileNet V1 byte exact per output channel against the
+CPU reference, and two chained operators come out at the accuracy the
+hardware's own arithmetic allows. A whole MobileNet does not run yet.
+Nothing that is still wrong there is in the kernel.
+
+Igor, thank you again for the RK3588 review. Both of the things you
+found in v6 are addressed above and the completion path has changed
+enough that it needs another look rather than a carried tag. Your offer
+to run this on all three RK3588 cores would be very welcome, since the
+only behaviour change to RK3588 in the series is the job_lock ordering
+in 1/10 and I cannot test it here.
+
+Jiaxing Hu (10):
+  accel/rocket: take the completion register writes under job_lock
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: allow the RK3576 NPU MMU clock set
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../bindings/iommu/rockchip,iommu.yaml        |  8 ++
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 47 +++++++++-
+ .../power/rockchip,power-controller.yaml      |  8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 10 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 80 ++++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 28 +++++-
+ drivers/accel/rocket/rocket_core.h            | 11 ++-
+ drivers/accel/rocket/rocket_device.c          |  4 +
+ drivers/accel/rocket/rocket_drv.c             | 22 ++++-
+ drivers/accel/rocket/rocket_job.c             | 90 ++++++++++++++-----
+ drivers/pmdomain/rockchip/pm-domains.c        | 71 ++++++++++-----
+ 11 files changed, 324 insertions(+), 55 deletions(-)
+
+-- 
+2.43.0
+

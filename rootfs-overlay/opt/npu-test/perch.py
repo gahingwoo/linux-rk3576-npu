@@ -40,7 +40,12 @@ npu = tflite.Interpreter(model_path=model, experimental_delegates=deleg)
 npu.allocate_tensors()
 ni, no = npu.get_input_details()[0], npu.get_output_details()[0]
 n_in = int(np.prod(ni["shape"]))
-data = ((np.arange(n_in) * 7) % 251).astype(np.int64)
+# ROCKET_SEED changes the input without changing anything else, so a repeat
+# submit that recomputes and one that returns a stale output buffer can be told
+# apart. Every earlier "byte exact N times in a row" measurement here fed the
+# same input each time and could not.
+seed = int(os.environ.get("ROCKET_SEED", "7"))
+data = ((np.arange(n_in) * seed) % 251).astype(np.int64)
 npu.set_tensor(ni["index"], data.astype(ni["dtype"]).reshape(ni["shape"]))
 npu.invoke()
 got = npu.get_tensor(no["index"])[0].astype(int)
