@@ -1,0 +1,140 @@
+From bf10346dcb25628237b74914db4685dd723e1621 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 12 Aug 2026 20:49:09 +1200
+Subject: [PATCH] rocket RK3576: derive the row window from the input CBUF
+ budget
+
+One task can stage about 2560 entries of input, five CBUF banks, and
+calc_input_banks is allowed fifteen, three times what the hardware will take.
+The generic path never checked, so any layer over the budget produced garbage
+on the whole surface.
+
+Measured on a ROCK 4D with depthwise layers cut from mn_dw25, holding the
+channel count fixed and walking the width so nothing but the size changes:
+
+  64ch, 2450 entries    64/64      64ch, 2592 entries     0/64
+  64ch, 2048 entries    64/64      64ch, 3200 entries     0/64
+  128ch, 1936 entries  128/128     32ch, 3108 entries     0/32
+
+The last two are the ones that separate this from a channel count limit: 128
+channels pass when they fit and 32 fail when they do not, which is the
+opposite of what a channel story predicts for both.
+
+The 91 rows that were hardcoded as the window are that same capacity divided
+by the single case they were measured on, 2560 / 28 entries per row at 32
+channels and 112 wide being 91.4. Deriving max_iwin from the budget reproduces
+that 91 exactly for its own case and fixes the sizes the literal got wrong,
+and the path is now entered whenever a layer is over budget rather than only
+at 112 wide and up.
+
+Board: dw64w72, dw64w80 and dw64w96 go from 0 of 64 to 64 of 64. mn_dw1,
+dw32, conv2d-cal and mn_dw25, the calibrated and under-budget cases, are
+unmoved. ROCKET_CBUF_ENTRIES restores the old behaviour and breaks dw64w72
+again.
+
+Two cases are NOT fixed by this and are recorded as open: a 111 wide layer,
+the only odd width tried, and MobileNet's op3 in the full graph.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_ml.c   | 20 +++++++++++++++
+ src/gallium/drivers/rocket/rkt_task.c | 37 +++++++++++++++++++++++++--
+ 2 files changed, 55 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index d98b77e..81e446e 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -356,6 +356,26 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+          rkt_dump_buffer(regcmd, "regcmd", 0, i, regcmd_offset,
+                          (size + 4) * sizeof(uint64_t));
+ 
++      /*
++       * ROCKET_DUMP_REGCMD=1 prints the assembled register stream to stderr,
++       * one entry per line, so two runs that differ in one model parameter can
++       * be diffed from the console log alone. dump_bos writes files, which do
++       * not come back from the board.
++       *
++       * The same ordered-write diff against the vendor is what found the
++       * PC_TASK_CON field layout; this is the same instrument pointed at two
++       * of our own runs instead.
++       */
++      if (getenv("ROCKET_DUMP_REGCMD")) {
++         const uint64_t *rc = (const uint64_t *)(regcmd + regcmd_offset);
++         for (unsigned e = 0; e < size; e++) {
++            uint64_t w = rc[e];
++            fprintf(stderr, "RC t%u %02u t=%04x r=%04x v=%08x\n", i, e,
++                    (unsigned)(w >> 48), (unsigned)(w & 0xffff),
++                    (unsigned)((w >> 16) & 0xffffffff));
++         }
++      }
++
+       regcmd_offset += ALIGN(size * sizeof(uint64_t), 64);
+    }
+ 
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 54c5e87..2eb8543 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -62,6 +62,13 @@ calc_line_stride(unsigned width)
+    return width * ATOMIC_K_SIZE * sizeof(uint8_t);
+ }
+ 
++static uint32_t
++rkt_env_u32(const char *name, uint32_t def)
++{
++   const char *s = getenv(name);
++   return s ? (uint32_t)strtoul(s, NULL, 0) : def;
++}
++
+ static bool
+ rkt_env_bool(const char *name, bool def)
+ {
+@@ -242,8 +249,33 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+     * surface at maxdiff 255 and 95.6 percent of the bad pixels on a rail,
+     * while op2 before it matched the offline model exactly.
+     */
++   /*
++    * How much input CBUF one task may stage. Measured on a ROCK 4D by holding
++    * the channel count fixed and walking the width, on depthwise layers cut
++    * from mn_dw25 so nothing but the size changes:
++    *
++    *   2450 entries pass, 2592 fail, at 64 channels
++    *   1936 entries pass at 128 channels, a count that had only ever failed
++    *   3108 entries fail at 32 channels, a count that passes everywhere else
++    *
++    * So it is a capacity, not a channel count, and it sits at five banks. The
++    * 91 that was hardcoded here is that same capacity divided by the one case
++    * it was measured on: 2560 / 28 entries per row at 32 channels and 112 wide
++    * is 91.4. Deriving it reproduces that 91 exactly and fixes every size the
++    * literal got wrong.
++    *
++    * calc_input_banks is allowed fifteen banks, three times what the hardware
++    * will actually stage, and the generic path below never checks. The 112
++    * wide layers only ever worked because this path capped them by accident.
++    *
++    * ROCKET_CBUF_ENTRIES overrides the budget.
++    */
++   unsigned usable_entries =
++      rkt_env_u32("ROCKET_CBUF_ENTRIES", 5 * operation->cbuf_entries_per_bank);
++   bool over_budget = entries_per_slice * operation->input_height > usable_entries;
++
+    if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
+-       operation->input_width >= 112 &&
++       (operation->input_width >= 112 || over_budget) &&
+        (operation->stride == 1 || rkt_env_bool("ROCKET_STRIDE_WIN", true))) {
+       unsigned full_oh = operation->output_height;
+       unsigned in_h = operation->input_height;
+@@ -283,7 +315,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+        * start at the second one wherever that now falls.
+        */
+       const char *rw = getenv("ROCKET_ROWWIN");
+-      unsigned max_iwin = rw ? (unsigned)strtoul(rw, NULL, 0) : 91;
++      unsigned max_iwin = rw ? (unsigned)strtoul(rw, NULL, 0)
++                             : MAX2(usable_entries / entries_per_slice, 1u);
+       unsigned stride = operation->stride;
+       unsigned kh = operation->weights_height;
+       unsigned line_in = calc_line_stride(operation->input_width);
+-- 
+2.43.0
+
