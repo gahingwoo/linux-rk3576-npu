@@ -2,52 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 104. Name the first broken operator.
+# 2026-08-12 round 108. The stride 2 depthwise is fixed. Now 64 channels.
 #
-# Round 103's ladder walked MobileNet itself, output moved to each layer by a
-# four byte patch of the subgraph's output index. Its two controls held: L00
-# reproduced mn_conv0's file exactly and L01 reproduced mn_conv0dw1's exactly,
-# so the patch is what it claims to be.
+# Round 107, on dw1_s2, which is mn_dw1 with only its stride patched to 2:
 #
-# Then the whole chain was simulated offline with the hardware's own
-# arithmetic on one side and tflite's on the other, and the two agree layer by
-# layer until they suddenly do not:
+#   default, the stride key          2/32   maxdiff 255
+#   ROCKET_DW_SPLITVALS=1           32/32   maxdiff 1
+#   ROCKET_CBUF_DERIVE=1            32/32   maxdiff 1
+#   mn_dw1 under both knobs         32/32   unmoved, as required
+#   conv2d-cal under CBUF_DERIVE   128/128  unmoved, as required
 #
-#   op0 conv0  3->32   s2   model 32/32  md 1     board 32/32  md 1
-#   op1 dw     32      s1   model 28/32  md 3     board 28/32  md 3
-#   op2 pw     32->64  s1   model 22/64  md 6     board 22/64  md 6
-#   op4 pw     64->128 s1   model 18/128 md 14    board  1/128 md 255
-#   op6 pw    128->128 s1   model  4/128 md 23    board  0/128 md 255
-#   op8 pw    128->256 s1   model 34/256 md  7    board  0/256 md 255
+# So CNA 0x1018 and 0x1040 were keyed off the stride and a depthwise wants the
+# split pair whatever its stride. That is now the default, narrowed to
+# depthwise so no regular conv can be affected by it, with
+# ROCKET_DW_NOSPLITVALS as the control.
 #
-# So through op2 the hardware is EXACTLY what correct hardware produces. The
-# rising maxdiff there is the tflite reference artifact compounding through the
-# chain, not a defect, and mn_pw24's 297 of 1024 is downstream of the same
-# thing rather than a target of its own.
+# I am not taking the vendor's rule as the default yet even though round 107's
+# own decision rule said to prefer it. It is the more general answer and it
+# works here, but it changes REGULAR convs too and exactly one of them has been
+# put against it. Tests 8 to 12 put the rest of them against it in this flash;
+# if they all hold, it replaces the narrow fix.
 #
-# The first real divergence is op3 or op4, and op3 is the interesting one: a
-# DEPTHWISE at stride 2. Everything depthwise that has ever been verified here
-# is stride 1, mn_dw1 and mn_dw25 both. A stride 2 SAME layer, 112 to 56, pads
-# before 0 and after 1, which is the asymmetric trailing padding that round 98
-# found the hardware feeds a raw zero on the first conv path. The generic path
-# has never once been asked for it: conv2d-cal, mn_dw1 and mn_dw25 are all
-# stride 1 with symmetric padding.
+# What the fix does NOT do is repair op3: mn_L03 with the knob was still 1 of
+# 64 at maxdiff 255. dw1_s2 is 32 channels and op3 is 64, and 64 has never been
+# run on this hardware in any layer. 32 and 1024 are both correct at stride 1
+# and 32 is now correct at stride 2, so 64 is the last untried count, and the
+# depthwise weight buffer is laid out in groups of exactly 64.
 #
-# L03, L05 and L07 are new probes so the ladder has no gaps from op0 to op8.
+# DECISION RULE, written before the run:
+#   L03 is now near its model, 21/64 md13   the split pair was the whole of it
+#                                           and the ladder moves to op4
+#   L03 still collapses                     64 channels is a second and
+#                                           separate fault, and the group
+#                                           boundary is where to look
+#   L05, 128 channels at stride 1, is also wrong once L03 is right
+#                                           it is channel count, not stride
 #
-# DECISION RULE, written before the run, with the model's number for each:
-#   op    model      if the board matches      if the board is far below
-#   L03   21/64  md13   op3 is correct, and op4 is the first defect
-#   L04   18/128 md14   op4 correct too, and the cliff is later
-#   L05    9/128 md13
-#   L06    4/128 md23
-#   L07    7/128 md10
-#   L08   34/256 md 7
-#
-# The first L whose board number falls far below its model number is the
-# operator to fix, and its kind, stride and channel counts name the case. L00,
-# L01 and L02 are the control: all three matched their model last round and
-# must do so again, or this build moved something and nothing here can be read.
+# Tests 2 to 7 are the ladder. Tests 8 to 12 are the regular conv set against
+# the vendor's rule, and every one of them is currently correct, so any of them
+# can fail. Tests 13 to 15 are the standing regression.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -64,42 +57,38 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..3) CONTROL: must reproduce 32/32 md1, 28/32 md3, 22/64 md6 ====="
-	p mn_L00.tflite ""
-	p mn_L01.tflite ""
+	log "===== 1) dw1_s2, which the fix makes 32/32. CONTROL for the build ====="
+	p dw1_s2.tflite ""
+
+	log ""
+	log "===== 2..7) the ladder with the fix in. L03 model 21/64 md13 ====="
 	p mn_L02.tflite ""
-
-	log ""
-	log "===== 4) op3, DEPTHWISE AT STRIDE 2. Model says 21/64 maxdiff 13 ====="
 	p mn_L03.tflite ""
-
-	log ""
-	log "===== 5) op4, pw 64->128.  Model says 18/128 maxdiff 14 ====="
 	p mn_L04.tflite ""
-
-	log ""
-	log "===== 6) op5, dw 128 s1.   Model says 9/128 maxdiff 13 ====="
 	p mn_L05.tflite ""
-
-	log ""
-	log "===== 7) op6, pw 128->128. Model says 4/128 maxdiff 23 ====="
-	p mn_L06.tflite ""
-
-	log ""
-	log "===== 8) op7, dw 128 s2.   Model says 7/128 maxdiff 10 ====="
 	p mn_L07.tflite ""
-
-	log ""
-	log "===== 9) op8, pw 128->256. Model says 34/256 maxdiff 7 ====="
 	p mn_L08.tflite ""
 
 	log ""
-	log "===== 10..11) REGRESSION ====="
-	p conv2d-cal.tflite ""
-	p mn_dw1.tflite ""
+	log "===== 8..12) the vendor rule against every regular conv we have ====="
+	p conv2d-cal.tflite "ROCKET_CBUF_DERIVE=1"
+	p cal_s1.tflite "ROCKET_CBUF_DERIVE=1"
+	p cal_k1.tflite "ROCKET_CBUF_DERIVE=1"
+	p cal_k3.tflite "ROCKET_CBUF_DERIVE=1"
+	p cal_oc16.tflite "ROCKET_CBUF_DERIVE=1"
 
 	log ""
-	log "===== The first L far below its model number is the operator.     ====="
+	log "===== 13) CONTROL: the stride key back. dw1_s2 must break again ====="
+	p dw1_s2.tflite "ROCKET_DW_NOSPLITVALS=1"
+
+	log ""
+	log "===== 14..16) REGRESSION ====="
+	p mn_dw1.tflite ""
+	p mn_dw25.tflite ""
+	p mn_conv0.tflite ""
+
+	log ""
+	log "===== L03 first, then 8..12, then check 13 breaks it again.       ====="
 	sync
 }
 case "$1" in

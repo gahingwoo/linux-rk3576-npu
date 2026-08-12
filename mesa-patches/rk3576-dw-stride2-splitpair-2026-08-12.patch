@@ -1,0 +1,157 @@
+From ebcd5e921d490942a520c9fde662dd659525b801 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 12 Aug 2026 18:36:28 +1200
+Subject: [PATCH] rocket RK3576: a depthwise takes the split CBUF pair whatever
+ its stride
+
+CNA 0x1018 and 0x1040 were selected on the stride, split ? 0x40000505 :
+0x40000404 and split ? 0x14000000 : 0x10000000 with split = (stride != 1), so
+a stride 2 depthwise got the pair meant for a conv that fits in one row
+window.
+
+Measured on a ROCK 4D with mn_dw1, a 32 channel depthwise that is 32 of 32,
+with only its stride patched to 2 in the flatbuffer and nothing else changed:
+2 of 32 channels with the whole surface at maxdiff 255 before, 32 of 32 at
+maxdiff 1 after. Three different dispatch routes gave the same collapse
+beforehand, so it was not the task split. mn_dw1 itself does not move, because
+at stride 1 it already took the split pair, and no regular conv can be
+affected because this is narrowed to depthwise.
+
+ROCKET_DW_NOSPLITVALS restores the stride key.
+
+The vendor keys both registers off whether the op fits in one row window
+rather than off the stride at all, which also fixes this case on the board.
+That is the more general answer but it changes regular convs too, so it stays
+behind ROCKET_CBUF_DERIVE until the whole regular set has been measured
+against it.
+
+Also makes the RK3576 row-window split stride aware rather than gated on
+stride 1. Output row o reads input rows o*stride - pad_top through
+o*stride - pad_top + kh - 1; the old form under-staged a stride 2 layer by
+half, asking for 57 of 112 input rows in a single window. At stride 1 it
+reduces to the old numbers exactly, 90 output rows then 22, staging 91 then
+21. On its own it did not change any result, since the layer was equally wrong
+through all three routes, but it is correct on its own terms and it stops a
+stride 2 layer falling through to the RK3588 slice splitter, which fills
+fields this encoder never reads.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 18 +++++++++-
+ src/gallium/drivers/rocket/rkt_task.c   | 48 ++++++++++++++++++++++---
+ 2 files changed, 60 insertions(+), 6 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index e06e538..60a05df 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -696,7 +696,23 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+     * old float surface, so whatever is wrong with depthwise is elsewhere, and
+     * this is the first concrete difference found since.
+     */
+-   bool dw_split = split || (dw && getenv("ROCKET_DW_SPLITVALS"));
++   /*
++    * A DEPTHWISE always takes the split pair, whatever its stride. Board,
++    * round 107, on mn_dw1 with only its stride patched to 2 in the flatbuffer:
++    * 2 of 32 channels with the whole surface at maxdiff 255 by the stride key,
++    * 32 of 32 at maxdiff 1 with this. mn_dw1 itself at stride 1 does not move,
++    * because it already took the split pair, and conv2d-cal, a stride 2
++    * REGULAR conv, is untouched by this because it is not depthwise.
++    *
++    * ROCKET_DW_NOSPLITVALS restores the stride key, and is the control.
++    *
++    * ROCKET_CBUF_DERIVE fixes the same case by the vendor's own rule, keying
++    * both registers off whether the op fits in one row window rather than off
++    * the stride at all. That is the more general answer and it is measured to
++    * work here too, but it changes REGULAR convs as well and only one of them
++    * has been checked against it, so it stays a knob until the whole set has.
++    */
++   bool dw_split = split || (dw && !getenv("ROCKET_DW_NOSPLITVALS"));
+    R_CNA(0x1018, (dw_split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
+    R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
+    R_CNA(0x1020, (dw ? oc : ic) * k * k);
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index bc38de5..54c5e87 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -62,6 +62,13 @@ calc_line_stride(unsigned width)
+    return width * ATOMIC_K_SIZE * sizeof(uint8_t);
+ }
+ 
++static bool
++rkt_env_bool(const char *name, bool def)
++{
++   const char *s = getenv(name);
++   return s ? atoi(s) != 0 : def;
++}
++
+ static void
+ calc_explicit_padding(const struct rkt_operation *operation,
+                       unsigned *pad_top, unsigned *pad_bottom,
+@@ -223,8 +230,21 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+     * (depthwise 3x3 / pointwise) is handled here; other shapes use the generic
+     * path below.
+     */
++   /*
++    * ROCKET_STRIDE_WIN=0 puts the stride == 1 gate back, which is the control:
++    * with it, a stride 2 layer falls through to the slice splitter below.
++    *
++    * That fall-through is what broke MobileNet. The splitter below is the
++    * RK3588 derived one and it fills top_slice and bottom_slice, not the
++    * RK3576 fields this encoder reads, so staged_rows, input_offset,
++    * cbuf_input_row_start and cbuf_reuse_row all stay zero. Round 104 measured
++    * op3, a 112 wide depthwise at stride 2, at 1 of 64 channels with the whole
++    * surface at maxdiff 255 and 95.6 percent of the bad pixels on a rail,
++    * while op2 before it matched the offline model exactly.
++    */
+    if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
+-       operation->input_width >= 112 && operation->stride == 1) {
++       operation->input_width >= 112 &&
++       (operation->stride == 1 || rkt_env_bool("ROCKET_STRIDE_WIN", true))) {
+       unsigned full_oh = operation->output_height;
+       unsigned in_h = operation->input_height;
+       /*
+@@ -264,7 +284,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+        */
+       const char *rw = getenv("ROCKET_ROWWIN");
+       unsigned max_iwin = rw ? (unsigned)strtoul(rw, NULL, 0) : 91;
+-      unsigned overlap = (operation->weights_height - 1) / 2;
++      unsigned stride = operation->stride;
++      unsigned kh = operation->weights_height;
+       unsigned line_in = calc_line_stride(operation->input_width);
+       unsigned line_out = calc_line_stride(operation->output_width);
+       unsigned out_start = 0;
+@@ -273,10 +294,27 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+ 
+       while (out_start < full_oh) {
+          struct split_task task = {0};
+-         unsigned in_lo = (out_start >= overlap) ? out_start - overlap : 0;
+-         unsigned out_end = MIN2(full_oh, in_lo + max_iwin - overlap);
++         /*
++          * Output row o reads input rows o*stride - pad_top through
++          * o*stride - pad_top + kh - 1. The old form of this was written for
++          * stride 1 only, where that is o - overlap through o + overlap, and
++          * it under-staged a stride 2 layer by half: for a 112 to 56 layer it
++          * asked for 57 of the 112 input rows in a single window, so every
++          * output row past the middle convolved rows that were never there.
++          *
++          * At stride 1 this reduces to exactly the old numbers, which is the
++          * check that matters: 90 output rows then 22, staging 91 then 21.
++          */
++         unsigned base = out_start * stride;
++         unsigned in_lo = (base >= pad_top) ? base - pad_top : 0;
++         unsigned max_hi = in_lo + max_iwin - 1;
++         /* largest out_end whose last input row still fits the window */
++         unsigned span = max_hi + pad_top + 1;
++         unsigned out_end = (span >= kh) ? (span - kh) / stride + 1 : out_start + 1;
++         out_end = MIN2(full_oh, MAX2(out_end, out_start + 1));
+          unsigned win_orows = out_end - out_start;
+-         unsigned in_hi = MIN2(in_h - 1, (out_end - 1) + overlap);
++         unsigned hi = (out_end - 1) * stride + kh - 1;
++         unsigned in_hi = MIN2(in_h - 1, (hi >= pad_top) ? hi - pad_top : 0);
+          unsigned win_irows = in_hi - in_lo + 1;
+          bool last = out_end >= full_oh;
+ 
+-- 
+2.43.0
+
