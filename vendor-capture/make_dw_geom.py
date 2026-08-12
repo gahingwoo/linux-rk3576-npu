@@ -175,9 +175,11 @@ def main():
     print(cut_depthwise(out, "dw64_s2", 64, 112, stride=2))
 
     # The width ladder at a fixed channel count, rounds 115 to 120.
+    # 71 and 72 are the odd/even pair that both fit ONE window, so odd width
+    # can be asked without a split in the way, rounds 120 to 121.
     for c, w in ((64, 48), (64, 64), (64, 70), (64, 72), (64, 80), (64, 96),
                  (64, 110), (32, 96), (32, 109), (32, 110), (32, 111),
-                 (16, 96), (128, 44)):
+                 (16, 96), (128, 44), (32, 71), (32, 72)):
         print(cut_depthwise(out, "dw%dw%d" % (c, w), c, w))
 
     # Stride patched onto models that are correct at stride 1, rounds 106..110.

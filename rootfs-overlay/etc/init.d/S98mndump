@@ -2,45 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 120. What the budget did not fix.
+# 2026-08-12 round 121. Three windows, and odd widths, asked separately.
 #
-# Round 119 shipped the derived budget and it took three of the five:
+# Round 120's control failed and that was the useful part. dw64w110 is EVEN,
+# over budget, and it fails, which the rule written before the run had already
+# named as the outcome that refutes parity. Computing the actual window split
+# for every result then separates two faults cleanly:
 #
-#   dw64w72    0/64  ->  64/64
-#   dw64w80    0/64  ->  64/64
-#   dw64w96    0/64  ->  64/64
-#   dw32w111   0/32  ->   0/32     still wrong
-#   mn_L03     1/64  ->   1/64     still wrong
+#   model      entries/row  window  windows          result
+#   dw64w72        36         71    2  [71, 3]        pass
+#   dw64w96        48         53    2  [53, 45]       pass
+#   dw32w110       28         91    2  [91, 21]       pass
+#   mn_dw1         28         91    2  [91, 23]       pass
+#   dw32w109       28         91    2  [91, 20]       FAIL, odd width
+#   dw32w111       28         91    2  [91, 22]       FAIL, odd width
+#   dw64w110       55         46    3  [46, 46, 22]   FAIL
+#   dw64           56         45    3  [45, 45, 26]   FAIL
+#   dw64_s2        56         45    3  [45, 45, 24]   FAIL
 #
-# Every control held. mn_dw1, dw32, conv2d-cal and mn_dw25 are unmoved, so the
-# derivation gives back the same 91 rows for the case the literal came from,
-# and ROCKET_CBUF_ENTRIES=100000 breaks dw64w72 again, so the knob bites.
-# Committed and pushed.
+# Every one and two window layer passes except the odd widths, and every three
+# window layer fails. mn_L03 is three windows, which is why the budget fix left
+# it at 1 of 64.
 #
-# Two are left and they may be one thing or two. What is untested about them:
-#
-#   dw32w111   111 is the only ODD width ever run here. Everything else has
-#              been 7, 40, 44, 48, 64, 70, 72, 80, 96 or 112.
-#   mn_L03     112 wide, 64 channels, stride 2, and fourth in a 31 operator
-#              graph. Its standalone twin dw64_s2 has not been rerun since the
-#              budget landed, and at 56 entries a row it now gets a 45 row
-#              window where it used to get 91.
+# Neither needs a new model to ask. dw64w96 passes at its derived 53 row window
+# and shrinking the window turns the SAME model into three and four windows,
+# with nothing else changed. And 71 and 72 are an odd and an even width that
+# both fit one window, so odd can be asked with no split in the way.
 #
 # DECISION RULE, written before the run:
-#   dw32w110 passes and dw32w109 fails    it is the odd width, and the line
-#                                         stride or the window arithmetic
-#                                         rounds it away
-#   both pass                             111 was something else entirely and
-#                                         needs its own look
-#   both fail                             it is not parity, it is being just
-#                                         under 112 and over budget
-#   dw64_s2 passes while mn_L03 fails     op3's fault needs the graph around
-#                                         it, not its own shape
-#   dw64_s2 fails too                     stride 2 at 112 wide with four
-#                                         atomics, reproducible standalone
+#   dw64w96 passes at 53 and fails at 40 and 32
+#           three windows is the fault, on a model that is correct at two, and
+#           the cumulative fields are where to look: cbuf_input_row_start is a
+#           running sum of staged rows and cbuf_reuse_row is in_lo
+#   it passes at all three
+#           the window count is innocent and the three failures share something
+#           else, most likely being over budget before the split
+#   dw32w71 fails and dw32w72 passes
+#           odd width is broken outright, with no split involved
+#   both pass
+#           odd width is only broken once it is split, which points at the
+#           window arithmetic rounding rather than the line stride
 #
-# Test 8 is the control for the parity pair: dw64w110 is even, over budget and
-# three windows, so if it fails the reading is not parity but window count.
+# Test 1 is the control for the whole round: dw64w96 at its default must still
+# be 64 of 64, or the build moved and nothing here can be read.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -57,33 +61,36 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..3) the parity question: 110 even, 109 odd, 111 odd ====="
-	p dw32w110.tflite ""
+	log "===== 1) CONTROL: dw64w96 as it stands, 2 windows, must be 64/64 ====="
+	p dw64w96.tflite ""
+
+	log ""
+	log "===== 2..3) the SAME model at 3 and 4 windows ====="
+	p dw64w96.tflite "ROCKET_ROWWIN=40"
+	p dw64w96.tflite "ROCKET_ROWWIN=32"
+
+	log ""
+	log "===== 4..5) odd and even width, both in ONE window ====="
+	p dw32w71.tflite ""
+	p dw32w72.tflite ""
+
+	log ""
+	log "===== 6) odd width once it is split, for comparison ====="
 	p dw32w109.tflite ""
-	p dw32w111.tflite ""
 
 	log ""
-	log "===== 4..5) 112 wide at 64 channels, standalone, both strides ====="
-	p dw64.tflite ""
-	p dw64_s2.tflite ""
-
-	log ""
-	log "===== 6) and the same shape inside the graph ====="
-	p mn_L03.tflite ""
-
-	log ""
-	log "===== 7) CONTROL: even, over budget, three windows ====="
-	p dw64w110.tflite ""
+	log "===== 7) and a two-window layer forced to three ====="
+	p dw32w110.tflite "ROCKET_ROWWIN=40"
 
 	log ""
 	log "===== 8..11) REGRESSION ====="
 	p mn_dw1.tflite ""
-	p dw64w96.tflite ""
+	p dw64w72.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 1 vs 2 is parity. 5 vs 6 says whether op3 needs the graph.  ====="
+	log "===== 1 vs 2 vs 3 is the window count. 4 vs 5 is the odd width.   ====="
 	sync
 }
 case "$1" in

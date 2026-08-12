@@ -68,11 +68,25 @@ window layer fails:
 | `dw64` | 56 | 45 | 3 `[45, 45, 26]` | **fail** |
 | `dw64_s2` | 56 | 45 | 3 `[45, 45, 24]` | **fail** |
 
-So: **three or more row windows have never worked**, which is what MobileNet's
-op3 is, and **an odd input width fails even at two windows**. My reading that
-the second pair was about parity is not supported: its control, `dw64w110`, is
-even and fails, exactly as the rule written before the run said it would if
-parity were wrong. It fails because it is three windows.
+From that table I read "three or more row windows have never worked", and
+**round 121 refuted it.** Shrinking the window on `dw64w96`, which passes at
+two, turns the same model into three and four windows and it stays 64 of 64,
+and `dw32w110` forced to three windows stays 32 of 32. The window count is
+innocent.
+
+What round 121 did establish is the other half, at its minimum: `dw32w71` is 71
+wide, ONE window, 1278 entries against a 2560 budget, and it is 2 of 32, while
+`dw32w72` next to it is 32 of 32. **An odd input width is broken on its own,
+with no split and no budget pressure involved.**
+
+That accounts for `dw32w71`, `dw32w109` and `dw32w111` and not for the rest.
+`dw64w110`, `dw64`, `dw64_s2` and `mn_L03` are all EVEN. At 64 channels the
+widths 48, 64, 70, 72, 80 and 96 pass and 110 and 112 fail, and nothing between
+96 and 110 has been measured. So there are two open faults, one of them named
+and one of them not:
+
+  - odd input width, reproducible in a single window
+  - something at 64 channels between 96 and 110 wide, still unbisected
 
 
 
