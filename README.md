@@ -6,31 +6,40 @@ Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
 The driver support is on the list. Current series:
 
-**[RFC PATCH v6 0/9: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260806063413.350184-1-gahing@gahingwoo.com/)**
-(2026-08-06, on top of Igor Paunovic's clocks-by-name fix)
+**[PATCH v7 0/10: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260812094106.1391698-1-gahing@gahingwoo.com/)**
+(2026-08-12, on top of Igor Paunovic's clocks-by-name fix)
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
 [v2](https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/) |
 [v3](https://lore.kernel.org/all/20260731043507.1832277-1-gahing@gahingwoo.com/) |
 [v4](https://lore.kernel.org/all/20260803094125.3285895-1-gahing@gahingwoo.com/) |
-[v5](https://lore.kernel.org/all/20260805063826.95682-1-gahing@gahingwoo.com/)
+[v5](https://lore.kernel.org/all/20260805063826.95682-1-gahing@gahingwoo.com/) |
+[v6](https://lore.kernel.org/all/20260806063413.350184-1-gahing@gahingwoo.com/)
 
-v6 splits the driver work into preparation and enablement, adds bindings for the
-power domain resets and for the NPU MMU clock set, and fixes five things found by
-review: a one way poll_dying latch, a reset count that walked an unacquired
-entry, two register writes that belonged under job_lock, a poll that could touch
-a runtime suspended device, and a completion race that v5 had closed on only one
-side. Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Alexey Charkov, Heiko
-Stuebner, Tomeu Vizoso, Philipp Zabel, Diederik de Haas and Igor Paunovic, who
-provides the RK3588 coverage this project cannot produce.
+v7 is the first revision sent as PATCH rather than RFC, because the thing every
+earlier cover letter described as unsolved is solved and Rockchip has confirmed
+the register layout behind it.
 
-Since v6 the interrupt claim in every cover letter has been
-[corrected on the list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/):
-the completion interrupt works, and the polling in patch 7 should not exist. v7
-drops it, splits the `job_lock` fix into its own patch with a Fixes tag,
-separates the `rk3588_soc_data` change from adding `rk3576_soc_data`, and puts
-the refactoring before the new support rather than inside it.
+It opens by withdrawing a claim carried from v1 to v6: that the RK3576's
+completion interrupt never reaches the GIC. It does. It never fired because the
+block believed it had 28672 tasks left to run. So v7 removes the polled
+completion path entirely, writes `PC_TASK_CON` with the RK3576 field layout,
+splits the `job_lock` fix into its own patch with a Fixes tag, attaches the
+power domain list before `iommu_group_get()` so a failure needs no unwinding,
+and grows `struct rocket_core`'s `clks[]` in the patch that adds the names
+rather than the one that claims to change nothing for RK3588. The last two are
+Igor Paunovic's review of v6.
+
+The v7 branch was run on the board before it was sent, with none of this
+repository's out of tree patches applied, including no `rk_iommu`
+`flush_iotlb_all`: three submits with three different inputs are byte exact
+each time, the NPU's interrupt count goes from zero to three across them, and
+probe, unbind and rebind are clean with no warning.
+
+Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Alexey Charkov, Heiko
+Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Diederik de Haas and Igor
+Paunovic, who provides the RK3588 coverage this project cannot produce.
 
 Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
@@ -78,8 +87,8 @@ interrupt does reach the GIC on RK3576. It never fired because the PC believed
 it had 28672 tasks left. With the fix and the poll disabled, so only a real
 interrupt can retire a job, a convolution runs three times out of three with
 zero timeouts. [Correction sent to the
-list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/);
-v7 drops the poll.
+list](https://lore.kernel.org/all/20260807211629.1573228-1-gahing@gahingwoo.com/),
+and v7 removes the poll.
 
 **What computes today**, every one confirmed per output channel against the
 CPU, in a single boot, with a control model passing at both ends of the run:
@@ -231,15 +240,78 @@ wrong for conv0". The offset and the scale were right and the shift was short
 by four; treating the three as one captured triple, to be accepted or rejected
 together, is what kept conv0 broken.
 
-An impulse first conv is now byte exact. The real conv0 is 99.5 percent of
-pixels exact, with the remainder at the saturation boundary plus a 0.3 percent
-tail.
+That took conv0 from an empty MAC to 99.5 percent of pixels exact, and the
+remainder turned out to be a fifth thing, in one column.
 
-**What still does not compute**: the last half percent of conv0, chained
-operations, and MobileNet, which needs them.
+**The right hand pad does not work.** With tflite SAME on a 224 wide image at
+stride 2 the single pad lands after the image, so output column 111 is the only
+one that reads a padded tap and `kx = 2` is the only tap that reaches it. That
+tap is fed a raw zero, before the CNA's per lane values are applied, so with
+those at -128 it contributes `-128 * w` instead of nothing. Nothing in the
+register file steers that byte: the pad value register was swept over four
+values and only the row pad moved, the fourth lane's value is inert, and of the
+two trailing pad fields in `0x1080` one is load bearing and the other changes
+nothing at all.
+
+So this driver stopped asking for it. The input is widened in memory to the
+first whole number of feature atomics past what the last window reads, the added
+columns hold the input zero point, and the CNA is told the image is that wide.
+For 224 that is 240, where `240 * 3` is a round 45 of the 16 byte units. Six
+registers carry the width and each one reproduces its previous literal exactly
+at 224, which is how they were identified. **conv0 is now 32 of 32.**
+
+## Chaining works, and the row window is a CBUF budget
+
+Chained operations needed no change at all. The long standing "op2 fails" was
+the individual operators failing, and it went away when they were fixed.
+`conv0` into a depthwise comes out 28 of 32 at maxdiff 3, and simulating both
+operators offline with the hardware's own arithmetic reproduces the board
+exactly, down to the same four channels: they are the CPU reference's own
+rounding spread through the second operator's window, not a defect.
+
+That simulation settled a larger question too. Every model here carries a one
+sided off by one population against the tflite reference, worst at 85.50
+percent of interior pixels exact with all 56125 misses one count low, and it is
+**the reference, not the hardware**. tflite's requant is a
+`SaturatingRoundingDoublingHighMul` followed by a `RoundingDivideByPOT`, and for
+a multiplier of 0.2922 its final divide is by two, so the intermediate lands on
+exactly one half for half the pixels and rounds up every time. Emulating that
+offline reproduces four models to the pixel, while comparing the hardware
+against exact arithmetic gives 99.97 to 99.99 percent. `maxdiff <= 1` was the
+right pass mark all along.
+
+**One task can stage about 2560 entries of input CBUF, five banks**, where the
+bank arithmetic hands out fifteen. Nothing checked, so any layer over the budget
+produced garbage on the whole surface. Holding the channel count fixed and
+walking the width separates it from a channel count limit:
+
+| layer | input entries | output channels correct |
+|---|---|---|
+| 64 channels, 70 wide | 2450 | 64 / 64 |
+| 64 channels, 72 wide | 2592 | 0 / 64 |
+| **128 channels**, 44 wide | 1936 | **128 / 128** |
+| **32 channels**, 111 wide | 3108 | **0 / 32** |
+
+The last two come out the opposite way to what a channel count story predicts
+for both. And the 91 rows this driver had hardcoded as its row window is that
+same budget divided by the single layer it was measured on: 2560 over 28 entries
+per row is 91.4. Deriving it reproduces that 91 exactly for its own case and
+fixes the sizes the literal got wrong.
+
+**What still does not compute.** MobileNet runs end to end without hanging, and
+its first three operators match the offline model exactly, but it diverges from
+operator three onward, so the classifier output is not usable. Two faults are
+left and both are reproducible in a single operator:
+
+- an **odd input width** fails on its own: 71 wide is 2 of 32 channels while 72
+  wide is 32 of 32, one window each, well inside the budget;
+- at **64 channels** something turns over between 96 wide, which passes, and 110,
+  which does not. Nothing between them has been measured.
+
+Neither is in the kernel.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
-retractions.
+retractions, of which there have been several.
 
 | | |
 |---|---|
@@ -250,33 +322,37 @@ retractions.
 
 ## Status
 
-NPU probe verified on hardware (2026-06-07):
+The v7 series was run on a ROCK 4D with nothing else applied (2026-08-12):
 
 ```
-[    1.230794] [drm] Initialized rocket 0.0.0 for rknn on minor 0
-[    1.232935] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.284413] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.286304] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+
+  29:  0 ... GICv2 279 Level  27702000.iommu, 27700000.npu     before three submits
+  29:  3 ... GICv2 279 Level  27702000.iommu, 27700000.npu     after
 ```
 
-`/dev/accel/accel0` present. Full boot log: <https://gist.github.com/gahingwoo/7543c1be83c8b8ec15727a8f11a4873c>
+Three submits, three interrupts, one each. The three used different inputs, so
+a stale output buffer could not pass: every earlier "byte exact N times in a
+row" figure in this project fed the same input each time and could not tell a
+recomputation from an untouched buffer.
+
+`/dev/accel/accel0` present, unbind and rebind clean, no warning in dmesg.
+Earlier boot log: <https://gist.github.com/gahingwoo/7543c1be83c8b8ec15727a8f11a4873c>
 
 ## Patches
 
-The upstream series is the lore link above. `kernel/` additionally carries the
-working tree this project tests with, which is ahead of what has been posted:
-the `PC_TASK_CON` fix lives there, and the Mesa register fixes are in
-`mesa-patches/`.
+The upstream series is the lore link above, and everything in it is now posted;
+the `PC_TASK_CON` fix that used to live only here went out with v7.
 
-```
-0001  arm64: dts: rockchip: rk3576: add RKNN NPU subsystem
-0002  arm64: dts: rockchip: rk3576-rock-4d: enable NPU core 0
-```
+`kernel/` carries the working tree this project tests with, which is a
+superset: it keeps instrumentation and probes that are not upstream material,
+such as register tracing and an `rk_iommu` `flush_iotlb_all` that has not been
+submitted. None of it is needed for the driver to work, which the v7
+verification run above measured directly by leaving all of it out.
 
-Apply:
-
-```bash
-cd /path/to/linux-next
-git am /path/to/linux-rk3576-npu/kernel/000*.patch
-```
+The Mesa side is not upstream at all yet and lives in `mesa-patches/` as a
+patch series against `gitlab.freedesktop.org/mesa/mesa`.
 
 ## Build
 
@@ -329,8 +405,14 @@ rootfs-overlay/
     bringup-check.sh         probe + inference verification (run as root on board)
     infer.py                 Teflon MobileNetV1 UINT8 inference driver
     install.sh               first-run: pip3 install tflite-runtime
-    *.tflite                 MobileNetV1 model (downloaded by build.sh, gitignored)
+    perch.py                 per output channel comparison against the CPU, and
+                             the instruments the rounds were read with
+    *.tflite                 models (downloaded or generated, gitignored)
   usr/lib/libteflon.so       Mesa Teflon TFLite delegate
+vendor-capture/
+  make_dw_geom.py            rebuilds every geometry probe model by byte patching
+                             ones already in the tree, since .tflite is gitignored
+                             and there is no tensorflow here to build them with
 notes/
   rk3576-npu-values.md       hardware register/clock/IRQ values with provenance
   provenance.md              CONFIRMED / UNVERIFIED table
