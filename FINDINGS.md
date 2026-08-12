@@ -1,6 +1,81 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-12 rounds 105 to 120: the row window is a CBUF budget, and two faults are left
+
+Rounds 108 to 118 were never committed. Each one lived only in the S98mndump
+header and the next round overwrote it, so this section is the record being put
+back, and `vendor-capture/make_dw_geom.py` is the generator for all 38 probe
+models, which reproduce byte for byte what was flashed (.tflite is gitignored).
+
+**MobileNet's op3 was localised to a depthwise at stride 2, then that was
+wrong.** The stride 2 gate on the row-window path did send the layer to the
+RK3588 slice splitter, which fills fields this encoder never reads, and making
+the window arithmetic stride aware was correct on its own terms, but it changed
+nothing: op3 came back byte identical with 34 OUT_CVT lines against 29, so the
+dispatch plainly changed and the output did not care.
+
+**What did fix a stride 2 depthwise** was CNA 0x1018 and 0x1040, selected on
+`split = (stride != 1)`. A depthwise wants the split pair whatever its stride;
+the comment next to them already said so. On `dw1_s2`, mn_dw1 with only its
+stride patched to 2: 2 of 32 with the whole surface at maxdiff 255 before, 32
+of 32 after. Shipped narrowed to depthwise. The vendor's own rule, keying both
+off whether the op fits one row window, fixes it too and holds across
+conv2d-cal, cal_s1, cal_k1, cal_k3 and cal_oc16, but it changes regular convs
+so it stays behind `ROCKET_CBUF_DERIVE`.
+
+**op3 was still wrong, and the hunt for why cost six rounds and three of my own
+readings.** Closed by their own controls: the row window (five sizes, identical
+output, while the same knob at 16 broke a good model), the weight grouping
+(inert at 32 and 128 on op3), and the width gate (64 channels fail on BOTH
+paths, so `input_width >= 112` was a coincidence). A register diff between a
+working and a failing model came back clean: fifteen registers differ and every
+one scales exactly as its own formula says.
+
+**It is a capacity.** Holding the channel count fixed and walking the width:
+
+| model | entries | result |
+|---|---|---|
+| `dw64w64` | 2048 | 64/64 |
+| `dw64w70` | 2450 | 64/64 |
+| `dw64w72` | 2592 | 0/64 |
+| `dw64w80` | 3200 | 0/64 |
+| `dw128w44` | 1936 | **128/128**, a count that had only ever failed |
+| `dw32w111` | 3108 | **0/32**, a count that passes everywhere else |
+
+The last two are what separate this from a channel-count limit: they come out
+the opposite way to what a channel story predicts for both. One task stages
+about 2560 entries, five CBUF banks, where `calc_input_banks` is allowed
+fifteen. And the 91 rows hardcoded as the window is that same capacity divided
+by the one case it was measured on: 2560 / 28 entries per row at 32 channels
+and 112 wide is 91.4. Deriving it reproduces that 91 exactly and fixes
+`dw64w72`, `dw64w80` and `dw64w96` outright, with every calibrated case
+unmoved.
+
+**Two faults are left, and computing the actual window split separates them
+cleanly.** Every 1 and 2 window layer passes except the odd widths, and every 3
+window layer fails:
+
+| model | entries/row | window | windows | result |
+|---|---|---|---|---|
+| `dw64w72` | 36 | 71 | 2 `[71, 3]` | pass |
+| `dw64w96` | 48 | 53 | 2 `[53, 45]` | pass |
+| `dw32w110` | 28 | 91 | 2 `[91, 21]` | pass |
+| `mn_dw1` | 28 | 91 | 2 `[91, 23]` | pass |
+| `dw32w109` | 28 | 91 | 2 `[91, 20]` | **fail, odd width** |
+| `dw32w111` | 28 | 91 | 2 `[91, 22]` | **fail, odd width** |
+| `dw64w110` | 55 | 46 | 3 `[46, 46, 22]` | **fail** |
+| `dw64` | 56 | 45 | 3 `[45, 45, 26]` | **fail** |
+| `dw64_s2` | 56 | 45 | 3 `[45, 45, 24]` | **fail** |
+
+So: **three or more row windows have never worked**, which is what MobileNet's
+op3 is, and **an odd input width fails even at two windows**. My reading that
+the second pair was about parity is not supported: its control, `dw64w110`, is
+even and fails, exactly as the rule written before the run said it would if
+parity were wrong. It fails because it is three windows.
+
+
+
 ## 2026-08-12 rounds 102 to 103: **chaining works**, and MobileNet's first defect is localised
 
 `mn_conv0dw1`, conv0 into dw1, came out 28 of 32 with maxdiff 3. Modelling both

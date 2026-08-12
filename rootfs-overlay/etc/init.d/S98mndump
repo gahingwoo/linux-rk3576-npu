@@ -2,45 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 119. The window is the budget, derived.
+# 2026-08-12 round 120. What the budget did not fix.
 #
-# Round 118 pinned it, and the two tests that could have embarrassed the
-# reading came out the way capacity predicts and the opposite way to channels:
+# Round 119 shipped the derived budget and it took three of the five:
 #
-#   dw64w70    2450 entries   64/64    pass, predicted pass
-#   dw64w72    2592 entries    0/64    fail, predicted fail
-#   dw32w111   3108 entries    0/32    fail, predicted fail, 32 channels
-#   dw128w44   1936 entries  128/128   pass, predicted pass, 128 channels
+#   dw64w72    0/64  ->  64/64
+#   dw64w80    0/64  ->  64/64
+#   dw64w96    0/64  ->  64/64
+#   dw32w111   0/32  ->   0/32     still wrong
+#   mn_L03     1/64  ->   1/64     still wrong
 #
-# So one task may stage about 2560 entries of input, five CBUF banks, and the
-# channel count only matters through how much a row costs. calc_input_banks is
-# allowed fifteen banks, three times what the hardware will take, and the
-# generic path never checks.
+# Every control held. mn_dw1, dw32, conv2d-cal and mn_dw25 are unmoved, so the
+# derivation gives back the same 91 rows for the case the literal came from,
+# and ROCKET_CBUF_ENTRIES=100000 breaks dw64w72 again, so the knob bites.
+# Committed and pushed.
 #
-# The 91 that was hardcoded as the row window is that same capacity divided by
-# the single case it was measured on: 2560 / 28 entries per row, at 32 channels
-# and 112 wide, is 91.4. So max_iwin is now derived from the budget and the
-# path is entered whenever a layer is over it, at any width. The derivation
-# reproduces 91 exactly for the case it came from, which is the check that
-# matters, and it is checked by tests 6 to 9 rather than asserted.
+# Two are left and they may be one thing or two. What is untested about them:
+#
+#   dw32w111   111 is the only ODD width ever run here. Everything else has
+#              been 7, 40, 44, 48, 64, 70, 72, 80, 96 or 112.
+#   mn_L03     112 wide, 64 channels, stride 2, and fourth in a 31 operator
+#              graph. Its standalone twin dw64_s2 has not been rerun since the
+#              budget landed, and at 56 entries a row it now gets a 45 row
+#              window where it used to get 91.
 #
 # DECISION RULE, written before the run:
-#   dw64w72, dw32w111, dw64w80 and dw64w96 all come good
-#             the budget is the whole of it on the generic path
-#   they come good and mn_L03 does not
-#             the row-window path has a second fault of its own, which round
-#             111 already hinted at: L03 at ROCKET_ROWWIN=24 needs three banks
-#             and still failed
-#   they do not come good
-#             the budget is real but splitting is not how the hardware wants it
-#             met, and the next question is what a window costs that a whole
-#             surface does not
+#   dw32w110 passes and dw32w109 fails    it is the odd width, and the line
+#                                         stride or the window arithmetic
+#                                         rounds it away
+#   both pass                             111 was something else entirely and
+#                                         needs its own look
+#   both fail                             it is not parity, it is being just
+#                                         under 112 and over budget
+#   dw64_s2 passes while mn_L03 fails     op3's fault needs the graph around
+#                                         it, not its own shape
+#   dw64_s2 fails too                     stride 2 at 112 wide with four
+#                                         atomics, reproducible standalone
 #
-# Tests 6 to 9 are the control and they are the calibrated cases: mn_dw1 and
-# dw32 are 112 wide at 32 channels, where the derived window must come out at
-# exactly the 91 that was there before, and conv2d-cal and mn_dw25 are under
-# the budget so they must not be split at all. Any of them moving means the
-# derivation changed the case it was fitted to.
+# Test 8 is the control for the parity pair: dw64w110 is even, over budget and
+# three windows, so if it fails the reading is not parity but window count.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -57,34 +57,33 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) the four that were over budget and failed ====="
-	p dw64w72.tflite ""
+	log "===== 1..3) the parity question: 110 even, 109 odd, 111 odd ====="
+	p dw32w110.tflite ""
+	p dw32w109.tflite ""
 	p dw32w111.tflite ""
-	p dw64w80.tflite ""
-	p dw64w96.tflite ""
 
 	log ""
-	log "===== 5) and the 64 channel layer in the real graph ====="
+	log "===== 4..5) 112 wide at 64 channels, standalone, both strides ====="
+	p dw64.tflite ""
+	p dw64_s2.tflite ""
+
+	log ""
+	log "===== 6) and the same shape inside the graph ====="
 	p mn_L03.tflite ""
 
 	log ""
-	log "===== 6..9) CONTROL: the calibrated cases must not move ====="
+	log "===== 7) CONTROL: even, over budget, three windows ====="
+	p dw64w110.tflite ""
+
+	log ""
+	log "===== 8..11) REGRESSION ====="
 	p mn_dw1.tflite ""
-	p dw32.tflite ""
+	p dw64w96.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== 10..11) and the ones that were already under budget ====="
-	p dw64w70.tflite ""
-	p dw128w44.tflite ""
-
-	log ""
-	log "===== 12) CONTROL: the old budget back, dw64w72 must break again ====="
-	p dw64w72.tflite "ROCKET_CBUF_ENTRIES=100000"
-
-	log ""
-	log "===== 1..4 are the round. 6..9 must be unchanged.                 ====="
+	log "===== 1 vs 2 is parity. 5 vs 6 says whether op3 needs the graph.  ====="
 	sync
 }
 case "$1" in
