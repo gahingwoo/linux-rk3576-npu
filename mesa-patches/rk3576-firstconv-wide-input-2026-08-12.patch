@@ -1,0 +1,332 @@
+From d7c3bd0a57558f0f216d221aeff29135c30b64cc Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 12 Aug 2026 16:21:20 +1200
+Subject: [PATCH] rocket RK3576: widen the first conv's input instead of using
+ the right pad
+
+The first conv's last output column was the whole of its residual: 2058 of
+its 12544 pixels per channel off by up to 255 while every other column and
+the interior were exact.
+
+With tflite SAME on a 224 wide image at stride 2 the single pad lands after
+the image, so output column 111 is the only one that reads a padded tap and
+kx = 2 is the only tap that reaches it. A model with one live tap per channel
+fails exactly the channels whose tap has kx = 2, and one with the same taps
+and no bias passes, because without the bias the fault sits under the ReLU
+clip.
+
+The padded tap is fed a raw zero, before the CNA's per lane values are
+applied. Those hold -128, which is what an input zero point of 128 requires
+for real pixels, so the pad contributes -128 * w instead of nothing. Setting
+them to zero instead swaps the two halves: the pad becomes exact and every
+real pixel goes wrong by the same 128 * w.
+
+Nothing steers that byte. The pad value register was swept over 0x00, 0x40
+and 0x80 and only the row pad moved; the fourth lane's value is inert; and of
+the two trailing pad fields in 0x1080 one is load bearing and the other
+changes nothing at all.
+
+So stop asking for it. Widen the input in memory to the first whole number of
+feature atomics past what the last window reads, fill the added columns with
+the input zero point, and tell the CNA the image is that wide. For a 224 wide
+image that is 240: 240 * 3 is a round 45 of the 16 byte units and the 0x1044
+low field stays at the 15 it already held. Six registers carry the width and
+each reproduces its previous literal exactly at 224, which is how they were
+identified. 0x1080 is left alone; the pad is still requested, it simply stops
+being reached.
+
+Measured on a ROCK 4D, MobileNet's conv0 against the CPU reference: 9 of 32
+channels to 32 of 32, every edge and the interior within one count.
+ROCKET_FC_WIDE=0 restores the narrow input and reproduces the old numbers
+exactly.
+
+Also take the 15 bit OUT_CVT multiplier to nearest rather than always up.
+Both emitters added one unconditionally, which has never been visible because
+"within one count" is the pass mark. Round to nearest emitted the same value
+as the old rule on every model measured and truncation was worse, so this is
+the more defensible of two answers that have never differed. ROCKET_RN
+selects. The carry out of the 15 bit field is now renormalised rather than
+written past the field's width.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_ml.c     |  27 +++++-
+ src/gallium/drivers/rocket/rkt_ml.h     |  36 +++++++
+ src/gallium/drivers/rocket/rkt_regcmd.c | 122 +++++++++++++++++++++---
+ 3 files changed, 167 insertions(+), 18 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
+index c3b81e5..d98b77e 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.c
++++ b/src/gallium/drivers/rocket/rkt_ml.c
+@@ -617,8 +617,8 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+           * the board's feature BO). The generic atomic layout (32 B/pixel) makes
+           * the CNA read garbage and the conv output collapses to the zero-point.
+           */
+-         input_size = operation->input_width * operation->input_height *
+-                      operation->input_channels;
++         input_size = rkt_fc_width(operation->input_width) *
++                      operation->input_height * operation->input_channels;
+       } else {
+          unsigned input_channels_1 =
+             DIV_ROUND_UP(operation->input_channels, FEATURE_ATOMIC_SIZE) * 2;
+@@ -730,9 +730,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+          uint8_t *map = pipe_buffer_map(pcontext, &input_tensor->base,
+                                         PIPE_MAP_WRITE, &transfer_out);
+ 
+-         memcpy(map, inputs[i],
+-                operation->input_width * operation->input_height *
+-                input_channels);
++         unsigned row = operation->input_width * input_channels;
++         unsigned stride = rkt_fc_width(operation->input_width) *
++                           input_channels;
++
++         if (stride == row) {
++            memcpy(map, inputs[i], row * operation->input_height);
++         } else {
++            /*
++             * The widened first-conv input. Every row keeps its real pixels and
++             * the columns past them hold the input zero point, so the last
++             * window reads a real byte where the hardware would otherwise
++             * generate a pad of zero. See rkt_fc_width().
++             */
++            const uint8_t *src = inputs[i];
++            for (unsigned y = 0; y < operation->input_height; y++) {
++               memcpy(map + y * stride, src + y * row, row);
++               memset(map + y * stride + row,
++                      (uint8_t)operation->input_zero_point, stride - row);
++            }
++         }
+          pipe_buffer_unmap(pcontext, transfer_out);
+ 
+          if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS))
+diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
+index 383cc0a..f991569 100644
+--- a/src/gallium/drivers/rocket/rkt_ml.h
++++ b/src/gallium/drivers/rocket/rkt_ml.h
+@@ -185,4 +185,40 @@ bool rkt_is_depthwise(const struct pipe_ml_operation *poperation);
+ void rkt_dump_buffer(const uint8_t *ptr, char *name, int operation_nr,
+                      int suboperation_nr, int offset, unsigned size);
+ 
++/*
++ * The RK3576 first conv's right hand edge.
++ *
++ * Board measurement, rounds 94 to 97: the last output column is the only one
++ * that reads a padded tap, and the byte it is fed is a raw zero, before the
++ * CNA's per-lane values are applied. With those set to -128, which is what the
++ * input's zero point of 128 requires for real pixels, that pad contributes
++ * -128 * w instead of nothing, and it is the whole of conv0's residual.
++ *
++ * Nothing steers that byte. 0x1084 was swept over 0x00, 0x40 and 0x80 and only
++ * the row pad moved; 0x1060 is inert; of the two trailing pad fields in 0x1080
++ * one is load bearing and the other changes nothing at all.
++ *
++ * So do not use the hardware's right pad. Widen the input in memory to a whole
++ * number of 16 byte units past what the last window reads, fill the extra
++ * columns with the input zero point, and tell the CNA the image is that wide.
++ * The last window then reads real bytes and no pad is generated. 240 is the
++ * first such width for a 224 wide image: 240 * 3 is 720, a whole 45 units, and
++ * the 0x1044 low field stays at the 15 the capture already held.
++ *
++ * ROCKET_FC_WIDE=0 restores the narrow input, which is the control.
++ */
++static inline bool
++rkt_fc_wide(void)
++{
++   const char *s = getenv("ROCKET_FC_WIDE");
++   return s ? atoi(s) != 0 : true;
++}
++
++static inline unsigned
++rkt_fc_width(unsigned input_width)
++{
++   return rkt_fc_wide() ? align(input_width + 1, FEATURE_ATOMIC_SIZE)
++                        : input_width;
++}
++
+ #endif /* RKT_ML_H */
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index b20a65c..ab53cc0 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -48,6 +48,33 @@ rkt_env_i32(const char *name, int def)
+    return s ? atoi(s) : def;
+ }
+ 
++/*
++ * How the 15 bit OUT_CVT multiplier is taken out of the fp32 requant scale.
++ *
++ * Both emitters do ((fui(M) >> 9) & 0x7fff) + 1, which always rounds the
++ * mantissa UP, and the +1 has never been questioned because "within one count"
++ * has been the pass mark since the first round, so a surface uniformly one
++ * count out and an exact one score the same.
++ *
++ * The hardware's final shift already rounds half up, so the direction of this
++ * one matters. Round to nearest is ((fui(M) >> 8) & 1): add one only when the
++ * bit below the field is set. ROCKET_RN selects, so all three can be measured
++ * against each other on one flash rather than argued about:
++ *
++ *   0, the default   +1, always up, what every result so far was measured with
++ *   1                round to nearest
++ *   2                truncate
++ */
++static unsigned
++rkt_cvt_round(uint32_t scale_bits)
++{
++   switch (rkt_env_u32("ROCKET_RN", 1)) {
++   case 0:  return 1;
++   case 2:  return 0;
++   default: return (scale_bits >> 8) & 1;
++   }
++}
++
+ static void
+ emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
+          uint32_t value)
+@@ -127,20 +154,75 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x1020, 0x00000030);
+    R_CNA(0x1024, 0x0202001f);   /* out_ch-1 = 31 */
+    R_CNA(0x1028, 0x0d20000b);
+-   R_CNA(0x102c, 0x00df00df);   /* (in_w-1, in_h-1) = (223,223) */
++   /*
++    * The input width the CNA is told about, which is no longer the tensor's.
++    * rkt_fc_width() widens it so the last window reads real bytes instead of
++    * the hardware's broken right pad; the five registers below are the ones
++    * that carry it. Each matches its captured literal exactly when the width
++    * is left narrow, which is how they were identified:
++    *
++    *   0x102c  (w-1, in_h-1)       0x00df00df at 224
++    *   0x1044  (w, blocks)         0x00e0000f, and the low field is 15 for
++    *                               both widths, so it is left alone
++    *   0x1078  (stride_units-1, in_h-1)   0x002900df, 42-1
++    *   0x1090  stride in 16 byte units    0x2a, 224*3/16
++    *   0x1094  and 0x1098  that times in_h  0x24c0
++    *   0x118c  (w/16, that-1)      0x000e000d, 224/16
++    *
++    * 0x1080 is deliberately NOT touched. The trailing pad is still requested;
++    * it simply stops being reached on the width axis once the real image
++    * covers the last window.
++    */
++   unsigned fc_w = rkt_fc_width(operation->input_width);
++   unsigned fc_h = operation->input_height;
++   unsigned fc_units = fc_w * 3 / FEATURE_ATOMIC_SIZE;
++   R_CNA(0x102c, ((fc_w - 1) << 16) | (fc_h - 1));
+    R_CNA(0x1030, 0x0060006f);   /* out_w-1 = 111 */
+    R_CNA(0x1034, 0x000030ff);   /* out_w*out_h-1 = 12543 */
+    R_CNA(0x1038, 0x00000007);
+    R_CNA(0x103c, 0x000f0000);
+    R_CNA(0x1040, 0x10000000);   /* CBUF_CON0 — matches the vendor runtime capture */
+-   R_CNA(0x1044, 0x00e0000f);   /* in_w = 224 */
++   R_CNA(0x1044, (fc_w << 16) | 0x0f);
+    R_CNA(0x1048, 0x000e38e0);
+    R_CNA(0x104c, 0x40004000);   /* CVT (quant) */
+    R_CNA(0x1050, 0x00014000);
+-   R_CNA(0x1054, 0xffffff80);
+-   R_CNA(0x1058, 0xffffff80);
+-   R_CNA(0x105c, 0xffffff80);
+-   R_CNA(0x1060, 0x00000000);
++   /*
++    * The three per-lane CVT values, one per ARGB colour lane. The generic path
++    * writes zero in all three and bypasses the CVT; this path enables it and
++    * writes -128 in each.
++    *
++    * -128 is what a raw byte of 0 becomes once 0x80 is subtracted, so as a
++    * DATA offset these say "the input's zero point is 0", which is true of the
++    * image tensor the capture came from and false of MobileNet's conv0, whose
++    * input zero point is 128. They are literals and nothing derives them.
++    *
++    * Round 95 measured that 0x1084 is not what makes the last output column
++    * wrong: every pad byte from 0x00 to 0x80 leaves colN at the same 2122
++    * pixels off by more than one, while the last ROW responds to it exactly as
++    * a pad value should and is best at the value already written. So the row
++    * padding is correct and the column padding is being fed from somewhere
++    * else, and these three are the only other CNA registers this path writes
++    * that the generic path does not.
++    *
++    * ROCKET_FC_LANE_OFF writes all three. If the surface INTERIOR breaks with
++    * it, they are data offsets and this is closed; if only the last column
++    * moves, they are the width-axis pad.
++    */
++   {
++      uint32_t lane = rkt_env_u32("ROCKET_FC_LANE_OFF", 0xffffff80);
++      R_CNA(0x1054, lane);
++      R_CNA(0x1058, lane);
++      R_CNA(0x105c, lane);
++   }
++   /*
++    * The fourth ARGB lane's CVT value. The three colour lanes above hold -128
++    * and this one holds zero, which is why it is a candidate for the right
++    * edge: round 96 measured that the last output column is fed a raw byte of
++    * zero BEFORE the lane values are applied, so whatever supplies it is not
++    * 0x1084, and this is the only neighbouring register left holding a value
++    * the three lanes do not. ROCKET_FC_1060 sweeps it.
++    */
++   R_CNA(0x1060, rkt_env_u32("ROCKET_FC_1060", 0x00000000));
+    /*
+     * FC_CON1 (0x1064) = 0x777, matching the vendor RUNTIME conv0 regcmd (captured
+     * live via the instrumented rknpu, real IOMMU addresses present). An earlier
+@@ -155,7 +237,8 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    R_CNA(0x106c, 0x00000000);
+    R_CNA(0x1070, 0x00000000);
+    R_CNA(0x1074, 0x00000000);
+-   R_CNA(0x1078, 0x002900df);
++   R_CNA(0x1078, rkt_env_u32("ROCKET_FC_1078",
++                             ((fc_units - 1) << 16) | (fc_h - 1)));
+    R_CNA(0x107c, 0x00000002);
+    /*
+     * The PADDING register, derived rather than hardcoded.
+@@ -207,16 +290,17 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+    }
+    R_CNA(0x1088, feature_addr); /* input feature base addr */
+    R_CNA(0x108c, 0x000f000f);
+-   R_CNA(0x1090, 0x0000002a);   /* CBUF input line-stride = ceil(224/16)*3 */
+-   R_CNA(0x1094, 0x000024c0);
+-   R_CNA(0x1098, 0x000024c0);
++   R_CNA(0x1090, fc_units);
++   R_CNA(0x1094, fc_units * fc_h);
++   R_CNA(0x1098, fc_units * fc_h);
+    R_CNA(0x109c, 0x00000000);
+    R_CNA(0x1100, 0x00000000);
+    R_CNA(0x1104, 0x00000000);
+    R_CNA(0x1110, weight_addr);  /* weights base addr (DCOMP_ADDR0) */
+    R_CNA(0x1140, 0x00000000);
+    R_CNA(0x1144, 0x00000000);
+-   R_CNA(0x118c, 0x000e000d);
++   R_CNA(0x118c, rkt_env_u32("ROCKET_FC_118C",
++                             ((fc_w / 16) << 16) | (fc_w / 16 - 1)));
+ 
+    /* CORE. */
+    R_CORE(0x3018, 0x10000081); /* MISC/MAC cfg (first-conv in_ch=3) */
+@@ -303,7 +387,11 @@ fill_first_regcmd_rk3576_firstconv(struct rkt_ml_subgraph *subgraph,
+       uint32_t sb = fui(conv_scale);
+       /* The generic path computes this then emits shift - 1; keep both. */
+       unsigned fc_shift = 127 + 31 - 32 - (sb >> 23) + 16 - 1 + 4;
+-      unsigned fc_scale = ((sb >> 9) & 0x7fff) + 1;
++      unsigned fc_scale = ((sb >> 9) & 0x7fff) + rkt_cvt_round(sb);
++      if (fc_scale > 0x7fff) {
++         fc_scale = 1 << 14;
++         fc_shift--;
++      }
+       if (fc_scale < (1 << 14))
+          fc_scale |= (1 << 14);
+       int32_t fc_off = (int32_t)task->output_zero_point - 0x80;
+@@ -509,7 +597,15 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    unsigned shift = 127 + 31 - 32 - (scale_bits >> 23) + 16;
+    if (operation->truncate_bits > 0)
+       shift--;
+-   unsigned cvt_scale = ((scale_bits >> 9) & 0x7fff) + 1;
++   unsigned cvt_scale = ((scale_bits >> 9) & 0x7fff) + rkt_cvt_round(scale_bits);
++   if (cvt_scale > 0x7fff) {
++      /* The mantissa's top 15 bits were all ones and the round carried out of
++       * the field. Renormalising is exact: half the multiplier, one less
++       * shift. Nothing has hit this yet, but the field is 15 bits wide and
++       * writing 0x8000 into it would be silent. */
++      cvt_scale = 1 << 14;
++      shift--;
++   }
+    if (cvt_scale < (1 << 14))
+       cvt_scale |= (1 << 14);
+    int32_t out_offset = (int32_t)task->output_zero_point - 0x80;
+-- 
+2.43.0
+

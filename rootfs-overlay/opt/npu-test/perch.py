@@ -130,6 +130,24 @@ if len(nzr):
     inner = np.abs(got[1:-1, 1:-1] - ref[1:-1, 1:-1]).max()
     print(f"    maxdiff excluding the outer ring: {int(inner)}"
           f"    whole surface: {int(np.abs(got - ref).max())}", flush=True)
+    # WHICH edge. "excluding the outer ring" strips all four at once, so a
+    # maxdiff of 1 inside and 255 overall says only that the damage is on the
+    # ring, not which side of it. That distinction decides the question: with
+    # tflite SAME on 224 at stride 2, the single pad lands AFTER, so the last
+    # output row and the last output column are the only ones that read a
+    # padded tap. The first row and the first column read nothing padded at
+    # all. If the damage is on the last row and last column, it is padding;
+    # if it is on the first, padding cannot explain it.
+    def _reg(name, sl):
+        d = np.abs(got[sl] - ref[sl])
+        return f"{name} max {int(d.max())} off>1 {int((d > 1).sum())}"
+    print("    by edge: "
+          + " | ".join([_reg("row0", (slice(0, 1), slice(None))),
+                        _reg("rowN", (slice(-1, None), slice(None))),
+                        _reg("col0", (slice(None), slice(0, 1))),
+                        _reg("colN", (slice(None), slice(-1, None))),
+                        _reg("interior", (slice(1, -1), slice(1, -1)))]),
+          flush=True)
 
 # When a channel correlates but disagrees, NAME THE AFFINE MAP.
 #
@@ -205,6 +223,27 @@ print(f"    residual: within 1 {100.0 * (d <= 1).sum() / tot:5.1f}%   "
 sat = ((got >= 255) | (got <= ozp)) & (d > 1)
 print(f"      of the pixels off by more than 1, {100.0 * sat.sum() / max(1, (d > 1).sum()):5.1f}% "
       f"are at a rail of the hardware output", flush=True)
+# The off-by-one population, which every reading so far has treated as noise.
+#
+# "within 1" has been the pass mark since the first round, so a surface that is
+# uniformly one count low scores the same as an exact one and nothing has ever
+# looked at the SIGN. Olaf's report on the OUT_CVT says the 15 bit requant
+# mantissa is truncated where the hardware's final shift rounds half up, which
+# drags M_eff low by up to one unit in the last place and shows as npu = cpu-1
+# on exactly the pixels whose product sits just above a half. That prediction
+# has a signature: the off-by-one pixels are nearly all in one direction.
+#
+# Measured on the interior only, so the last column, which is a separate and
+# much larger fault, cannot colour it. A symmetric split near 50/50 is ordinary
+# rounding noise and the truncation reading is wrong.
+gi, ri = got[1:-1, 1:-1], ref[1:-1, 1:-1]
+di = ri - gi
+one = np.abs(di) == 1
+n1 = int(one.sum())
+print(f"    interior: exact {100.0 * (di == 0).sum() / di.size:5.2f}%   "
+      f"off by exactly 1: {n1}"
+      + (f", of which npu LOW {100.0 * (di[one] > 0).sum() / n1:5.1f}%"
+         if n1 else ""), flush=True)
 
 if not bad:
     print("    every channel correct", flush=True)

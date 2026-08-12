@@ -1,6 +1,94 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-12 rounds 94 to 98: **conv0 is finished, 32 of 32.** The right pad does not work
+
+What was left of conv0 after round 88 was one column. Not a scatter of rounding
+noise, and not the saturation boundary: output column 111, 2058 of the 12544
+pixels in a channel off by up to 255, with every other column, both rows and
+the whole interior within one count.
+
+Round 92's log had already said so and it was misread. `maxdiff excluding the
+outer ring: 1, whole surface: 255` puts every large error on the ring; the
+`rows with any error: 112/112` counter next to it fires on a difference of one,
+which the rounding gives nearly everywhere, so it cannot tell a ring from a
+surface and never disagreed. perch.py now prints each of the four edges and the
+interior separately, and that is what named the column.
+
+With tflite SAME on a 224 wide image at stride 2 the single pad lands after the
+image, so column 111 is the only output column that reads a padded tap, and
+`kx = 2` is the only tap that reaches it. Independently, an impulse model with
+one live tap per channel and the real bias failed exactly the channels whose
+tap has `kx = 2`, and the same taps with no bias passed, because the bias is
+what lifts the fault clear of the ReLU clip. Same column, two ways.
+
+**The padded tap is fed a raw zero, before the per lane values are applied.**
+The measurement that shows it is a single-tap model at `kx = 2`, where columns
+0 to 110 read a real pixel and column 111 reads the pad:
+
+| CNA `0x1054/8/c` | interior | last column |
+|---|---|---|
+| `0xffffff80`, the captured value | 0 pixels off by more than 1 | 2122 |
+| `0` | 346120 | **0, maxdiff 0** |
+
+The two halves swap. `-128` is what an input zero point of 128 requires for
+real pixels, and it turns the pad into `-128 * w` instead of nothing.
+
+**Nothing steers that byte**, and the search for a register that does is now
+closed with four negatives, each with a control that bit:
+
+| swept | result |
+|---|---|
+| `0x1084` over `0x00`, `0x40`, `0x80`, `0x80808080` | only the row pad and column 0 move; the last column sits at 2122, 2128, 2128, 2129 |
+| `0x1060`, two values | byte identical to the default |
+| `0x1080` trailing width field to 0 | the whole surface collapses, interior exact 0.30 percent |
+| `0x1080` trailing height field to 0 | byte identical to the default |
+
+So one of the two trailing pad fields is load bearing and the other changes
+nothing at all.
+
+**The fix is to not ask for it.** Widen the input in memory to the first whole
+number of feature atomics past what the last window reads, fill the added
+columns with the input zero point, and tell the CNA the image is that wide. For
+224 that is 240: `240 * 3` is a round 45 of the 16 byte units and the `0x1044`
+low field stays at the 15 it already held. Six registers carry the width and
+each reproduces its old literal exactly at 224, which is how they were
+identified. `0x1080` is left alone; the pad is still requested, it simply stops
+being reached.
+
+| model | before | after |
+|---|---|---|
+| `mn_conv0` | 9/32, last column 2058 off by more than 1 | **32/32**, every edge and the interior within 1 |
+| `fc_kx2` | 13/32, last column 2122 | **32/32**, last column maxdiff 0 |
+| `fc_impb` | 26/32 | **32/32** |
+| `conv2d-cal`, `mn_dw1`, `mn_dw25` | unchanged | unchanged |
+
+`ROCKET_FC_WIDE=0` restores the narrow input and reproduces 2122 and 2058
+exactly. Pinning either of the two least certain derived registers back to its
+captured literal destroys the result, `0x1078` to interior 0.52 percent and
+`0x118c` to 38.5 percent, so both derivations are load bearing.
+
+**Two void tests on the way, and both were avoidable.** Round 96 asked whether
+the trailing pad fields are honoured by setting them to 2; column 111 reads
+exactly one pad column and row 111 one pad row, so a second one that nothing
+ever reads cannot change any output, and both came back byte identical. The
+question needed the pad taken away, not added. Round 95's whole premise, that
+the pad byte is a raw input byte and should be `in_zp`, was refuted by its own
+control: an already exact model broke on its last ROW when the byte changed.
+
+**What the off-by-one population turned out to be.** "Within one count" has
+been the pass mark since the first round, so a surface uniformly one low scored
+the same as an exact one and nothing had ever looked at the sign. It is one
+sided: conv0 773 pixels all low, `mn_dw1` 56125 all low, `conv2d-cal` 10 the
+other way. Both emitters took the 15 bit OUT_CVT multiplier as
+`((fui(M) >> 9) & 0x7fff) + 1`, always up. Round to nearest emitted the same
+value on every model measured and truncation was worse, 99.95 against 99.99
+percent, so rounding up is right and to nearest is now the default as the more
+defensible of two answers that have never differed. `mn_dw1`'s 85.50 percent
+interior exact, all one way, is a separate and much larger residual on the
+generic path.
+
+
 ## 2026-08-11 rounds 76 to 88: **conv0 goes from an empty MAC to 99.5 percent pixel-exact.** Four literals
 
 conv0 had never worked, in any log going back to 2026-08-08, and it was never
