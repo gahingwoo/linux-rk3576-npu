@@ -1,6 +1,63 @@
 # RK3576 NPU (rocket + Mesa Teflon): conv0 zero-output, complete findings
 
 
+## 2026-08-12 rounds 99 to 101: the off-by-one is the REFERENCE, and a reading of mine is withdrawn
+
+The instrument added in round 97 showed every model carrying a one sided
+off-by-one population against the CPU reference, `mn_dw1` worst at 85.50
+percent of interior pixels exact with all 56125 of its misses one count low.
+It looked like a defect and it is not one.
+
+Two candidates died offline, without a flash. The Q4 per-channel coefficient
+cannot be it, because all four of these models are per-TENSOR quantised, so C
+is 16 for every channel in all of them. The bias rescale cannot be it, because
+the bias scale and `in_sc * wt_sc` agree to 3.6e-8.
+
+Round 99 killed the seam theory with its own control: the rate is FLAT across
+rows, 0.140 to 0.149 on every eighth, and three row windows instead of two came
+back byte identical at 56125, with three OUT_CVT lines in the log to show the
+knob reached.
+
+**Then I got it wrong.** I modelled the requant offline against a reference
+computed as `floor(acc * M + 0.5)`, concluded the depthwise path truncates
+where the regular path rounds half up, and spent round 100 on DPU 0x4044, the
+one bit that differs between them. It does nothing: `mn_dw1` with the bit set
+is byte identical to `mn_dw1` without it, and `conv2d-cal` with the bit
+CLEARED is byte identical to `conv2d-cal` with it set, against a control that
+predicted a drop to 75 percent. A clean negative, and the only luck in it is
+that the bit was inert; had it moved anything I would have shipped a wrong fix
+on a wrong model.
+
+Round 101 stopped guessing at bits and printed raw values at fixed
+coordinates instead, so the map could be solved. `mn_dw1` channel 4, where the
+nine centred taps sum to zero so the ramp's linear part cancels and the
+accumulator is constant at 217 between the wraps of the input modulus:
+
+```
+acc 217   exact 217 * 0.292199134827 = 63.4072   npu 63   reference 64
+```
+
+The hardware is right and the reference is not. tflite's requant is
+`SaturatingRoundingDoublingHighMul` then `RoundingDivideByPOT`, and for this
+multiplier its shift is -1, so the final divide is by two: `217 * q / 2^31` is
+126.814, rounds to 127, and 127 / 2 is exactly 63.5, which rounds up. Two
+roundings, and the second one lands on a half.
+
+Emulating that exactly, offline, reproduces the board to the pixel:
+
+| model | tflite shift | predicted vs board | hardware vs exact arithmetic |
+|---|---|---|---|
+| `mn_dw1` | -1 | 85.50%, 56125, all low / **85.50%, 56125, all low** | 99.97% |
+| `mn_dw25` | -2 | 99.66%, 86 / **99.66%, 86** | 99.99% |
+| `mn_conv0` | -7 | 99.80%, 773 / **99.80%, 773** | 99.98% |
+| `conv2d-cal` | -10 | 100.00%, 9 / **99.99%, 10** | 99.98% |
+
+So the hardware rounds half up on every path including depthwise, and is within
+one count of exact real arithmetic everywhere. There is nothing to fix, and
+`maxdiff <= 1` was the right pass mark all along. perch.py now says so at the
+print, so the figure is read as a change detector rather than a defect.
+
+
 ## 2026-08-12 rounds 94 to 98: **conv0 is finished, 32 of 32.** The right pad does not work
 
 What was left of conv0 after round 88 was one column. Not a scatter of rounding

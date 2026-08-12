@@ -1,0 +1,46 @@
+From 3c0f9d99c54cc4089586db2cbd4b173be7db2e4d Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 12 Aug 2026 16:52:17 +1200
+Subject: [PATCH] rocket RK3576: knob for DPU 0x4044, which turned out to be
+ inert
+
+Board: setting it on the depthwise path and clearing it on the regular path
+both leave the output byte identical, against a control that predicted a drop
+to 75 percent. Kept as a knob because it is the only single bit that differs
+between the two emissions and a future question may want it.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index ab53cc0..e06e538 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -836,7 +836,21 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    R_DPU(0x4034, (dpu_lines << 16) | (ow - 1));
+    R_DPU(0x4038, dw ? 0x00100092 : 0x00120080);
+    R_DPU(0x403c, 0x00000000);
+-   R_DPU(0x4044, dw ? 0x00000000 : 0x00000001);
++   /*
++    * DPU 0x4044, one bit, and it is one for a regular conv and zero for a
++    * depthwise. That difference has the shape of the residual.
++    *
++    * Modelling the requant offline against the CPU reference, with the exact
++    * accumulator these models produce, splits the three of them cleanly:
++    *
++    *   mn_dw1      board 85.50% exact, all low | half-up 99.97% | TRUNCATE 84.41%, all low
++    *   conv2d-cal  board 99.99% exact, none low | HALF-UP 99.98% | truncate 75.42%, all low
++    *
++    * So the regular path rounds the final shift half up and the depthwise path
++    * truncates it, and the only single-bit register that tracks that split is
++    * this one. ROCKET_DPU_4044 forces it either way on both paths.
++    */
++   R_DPU(0x4044, rkt_env_u32("ROCKET_DPU_4044", dw ? 0x00000000 : 0x00000001));
+    R_DPU(0x4048, 0x80000000);
+    R_DPU(0x404c, 0x7fffffff);
+    /*
+-- 
+2.43.0
+

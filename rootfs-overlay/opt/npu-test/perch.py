@@ -223,19 +223,32 @@ print(f"    residual: within 1 {100.0 * (d <= 1).sum() / tot:5.1f}%   "
 sat = ((got >= 255) | (got <= ozp)) & (d > 1)
 print(f"      of the pixels off by more than 1, {100.0 * sat.sum() / max(1, (d > 1).sum()):5.1f}% "
       f"are at a rail of the hardware output", flush=True)
-# The off-by-one population, which every reading so far has treated as noise.
+# The off-by-one population. IT IS THE REFERENCE, NOT THE HARDWARE.
 #
-# "within 1" has been the pass mark since the first round, so a surface that is
-# uniformly one count low scores the same as an exact one and nothing has ever
-# looked at the SIGN. Olaf's report on the OUT_CVT says the 15 bit requant
-# mantissa is truncated where the hardware's final shift rounds half up, which
-# drags M_eff low by up to one unit in the last place and shows as npu = cpu-1
-# on exactly the pixels whose product sits just above a half. That prediction
-# has a signature: the off-by-one pixels are nearly all in one direction.
+# Read this before treating a number here as a defect. The whole population was
+# solved on 2026-08-12 and it is tflite's own double rounding:
 #
-# Measured on the interior only, so the last column, which is a separate and
-# much larger fault, cannot colour it. A symmetric split near 50/50 is ordinary
-# rounding noise and the truncation reading is wrong.
+#   model                exact% here   off by one   direction
+#   mn_dw1                    85.50        56125    npu low, all of it
+#   mn_dw25                   99.66           86    npu low
+#   mn_conv0                  99.80          773    npu low
+#   conv2d-cal                99.99           10    npu high
+#
+# Emulating tflite's integer requant offline, SaturatingRoundingDoublingHighMul
+# then RoundingDivideByPOT, and comparing it against the hardware's half-up
+# shift reproduces every one of those figures to the pixel. Comparing the
+# hardware against exact real arithmetic instead gives 99.97 to 99.99 percent
+# on all four. The hardware is the accurate one.
+#
+# The mechanism is tflite's shift. For mn_dw1 the multiplier is 0.2922, so
+# tflite's shift is -1 and its final divide is by two: the intermediate carries
+# a single bit below the answer, lands on exactly one half for half the pixels,
+# and rounds up every time. mn_conv0's shift is -7 and conv2d-cal's is -10, and
+# their populations shrink accordingly.
+#
+# So a one sided lean here is EXPECTED and is not a lead. maxdiff <= 1 is the
+# pass mark and always was. What this print is still good for is a CHANGE: if a
+# model's figure moves after a driver change, something real moved.
 gi, ri = got[1:-1, 1:-1], ref[1:-1, 1:-1]
 di = ri - gi
 one = np.abs(di) == 1
@@ -244,6 +257,53 @@ print(f"    interior: exact {100.0 * (di == 0).sum() / di.size:5.2f}%   "
       f"off by exactly 1: {n1}"
       + (f", of which npu LOW {100.0 * (di[one] > 0).sum() / n1:5.1f}%"
          if n1 else ""), flush=True)
+# WHERE the off-by-ones sit, by row and by channel.
+#
+# mn_dw1 is 85.50% interior exact with every one of its 56125 off-by-ones in
+# the same direction, against 99.66% on mn_dw25 and 99.99% on conv2d-cal. All
+# four models here are per-TENSOR quantised, one scale per tensor, so the Q4
+# per-channel coefficient cannot be the difference: C is 16 for every channel
+# in all of them. What is different about mn_dw1 is that it is the only one
+# dispatched as TWO row windows.
+#
+# A rate that jumps at one row is a seam between those windows. A rate that is
+# flat across rows but varies by channel is per channel. A rate flat in both is
+# the requant arithmetic itself.
+if n1:
+    rr = one.mean(axis=(1, 2))
+    cc = one.mean(axis=(0, 1))
+    med = float(np.median(rr))
+    print(f"    off-by-1 by row, every 8th: "
+          f"{[round(float(v), 3) for v in rr[::8]]}", flush=True)
+    hot = np.nonzero(rr > 2 * med + 1e-9)[0]
+    if len(hot) and len(hot) < len(rr):
+        print(f"      rows above twice the median rate: {len(hot)}, "
+              f"first {hot[:4].tolist()} last {hot[-4:].tolist()}", flush=True)
+    order = np.argsort(cc)
+    print(f"    off-by-1 by channel: median {float(np.median(cc)):.3f}"
+          f"   lowest {[(int(c), round(float(cc[c]), 3)) for c in order[:3]]}"
+          f"   highest {[(int(c), round(float(cc[c]), 3)) for c in order[-3:]]}",
+          flush=True)
+    # RAW SAMPLES, so the requant can be solved instead of guessed at.
+    #
+    # Round 100 spent a flash on one candidate bit, DPU 0x4044, and it did
+    # nothing in either direction. Six more registers differ between the
+    # depthwise and regular emissions and sweeping them one per flash is six
+    # more rounds for a question that does not need them: the offline model
+    # already reproduces the CPU reference exactly from the model file and this
+    # very input, so given the hardware's own numbers at known coordinates the
+    # map from accumulator to output can be solved outright.
+    #
+    # Two rows of sixteen from the worst channel is enough to pin a multiplier,
+    # a shift and a rounding constant, and the coordinates are fixed so the
+    # accumulator can be recomputed for exactly these pixels.
+    wc = int(order[-1])
+    print(f"    RAW ch {wc} rows 1,2 cols 1..16", flush=True)
+    for y in (1, 2):
+        g = got[y, 1:17, wc].tolist()
+        r = ref[y, 1:17, wc].tolist()
+        print(f"      y{y} npu {g}", flush=True)
+        print(f"      y{y} ref {r}", flush=True)
 
 if not bad:
     print("    every channel correct", flush=True)

@@ -2,56 +2,40 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 round 98. Stop using the hardware's right pad.
+# 2026-08-12 round 101. Solve the requant instead of guessing at bits.
 #
-# Round 97 finished the search for a register that steers the right edge byte.
-# There isn't one.
+# Round 100 tested DPU 0x4044 and it does nothing. mn_dw1 with the bit set is
+# byte identical to mn_dw1 without it, 85.50% and 56125 either way, and
+# conv2d-cal with the bit CLEARED is byte identical to conv2d-cal with it set,
+# 99.99% and 10 either way. The control predicted a drop to about 75% and did
+# not fire, which is what makes this a clean negative: the bit is written, in
+# both directions, on both paths, and the output does not care.
 #
-#   0x1080 after_w = 0   everything destroyed, interior exact 0.30%
-#   0x1080 after_h = 0   byte identical to the default
-#   0x1060 = 0xffffff80  byte identical to the default
-#   0x1060 = 0x00000080  byte identical to the default
+# Six registers still differ between the depthwise and regular emissions:
+# 0x400c bit 3, 0x4030 bit 10, 0x4038 in two bytes, 0x4050, and RDMA 0x501c
+# and 0x5044. That is six more flashes to sweep one at a time, for a question
+# that does not need them.
 #
-# So of the two trailing pad fields one is load bearing and the other changes
-# nothing at all, and 0x1060 is inert. Together with round 95's sweep of 0x1084
-# and round 96's lane swap, the picture is closed: the last output column is
-# fed a raw zero, before the per-lane values are applied, and nothing in the
-# register file moves it.
-#
-# The fix is to not ask for it. Widen the input in memory so the last window
-# reads real bytes, fill the added columns with the input zero point, and tell
-# the CNA the image is that wide. 240 is the first width that keeps every unit
-# whole: 240 * 3 is 720, a round 45 of the 16 byte units, and the 0x1044 low
-# field stays at the 15 the capture already held. Six registers carry the
-# width and each one reproduces its captured literal exactly at 224, which is
-# how they were identified. 0x1080 is deliberately left alone: the pad is still
-# requested, it simply stops being reached.
+# The offline model reproduces the CPU reference exactly from the model file
+# and the same ramp perch.py feeds: 9 constant channels of 32 for mn_dw1, 5 at
+# the zero point, 256 distinct values, and 10 constant channels and 253
+# distinct for mn_conv0. So given the hardware's own outputs at known
+# coordinates, the map from accumulator to output can be SOLVED. perch.py now
+# prints two rows of sixteen raw values from the worst channel, with the
+# reference beside them, at fixed coordinates.
 #
 # DECISION RULE, written before the run:
-#   colN goes to 0 off>1 and the interior does not move
-#                        conv0 is finished, and the same for fc_kx2
-#   output comes out 119 columns wide or garbage
-#                        the CNA derives out_w from in_w and the four explicit
-#                        out_w registers do not win; the widening has to be
-#                        paid for another way
-#   colN unchanged       the CNA is not reading the widened line; 0x1090 or
-#                        0x118c is not what its captured literal says
+#   the samples fit (acc*S) >> SH exactly
+#                         the depthwise truncates and the search is for what
+#                         turns rounding on, with the arithmetic confirmed
+#   they fit with a different S or SH than mesa emits
+#                         it is not the rounding at all, it is the multiplier,
+#                         and the offline fit says what to write
+#   they fit neither      the accumulator entering the OUT_CVT is not the one
+#                         the model computes, and the BS stage is next
 #
-# Test 3 is the control: ROCKET_FC_WIDE=0 puts the narrow input back and must
-# reproduce round 97's numbers exactly, colN 2122 on fc_kx2 and 2058 on conv0.
-# Tests 6 and 7 pin the two registers whose meaning is least certain back to
-# their captured literals, so if the widening half works this round says which.
-#
-# The other half of round 97, for the record. The interior off-by-one lean is
-# real and one sided: conv0 773 pixels, 100% npu low; mn_dw1 56125, 100% low;
-# conv2d-cal only 10 and those the other way. Round to nearest on the 15 bit
-# multiplier emitted the SAME scale as the default on every model measured,
-# 0x7d34, so it changed nothing; truncation emitted 0x7d33 and was worse,
-# 99.95% against 99.99%. Rounding up is right and round to nearest agrees with
-# it everywhere measured, so it is now the default as the more defensible of
-# two answers that have never differed. ROCKET_RN=0 restores the old +1.
-# mn_dw1's 85.50% interior exact, all in one direction, is a separate and much
-# larger residual than conv0's and it is on the generic path. It is next.
+# The rest of the round is the standing regression, because a solved map is
+# worth nothing if conv0 or the regular path moved while it was measured.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -68,43 +52,29 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) fc_kx2 with the widened input. colN must go to 0 ====="
-	p fc_kx2.tflite ""
-
-	log ""
-	log "===== 2) conv0 with the widened input ====="
-	p mn_conv0.tflite ""
-
-	log ""
-	log "===== 3) CONTROL: narrow again. Must be colN 2122 and 2058 ====="
-	p fc_kx2.tflite "ROCKET_FC_WIDE=0"
-	p mn_conv0.tflite "ROCKET_FC_WIDE=0"
-
-	log ""
-	log "===== 4) the other two first-conv models, which were already exact ====="
-	p fc_kx0.tflite ""
-	p fc_imp.tflite ""
-
-	log ""
-	log "===== 5) and the mixed-tap one, whose 6 failures were all kx=2 ====="
-	p fc_impb.tflite ""
-
-	log ""
-	log "===== 6) 0x1078 pinned to its captured literal ====="
-	p mn_conv0.tflite "ROCKET_FC_1078=0x002900df"
-
-	log ""
-	log "===== 7) 0x118c pinned to its captured literal ====="
-	p mn_conv0.tflite "ROCKET_FC_118C=0x000e000d"
-
-	log ""
-	log "===== 8..10) REGRESSION. None of these is a first conv ====="
-	p conv2d-cal.tflite ""
+	log "===== 1) mn_dw1, the one to solve ====="
 	p mn_dw1.tflite ""
+
+	log ""
+	log "===== 2) conv2d-cal, the same instrument on a path that is right ====="
+	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== 3) mn_dw25, depthwise but nearly exact ====="
 	p mn_dw25.tflite ""
 
 	log ""
-	log "===== colN on 1 and 2, then check 3 reproduces 2122 and 2058.     ====="
+	log "===== 4) conv0, half-up by the model and 0.2% low on the board ====="
+	p mn_conv0.tflite ""
+
+	log ""
+	log "===== 5) fc_kx2, which must stay 32 of 32 ====="
+	p fc_kx2.tflite ""
+
+	log ""
+	log "===== The RAW lines in 1 and 2 are the round. Everything else is  ====="
+	log "===== the regression that says the map was measured on a good     ====="
+	log "===== build.                                                      ====="
 	sync
 }
 case "$1" in
