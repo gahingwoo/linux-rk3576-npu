@@ -2,42 +2,44 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 128. The pointwise weight buffer is grouped in 32s.
+# 2026-08-13 round 130. The pointwise weight stride says twice what it holds.
 #
-# ⚠ Round 127's two knobs were BOTH null and the reason is mine, not the
-# hardware's. RK3576 1x1 convolutions take their own packing path,
-# is_rk3576_pointwise, which returns before the generic loop I had put the
-# knobs in. That is the fifth knob in this project that could not reach the
-# code it was meant to test, and this time nothing caught it but the numbers
-# being suspiciously identical: two different groupings cannot give the same
-# 40 of 128 channels AND the same maxdiff 149.
+# Round 129's diff of pw32x64w56, which works, against pw64x64w56, which does
+# not, differs in nine registers and every one scales exactly as its own
+# formula says: 0x101c is ic*oc, 0x1020 is ic, 0x1028 carries surf*rows and
+# ic-1, 0x1030 carries wbpk, 0x103c and 0x1044 carry surf, 0x107c is ic-1 and
+# 0x4018 is an address that moves with the bigger input BO. Nothing there is
+# wrong on its own terms.
 #
-# Settled offline instead, which needs no board. posprobe_pw.py compiles a
-# position encoded 1x1 with the vendor toolkit and reads the weight blob back
-# out of the .rknn. At 64 input channels and 4 output:
+# What the arithmetic did turn up is an inconsistency inside this driver:
 #
-#   ic  0..31 for oc 0, then oc 1, oc 2, oc 3     first 128 bytes
-#   ic 32..63 for oc 0, then oc 1, oc 2, oc 3     second 128 bytes
+#   regular conv weight buffer   ALIGN(ic, 32) * 2 bytes per output channel
+#                                and tap, so two bytes per input channel
+#   pointwise weight buffer      ic bytes per output channel, so ONE
+#   wbpk at 0x1030               ic * k * k * 2, computed for the two byte form
 #
-# So the vendor writes [ic/32][oc][ic%32] and mesa writes one flat oc-major run
-# with all 64 input channels contiguous. At 32 channels or fewer there is one
-# group and the two are the SAME buffer, which is exactly why mn_pw2 has always
-# passed and why an earlier host check at small ic reported oc-major: it was,
-# within its range.
+# So for a pointwise the register says 64 bytes per kernel where the buffer
+# holds 32, and 128 where it holds 64. It is the same factor at both counts, so
+# it cannot by itself be what separates a working 32 from a failing 64, and it
+# is a real error either way: one of those two places is wrong about the same
+# buffer.
 #
 # DECISION RULE, written before the run:
-#   the four failing pointwise shapes come good
-#             the grouping is the fault and op4 should come with them
-#   they improve but are not exact
-#             the grouping is right and something else in this path is not
-#   they do not move
-#             the host probe and the board disagree, which would be the first
-#             time, and the probe would need re-running at another shape
+#   halving it fixes 64 and leaves 32 alone
+#             the stride was the fault and 32 survived it because one group
+#             gives the hardware nothing to stride over
+#   it fixes neither and breaks 32
+#             the doubling is what the hardware wants and the buffer is what
+#             should carry two bytes per input channel instead
+#   nothing moves at all
+#             0x1030's high half is not a stride the pointwise path uses, and
+#             the input BO layout is the last thing left
 #
-# Test 5 is the control: ROCKET_PW_FLAT restores the flat form and
-# pw64x128w56 must go back to 40 of 128. Test 6 is the other control, 32
-# channels, where the two forms are the same buffer, so it must not move at
-# all under either setting.
+# Test 3 is the control and it is the one that can embarrass this: 32 channels
+# works today WITH the doubling, so if halving it also leaves 32 working then
+# the register is not load bearing there and the reading is weaker than it
+# looks. If halving BREAKS 32, the register is load bearing and the buffer is
+# the half that is wrong.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -54,36 +56,36 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) the four pointwise shapes that failed ====="
-	p pw64x128w56.tflite ""
+	log "===== 1..2) THE TEST: halve the pointwise weight stride ====="
+	p pw64x64w56.tflite "ROCKET_PW_WBPK=1"
+	p pw64x128w56.tflite "ROCKET_PW_WBPK=1"
+
+	log ""
+	log "===== 3) CONTROL: 32 channels, which works WITH the doubling ====="
+	p pw32x64w56.tflite "ROCKET_PW_WBPK=1"
+
+	log ""
+	log "===== 4..5) the same two at the default, for the record ====="
 	p pw64x64w56.tflite ""
-	p pw128x128w56.tflite ""
-	p pw128x256w28.tflite ""
-
-	log ""
-	log "===== 5) CONTROL: flat form back, must return to 40 of 128 ====="
-	p pw64x128w56.tflite "ROCKET_PW_FLAT=1"
-
-	log ""
-	log "===== 6..7) CONTROL: 32 channels, same buffer either way ====="
 	p pw32x64w56.tflite ""
-	p mn_pw2.tflite ""
 
 	log ""
-	log "===== 8..10) MobileNet: op4 and the ladder past it ====="
-	p mn_L04.tflite ""
-	p mn_L06.tflite ""
-	p mn_L08.tflite ""
+	log "===== 6) and the flat layout as well, in case they interact ====="
+	p pw64x64w56.tflite "ROCKET_PW_WBPK=1 ROCKET_PW_FLAT=1"
 
 	log ""
-	log "===== 11..14) REGRESSION ====="
+	log "===== 7) op4 with whichever helps ====="
+	p mn_L04.tflite "ROCKET_PW_WBPK=1"
+
+	log ""
+	log "===== 8..11) REGRESSION ====="
 	p mn_L03.tflite ""
 	p mn_dw1.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 1..4 are the round, 5 says whether to believe it.           ====="
+	log "===== 1 vs 4 is the test, 3 vs 5 is what makes it mean something. ====="
 	sync
 }
 case "$1" in

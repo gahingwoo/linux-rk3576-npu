@@ -1,0 +1,55 @@
+From b1205c33a30c5862b54a05482088cb6984a227a0 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 13 Aug 2026 19:12:34 +1200
+Subject: [PATCH] rocket RK3576: knob for the pointwise weight stride, which is
+ inert
+
+0x1030's high half is weight bytes per kernel, computed as ic*k*k*2 for the two
+byte per input channel form the regular path stores. The RK3576 pointwise path
+stores one byte per input channel, so the register says double what its buffer
+holds, 64 where there are 32 and 128 where there are 64.
+
+Board: halving it for a pointwise changes nothing at all. 64 input channels
+stays at 25 of 64 and maxdiff 92, 128 output stays at 41 of 128 and maxdiff
+199, and 32 channels stays correct, so the field is not a stride this path
+uses. Kept as a knob because the inconsistency between the two places is real
+even if the hardware does not read it.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 806513a..d1fe372 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -579,7 +579,24 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+                       ? inw * ic / 64
+                       : DIV_ROUND_UP(inw * DIV_ROUND_UP(ic, FEATURE_ATOMIC_SIZE),
+                                      4);
+-   unsigned wbpk = dw ? (k * k * ic / 8) : (ic * k * k * 2); /* weight bytes/kernel */
++   /*
++    * Weight bytes per kernel. The regular path stores ALIGN(ic, 32) * 2 bytes
++    * per output channel and tap, hence the 2. The RK3576 POINTWISE path stores
++    * ic bytes per output channel, one per input channel, so for it this is
++    * double what the buffer actually holds: 64 where there are 32, and 128
++    * where there are 64.
++    *
++    * That is an inconsistency between two places in this driver rather than a
++    * reading of the hardware, and it is the same factor at both channel counts,
++    * so it cannot by itself be what separates a working 32 from a failing 64.
++    * It may still be what makes the failure possible once there is more than
++    * one weight group to stride over.
++    *
++    * ROCKET_PW_WBPK=1 drops the doubling for a pointwise only.
++    */
++   bool pw1 = !dw && k == 1;
++   unsigned wbpk = dw ? (k * k * ic / 8)
++                      : (ic * k * k * (pw1 && getenv("ROCKET_PW_WBPK") ? 1 : 2));
+    /* k_word tracks the kernel extent: per-byte = (k-1) (k=3 -> 0x0202, k=5 ->
+     * 0x0404). Was hard-coded to the k=3 value, which mis-fetched weights for k=5. */
+    unsigned k_word = (k >= 3) ? (((k - 1) << 8) | (k - 1)) : 0;
+-- 
+2.43.0
+
