@@ -2,35 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-12 v7 VERIFICATION. Not a round; this checks the upstream series.
+# 2026-08-13 round 124. Reuse the CBUF instead of running off the end of it.
 #
-# The v7 branch has never been run. What has been run is the fork with
-# task_con16=1 and no_poll=1, which is the same code by inspection and not the
-# same tree. The cover letter says "Tested on a Radxa ROCK 4D" and every claim
-# under "Where it stands" has to be true of THIS kernel:
+# Round 123 confirmed the second budget with four predictions at three channel
+# counts, and a channel count story cannot produce them:
 #
-#   the NPU probes with the two domain list and no attach failure
-#   a convolution submitted three times with three DIFFERENT inputs is byte
-#     exact each time, no reset in between, nothing retiring it but the IRQ
-#   /proc/interrupts counts up
-#   unbind and rebind is clean with no warning
+#   dw32w136   4624 entries   PASS, predicted    dw32w152  5776   FAIL, predicted
+#   dw128w64   4096 entries   PASS, predicted    dw128w80  6400   FAIL, predicted
+#   dw64w102   5202 entries   FAIL, which tightens the limit to [5000, 5202)
 #
-# It also answers a question the series does not: the fork carries patches that
-# v7 does not, including the rk_iommu flush_iotlb_all, which is neither
-# upstream nor in this series. If the NPU only works with those, the cover
-# letter's tested claim is wrong and the series is incomplete.
+# Ten banks is 5120 and sits in that range. So a window may stage about 2560
+# entries, five banks, and the whole layer about 5120, ten.
 #
-# perch.py takes ROCKET_SEED now, so the three submits differ in their input.
-# Every earlier "byte exact N times in a row" figure fed the same input and
-# could not tell a recomputation from an untouched output buffer. This can.
+# The reason is in the addressing. Window 0 writes at CBUF row 0 and every
+# later window addresses the buffer by ABSOLUTE input row: the write position
+# is the running staged count and the reuse base at 0x103c is in_lo, and those
+# two agree only because staging starts at row 0 and never skips. So the whole
+# layer's input has to be resident at once, and nothing ever checks that it
+# fits.
 #
-# WHAT WOULD SINK IT:
-#   any of the three runs not 128/128        the series does not compute here
-#   the interrupt count not rising           something still retires jobs
-#                                            without the interrupt
-#   an attach failure or a probe warning     the domain list move broke probe
-#   a warning on unbind or rebind            the teardown lost something with
-#                                            the poll
+# The fix is to let it not fit. When the running total would run past the
+# buffer, start again at CBUF row 0, restage that window in full, and make both
+# bases relative to whatever input row now sits at row 0. For a restarted
+# window both come out zero, which is exactly what window 0 already writes.
+#
+# On dw64w112 that gives 45 rows, then 43 at CBUF row 45, then a restart: the
+# third window would have needed 6272 entries resident and instead stages its
+# own 26 rows from row 0, 1456 entries.
+#
+# DECISION RULE, written before the run:
+#   the four over-budget layers come good and nothing else moves
+#             the buffer simply had to be reused, and both faults are closed
+#   they improve but are not exact
+#             reuse is right and one of the two bases is not
+#   they do not move
+#             the budget is real but this is not how the hardware wants it met
+#
+# Test 10 is the control: ROCKET_CBUF_TOTAL=100000 makes the overflow test
+# never fire, so dw64w104 must break again exactly as it did in round 122.
+#
+# ⚠ mn_L03 is the one that matters. It is 64 channels, 112 wide, stride 2, and
+# 6272 entries, which is why the round 119 window budget left it at 1 of 64. If
+# the reuse is right it should come good too, and MobileNet's operator 3 with
+# it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -44,56 +58,42 @@ start() {
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
+	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== kernel and probe ====="
-	uname -r > "$C"
-	dmesg | grep -iE "rocket|rknn|npu" | tail -12 > "$C"
-	log ""
-	log "===== power domains and clocks ====="
-	dmesg | grep -iE "power domain|attach" | tail -6 > "$C"
+	log "===== 1..4) the over-budget layers ====="
+	p dw64w104.tflite ""
+	p dw64w112.tflite ""
+	p dw32w152.tflite ""
+	p dw128w80.tflite ""
 
 	log ""
-	log "===== interrupts BEFORE ====="
-	grep -iE "npu|rknn|rocket" /proc/interrupts > "$C" 2>/dev/null || \
-		log "  no NPU line in /proc/interrupts yet"
+	log "===== 5) THE ONE THAT MATTERS: MobileNet operator 3 ====="
+	p mn_L03.tflite ""
 
 	log ""
-	log "===== three submits, three DIFFERENT inputs, no reset between ====="
-	p conv2d-cal.tflite "ROCKET_SEED=7"
-	p conv2d-cal.tflite "ROCKET_SEED=11"
-	p conv2d-cal.tflite "ROCKET_SEED=13"
+	log "===== 6..7) and the ladder either side of it ====="
+	p mn_L02.tflite ""
+	p mn_L04.tflite ""
 
 	log ""
-	log "===== interrupts AFTER. This must have risen ====="
-	grep -iE "npu|rknn|rocket" /proc/interrupts > "$C" 2>/dev/null
+	log "===== 8..9) CONTROL: under budget, must not move ====="
+	p dw64w100.tflite ""
+	p dw32w136.tflite ""
 
 	log ""
-	log "===== the rest of the standing set, on this kernel ====="
-	p mn_conv0.tflite ""
+	log "===== 10) CONTROL: no total budget, dw64w104 must break again ====="
+	p dw64w104.tflite "ROCKET_CBUF_TOTAL=100000"
+
+	log ""
+	log "===== 11..14) REGRESSION ====="
 	p mn_dw1.tflite ""
 	p mn_dw25.tflite ""
-	p dw64w96.tflite ""
+	p conv2d-cal.tflite ""
+	p mn_conv0.tflite ""
 
 	log ""
-	log "===== unbind and rebind ====="
-	D=$(ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep -E "^[0-9a-f]+\." | head -1)
-	if [ -n "$D" ]; then
-		echo "$D" > /sys/bus/platform/drivers/rocket/unbind 2>"$C"
-		sleep 1
-		echo "$D" > /sys/bus/platform/drivers/rocket/bind 2>"$C"
-		sleep 1
-		dmesg | tail -8 > "$C"
-	else
-		log "  could not find the platform device to unbind"
-	fi
-
-	log ""
-	log "===== dmesg WARN/BUG, which must be empty ====="
-	dmesg | grep -iE "WARNING|BUG:|call trace|refcount" | tail -10 > "$C"
-
-	log ""
-	log "===== v7 verification done ====="
+	log "===== Test 5 first. If op3 is right, the ladder moves on.         ====="
 	sync
 }
 case "$1" in

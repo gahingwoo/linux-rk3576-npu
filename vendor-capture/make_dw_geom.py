@@ -179,7 +179,14 @@ def main():
     # can be asked without a split in the way, rounds 120 to 121.
     for c, w in ((64, 48), (64, 64), (64, 70), (64, 72), (64, 80), (64, 96),
                  (64, 110), (32, 96), (32, 109), (32, 110), (32, 111),
-                 (16, 96), (128, 44), (32, 71), (32, 72)):
+                 (16, 96), (128, 44), (32, 71), (32, 72),
+                 # rounds 122: the even bisect between 96, which passes, and
+                 # 110, which does not, and two odd widths where surf is exact
+                 (64, 98), (64, 100), (64, 104), (64, 108),
+                 (64, 71), (32, 31),
+                 # round 123: the WHOLE layer's staged CBUF, tested at three
+                 # channel counts. Per window is 5 banks; the total looks like 10
+                 (32, 136), (32, 152), (64, 102), (128, 64), (128, 80)):
         print(cut_depthwise(out, "dw%dw%d" % (c, w), c, w))
 
     # Stride patched onto models that are correct at stride 1, rounds 106..110.

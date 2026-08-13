@@ -1,0 +1,99 @@
+From 7a8ae4d536c75156e0bac9cfbf3a4f10fbe37788 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 13 Aug 2026 18:28:24 +1200
+Subject: [PATCH] rocket RK3576: reuse the input CBUF instead of running off
+ the end of it
+
+Window 0 writes at CBUF row 0 and every later window addresses the buffer by
+absolute input row: the write position is the running staged count and the
+reuse base at 0x103c is in_lo, and those agree only because staging starts at
+row 0 and never skips. So a layer's whole input had to be resident at once and
+nothing checked that it fits.
+
+Measured on a ROCK 4D: a window may stage about 2560 entries, five banks, and
+the whole layer about 5120, ten. Four predictions at three channel counts
+confirmed it, and a channel count story cannot produce them: 32 channels passes
+at 136 wide, 4624 entries, and fails at 152, 5776, while 128 channels passes at
+64 wide, 4096, and fails at 80, 6400. A fifth put the limit in [5000, 5202).
+
+When the running total would run past the buffer, start again at CBUF row 0,
+restage that window in full, and make both bases relative to whatever input row
+now sits at row 0. For a restarted window both come out zero, which is what
+window 0 already writes.
+
+Board: dw64w104, dw32w152 and dw128w80 go from 0 channels correct to all of
+them, the under-budget layers do not move, and ROCKET_CBUF_TOTAL restores the
+old behaviour and breaks dw64w104 again.
+
+MobileNet's operator 3 comes with them, from 1 of 64 channels to 21 of 64 at
+maxdiff 13, which is exactly what an offline model of the hardware's own
+arithmetic predicts for it. What is left there is the CPU reference's own
+rounding carried down the chain, not a defect.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_task.c | 35 ++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
+index 2eb8543..91f4647 100644
+--- a/src/gallium/drivers/rocket/rkt_task.c
++++ b/src/gallium/drivers/rocket/rkt_task.c
+@@ -324,6 +324,32 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+       unsigned out_start = 0;
+       unsigned cbuf_rows = 0;
+       unsigned staged_end = 0;   /* input rows already in the CBUF */
++      /*
++       * The absolute input row that currently sits at CBUF row 0. Window 0
++       * writes at row 0 and every later window addresses the buffer by
++       * absolute input row, so the whole layer's input has to fit at once.
++       *
++       * It does not always. Measured on a ROCK 4D, a window may stage about
++       * 2560 entries but the WHOLE layer only about 5120, ten banks, and past
++       * that the surface comes back garbage:
++       *
++       *   pass  4608, 4802, 5000 entries    fail  5202, 5408, 6050, 6272
++       *
++       * Four predictions at three channel counts confirmed it and a channel
++       * count story cannot produce them: 32 channels passes at 136 wide, 4624,
++       * and fails at 152, 5776, while 128 channels passes at 64 wide, 4096,
++       * and fails at 80, 6400.
++       *
++       * So when the running total would run past the buffer, start again at
++       * CBUF row 0 and restage this window in full. Both bases are then
++       * relative to cbuf_base, which is what the emitter already multiplies by
++       * the surface stride.
++       *
++       * ROCKET_CBUF_TOTAL overrides the budget.
++       */
++      unsigned cbuf_base = 0;
++      unsigned total_entries =
++         rkt_env_u32("ROCKET_CBUF_TOTAL", 10 * operation->cbuf_entries_per_bank);
+ 
+       while (out_start < full_oh) {
+          struct split_task task = {0};
+@@ -385,13 +411,20 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+             staged = win_irows;
+          }
+ 
++         if ((cbuf_rows + staged) * entries_per_slice > total_entries) {
++            cbuf_base = in_lo;
++            cbuf_rows = 0;
++            new_lo = in_lo;
++            staged = win_irows;
++         }
++
+          task.output_height = win_orows;
+          task.input_height = win_irows;
+          task.staged_rows = staged;
+          task.input_offset = new_lo * line_in;
+          task.output_offset = out_start * line_out;
+          task.cbuf_input_row_start = cbuf_rows;
+-         task.cbuf_reuse_row = in_lo;
++         task.cbuf_reuse_row = in_lo - cbuf_base;
+          task.pad_top = (out_start == 0) ? pad_top : 0;
+          task.pad_bottom = last ? pad_bottom : 0;
+          task.pad_left = pad_left;
+-- 
+2.43.0
+

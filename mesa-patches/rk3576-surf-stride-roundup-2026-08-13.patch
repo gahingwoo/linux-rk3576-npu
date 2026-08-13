@@ -1,0 +1,69 @@
+From da91716e59d54a741802bb37954a4b9df0e46e00 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 13 Aug 2026 18:02:08 +1200
+Subject: [PATCH] rocket RK3576: the input CBUF surface stride was an integer
+ division
+
+surf was inw * ic / 64. A row costs inw * DIV_ROUND_UP(ic, 16) feature atomics
+of 16 bytes and this counts them in 64 byte units, so it is inw * atomics / 4.
+The two agree only when ic is a multiple of 16, and the old form truncates.
+
+At 32 channels that costs half a unit on every odd width, and on the board
+every odd width failed while every even one passed, with nothing else to
+separate them: dw32w71 was 2 of 32 channels and dw32w72 beside it 32 of 32,
+one row window each and well inside the CBUF budget.
+
+The derived form reproduces the old value exactly on all ten shapes that
+already passed, at 16, 32, 64, 128 and 1024 channels, and changes only the
+three that failed.
+
+Board: dw32w71, dw32w109 and dw32w111 go from 2, 0 and 0 of 32 channels to 32
+of 32, dw32w31 passes, and the even widths beside them do not move. The
+sharpest check is dw64w71, an odd width where surf was already exact because
+64 channels divide evenly: it passes on both settings, which it must if the
+truncation is the mechanism. ROCKET_SURF_TRUNC restores the old form and
+breaks dw32w71 again.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_regcmd.c | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
+index 60a05df..806513a 100644
+--- a/src/gallium/drivers/rocket/rkt_regcmd.c
++++ b/src/gallium/drivers/rocket/rkt_regcmd.c
+@@ -556,7 +556,29 @@ fill_regcmd_rk3576_normal(struct rkt_ml_subgraph *subgraph,
+    bool capped = win_orows < full_oh;           /* a window of a larger output */
+    unsigned wnum = task->num;
+ 
+-   unsigned surf = inw * ic / 64;                /* input CBUF surface stride */
++   /*
++    * Input CBUF surface stride. A row costs inw * DIV_ROUND_UP(ic, 16) feature
++    * atomics of 16 bytes, and this counts them in 64 byte units, so it is
++    * inw * atomics / 4. Writing it as inw * ic / 64 is the same thing only
++    * when ic is a multiple of 16, and it truncates.
++    *
++    * Board: at 32 channels the truncation costs half a unit on every ODD
++    * width, and every odd width measured fails while every even one passes.
++    * dw32w71 is 2 of 32 channels and dw32w72 beside it is 32 of 32, one row
++    * window each and well inside the CBUF budget, so nothing else separates
++    * them. 64 channels never truncates, inw * 4 / 4 being exact, and 64
++    * channel layers fail for a different reason.
++    *
++    * This form reproduces the old value exactly on every case that passes
++    * today: 112 wide at 16, 32 and 64 channels, 96 wide at 16, 32 and 64, 44
++    * wide at 128, and 7 wide at 1024.
++    *
++    * ROCKET_SURF_TRUNC=1 restores the truncating form.
++    */
++   unsigned surf = getenv("ROCKET_SURF_TRUNC")
++                      ? inw * ic / 64
++                      : DIV_ROUND_UP(inw * DIV_ROUND_UP(ic, FEATURE_ATOMIC_SIZE),
++                                     4);
+    unsigned wbpk = dw ? (k * k * ic / 8) : (ic * k * k * 2); /* weight bytes/kernel */
+    /* k_word tracks the kernel extent: per-byte = (k-1) (k=3 -> 0x0202, k=5 ->
+     * 0x0404). Was hard-coded to the k=3 value, which mis-fetched weights for k=5. */
+-- 
+2.43.0
+
