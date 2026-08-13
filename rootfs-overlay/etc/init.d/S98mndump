@@ -2,56 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 133. The pointwise weight layout, third and final form.
+# 2026-08-13 round 134. How far up MobileNet does it go now.
 #
-# Round 132's ladder said the fault is not the tap count and not the sum. With
-# two live taps in input group 0, output channels 0 to 31 computed and 32 to 63
-# came out CONSTANT; with the taps in input group 1 the two halves swapped
-# exactly. So an output channel only ever sees the input group with its own
-# index, which is a buffer address, not an adder.
+# Round 133 landed the tiled 1x1 weight layout and every pointwise shape came
+# out correct: 64 to 64, 64 to 128 and 128 to 128 all at maxdiff 1, the tap
+# ladder went from 0 of 64 to 64 of 64, and the ROCKET_PW_ICGROUP control put
+# the old layout back and reproduced the old failure exactly, 25 of 64.
 #
-# Read off the vendor's own compiler afterwards, at a shape big enough to see
-# it. The 1x1 weight buffer is 32x32 tiles, tiled in BOTH axes:
+# More to the point, operators 3 and 4 of MobileNet came off the board at 21 of
+# 64 maxdiff 13 and 18 of 128 maxdiff 14, which is not "still failing". It is
+# EXACTLY what correct hardware scores against tflite there.
 #
-#     [oc/32][ic/32][oc%32][ic%32]
+# That number now comes from a tool rather than a memory: chainmodel.py runs the
+# whole graph twice from the model file, once with tflite's requant and once
+# with the hardware's, and prints what a perfect accelerator would score. A
+# channel count means nothing past the first layer or two without it, because
+# tflite's double rounding compounds through the chain.
 #
-# with the edge tiles cut short, not padded. Every layout this driver has used
-# agrees with that whenever oc or ic is 32 or less, which is every shape the
-# layout had ever been checked at, and the flat form is 3968 of 4096 bytes
-# wrong at 64 by 64 while round 128's ic grouping is 2048 of 4096 wrong,
-# exactly the half with ic above 32.
+# DECISION RULE, written before the run. For each operator, correct is the
+# model's own figure and nothing else:
 #
-# That was measured with two position encoded models rather than one: with one
-# byte per (oc, ic) pair the probe caps at 255 positions, which is why every
-# earlier reading stopped at 32 output channels. One model whose weight depends
-# only on the output channel and one only on the input channel need 64 levels
-# each, and a byte then names its coordinates in the pair of them. Confirmed at
-# 64 by 64 and again at 48 by 40 for the cut tiles.
+#     op    correct hardware scores        was
+#      3    21/64   maxdiff 13    <- board matched this in round 133
+#      4    18/128  maxdiff 14    <- board matched this in round 133
+#      5     9/128  maxdiff 13
+#      6     4/128  maxdiff 23        0/128 maxdiff 255
+#      7     7/128  maxdiff 10
+#      8    36/256  maxdiff 7         0/256 maxdiff 255
+#     12   166/512  maxdiff 11
+#     18    92/512  maxdiff 7
+#     24   671/1024 maxdiff 6
+#     26   572/1024 maxdiff 25
 #
-# DECISION RULE, written before the run:
+#   every operator on its figure
+#             MobileNet is correct end to end and the next thing is accuracy on
+#             a real image, not a channel count.
+#   the first operator that reads maxdiff in the hundreds
+#             that operator is the defect and everything above it is downstream.
+#             Read its kind: a depthwise at 28 wide or narrower has never been
+#             run here, and neither has a 1x1 at 512 or 1024 channels.
+#   an operator far BELOW its figure with a small maxdiff
+#             not a defect, that is the reference artifact and the model says
+#             so. Do not chase it.
 #
-#   pw64x64w56 and pw64x128w56 correct, and pw32x64w56 still correct
-#             the layout is the answer. Then mn_L04 is the next thing to read,
-#             and if op4 is correct the whole chain moves.
-#   the 64 channel shapes improve but are not correct
-#             the layout was one of two faults, and the residual is what to
-#             measure next. Read the affine slope: 1.0 means an arithmetic
-#             residue, 0.5 means another whole group is misplaced.
-#   nothing changes
-#             the buffer is not what the CMAC reads, which contradicts round
-#             132, so suspect the build before the theory.
+# CONTROLS that can fail: entries 1 and 2 are operators 3 and 4, which matched
+# the model yesterday and must match it again, and conv2d-cal and mn_conv0 must
+# stay whole. Nothing in mesa or the kernel changed since round 133, so a move
+# in any of those means the image, not the driver.
 #
-# CONTROL that can fail: ROCKET_PW_ICGROUP restores round 128's layout, so
-# entry 3 must reproduce today's failure exactly, 25 of 64. If the knob changes
-# nothing then it is not reaching the path and entry 2 proves nothing either.
-# This project has been caught by that five times.
-#
-# The tap ladder is kept as the mechanism check. pwt_lo2 and pwt_hi2 must go
-# from 0 of 64 to 64 of 64 and their constant halves must disappear, because
-# under the new layout the taps land in the tile their own output channel
-# reads. pwt_all was already correct and must stay correct: its weights are the
-# same for ic and ic+32, so it is invariant under the old fault and cannot
-# improve, which makes it the sharpest regression in the set.
+# The two tail shapes at the end are a known gap, not a MobileNet blocker: every
+# channel count in MobileNet is a multiple of 32 and pw33 is not. 48 is a 16
+# wide tail tile and 33 a one wide one, which says whether the cut edge is
+# wrong in general or only when it is very small.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -68,44 +70,43 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) THE TEST: the shapes that fail on input channels ====="
-	p pw64x64w56.tflite ""
-	p pw64x128w56.tflite ""
-
-	log ""
-	log "===== 3) CONTROL: round 128's layout, which must still fail ====="
-	p pw64x64w56.tflite "ROCKET_PW_ICGROUP=1"
-
-	log ""
-	log "===== 4..5) the other input channel counts, and the boundary ====="
-	p pw128x128w56.tflite ""
-	p pw33x64w56.tflite ""
-
-	log ""
-	log "===== 6..8) the mechanism: the taps must now land in their own tile ====="
-	p pwt_lo2.tflite "ROCKET_SEED=249"
-	p pwt_hi2.tflite "ROCKET_SEED=249"
-	p pwt_lo32.tflite "ROCKET_SEED=249"
-
-	log ""
-	log "===== 9) REGRESSION: invariant under the old fault, must stay 64/64 ====="
-	p pwt_all.tflite "ROCKET_SEED=249"
-
-	log ""
-	log "===== 10) MobileNet operator 4, the reason for all of this ====="
+	log "===== 1..2) ANCHOR: operators 3 and 4, which must stay on the model ====="
+	p mn_L03.tflite ""
 	p mn_L04.tflite ""
 
 	log ""
-	log "===== 11..15) REGRESSION ====="
-	p pw32x64w56.tflite ""
-	p pwimp64x64w40.tflite ""
-	p mn_L03.tflite ""
+	log "===== 3..6) the next four operators: 9/128, 4/128, 7/128, 36/256 ====="
+	p mn_L05.tflite ""
+	p mn_L06.tflite ""
+	p mn_L07.tflite ""
+	p mn_L08.tflite ""
+
+	log ""
+	log "===== 7..10) deeper: 166/512, 92/512, 671/1024, 572/1024 ====="
+	p mn_L12.tflite ""
+	p mn_L18.tflite ""
+	p mn_L24.tflite ""
+	p mn_L26.tflite ""
+
+	log ""
+	log "===== 11) the whole MobileNet ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
+
+	log ""
+	log "===== 12..13) the cut tile, a known gap and not a blocker ====="
+	p pw48x64w56.tflite ""
+	p pw33x64w56.tflite ""
+
+	log ""
+	log "===== 14..16) REGRESSION ====="
+	p pw64x128w56.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Entry 3 must FAIL and entry 9 must PASS. Only then do 1 and 2 ====="
-	log "===== mean anything.                                                ====="
+	log "===== Compare each operator against the table in the header. A big  ====="
+	log "===== maxdiff is a defect; a low channel count with a small maxdiff ====="
+	log "===== is the reference and is not.                                  ====="
 	sync
 }
 case "$1" in
