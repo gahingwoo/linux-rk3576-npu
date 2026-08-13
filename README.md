@@ -5,6 +5,17 @@ Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 MobileNet V1 runs end to end on the NPU as of 2026-08-13: 995 of its 1001
 outputs are within one count of the CPU reference. Details below.
 
+## Companion projects
+
+Three repositories, one board. The name of the third is a joke: a 叉烧炉 is the oven,
+叉烧 is what comes out of it.
+
+| repo | what it is |
+|---|---|
+| **linux-rk3576-npu** | this one: the open RK3576 NPU driver and Mesa work. `rocket` on the list, Teflon in Mesa, and the register knowledge the other two are built on |
+| [kiln](https://github.com/gahingwoo/kiln) | the **vendor** RKLLM/RKNN stack on a mainline kernel. LLM and vision on the board today, through a closed runtime, and the yardstick the open stack is measured against |
+| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. Day one; it starts by reading what the vendor asks the hardware to do |
+
 ## Upstream
 
 The driver support is on the list. Current series:
