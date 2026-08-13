@@ -345,6 +345,12 @@ def main():
                       (32, 64, 1)):                    # one pixel at a shape known good
         print(cut_pointwise(out, "pw%dx%dw%d" % (ic, oc, w), ic, oc, w))
 
+    # Round 136: how wide the output tail has to be. Board, round 135: a tail
+    # of 8 is correct and a tail of 1 is an EMPTY convolution, nothing between
+    # them measured. MobileNet's last operator is 1001 channels, a tail of 9.
+    for oc in (34, 36, 41, 47, 56):
+        print(cut_pointwise(out, "pw64x%dw56" % oc, 64, oc, 56))
+
     # MobileNet cut off after each operator, rounds 103 and 104.
     for op, tensor in ((0, 7), (1, 33), (2, 37), (3, 39), (4, 43), (5, 45),
                        (6, 49), (7, 51), (8, 55), (12, 67), (18, 85),

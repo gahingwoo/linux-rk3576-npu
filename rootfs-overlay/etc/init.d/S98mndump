@@ -2,56 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 135. The last operator, and the register that is not the
-# stride's.
+# 2026-08-13 round 136. The CBUF row cost, and how wide an output tail has to
+# be before it disappears.
 #
-# Round 134 walked the ladder and MobileNet is on the model from operator 3 to
-# operator 7 to the channel and to the maxdiff, and within a few channels the
-# rest of the way. The whole network is not, and the log says why: its output
-# is every value at the zero point, an empty convolution, and the operator that
-# produces it is number 28, 1024 to 1001 at ONE PIXEL. That shape has two
-# things nothing here has ever run: an output channel count that is not a
-# multiple of 32, and a 1x1 surface.
+# Round 135 answered three of its four questions and left one clean lead.
 #
-# Two separate things are under test this round.
+#   the ONE PIXEL surface is fine        64/64, 64/64 and 40/40 on three w1
+#                                        models, values distinct and matching
+#   an output tail of 8 is fine          pw64x40w56 is 40 of 40 at maxdiff 1
+#   an output tail of 1 is EMPTY         pw64x33w56 is every channel pinned at
+#                                        the zero point, npu distinct=1
+#   the split pair changed nothing       entries 2 and 3 came out byte for byte
+#                                        identical, so this shape was already
+#                                        on the same value either way
 #
-# 1. WHICH AXIS THE CUT TILE BREAKS. pw48 and pw33 fail with 105 and 255
-#    maxdiff, and both are INPUT channel tails. Yet the tiled weight layout was
-#    checked against the vendor's own compiler at 48 by 64 and at 64 by 40 after
-#    that run, and it matches byte for byte at both, so the tail is not the
-#    layout. Operator 28's tail is on the OUTPUT axis, which no probe has ever
-#    had. pw64x40 and pw64x33 are that, and the w1 models are the single pixel.
+# That last one is not a void control, it is a measurement: the derived rule and
+# the stride keyed rule agree here, because this driver SPLITS pw48 into two
+# windows of 45 and 11 rows while the vendor runs it in one. The register dump
+# from entry 11 says so directly, 0x102c reading 0x0037002c against the vendor's
+# 0x00370037 for the same shape, and it says why: our 0x1028 high half is 1890,
+# which is 42 rows worth of a 42 unit row, where the vendor's is 3136, 56 by 56.
 #
-# 2. 0x1018 AND 0x1040 ARE NOT KEYED OFF THE STRIDE. They were `s != 2` here,
-#    fitted to two captures. Reading 0x1018 out of 87 compiled .rknn and
-#    comparing it against each one's own window count, the split pair appears
-#    exactly when the window holds fewer rows than the layer has, in 86 of 87.
-#    The one exception is a 1x1 whose window is 79 rows of 80.
+# So the row cost itself was wrong. A column costs DIV_ROUND_UP(ic, 16) atomics
+# of 16 bytes, four to a 64 byte unit, EXCEPT that when the last unit would hold
+# exactly three atomics nothing packs and the row costs a whole unit per column.
+# rkt_task.c has always had that rule and rkt_regcmd.c used a plain division.
+# They agree unless the atomic count is 3 modulo 4, which is 33 to 48 input
+# channels, or 113 to 128, and nothing else this project has ever run.
 #
-#    That rule now runs by default. It changes the value for every stride 1
-#    layer that fits in one window, which includes pw48x64w56, where the vendor
-#    emits 0x40000404 and this driver has been emitting 0x40000505.
+# The vendor sides with the rule, in its own compiled files: c_48 at 80 wide
+# carries 80 where the division says 60, pw48 at 56 wide carries 56 against 42,
+# dwbig_112 at 7 wide carries 14 against 13.
 #
 # DECISION RULE, written before the run:
 #
 #   pw48 and pw33 correct, everything else unchanged
-#             the split pair was the input tail fault. Ship the derived rule.
-#   pw48 and pw33 unchanged, and entry 3 reproduces today's numbers
-#             the pair is not it. Then read the dump in entry 11 against the
-#             vendor's stream for the same shape, which is already extracted.
-#   a shape that passes today FAILS
-#             the derived rule is wrong somewhere. pw32x64w56 is the one to
-#             watch: it fits in one window, so its pair changes this round,
-#             and it has been correct since round 133.
+#             the row cost was the input tail fault. Note that this also stops
+#             pw48 being split in two, so it tests the split path's absence.
+#   pw48 and pw33 still wrong but DIFFERENT
+#             the row cost was one of two faults there. Compare the new
+#             register dump against the vendor's, which now agrees on 0x103c.
+#   entry 3 does not reproduce round 135's 28 of 64 at maxdiff 105
+#             the control is void, because ROCKET_SURF_DIV is supposed to put
+#             back exactly what ran yesterday.
 #
-#   the w1 models empty or wrong while pw64x64w56 stays correct
-#             the single pixel surface is its own fault and is what stands
-#             between here and the whole network.
+#   the output tail ladder
+#             34, 36, 41, 47 and 56 output channels bisect between a tail of 1,
+#             which is empty, and a tail of 8, which is correct. MobileNet's
+#             last operator has a tail of 9, so if the ladder is clean from 4
+#             upwards then the empty final layer is NOT its tail and the next
+#             suspect is its 1024 input channels.
 #
-# CONTROL that can fail: entry 3 runs pw48 with ROCKET_CBUF_STRIDE=1, which
-# puts the stride keyed value back. It must reproduce round 134's 28 of 64 at
-# maxdiff 105. If entry 2 and entry 3 read the same, the knob is not reaching
-# the path and neither number means anything.
+# CONTROLS that can fail: entry 3 restores the old row cost on the failing
+# shape, and pw64x64w56, pw32x64w56, conv2d-cal, mn_conv0 and mn_L04 are all
+# unchanged by the new rule on paper, since none of them is 3 atomics per row.
+# If any of those moves, the rule is not doing what its comment says.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -68,44 +73,42 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) the INPUT channel tails, with the derived split pair ====="
-	p pw33x64w56.tflite ""
+	log "===== 1..2) THE TEST: the input tails, with the packed row cost ====="
 	p pw48x64w56.tflite ""
+	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 3) CONTROL: the same shape with the stride keyed pair back ====="
-	p pw48x64w56.tflite "ROCKET_CBUF_STRIDE=1"
+	log "===== 3) CONTROL: the same shape with the old row cost back ====="
+	p pw48x64w56.tflite "ROCKET_SURF_DIV=1"
 
 	log ""
-	log "===== 4..5) the OUTPUT channel tails, which no probe has ever had ====="
-	p pw64x40w56.tflite ""
+	log "===== 4..8) the OUTPUT tail ladder: 34, 36, 41, 47, 56 ====="
+	p pw64x34w56.tflite ""
+	p pw64x36w56.tflite ""
+	p pw64x41w56.tflite ""
+	p pw64x47w56.tflite ""
+	p pw64x56w56.tflite ""
+
+	log ""
+	log "===== 9..10) the two ends of that ladder, for the record ====="
 	p pw64x33w56.tflite ""
+	p pw64x40w56.tflite ""
 
 	log ""
-	log "===== 6..8) ONE PIXEL surfaces, which operator 28 runs on ====="
-	p pw64x64w1.tflite ""
-	p pw32x64w1.tflite ""
-	p pw64x40w1.tflite ""
-
-	log ""
-	log "===== 9..10) REGRESSION, both change their pair this round ====="
-	p pw32x64w56.tflite ""
-	p pw64x64w56.tflite ""
-
-	log ""
-	log "===== 11) our register stream for the failing shape ====="
+	log "===== 11) our register stream for the input tail shape ====="
 	p pw48x64w56.tflite "ROCKET_DUMP_REGCMD=1"
 
 	log ""
-	log "===== 12..15) REGRESSION ====="
+	log "===== 12..16) REGRESSION, none of these is 3 atomics per row ====="
+	p pw64x64w56.tflite ""
+	p pw32x64w56.tflite ""
 	p mn_L04.tflite ""
-	p mn_L03.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Entry 3 must reproduce 28 of 64 at maxdiff 105, or entry 2 ====="
-	log "===== proves nothing.                                            ====="
+	log "===== Entry 3 must read 28 of 64 at maxdiff 105, and the ladder    ====="
+	log "===== says whether MobileNet's last operator is a tail problem.    ====="
 	sync
 }
 case "$1" in

@@ -2190,7 +2190,7 @@ index 1f616df..81e446e 100644
        if (tensor)
           pipe_resource_reference(tensor, NULL);
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
-index 04dea3d..f991569 100644
+index 04dea3d..b94ea24 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
 +++ b/src/gallium/drivers/rocket/rkt_ml.h
 @@ -1,5 +1,6 @@
@@ -2272,7 +2272,7 @@ index 04dea3d..f991569 100644
  };
  
  bool
-@@ -148,4 +185,40 @@ bool rkt_is_depthwise(const struct pipe_ml_operation *poperation);
+@@ -148,4 +185,71 @@ bool rkt_is_depthwise(const struct pipe_ml_operation *poperation);
  void rkt_dump_buffer(const uint8_t *ptr, char *name, int operation_nr,
                       int suboperation_nr, int offset, unsigned size);
  
@@ -2312,9 +2312,40 @@ index 04dea3d..f991569 100644
 +                        : input_width;
 +}
 +
++/*
++ * The 64 byte units one input row occupies in the CBUF, which is what the CNA
++ * carries in 0x103c, 0x1044 and the high half of 0x1028.
++ *
++ * A column costs DIV_ROUND_UP(ic, 16) feature atomics of 16 bytes, so four to
++ * a unit, EXCEPT that when the last unit of a column would hold exactly three
++ * atomics nothing is packed at all and the row costs a whole unit per column.
++ *
++ * rkt_task.c has always carried that same trailing-three rule, in units of the
++ * 128 byte CBUF entry it banks with, and this file used a plain division for
++ * the register instead. The two agree unless the atomic count is 3 modulo 4,
++ * that is unless the layer has 33 to 48 input channels, or 113 to 128, and so
++ * on.
++ *
++ * The vendor sides with the rule. Across 87 compiled .rknn it reproduces
++ * 0x103c wherever the geometry can be read back cleanly, while the division is
++ * wrong on every such layer: c_48 at 80 wide reads 80 against 60, pw48 at 56
++ * wide reads 56 against 42, dwbig_112 at 7 wide reads 14 against 13.
++ */
++static inline unsigned
++rkt_entries_per_slice(unsigned input_width, unsigned input_channels)
++{
++   const unsigned atomics_per_unit = 4;     /* 64 bytes of 16 byte atomics */
++   unsigned total = DIV_ROUND_UP(input_channels, FEATURE_ATOMIC_SIZE);
++   unsigned last = total % atomics_per_unit;
++
++   return (total / atomics_per_unit) * input_width
++          + (last == 3 ? input_width
++                       : DIV_ROUND_UP(last * input_width, atomics_per_unit));
++}
++
  #endif /* RKT_ML_H */
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..94da81f 100644
+index be992fd..6bd926b 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -1,12 +1,80 @@
@@ -2398,7 +2429,7 @@ index be992fd..94da81f 100644
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +96,1053 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +96,1067 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -2879,12 +2910,26 @@ index be992fd..94da81f 100644
 +    * today: 112 wide at 16, 32 and 64 channels, 96 wide at 16, 32 and 64, 44
 +    * wide at 128, and 7 wide at 1024.
 +    *
-+    * ROCKET_SURF_TRUNC=1 restores the truncating form.
++    * ...and that is still not the whole rule; see rkt_entries_per_slice. A row
++    * whose last 64 byte unit would hold exactly three atomics is not packed at
++    * all and costs a whole unit per column, which rkt_task.c has always known
++    * and this file did not.
++    *
++    * That is exactly the population that fails: a pointwise at 48 input
++    * channels is 28 of 64 channels correct, at 33 it is 16 of 64, and both are
++    * three atomics per row. 64 channels is four atomics and 16 or 32 is one or
++    * two, and all of those come out identical under either form, which is why
++    * this survived until a 48 channel layer was run.
++    *
++    * ROCKET_SURF_TRUNC=1 restores the truncating form, ROCKET_SURF_DIV=1 the
++    * plain division that was the default until round 136.
 +    */
 +   unsigned surf = getenv("ROCKET_SURF_TRUNC")
 +                      ? inw * ic / 64
-+                      : DIV_ROUND_UP(inw * DIV_ROUND_UP(ic, FEATURE_ATOMIC_SIZE),
-+                                     4);
++                   : getenv("ROCKET_SURF_DIV")
++                      ? DIV_ROUND_UP(inw * DIV_ROUND_UP(ic, FEATURE_ATOMIC_SIZE),
++                                     4)
++                      : rkt_entries_per_slice(inw, ic);
 +   /*
 +    * Weight bytes per kernel. The regular path stores ALIGN(ic, 32) * 2 bytes
 +    * per output channel and tap, hence the 2. The RK3576 POINTWISE path stores
@@ -3452,7 +3497,7 @@ index be992fd..94da81f 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,13 +1156,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,13 +1170,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -3524,7 +3569,7 @@ index be992fd..94da81f 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -60,8 +1232,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -60,8 +1246,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     if (operation->depthwise)
        con1 |= CNA_CONV_CON1_CONV_MODE(3);
  
@@ -3541,7 +3586,7 @@ index be992fd..94da81f 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +1250,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +1264,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -3549,7 +3594,7 @@ index be992fd..94da81f 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +1277,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +1291,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -3586,7 +3631,7 @@ index be992fd..94da81f 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,10 +1400,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,10 +1414,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -3620,7 +3665,7 @@ index be992fd..94da81f 100644
     EMIT(REG_CORE_MISC_CFG, misc_cfg);
     EMIT(REG_CORE_DATAOUT_SIZE_0,
          CORE_DATAOUT_SIZE_0_DATAOUT_HEIGHT(task->output_height - 1) |
-@@ -203,8 +1436,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +1450,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -3646,7 +3691,7 @@ index be992fd..94da81f 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +1493,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +1507,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -3656,7 +3701,7 @@ index be992fd..94da81f 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -389,8 +1639,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -389,8 +1653,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
        EMIT(REG_DPU_EW_RELUX_CMP_VALUE, 0);
        EMIT(REG_DPU_OUT_CVT_OFFSET, offset);
  
@@ -3672,7 +3717,7 @@ index be992fd..94da81f 100644
        // DBG("conv_scale %f\n", conv_scale);
        uint32_t scale_bits = fui(conv_scale);
        /* Taken from
-@@ -522,13 +1778,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1792,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -3703,7 +3748,7 @@ index be992fd..94da81f 100644
  }
  
  void
-@@ -536,7 +1803,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1817,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
