@@ -7,8 +7,9 @@ outputs are within one count of the CPU reference. Details below.
 
 ## Companion projects
 
-Three repositories, one board. The name of the third is a joke: a 叉烧炉 is the oven,
-叉烧 is what comes out of it.
+Three repositories, one board. The third name is a joke about the second: char siu
+is Cantonese barbecue pork, a staple of Hong Kong and Malaysia, and a kiln is the
+oven it is roasted in.
 
 | repo | what it is |
 |---|---|

@@ -1,3 +1,12 @@
+# DRM and its helpers must be built-in too: rocket is =y below, and a built-in
+# driver cannot depend on modular DRM/DRM_SCHED/DRM_GEM_SHMEM_HELPER. On the
+# 7.2 base these came out =m from base.config alone, which silently demoted
+# CONFIG_DRM_ACCEL_ROCKET to =m -- the module then loads far too late, after
+# the late_initcall that turns off "unused" regulators has cut vdd_npu_s0, and
+# /dev/accel/accel0 never appears.
+CONFIG_DRM=y
+CONFIG_DRM_SCHED=y
+CONFIG_DRM_GEM_SHMEM_HELPER=y
 CONFIG_DRM_ACCEL=y
 # Built-in (=y), not module: rocket must probe before the late_initcall that
 # disables "unused" regulators turns off vdd_npu_s0 (~31s after boot).

@@ -1,33 +1,36 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: gahingwoo <huhuvmb88@outlook.com>
+From: Jiaxing Hu <huhuvmb88@gmail.com>
 Date: Fri, 10 Jul 2026 00:00:00 +1200
-Subject: [PATCH 25/27] iommu/rockchip: implement flush_iotlb_all (ZAP the IOTLB)
+Subject: [PATCH] iommu/rockchip: implement .flush_iotlb_all
 
-rk_iommu implemented neither .flush_iotlb_all nor .iotlb_sync, so the generic
-iommu_flush_iotlb_all() was a silent no-op on Rockchip: a domain whose driver
-relies on it (e.g. the accel/rocket NPU, which flushes the TLB before each
-submit) never actually got a flush. On the non-coherent RK3576 NPU a reused
-IOVA could then keep a previous BO's translation -> stale/zero device reads.
+rk_iommu invalidates the IOTLB synchronously in .unmap (via
+rk_iommu_zap_iova), so it stays consistent without a deferred .iotlb_sync
+and does not advertise IOMMU_CAP_DEFERRED_FLUSH.
 
-Add a flush_iotlb_all that ZAP_CACHEs every bank of every IOMMU attached to the
-domain, under the same runtime-PM + clk guard as rk_iommu_zap_iova().
-Signed-off-by: Jiaxing Hu <huhuvmb88@outlook.com>
+It never implemented the optional .flush_iotlb_all op, though, and
+iommu_flush_iotlb_all() is a no-op when that op is absent -- so on Rockchip
+a driver that owns an rk_iommu domain and calls it to flush the whole
+domain's TLB (e.g. before reusing a mapping, without unmapping it) gets
+nothing, even though the hardware can do it: rk_iommu already issues
+ZAP_CACHE for range shootdowns.
+
+Implement it with that same primitive: ZAP_CACHE every bank of every IOMMU
+on the domain, under the runtime-PM + clk guard already used by
+rk_iommu_zap_iova().
+
+Found while bringing up an out-of-tree RK3576 NPU (accel/rocket) driver
+that flushes before each submit; on Rockchip that flush did nothing.
+
+Signed-off-by: Jiaxing Hu <huhuvmb88@gmail.com>
 ---
 diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
 --- a/drivers/iommu/rockchip-iommu.c
 +++ b/drivers/iommu/rockchip-iommu.c
-@@ -1202,6 +1202,37 @@
+@@ -1202,6 +1202,30 @@
  	return 0;
  }
  
-+/*
-+ * Kiln B: full IOTLB shootdown for a domain. rk_iommu never implemented
-+ * flush_iotlb_all, so the generic iommu_flush_iotlb_all() was a SILENT no-op --
-+ * a reused iova could keep a previous BO's translation (stale/zero NPU reads ->
-+ * partial/empty conv output). The vendor rknpu zaps the TLB directly; this lets
-+ * the standard call actually flush, ZAP_CACHE'ing every bank of every IOMMU on
-+ * the domain (same power/clk guard as rk_iommu_zap_iova).
-+ */
++/* shootdown the entire tlb on all iommus using this domain */
 +static void rk_iommu_flush_iotlb_all(struct iommu_domain *domain)
 +{
 +	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
