@@ -2,6 +2,9 @@
 
 Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
+MobileNet V1 runs end to end on the NPU as of 2026-08-13: 995 of its 1001
+outputs are within one count of the CPU reference. Details below.
+
 ## Upstream
 
 The driver support is on the list. Current series:
@@ -45,6 +48,63 @@ Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
+
+## MobileNet V1 runs end to end (2026-08-13)
+
+The whole network now produces a real classification on the NPU with the open
+stack: **995 of its 1001 outputs land within one count of the CPU reference**,
+with the same ten distinct values the CPU produces. Every run before this one
+was 1001 channels of zero.
+
+Layer by layer, against `vendor-capture/chainmodel.py`, which runs the graph
+twice from the model file, once with tflite's requant and once with the
+hardware's, and so says what a **perfect** accelerator would score:
+
+| operator | kind | board | correct hardware scores |
+|---|---|---|---|
+| 3 | depthwise | 21/64 maxdiff 13 | 21/64 maxdiff 13 |
+| 4 | 1x1 | 18/128 maxdiff 14 | 18/128 maxdiff 14 |
+| 5 | depthwise | 9/128 maxdiff 13 | 9/128 maxdiff 13 |
+| 6 | 1x1 | 4/128 maxdiff 23 | 4/128 maxdiff 23 |
+| 7 | depthwise | 7/128 maxdiff 10 | 7/128 maxdiff 10 |
+| 8 | 1x1 | 34/256 maxdiff 7 | 36/256 maxdiff 7 |
+| 24 | 1x1 | 653/1024 maxdiff 5 | 671/1024 maxdiff 6 |
+| 26 | 1x1 | 574/1024 maxdiff 28 | 572/1024 maxdiff 25 |
+
+Operators 3 to 7 are exact, and past that the two agree within a few channels
+in **both** directions, the board reading better than the model at 12 and at
+26. A low channel count deep in the network is the reference's own compounding
+rounding, not a defect, and without that column it cannot be told from one.
+
+Four faults stood between the working single operators and this, all in Mesa
+and none in the kernel:
+
+- the **1x1 weight buffer is 32x32 tiles in both axes**, `[oc/32][ic/32][oc%32]
+  [ic%32]`. Every layout used before agrees with that whenever `oc` or `ic` is
+  32 or less, which is every shape it had ever been checked at, because a probe
+  that gives each `(oc, ic)` pair its own byte caps at 255 positions. Two models
+  of one shape, one whose weight depends only on the output channel and one
+  only on the input channel, lift that cap and name both coordinates of every
+  byte.
+- **a row whose last CBUF unit would hold exactly three atomics does not pack**
+  and costs a whole unit per column. `rkt_task.c` always knew; `rkt_regcmd.c`
+  divided instead. They agree unless the atomic count is 3 modulo 4, which is
+  33 to 48 input channels and 113 to 128.
+- **the CBUF split pair is the window count, not the stride.** Reading `0x1018`
+  out of 87 compiled `.rknn` and comparing each with its own window count, the
+  pair says "more than one row window" in 86 of them.
+- **the coefficient buffer's second operand has to be 16 byte aligned.** It sat
+  at `table_bytes + oc * 2`, and the table in front is always a multiple of 64,
+  so the address was aligned exactly when the output channel count was a
+  multiple of 8 and odd when the count was odd. Every layer that missed came
+  back an **empty convolution**, which is why MobileNet's last operator, 1024 to
+  1001, produced nothing at all.
+
+Still open, all in Mesa: an **odd** output channel count is wrong across its
+whole second weight tile (the CNA counts output channels in pairs and is told a
+padded count by the vendor; the fix is written and not yet on the board), a
+pointwise with **56** output channels times the NPU out, and **33** input
+channels is wrong for a reason the packed row cost did not cover.
 
 ## Every regular convolution shape computes, and so does depthwise
 
@@ -298,17 +358,9 @@ same budget divided by the single layer it was measured on: 2560 over 28 entries
 per row is 91.4. Deriving it reproduces that 91 exactly for its own case and
 fixes the sizes the literal got wrong.
 
-**What still does not compute.** MobileNet runs end to end without hanging, and
-its first three operators match the offline model exactly, but it diverges from
-operator three onward, so the classifier output is not usable. Two faults are
-left and both are reproducible in a single operator:
-
-- an **odd input width** fails on its own: 71 wide is 2 of 32 channels while 72
-  wide is 32 of 32, one window each, well inside the budget;
-- at **64 channels** something turns over between 96 wide, which passes, and 110,
-  which does not. Nothing between them has been measured.
-
-Neither is in the kernel.
+The two faults this section used to end on are both closed. The odd input width
+was a truncating division in the CBUF surface stride, and the turnover at 64
+channels was the 1x1 weight layout: see the MobileNet section above.
 
 Full ledger: **[FINDINGS.md](FINDINGS.md)**, newest first, including the
 retractions, of which there have been several.

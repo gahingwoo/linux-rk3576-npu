@@ -1,0 +1,65 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 04/10] dt-bindings: iommu: rockchip: allow the RK3576 NPU MMU clock set
+In-Reply-To: <DKMWKH7ECZZM.3GL6MUEUO2Q1N@cknow-tech.com>
+References: <20260812094106.1391698-1-gahing@gahingwoo.com>
+ <20260812094106.1391698-5-gahing@gahingwoo.com>
+ <DKMWKH7ECZZM.3GL6MUEUO2Q1N@cknow-tech.com>
+
+Hi Diederik,
+
+You are right, and worse than that, this is the same thing you asked
+for on v6 and I told you it was fixed.
+
+My reply then said v7 would carry a compatible of its own and pin each
+side with an allOf. It does not. What v7 actually contains is a
+minItems of 2 and three descriptions ending in "RK3576 NPU MMUs only",
+which is a comment, not a schema, and it leaves both of the cases you
+name allowed: an rk3568-iommu with five clocks, and an RK3576 NPU MMU
+with two. I do not have an explanation for the gap between what I said
+and what I sent, only the fix.
+
+v8 does what you and the bot asked for the first time. The MMU nodes
+get their own compatible,
+
+    compatible = "rockchip,rk3576-npu-iommu", "rockchip,rk3568-iommu";
+
+the enum gains it, and an allOf pins both sides so neither can borrow
+the other's clock set:
+
+    allOf:
+      - if:
+          properties:
+            compatible:
+              contains:
+                const: rockchip,rk3576-npu-iommu
+        then:
+          properties:
+            clocks:
+              minItems: 5
+              maxItems: 5
+            clock-names:
+              items:
+                - const: aclk
+                - const: iface
+                - const: npu
+                - const: aclk_cbuf
+                - const: hclk_cbuf
+        else:
+          properties:
+            clocks:
+              maxItems: 2
+            clock-names:
+              maxItems: 2
+
+so every existing devicetree keeps exactly two clocks and only the new
+compatible may have five. The ", RK3576 NPU MMUs only" wording goes
+away with it, since the schema then says it.
+
+The DTS patch changes with it, since v7's NPU MMU nodes use the plain
+rockchip,rk3576-iommu string.
+
+I will not claim it is fixed this time until the patch is in front of
+you.
+
+Thanks for catching it twice,
+Jiaxing

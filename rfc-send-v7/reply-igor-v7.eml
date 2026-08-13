@@ -1,0 +1,77 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260812124850.6597-1-royalnet026@gmail.com>
+References: <20260812094106.1391698-1-gahing@gahingwoo.com>
+ <20260812094106.1391698-9-gahing@gahingwoo.com>
+ <20260812124850.6597-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+Thank you for the run, and for reading the patch rather than only
+testing it. Both of your points are right and both are fixed for v8.
+I am answering your 1/10 question here as well so it stays in one
+place.
+
+> That is the v6 comment for the poll.
+
+Yes, and it should not have shipped. The cover letter withdraws the
+premise that comment states, the patch under it deletes the machinery
+it describes, and it has no code beneath it at all. It is gone in v8.
+
+For the record on how it survived: it was fixed in my tree the day the
+correction went to the list and the fix never made it into the series I
+formatted. That is the second time a fix has existed here and not
+reached what I sent, so I now diff the posted patches against the tree
+before sending rather than trusting that they match.
+
+> It would sit more naturally in 1/10, which already touches that
+> function, or in a patch of its own.
+
+A patch of its own, placed after 1/10 rather than before it. 1/10 is a
+fix with a Fixes tag that someone may want to backport, and it should
+stay the smallest thing that fixes the bug. Refactoring the function
+first would put the backport on top of a restructure it does not need.
+So v8 is 1/10 unchanged, then the extraction on its own, then the
+RK3576 patch with no shared-path changes left in it.
+
+> would a synchronize_irq(core->irq) before the guard in
+> rocket_reset() be worth having as well?
+
+I think yes, and before the guard is the only place it can go. The
+handler takes job_lock, so calling it inside the scoped_guard would
+wait for a handler that is waiting for the lock we hold. Before the
+guard nothing is held, and both callers, the timedout_job callback and
+reset_work, are process context, so it is safe there.
+
+It also closes exactly the window you describe rather than a different
+one. drm_sched_stop() stops the scheduler and returns; a threaded
+handler already running is untouched by it, and the comment sitting
+above that code says "Remaining interrupts have been handled", which is
+the assumption your reading breaks. synchronize_irq() makes that
+sentence true instead of hopeful.
+
+What it does not do is stop a handler that has already read
+in_flight_job from finishing its work on a job the reset is about to
+drop. That one wants the check and the write to be one step under the
+lock, which is what 1/10 does. The two changes are complementary and I
+will send them as such, with the comment reworded to say what is
+actually guaranteed.
+
+Your RK3588 numbers are also the only evidence anyone has that 1/10
+costs nothing on the path it protects, since I cannot run three cores
+here. Carrying the tag to v8:
+
+  Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores
+
+One piece of news from the userspace side, since you run MobileNet
+through Teflon yourself. As of today the whole of MobileNet V1 runs on
+the RK3576 with the open stack: 995 of its 1001 outputs land within one
+count of the CPU reference, against 1001 channels of zero in every run
+before this. The kernel side of that is this series unchanged; what
+moved was four Mesa faults, the last of which was a coefficient buffer
+whose second operand has to be 16 byte aligned, which is why every
+layer whose output channel count was not a multiple of eight came back
+empty.
+
+Thanks again,
+Jiaxing
