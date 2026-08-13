@@ -2,58 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 132. The tap ladder: how many live input channels does it
-# take to break, and does the break need two weight groups.
+# 2026-08-13 round 133. The pointwise weight layout, third and final form.
 #
-# Round 131 left one live input channel per output channel correct at 64 input
-# channels, 64 of 64, and the real dense weights wrong at the same shape. So
-# what is fetched and where it lands is right and the SUM is wrong. This round
-# walks the count between one tap and sixty four.
+# Round 132's ladder said the fault is not the tap count and not the sum. With
+# two live taps in input group 0, output channels 0 to 31 computed and 32 to 63
+# came out CONSTANT; with the taps in input group 1 the two halves swapped
+# exactly. So an output channel only ever sees the input group with its own
+# index, which is a buffer address, not an adder.
 #
-# The weight buffer is grouped in 32 input channels, group 0 is channels 0..31
-# and group 1 is 32..63, so the ladder separates two different questions:
-# whether density alone breaks it, and whether crossing the group does.
+# Read off the vendor's own compiler afterwards, at a shape big enough to see
+# it. The 1x1 weight buffer is 32x32 tiles, tiled in BOTH axes:
 #
-# Nothing in mesa or the kernel changed for this round. Only the models are
-# new, so a regression here would mean the image is wrong, not the driver.
+#     [oc/32][ic/32][oc%32][ic%32]
 #
-# The models are byte patches of one another with identical shapes, so every
-# register value and every buffer size is the same in all of them and the only
-# thing that moves is the weight contents. ROCKET_SEED=249 for the ladder: a
-# ramp summed over 32 channels is nearly flat, and offline the seed and the
-# alternating 5/1 tap pattern together take the reference from a 26 count
-# spread to 148, which is what makes a wrong sum visible. That was checked
-# before the image was built, not after.
+# with the edge tiles cut short, not padded. Every layout this driver has used
+# agrees with that whenever oc or ic is 32 or less, which is every shape the
+# layout had ever been checked at, and the flat form is 3968 of 4096 bytes
+# wrong at 64 by 64 while round 128's ic grouping is 2048 of 4096 wrong,
+# exactly the half with ic above 32.
 #
-# DECISION RULE, written before the run. Read them in this order:
+# That was measured with two position encoded models rather than one: with one
+# byte per (oc, ic) pair the probe caps at 255 positions, which is why every
+# earlier reading stopped at 32 output channels. One model whose weight depends
+# only on the output channel and one only on the input channel need 64 levels
+# each, and a byte then names its coordinates in the pair of them. Confirmed at
+# 64 by 64 and again at 48 by 40 for the cut tiles.
 #
-#   1) pwt_lo2 fails
-#             the control failed. Two taps in the group that already works
-#             cannot be wrong, so the construction is broken and nothing else
-#             in the round means anything.
-#   2) pwt_lo32 fails
-#             the ic=64 configuration is wrong even when only the FIRST group
-#             contributes, which is the ic=32 computation done by the ic=64
-#             setup. Then the fault is not the crossing at all, it is the
-#             configuration or the fetch at 64, and the next round goes at the
-#             input surface count rather than the weights.
-#   3) pwt_lo32 passes and pwt_hi32 fails
-#             the second group is right as a single tap and wrong dense, so
-#             the fault is inside group 1's own packing past the first lane.
-#   4) both pass and pwt_all fails
-#             each group is right alone and only the sum of the two is wrong.
-#             That is a partial sum across groups, and pwt_x2 says whether two
-#             taps are already enough to show it.
-#   5) everything passes
-#             density is not the variable. Then the difference between the
-#             ladder and pw64x64w56 is the width and the real weights, and
-#             pwd_g0 and pwd_g1 below answer the same question with the real
-#             weights at the width that actually fails.
+# DECISION RULE, written before the run:
 #
-# pwd_g0 and pwd_g1 are the top rung: the failing model itself with one group
-# of 32 overwritten at the weight zero point, so both halves are dense and
-# real. pw33 puts a single channel in the second group and says whether the
-# boundary is exactly the group size.
+#   pw64x64w56 and pw64x128w56 correct, and pw32x64w56 still correct
+#             the layout is the answer. Then mn_L04 is the next thing to read,
+#             and if op4 is correct the whole chain moves.
+#   the 64 channel shapes improve but are not correct
+#             the layout was one of two faults, and the residual is what to
+#             measure next. Read the affine slope: 1.0 means an arithmetic
+#             residue, 0.5 means another whole group is misplaced.
+#   nothing changes
+#             the buffer is not what the CMAC reads, which contradicts round
+#             132, so suspect the build before the theory.
+#
+# CONTROL that can fail: ROCKET_PW_ICGROUP restores round 128's layout, so
+# entry 3 must reproduce today's failure exactly, 25 of 64. If the knob changes
+# nothing then it is not reaching the path and entry 2 proves nothing either.
+# This project has been caught by that five times.
+#
+# The tap ladder is kept as the mechanism check. pwt_lo2 and pwt_hi2 must go
+# from 0 of 64 to 64 of 64 and their constant halves must disappear, because
+# under the new layout the taps land in the tile their own output channel
+# reads. pwt_all was already correct and must stay correct: its weights are the
+# same for ic and ic+32, so it is invariant under the old fault and cannot
+# improve, which makes it the sharpest regression in the set.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -70,47 +68,44 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) CONTROL: two taps in group 0, which must pass ====="
+	log "===== 1..2) THE TEST: the shapes that fail on input channels ====="
+	p pw64x64w56.tflite ""
+	p pw64x128w56.tflite ""
+
+	log ""
+	log "===== 3) CONTROL: round 128's layout, which must still fail ====="
+	p pw64x64w56.tflite "ROCKET_PW_ICGROUP=1"
+
+	log ""
+	log "===== 4..5) the other input channel counts, and the boundary ====="
+	p pw128x128w56.tflite ""
+	p pw33x64w56.tflite ""
+
+	log ""
+	log "===== 6..8) the mechanism: the taps must now land in their own tile ====="
 	p pwt_lo2.tflite "ROCKET_SEED=249"
-
-	log ""
-	log "===== 2..3) two taps in group 1, then one tap in each group ====="
 	p pwt_hi2.tflite "ROCKET_SEED=249"
-	p pwt_x2.tflite "ROCKET_SEED=249"
-
-	log ""
-	log "===== 4..5) all 32 of one group live, the other group dead ====="
 	p pwt_lo32.tflite "ROCKET_SEED=249"
-	p pwt_hi32.tflite "ROCKET_SEED=249"
 
 	log ""
-	log "===== 6) all 64 live ====="
+	log "===== 9) REGRESSION: invariant under the old fault, must stay 64/64 ====="
 	p pwt_all.tflite "ROCKET_SEED=249"
 
 	log ""
-	log "===== 7..8) the SAME question with the real weights at 56 wide ====="
-	p pwd_g0.tflite "ROCKET_SEED=249"
-	p pwd_g1.tflite "ROCKET_SEED=249"
+	log "===== 10) MobileNet operator 4, the reason for all of this ====="
+	p mn_L04.tflite ""
 
 	log ""
-	log "===== 9..10) where the boundary is: 33 and 48 input channels ====="
-	p pw33x64w56.tflite "ROCKET_SEED=249"
-	p pw48x64w56.tflite "ROCKET_SEED=249"
-
-	log ""
-	log "===== 11) CONTROL: round 131's impulse, which must stay 64 of 64 ====="
-	p pwimp64x64w40.tflite ""
-
-	log ""
-	log "===== 12..15) REGRESSION ====="
+	log "===== 11..15) REGRESSION ====="
 	p pw32x64w56.tflite ""
+	p pwimp64x64w40.tflite ""
 	p mn_L03.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Read 1, 4, 5 and 6 in that order. The first one that fails    ====="
-	log "===== picks the branch of the rule above.                           ====="
+	log "===== Entry 3 must FAIL and entry 9 must PASS. Only then do 1 and 2 ====="
+	log "===== mean anything.                                                ====="
 	sync
 }
 case "$1" in

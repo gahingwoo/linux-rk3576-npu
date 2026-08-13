@@ -1,17 +1,43 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..4f6ccc5 100644
+index 82258e7..8bdf5ac 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
-@@ -3,6 +3,8 @@
+@@ -1,9 +1,13 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
   * SPDX-License-Identifier: MIT
   */
  
 +#include <string.h>
 +
  #include "util/u_inlines.h"
++#include "util/half_float.h"
  
  #include "rkt_coefs.h"
-@@ -29,19 +31,176 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+ #include "rkt_ml.h"
+@@ -21,6 +25,20 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    unsigned output_channels_real = poperation->output_tensors[0]->dims[3];
+    unsigned weights_size;
+    uint8_t zero_point = poperation->conv.weight_tensor->zero_point;
++   /*
++    * ROCKET_WT_ZP: pack weights as (w - wt_zp) instead of (w - 0x80). The CMAC
++    * computes Sum(in - 0x80)(w_stored); with in_zp=0x80 and w_stored = w - wt_zp this
++    * equals the true quantised conv Sum(in - in_zp)(w - wt_zp) PER PIXEL, with no
++    * separate wt_zp correction operand. (w-0x80) leaves an uncorrected
++    * (wt_zp-0x80)*Sum(in-0x80) per output pixel -> doubled spread/saturation.
++    * Proven byte-exact offline vs the tflite CPU reference on conv2d-cal. The pad
++    * (nonexistent-input) lanes become the neutral weight (raw=wt_zp -> 0).
++    */
++   int wt_sub = getenv("ROCKET_WT_ZP") ? (int)zero_point : 0x80;
++   /* pad (nonexistent-input) lanes are separately controlled: the WT_ZP run showed
++    * they are LIVE (changing them moved per-pixel variance), so isolate them from the
++    * real-weight change. ROCKET_WT_ZP_PAD makes the pad lanes the neutral weight (0). */
++   int pad_sub = getenv("ROCKET_WT_ZP_PAD") ? (int)zero_point : 0x80;
+    struct pipe_transfer *transfer_in, *transfer_out;
+    void *map =
+       pipe_buffer_map(pcontext, poperation->conv.weight_tensor->resource,
+@@ -29,22 +47,432 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint8_t *weights_out;
  
@@ -25,6 +51,47 @@ index 82258e7..4f6ccc5 100644
  
 -   weights_size = weights_width * weights_height * output_channels *
 -                  ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
++   /*
++    * ROCKET_FP16: bypass the int8 SDP requant blob entirely (the value-dependent
++    * coefficient float surface is not derivable). Dequantise the int8 weights to
++    * fp16 and lay them out in allbilly's kh-major order
++    *   [oc/16][ic/32][ky][kx][16 oc][32 ic], fp16 (2 bytes)
++    * which the CMAC reads in fp16 precision (CORE_MISC_CFG=2<<8). The conv runs in
++    * fp16; the only requant left is the per-channel OUT_CVT (derivable), set in
++    * rkt_regcmd.c. See FINDINGS-FLOATSURFACE.md: fp16 is the upstreamable path.
++    */
++   if (getenv("ROCKET_FP16") && !rkt_is_depthwise(poperation)) {
++      unsigned aic = ALIGN(input_channels_real, 32);
++      unsigned oc16 = ALIGN(output_channels_real, 16);
++      weights_size = oc16 * aic * weights_width * weights_height * 2;
++      rsc = pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT,
++                               weights_size);
++      uint16_t *wo = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
++      memset(wo, 0, weights_size);
++      const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
++      float wt_sc = poperation->conv.weight_tensor->scale;       /* per-tensor */
++      unsigned p = 0;
++      for (unsigned ocb = 0; ocb < oc16; ocb += 16)
++         for (unsigned icb = 0; icb < aic; icb += 32)
++            for (unsigned ky = 0; ky < weights_height; ky++)
++               for (unsigned kx = 0; kx < weights_width; kx++)
++                  for (unsigned o = 0; o < 16; o++)
++                     for (unsigned i = 0; i < 32; i++) {
++                        unsigned oc = ocb + o, ic = icb + i;
++                        float v = 0.0f;
++                        if (oc < output_channels_real &&
++                            ic < input_channels_real) {
++                           float sc = wsc ? wsc[oc] : wt_sc;
++                           v = ((int)weights_in[oc][kx][ky][ic] -
++                                (int)zero_point) * sc;
++                        }
++                        wo[p++] = _mesa_float_to_half(v);
++                     }
++      pipe_buffer_unmap(pcontext, transfer_out);
++      pipe_buffer_unmap(pcontext, transfer_in);
++      return rsc;
++   }
++
 +   /*
 +    * RK3576 first-conv (ARGB, <=4 real input channels) uses a dedicated 1536-byte
 +    * weight layout (see the packing branch below), not the generic 18432-byte
@@ -40,7 +107,29 @@ index 82258e7..4f6ccc5 100644
 +    * oc*ALIGN(ic,32)*2 packing (2x too big + wrong order). Captured from the
 +    * board's working weight buffer.
 +    */
-+   bool is_rk3576_pointwise = soc == RKT_SOC_RK3576 &&
++   /*
++    * ROCKET_PW_AS_3X3: run a 1x1 conv as a 3x3 whose outer ring is the weight
++    * zero point. That is mathematically the same convolution, because the MAC
++    * computes sum((in - 0x80) * (w - wt_zp)) and a tap with w == wt_zp
++    * contributes nothing, including the SAME padding taps at the border.
++    *
++    * The point is that a 1x1 conv is the only non-depthwise shape left that
++    * fails, and it fails in a way no register or buffer explains: its regcmd
++    * matches a vendor .rknn compiled at the same geometry, its weight layout
++    * matches the vendor's own compiled buffer, and the DPU runs and writes the
++    * whole surface with exactly out_offset while ignoring the weights, the
++    * input, and the A operand even when A is forced to a value that visibly
++    * moves the model that computes. Rewriting it as a 3x3 sends it down the
++    * path that does work, which either produces the right answer or narrows
++    * this to something specific about 1x1 in the hardware.
++    */
++   bool pw3 = getenv("ROCKET_PW_AS_3X3") && soc == RKT_SOC_RK3576 &&
++              !rkt_is_depthwise(poperation) && input_channels_real > 4 &&
++              weights_width == 1 && weights_height == 1;
++   unsigned ww = pw3 ? 3 : weights_width;
++   unsigned wh = pw3 ? 3 : weights_height;
++
++   bool is_rk3576_pointwise = soc == RKT_SOC_RK3576 && !pw3 &&
 +                              !rkt_is_depthwise(poperation) &&
 +                              input_channels_real > 4 &&
 +                              weights_width == 1 && weights_height == 1;
@@ -50,7 +139,7 @@ index 82258e7..4f6ccc5 100644
 +   else if (is_rk3576_pointwise)
 +      weights_size = input_channels_real * output_channels_real;
 +   else
-+      weights_size = weights_width * weights_height * output_channels *
++      weights_size = ww * wh * output_channels *
 +                     ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
  
     rsc =
@@ -69,35 +158,107 @@ index 82258e7..4f6ccc5 100644
 +    *
 +    * The buffer is KH*KW spatial blocks in row-major (ky outer, kx inner)
 +    * order.  Each block packs the channels two at a time, every channel pair
-+    * followed by two weight-zero-point pad bytes, i.e. two bytes per channel:
++    * followed by the two channels' weight zero points, i.e. two bytes per
++    * channel:
 +    *
 +    *   buf[p*block + g*4 + 0] = w[2g  ][ky][kx]   (p = ky*KW + kx)
 +    *   buf[p*block + g*4 + 1] = w[2g+1][ky][kx]
-+    *   buf[p*block + g*4 + 2] = zp
-+    *   buf[p*block + g*4 + 3] = zp
++    *   buf[p*block + g*4 + 2] = -wt_zp[2g  ]
++    *   buf[p*block + g*4 + 3] = -wt_zp[2g+1]
 +    *
 +    * block = DIV_ROUND_UP(channels, 2) * 4, so for the 32-channel layers the
 +    * block is 64 bytes and the whole buffer is 9*64 = 576 bytes, matching the
 +    * size the CNA weight DMA is programmed with (0x101c).
++    *
++    * Confirmed against the vendor's own 576 bytes for sv_dwu, whose weights are
++    * known exactly: all 288 weight lanes match under this order, and 96 of 288
++    * under the ky/kx transpose, so the plane order is settled too. The two
++    * lanes after each pair came back as the NEGATED per-channel weight zero
++    * point, identical in every spatial block, which is the same sign and the
++    * same quantity a regular conv carries as B in its A/B/C record. This file
++    * used to write +zp there.
++    *
++    * The sign is fixed below; the per-CHANNEL part is deliberately not taken
++    * up. `zero_points[]` is in a different domain from the scalar
++    * `zero_point` on the tensors this driver sees, and getting that wrong is
++    * what made round 50 a void experiment. Every model here is per-axis
++    * quantised, where the zero point is zero and both the sign and the domain
++    * are moot, so there is nothing to measure the guess against.
 +    */
 +   if (soc == RKT_SOC_RK3576 && rkt_is_depthwise(poperation)) {
 +      unsigned channels = input_channels_real;
 +      uint8_t pad = zero_point - 0x80;
-+      unsigned n = 0;
++      uint8_t zplane = getenv("ROCKET_DW_ZP_POS") ? pad : (uint8_t)(-(int8_t)pad);
++      unsigned npos = weights_width * weights_height;
++      /*
++       * The buffer is CHANNEL GROUPS of 64, each group tap major inside
++       * itself, and the groups laid end to end.
++       *
++       * Established offline against vendor .rknn files compiled at 32, 128,
++       * 256 and 1024 channels, whose weights are generated on the host so the
++       * test is exact rather than a correlation: a group of 64 reproduces
++       * 288/288, 1152/1152, 2304/2304 and 9208/9216 weight lanes, and the
++       * eight that miss at 1024 are all one channel whose kernel the quantiser
++       * treated differently. One group of C, which is what this file used to
++       * write, reproduces 288/288 at 32 channels and about 4 in 1000 above it.
++       *
++       * The two agree exactly up to 64 channels, which is why every depthwise
++       * in this project has been byte exact and the 1024 channel one has not.
++       *
++       * It also matches what the board measured. With one live tap in every
++       * channel, the channels that produced anything were a contiguous run
++       * that moved with the tap, and inverting the nine runs showed each
++       * output channel could reach only ONE OR TWO of its nine spatial blocks:
++       * a group of C puts them 2C bytes apart, 2048 at 1024 channels, while a
++       * group of 64 puts them 128 apart whatever C is.
++       *
++       * ROCKET_DW_GROUP overrides the group size. Setting it to the channel
++       * count restores the old single group and is the control.
++       */
++      unsigned group = MIN2(channels, 64u);
++      const char *gs = getenv("ROCKET_DW_GROUP");
++      if (gs) {
++         unsigned v = (unsigned)strtoul(gs, NULL, 0);
++         if (v)
++            group = MIN2(channels, v);
++      }
++
++      unsigned block = DIV_ROUND_UP(group, 2) * 4;
++      unsigned gsize = npos * block;
 +
 +      for (int y = 0; y < weights_width; y++) {        /* ky (dims[1]) */
 +         for (int x = 0; x < weights_height; x++) {     /* kx (dims[2]) */
-+            for (unsigned g = 0; g < DIV_ROUND_UP(channels, 2); g++) {
-+               for (unsigned s = 0; s < 2; s++) {
-+                  unsigned c = g * 2 + s;
-+                  weights_out[n++] =
-+                     c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
++            unsigned pos = y * weights_height + x;
++
++            for (unsigned c0 = 0; c0 < channels; c0 += group) {
++               uint8_t *blk =
++                  weights_out + (c0 / group) * gsize + pos * block;
++               unsigned n = 0;
++
++               for (unsigned g = 0; g < DIV_ROUND_UP(group, 2); g++) {
++                  for (unsigned s = 0; s < 2; s++) {
++                     unsigned c = c0 + g * 2 + s;
++                     blk[n++] =
++                        c < channels ? weights_in[0][y][x][c] - 0x80 : pad;
++                  }
++                  blk[n++] = zplane;
++                  blk[n++] = zplane;
 +               }
-+               weights_out[n++] = pad;
-+               weights_out[n++] = pad;
 +            }
 +         }
 +      }
++
++      /*
++       * ROCKET_DW_WTEST: overwrite the ENTIRE depthwise weight buffer (weight +
++       * pad lanes) with 0x7f. The dw regcmd is byte-identical to the vendor and
++       * the real weights are staged (nonzero, distinct~76) yet the CMAC outputs
++       * EXACT zero -> it reads zero from CBUF. If 0x7f everywhere still yields a
++       * zero output, the CMAC reads NOTHING from this buffer (CBUF-staging/dw-mode
++       * gate); if the output goes nonzero, the CMAC DOES read it, so the real-
++       * weight zero is the LAYOUT (real weights land in lanes the CMAC ignores).
++       */
++      if (getenv("ROCKET_DW_WTEST"))
++         memset(weights_out, 0x7f, weights_size);
 +
 +      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
 +         static int task = 0;
@@ -132,7 +293,26 @@ index 82258e7..4f6ccc5 100644
 +      uint8_t pad = zero_point - 0x80;
 +      unsigned oc_n = output_channels_real;
 +
-+      memset(weights_out, 0, weights_size);
++      /*
++       * Fill with the NEUTRAL weight, not with zero.
++       *
++       * Each 16 byte unit holds three [R,G,B,pad] groups and a fourth group
++       * that no kx reaches, so those four bytes keep whatever the memset left.
++       * A stored byte is w - 0x80 and the hardware subtracts the weight zero
++       * point through B, so the effective weight of a lane is
++       * stored - (wt_zp - 0x80). Zero therefore means -(wt_zp - 0x80), which
++       * is -23 for conv0 whose weight zero point is 151, not nothing: twelve
++       * lanes per output channel multiply real input data by -23.
++       *
++       * The neutral value is pad, which is exactly what the alpha lane beside
++       * them already gets. This is the same mistake the depthwise buffer had
++       * in its zero point lanes, and it hides on any per-axis tensor because
++       * there the zero point is 0 and the two agree.
++       *
++       * ROCKET_FC_ZERO_PAD restores the memset to zero as the control.
++       */
++      memset(weights_out, getenv("ROCKET_FC_ZERO_PAD") ? 0 : pad,
++             weights_size);
 +
 +      for (int ky = 0; ky < weights_width; ky++) {
 +         for (unsigned oc = 0; oc < oc_n; oc++) {
@@ -173,9 +353,88 @@ index 82258e7..4f6ccc5 100644
 +      unsigned ic_n = input_channels_real;
 +      unsigned oc_n = output_channels_real;
 +
++      /*
++       * The vendor's 1x1 weight buffer is 32x32 tiles, tiled in BOTH axes:
++       *
++       *   [oc/32][ic/32][oc%32][ic%32]
++       *
++       * with the tile edges cut short rather than padded when a channel count
++       * is not a multiple of 32.
++       *
++       * Read off the vendor's own compiler with two position encoded 1x1
++       * models of the same shape, one whose weight depends only on the output
++       * channel and one only on the input channel. A byte in the blob then
++       * names its output channel in the first and its input channel in the
++       * second, which lifts the 255 distinct values limit that had kept every
++       * earlier reading of this at 32 output channels or fewer. Confirmed at
++       * 64 by 64, and at 48 by 40 for the cut tiles.
++       *
++       * That limit is the whole story of the two wrong layouts before this
++       * one. All three agree whenever oc or ic is 32 or less, which is every
++       * shape this had ever been checked at:
++       *
++       *   flat [oc][ic]           3968 of 4096 bytes wrong at 64 by 64
++       *   [ic/32][oc][ic%32]      2048 of 4096 wrong, exactly the half with
++       *                           ic above 32
++       *
++       * Board, round 132, is the same statement from the other side. With two
++       * live taps in the first group of input channels, output channels 0 to
++       * 31 computed and 32 to 63 came out constant; with the taps in the
++       * second group the halves swapped. Under the layout above an output
++       * channel's weights live in the tile chosen by ITS OWN index, so writing
++       * the second input group where the second output group's tile belongs
++       * puts each half of the output on the wrong half of the buffer, which is
++       * exactly what the surfaces showed.
++       *
++       * ROCKET_PW_ICGROUP restores the previous form and ROCKET_PW_FLAT the
++       * one before that.
++       */
++      bool pw_flat = getenv("ROCKET_PW_FLAT") != NULL;
++      bool pw_icgroup = getenv("ROCKET_PW_ICGROUP") != NULL;
++
 +      for (unsigned oc = 0; oc < oc_n; oc++)
-+         for (unsigned ic = 0; ic < ic_n; ic++)
-+            weights_out[oc * ic_n + ic] = weights_in[oc][0][0][ic] - 0x80;
++         for (unsigned ic = 0; ic < ic_n; ic++) {
++            unsigned n;
++
++            if (pw_flat) {
++               n = oc * ic_n + ic;
++            } else if (pw_icgroup) {
++               unsigned g = ic / WEIGHT_ATOMIC_SIZE;
++               unsigned r = ic % WEIGHT_ATOMIC_SIZE;
++               unsigned gsz = MIN2(ic_n - g * WEIGHT_ATOMIC_SIZE,
++                                   (unsigned)WEIGHT_ATOMIC_SIZE);
++
++               n = g * oc_n * WEIGHT_ATOMIC_SIZE + oc * gsz + r;
++            } else {
++               unsigned og = oc / WEIGHT_ATOMIC_SIZE;
++               unsigned ig = ic / WEIGHT_ATOMIC_SIZE;
++               unsigned ogsz = MIN2(oc_n - og * WEIGHT_ATOMIC_SIZE,
++                                    (unsigned)WEIGHT_ATOMIC_SIZE);
++               unsigned igsz = MIN2(ic_n - ig * WEIGHT_ATOMIC_SIZE,
++                                    (unsigned)WEIGHT_ATOMIC_SIZE);
++
++               n = og * WEIGHT_ATOMIC_SIZE * ic_n
++                   + ig * WEIGHT_ATOMIC_SIZE * ogsz
++                   + (oc % WEIGHT_ATOMIC_SIZE) * igsz
++                   + ic % WEIGHT_ATOMIC_SIZE;
++            }
++
++            weights_out[n] = weights_in[oc][0][0][ic] - 0x80;
++         }
++
++      /*
++       * ROCKET_PW_WTEST: overwrite the whole pointwise weight buffer with one
++       * value. A 1x1 conv's regcmd now matches the vendor byte for byte apart
++       * from two registers shown inert and two requant fields that are not
++       * comparable across differently quantized models, and this layout is
++       * confirmed against the vendor's own compiled buffer (a position-encoded
++       * 1x1 compiled on the host reads back oc-major with ic contiguous). Yet
++       * the output is constant across different inputs, which no weight value
++       * can cause. If the output does not move when every weight becomes 0x7f,
++       * the CMAC is not reading this buffer at all.
++       */
++      if (getenv("ROCKET_PW_WTEST"))
++         memset(weights_out, 0x7f, weights_size);
 +
 +      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
 +         static int task = 0;
@@ -187,10 +446,93 @@ index 82258e7..4f6ccc5 100644
 +      return rsc;
 +   }
 +
++   /*
++    * How many input channels go in one weight group. Board, round 126: a
++    * pointwise is correct at 32 input channels and wrong at 64 and 128, on
++    * standalone models under both CBUF budgets, and the width makes no
++    * difference at all: 64 to 128 gives the same 40 of 128 channels and the
++    * same maxdiff 149 at 56 wide and at 28.
++    *
++    * 32 is exactly this boundary. At or below it there is one ic1 group and
++    * the grouping never has to be right; above it there are two or more and it
++    * does. The depthwise path already needed 64 rather than 32 here.
++    *
++    * ROCKET_WT_GROUP overrides, ROCKET_WT_ORDER=1 walks the taps outside the
++    * groups instead of inside them.
++    */
     unsigned input_channel_groups = WEIGHT_ATOMIC_SIZE;
     if (rkt_is_depthwise(poperation))
        input_channel_groups *= 2;
-@@ -129,6 +288,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
++   {
++      const char *g = getenv("ROCKET_WT_GROUP");
++      if (g && !rkt_is_depthwise(poperation))
++         input_channel_groups = (unsigned)strtoul(g, NULL, 0);
++   }
++   bool wt_taps_outside = getenv("ROCKET_WT_ORDER") != NULL;
+ 
+    unsigned input_channels_1 =
+       DIV_ROUND_UP(input_channels, input_channel_groups);
+@@ -53,9 +481,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    unsigned n = 0;
+    for (int oc1 = 0; oc1 < DIV_ROUND_UP(output_channels, WEIGHT_ATOMIC_SIZE);
+         oc1++) {
+-      for (int ic1 = 0; ic1 < input_channels_1; ic1++) {
+-         for (int x = 0; x < weights_width; x++) {
+-            for (int y = 0; y < weights_height; y++) {
++      for (int g1 = 0; g1 < (wt_taps_outside ? ww * wh : input_channels_1); g1++) {
++         for (int g2 = 0; g2 < (wt_taps_outside ? input_channels_1 : ww * wh);
++              g2++) {
++            {
++               int ic1 = wt_taps_outside ? g2 : g1;
++               int xy  = wt_taps_outside ? g1 : g2;
++               int x = xy / wh, y = xy % wh;
+                for (int oc2 = 0; oc2 < MIN2(output_channels, WEIGHT_ATOMIC_SIZE);
+                     oc2++) {
+                   for (int ic2 = 0; ic2 < input_channels_2; ic2++) {
+@@ -70,12 +502,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+                      else if (ic >= input_channels_real) {
+                         if (ic2 < 16 || (input_channels_real % 32) > 16)
+                            weights_out[n++] =
+-                              zero_point - 0x80; /* TODO: Why is the blob converting to
+-                                                    signed? It should be unsigned. */
+-                     } else
+-                        weights_out[n++] = weights_in[oc][x][y][ic] -
+-                                           0x80; /* TODO: Why is the blob converting to
+-                                                    signed? It should be unsigned. */
++                              (uint8_t)(zero_point - pad_sub); /* neutral lane (0) only with ROCKET_WT_ZP_PAD */
++                     } else if (pw3 && (x != 1 || y != 1))
++                        /* ring tap: w == wt_zp contributes nothing to the MAC */
++                        weights_out[n++] = (uint8_t)(zero_point - wt_sub);
++                     else
++                        weights_out[n++] = weights_in[oc][pw3 ? 0 : x][pw3 ? 0 : y][ic] -
++                                           wt_sub; /* w - wt_zp (or legacy w - 0x80) */
+                   }
+                }
+             }
+@@ -83,6 +516,22 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       }
+    }
+ 
++   /*
++    * ROCKET_WTEST: overwrite the whole generic weight buffer with one value.
++    * The pointwise path has had this since round 8; the generic path needs it
++    * now because a 3x3 conv cropped from the model that computes returns
++    * out_zp plus 0 to 2, which is what requant(bias) with a MAC of exactly zero
++    * would give, and its regcmd and weight layout are both verified against the
++    * vendor. If the output does not move when every weight becomes 0x7f, the
++    * CMAC is not reading this buffer for k=3 either.
++    *
++    * ⚠ The control is the SAME knob on conv2d-cal, which computes correctly, so
++    * forcing its weights MUST wreck it. A knob that changes nothing anywhere
++    * proves nothing, which has cost this project two rounds already.
++    */
++   if (getenv("ROCKET_WTEST"))
++      memset(weights_out, 0x7f, weights_size);
++
+    if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
+       static int task = 0;
+       rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
+@@ -129,6 +578,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
     return correction;
  }
  
@@ -222,7 +564,7 @@ index 82258e7..4f6ccc5 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +331,66 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +621,828 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -240,11 +582,59 @@ index 82258e7..4f6ccc5 100644
 +    * old single-uint32-per-channel bias left this uncompensated, so every layer
 +    * with an asymmetric weight zero point drifted/saturated.
 +    */
-+   if (rkt_screen(subgraph->base.context->screen)->soc == RKT_SOC_RK3576) {
++   if (rkt_screen(subgraph->base.context->screen)->soc == RKT_SOC_RK3576 &&
++       !getenv("ROCKET_RK3588_SDP")) {
 +      unsigned wt_zp = poperation->conv.weight_tensor->zero_point;
 +      int32_t in_zp = poperation->input_tensors[0]->zero_point;
 +      unsigned groups = DIV_ROUND_UP(output_channels, 8);
-+      unsigned bufsize = groups * 64 + 0x100;   /* structure + zeroed X2 pad */
++      /*
++       * Where the fp16 weight scale table starts, which is the end of the
++       * per-channel record table and differs between a regular conv and a
++       * depthwise one. rkt_regcmd.c points 0x5024 past the same two regions,
++       * so both files call the same helper and cannot drift apart.
++       */
++      unsigned table_bytes =
++         rkt_coef_table_bytes(rkt_is_depthwise(poperation), output_channels);
++      /*
++       * The DPU_RDMA reads a per-channel BS *float* surface from 0x5024 (=
++       * bias + groups*64) for ALL output channels. The vendor's buffer for this
++       * conv is 20800B; ours was groups*64+0x100 = 1280B, so the RDMA read ran
++       * ~19.5KB past the BO end -> IOMMU fault / RDMA stall -> the CMAC read zero
++       * weights (core wt_rd=0) = the wall. Size the BO to cover the read: the int
++       * A/B/C table (groups*64) plus a float region bounded by the full weight
++       * count (the float surface can hold no more floats than there are weights).
++       * The float content stays zeroed here -- filling it with the dequant-weight
++       * surface is a separate TODO; this only stops the out-of-bounds stall.
++       */
++      unsigned wt_elems = poperation->conv.weight_tensor->dims[0] *
++                          poperation->conv.weight_tensor->dims[1] *
++                          poperation->conv.weight_tensor->dims[2] *
++                          poperation->conv.weight_tensor->dims[3];
++      /* The vendor float surface is ~5192 floats regardless of conv size, so for
++       * small (e.g. 1x1) convs wt_elems alone under-allocates and the SDP reads
++       * past the BO -> stall. Floor the float region generously. */
++      /*
++       * ROCKET_FS_ELEMS: override the float region's element count.
++       *
++       * This is the one thing left in the coefficient buffer that depends on the
++       * kernel size, and the kernel size is the dividing line: 5x5 computes and
++       * 3x3 and 1x1 do not, on the same model with only the kernel cropped. The
++       * buffer comes out 206080, 75008 and 34048 bytes for k=5, 3 and 1, because
++       * wt_elems is ic*oc*k*k. Everything else about those three models is
++       * verified identical or verified correct against the vendor: the regcmd,
++       * the weight layout including the 32-channel grouping, the bias tensor,
++       * the requant, A, B and C.
++       *
++       * On a constant input at in_zp the MAC is zero by construction, so all
++       * three must return requant(bias). They do not: k=5 is exactly right, k=3
++       * is clamped to the zero point everywhere, and k=1 goes below it. Forcing
++       * this count equal across the three makes the coefficient buffer identical
++       * and leaves the kernel as the only difference, which is the experiment.
++       */
++      if (getenv("ROCKET_FS_ELEMS"))
++         wt_elems = (unsigned)strtoul(getenv("ROCKET_FS_ELEMS"), NULL, 0);
++      unsigned bufsize =
++         table_bytes + MAX2(wt_elems, 8192) * sizeof(float) + 0x100;
 +      uint8_t *b8;
 +
 +      /*
@@ -256,24 +646,738 @@ index 82258e7..4f6ccc5 100644
 +       * scaled regardless of A), confirming the factor belongs on both terms.
 +       * ROCKET_BIAS_NOSCALE=1 drops it for comparison.
 +       */
-+      int a_scale = getenv("ROCKET_BIAS_NOSCALE") ? 1 : 0x80;
++      int a_scale = getenv("ROCKET_BIAS_SCALE80") ? 0x80 : 1; /* default 1: the HW does not scale A by 0x80 */
 +
 +      *truncate_bits = 0;
 +      rsc = pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT, bufsize);
 +      b8 = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
 +      memset(b8, 0, bufsize);
 +
-+      for (unsigned oc = 0; oc < output_channels; oc++) {
-+         int32_t sw = calculate_weight_sum(poperation, oc, weights);
-+         int32_t A = a_scale * (sw + biases_in[oc]);
-+         int16_t B = (int16_t)(0x80 - (int32_t)wt_zp);
-+         int16_t C = (int16_t)(0x4000 - (in_zp - 0x80) * sw);
-+         uint8_t *gb = b8 + (oc / 8) * 64;
-+         unsigned i = oc % 8;
++      const char *bf = getenv("ROCKET_BIAS_FILE");
++      if (bf) {
++         /* MILESTONE: load the known-good vendor BS surface verbatim, to confirm
++          * the live Teflon path computes a correct conv given the right bytes. */
++         FILE *f = fopen(bf, "rb");
++         if (f) {
++            size_t n = fread(b8, 1, bufsize, f);
++            fclose(f);
++            fprintf(stderr, "rocket: loaded %zu bias bytes from %s\n", n, bf);
++         } else {
++            fprintf(stderr, "rocket: ROCKET_BIAS_FILE %s: open failed\n", bf);
++         }
++      } else {
++         /*
++          * Interleaved [8x int32 A | 8x int16 B | 8x int16 C] per 8-oc group --
++          * the layout the RK3576 SDP wants, matched byte-for-byte to the vendor's
++          * captured buffer for position-encoded per-axis convs. A and B were
++          * already right:
++          *    A[oc] = 0x80 * (sum_kernel(wq - wt_zp) + bias[oc])  (a_scale*(sw+bias))
++          *    B     = 0x80 - wt_zp
++          * The missing piece is C, the per-channel requant multiplier, validated
++          * byte-exact on the board (pw_oc/pw_ic, 256/256):
++          *    C[oc] = round(2^14 * wt_sc[oc] / max_oc(wt_sc))
++          * It is *relative* (the max-scale channel = 0x4000); the absolute scale
++          * rides the per-layer OUT_CVT shift. For a per-tensor conv every scale is
++          * equal -> C = 0x4000 for all channels. The float surface (@groups*64)
++          * stays zeroed -- the board test is whether ABC alone now computes, i.e.
++          * whether that surface is even load-bearing once C is correct.
++          */
++         const float *wscales = poperation->conv.weight_tensor->scales;
++         float max_sc = wscales ? wscales[0] : 1.0f;
++         if (wscales)
++            for (unsigned oc = 1; oc < output_channels; oc++)
++               if (wscales[oc] > max_sc)
++                  max_sc = wscales[oc];
 +
-+         *(int32_t *)(gb + 0 + i * 4) = A;
-+         *(int16_t *)(gb + 32 + i * 2) = B;
-+         *(int16_t *)(gb + 48 + i * 2) = C;
++         /*
++          * ROCKET_DW_FLOATBIAS: a DEPTHWISE layer takes a float32 bias per
++          * output channel, not the int32 A/B/C table.
++          *
++          * Captured from the vendor runtime with the single-variable pair
++          * sv_rgu and sv_dwu, ic = oc = 32 at 112x112, k=3, s=1, only `groups`
++          * differing, whose biases are known here exactly:
++          *
++          *   regular    int32 A/B/C table at bo01+0x2400, correlating +0.9972
++          *              with the per-channel weight sum, and NO float bias
++          *              anywhere in the buffer
++          *   depthwise  the float32 bias array BYTE FOR BYTE at bo01+0x3198,
++          *              and NO A/B/C table (+0.0000 where the regular one
++          *              gives +0.9972)
++          *
++          * The two formats are mutually exclusive, and the register that
++          * selects between them is one this driver already sets correctly:
++          * 0x501c is 0x0710 for a regular conv and 0x0510 for depthwise, which
++          * rkt_regcmd.c emits. So mesa has been telling the DPU to read this
++          * surface in depthwise mode and then filling it with the regular
++          * integer table. That is why a depthwise layer fires and saturates,
++          * collapsing to 6 distinct values against a 101-value reference,
++          * rather than producing nothing.
++          */
++         /*
++          * ROCKET_DW_REC48: a DEPTHWISE layer uses a 48 byte coefficient
++          * record, not the 64 byte one.
++          *
++          * Decoded from the vendor runtime capture (sv_dwu, ic = oc = 32 at
++          * 112x112, k=3, s=1, weights and bias known here exactly). The
++          * register 0x5020 points at bo01+0x240, which is immediately after the
++          * 576 byte depthwise weight buffer, and the table there decodes as
++          *
++          *    A   8 x int32  at +0     the bias plus the weight sum term
++          *    C   8 x int16  at +32    the per-channel multiplier
++          *    (no B)                   record is 48 bytes, not 64
++          *
++          * against a regular conv's A at +0, B at +32, C at +48 in 64 bytes.
++          * With the 48 byte record A correlates +0.9696 with the known
++          * per-channel weight sum and C peaks at exactly 0x4000, which is the
++          * layout's own signature; with the 64 byte record both collapse, to
++          * -0.15 and a maximum that is not 0x4000.
++          *
++          * ⚠ This corrects two earlier conclusions in FINDINGS.md that said the
++          * vendor emits no per-channel coefficient table for depthwise. Both
++          * scans tried 64, 32 and 128 byte blocks and never 48, so they missed
++          * a table that was there.
++          *
++          * mesa writing 64 byte records means every channel's A and C are read
++          * from the wrong offsets, which is why a depthwise layer fires and
++          * saturates rather than producing nothing.
++          */
++         /*
++          * DEFAULT for depthwise: the 48 byte record, decoded element for
++          * element from the vendor runtime capture.
++          *
++          * sv_dwu's 0x5020 points at bo01+0x240, immediately past its 576 byte
++          * weight buffer, and its 0x5024 448 bytes later. Taking the last 64 of
++          * those as the fp16 scale table leaves 384 bytes, which read as eight
++          * records of
++          *
++          *    A   8 x int32  at +0
++          *    C   8 x int16  at +32
++          *    (no B)
++          *
++          * in plain channel order, records four to seven zero. C came back as
++          * round(0x4000 * wt_sc[oc] / max(wt_sc)) for all 32 channels, and A as
++          *
++          *    A[oc] = round(bias / (in_sc * wt_sc[oc]))
++          *            + (in_zp - 0x80) * (N * wt_zp[oc] - sum(w_q))
++          *
++          * for all 32 channels of BOTH models, with nothing fitted: the
++          * calibration set was generated here so in_sc and in_zp are known.
++          * Since calculate_weight_sum() already returns sum(w_q - wt_zp), that
++          * is exactly `bias - (in_zp - 0x80) * sw`, the expression this file
++          * has used for A all along. So A needed no change; the record shape,
++          * the record count and where the fp16 table lands after it did.
++          *
++          * ⚠ This corrects the earlier conclusion, in FINDINGS.md and in the
++          * ROCKET_DW_FLOATBIAS comment below, that the vendor emits no
++          * per-channel table for depthwise. It emits one; it is not in the
++          * .rknn, librknnrt builds it at load time, and every search that
++          * looked for it in the model file was looking in the wrong place.
++          *
++          * ROCKET_DW_REC64 restores the regular 64 byte record, which is the
++          * control: it has to reproduce the old depthwise behaviour exactly.
++          *
++          * ROCKET_DW_ASHIFT=N scales A alone, left for N > 0 and right for
++          * N < 0.
++          *
++          * Round 57 swept the OUT_CVT shift from -3 to +3 on the honest
++          * metric and COMPUTED never moved off 1 on mn_dw1 or 2 on mn_dw25,
++          * while the same knob at +1 takes conv2d-cal from 128 of 128 to 0, so
++          * it does reach the hardware. A global scale cannot be what is left.
++          *
++          * What a global output shift CANNOT fix is a mismatch between the two
++          * things that are added before it. A is added to the MAC, and if the
++          * depthwise accumulator runs at a different power of two from the
++          * regular one then A and the MAC are in different units and shifting
++          * the sum moves both together. The signature is already visible
++          * offline: sorting mn_dw1's channels by |A| puts every channel whose
++          * output saturates at one end, which is what an A that is far too
++          * large for its MAC looks like. rkt_fill_biases carries the same idea
++          * for regular convs as ROCKET_BIAS_SCALE80, defaulting off because it
++          * measured wrong there.
++          */
++         if (rkt_is_depthwise(poperation) && !getenv("ROCKET_DW_REC64")) {
++            const char *ash = getenv("ROCKET_DW_ASHIFT");
++            int a_sh = ash ? atoi(ash) : 0;
++            const char *dwc = getenv("ROCKET_DW_C_VALUE");
++
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               int32_t sw = calculate_weight_sum(poperation, oc, weights);
++               unsigned g = oc / 8, i = oc % 8;
++               int32_t *A = (int32_t *)(b8 + g * 48 + i * 4);
++               int16_t *C = (int16_t *)(b8 + g * 48 + 32 + i * 2);
++               float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
++               int64_t a = (int64_t)biases_in[oc] - (int64_t)(in_zp - 0x80) * sw;
++
++               if (a_sh > 0)
++                  a <<= a_sh;
++               else if (a_sh < 0)
++                  a >>= -a_sh;
++               *A = (int32_t)a;
++               /*
++                * Q4, matching the regular path a few lines below rather than
++                * the vendor's Q14. The vendor writes 0x4000 * rel, but this
++                * driver's OUT_CVT is its own and the regular path is byte
++                * exact on hardware with 16 * rel while 0x4000 * rel railed the
++                * output. Keeping one convention across both records is what
++                * makes the depthwise result comparable with the regular one.
++                * ROCKET_DW_C14 writes the vendor's Q14 instead.
++                *
++                * ⚠ ROCKET_DW_C_VALUE, not ROCKET_C_VALUE. Round 57 swept
++                * ROCKET_C_VALUE on a depthwise model and got results identical
++                * to the default at 4 and at 64, which looked like C being
++                * inert. It is not evidence: that variable is only read by the
++                * regular branch below, so the sweep never changed anything.
++                * Those two tests are void, the same way round 50 was void.
++                */
++               *C = dwc ? (int16_t)strtol(dwc, NULL, 0)
++                        : getenv("ROCKET_DW_C14") ? (int16_t)(0x4000 * rel)
++                                                  : (int16_t)(16.0f * rel + 0.5f);
++            }
++            goto biases_done;
++         }
++
++         if (rkt_is_depthwise(poperation) && getenv("ROCKET_DW_FLOATBIAS")) {
++            float *fb = (float *)b8;
++            const float *bsc = poperation->conv.weight_tensor->scales;
++            float wt_sc = poperation->conv.weight_tensor->scale;
++            float in_sc = poperation->input_tensors[0]->scale;
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               float sc = (bsc ? bsc[oc] : wt_sc) * in_sc;
++               fb[oc] = (float)biases_in[oc] * sc;
++            }
++            goto biases_done;
++         }
++
++         for (unsigned oc = 0; oc < output_channels; oc++) {
++            int32_t sw = calculate_weight_sum(poperation, oc, weights);
++            unsigned g = oc / 8, i = oc % 8;
++            int32_t *A = (int32_t *)(b8 + g * 64 + i * 4);
++            int16_t *B = (int16_t *)(b8 + g * 64 + 32 + i * 2);
++            int16_t *C = (int16_t *)(b8 + g * 64 + 48 + i * 2);
++            float rel = wscales ? (wscales[oc] / max_sc) : 1.0f;
++            /*
++             * A (BS ALU add operand) = bias_in - (in_zp-0x80)*sw. The HW MAC computes
++             * Sum(in-0x80)(w-wt_zp) (the B term corrects wt_zp); the true conv numerator
++             * is Sum(in-in_zp)(w-wt_zp) = MAC - (in_zp-0x80)*sw, a per-channel constant
++             * that folds into the bias. For in_zp=0x80 this is just bias_in. The old
++             * A = 0x80*(sw+bias) was wrong on both counts (the 0x80 railed A; +sw had the
++             * wrong sign/coefficient). ROCKET_BIAS_NOSW drops the in_zp correction.
++             */
++            int32_t inzp_corr = ((int32_t)in_zp - 0x80) * sw;
++            int32_t bterm = getenv("ROCKET_BIAS_NOSW") ? biases_in[oc]
++                                                       : (biases_in[oc] - inzp_corr);
++            *A = a_scale * bterm;
++            /*
++             * ROCKET_DW_ATEST: for depthwise ONLY, force A (the BS ALU add operand,
++             * added to the MAC before requant) to a huge constant. output = requant(MAC
++             * + A). If dw1 output goes NONZERO -> the DPU/requant/output path is alive and
++             * A flows through -> the dw zero is the MAC (CMAC operands not read from CBUF).
++             * If output stays 0x00 even with huge A -> the dw DPU/output path itself is dead.
++             */
++            /*
++             * ROCKET_ATEST: the same probe, for any op rather than depthwise only.
++             * A 1x1 conv writes a full surface of exactly out_offset, meaning
++             * MAC + A came out as 0, and its output is unmoved by the weights, by
++             * the input, and by dropping -128*sum(w) from A. If forcing A to a
++             * value that must saturate the requant still leaves the output at
++             * out_offset, the DPU is not reading the coefficient buffer either
++             * and the dead stage is upstream of everything. If the output does
++             * move, the DPU reads A fine and only the CNA to CMAC path is dead.
++             */
++            if (getenv("ROCKET_ATEST"))
++               *A = (int32_t)strtoul(getenv("ROCKET_ATEST"), NULL, 0);
++            if (getenv("ROCKET_DW_ATEST") && rkt_is_depthwise(poperation)) {
++               /* MODERATE A: big enough that requant(0+A) clearly saturates the
++                * output (~255) but small enough to NOT overflow (A*cvt_scale). For
++                * dw1 (cvt_scale~0x4ace shift 0x10): A=0x2000 -> ~255. (0x40000000
++                * was too large -> ambiguous wrap.) ROCKET_DW_ATEST=<hex> overrides. */
++               uint32_t av = (uint32_t)strtoul(getenv("ROCKET_DW_ATEST"), NULL, 0);
++               *A = (av > 1) ? (int32_t)av : 0x2000;
++            }
++            /*
++             * ROCKET_B_VALUE: force the wt_zp correction operand. The hardware
++             * MAC computes sum((in - 0x80) * (w - 0x80)) while the true conv is
++             * sum((in - in_zp) * (w - wt_zp)), and B carries the difference,
++             * which is proportional to the input sum over the kernel window and
++             * therefore to the TAP COUNT: 400 taps at 5x5, 144 at 3x3, 16 at
++             * 1x1.
++             *
++             * That matters because a constant input at exactly in_zp makes
++             * (in - 0x80) zero, so the MAC is zero by construction and the
++             * output has to be requant(bias), identical for every kernel size,
++             * since cropping conv2d-cal's kernel leaves its bias and its
++             * requant untouched. On hardware it is not identical: the baseline
++             * comes back with 12 distinct values at 5x5, 45 at 1x1, and a flat
++             * zero point at 3x3. Something k-dependent is being added to a MAC
++             * that should be zero, and B is the only k-dependent term.
++             */
++            /*
++             * ROCKET_B_PERCH: B is PER CHANNEL in the vendor, not per layer.
++             *
++             * Decoded from the runtime capture. sv_rgu's B column holds 26
++             * distinct values across 32 channels, ranging -25 to 23 with a mean
++             * of 0.16, and correlates with nothing: not the bias, the weight
++             * sum, A, C or the scale. A small spread centred on zero is exactly
++             * what 0x80 - wt_zp[oc] looks like when the per-channel zero points
++             * sit near 128, which is what an asymmetric uint8 quantiser
++             * produces.
++             *
++             * This file has only ever used the scalar
++             * `weight_tensor->zero_point`, but `pipe_tensor` carries a
++             * `zero_points` array beside `scales`, and rkt_ml.c already tests
++             * it to decide whether a tensor is per-axis quantised. So the
++             * per-channel zero point is available and has never been used here.
++             */
++            const int *wzp = poperation->conv.weight_tensor->zero_points;
++            int zp_oc = (wzp && getenv("ROCKET_B_PERCH")) ? wzp[oc] : (int)wt_zp;
++            *B = getenv("ROCKET_B_VALUE")
++                    ? (int16_t)strtol(getenv("ROCKET_B_VALUE"), NULL, 0)
++                    : (int16_t)(0x80 - zp_oc);
++            /*
++             * C is a Q14 per-channel scale ratio (=0x4000 for the max-scale channel).
++             * If the HW does NOT apply a built-in >>14 after the BS C-multiply, this
++             * 2^14 compounds with the OUT_CVT cvt_scale -> ~2^14 over-scale -> the
++             * output rails (binary, amplitude-invariant). ROCKET_C_VALUE forces C so we
++             * can test: C=1 -> if output de-saturates/correct, the >>14 is missing and
++             * the 2^14 was the over-scale; if it collapses to out_zp, the HW does shift
++             * and C=0x4000 was right (bug elsewhere).
++             */
++            /*
++             * C is the per-channel scale RATIO (max-scale channel = 1.0) applied by the
++             * BS stage, which then shifts right by 4 (Q4) -- so 1.0 = 16, NOT 0x4000.
++             * Emitting Q14 (16384*rel) over-scaled by 2^10 and railed the output; Q4
++             * (16*rel) gives 93.8% byte-exact vs the relu reference on conv2d-cal. The
++             * absolute scale lives in the OUT_CVT cvt_scale (which already = conv_scale).
++             * NB Q4 is coarse for per-axis (1/16 ratio steps); fine if per-tensor (rel=1).
++             */
++            const char *cval = getenv("ROCKET_C_VALUE");
++            *C = cval ? (int16_t)strtol(cval, NULL, 0)
++                      : (int16_t)(16.0f * rel + 0.5f);
++         }
++biases_done:
++
++         /*
++          * (b) board test: the zeroed float surface stalls the SDP (core
++          * wt_rd=0) -- it is load-bearing. Fill it with a DERIVABLE candidate
++          * (the dense dequant weights) to ask whether a correct ABC + any valid
++          * derivable surface computes, or whether the vendor's exact (blob)
++          * tiling is required. ROCKET_FS_ZERO=1 reverts to the zeroed surface.
++          */
++         if (getenv("ROCKET_FS_SKELETON")) {
++            /*
++             * DERIVABLE SKELETON ONLY: the in_sc constant block + the per-channel
++             * bias array (= -bias_float[oc]); the data-dependent weight scatter is
++             * left zeroed. Tests whether that scatter is load-bearing or whether
++             * the engine computes on the skeleton alone (=> per-axis fully
++             * derivable). Offsets are the captured layout of the 16->128 pointwise
++             * float surface (bias contiguous @ slot 2674+oc; in_sc block @1216).
++             */
++            float *fs = (float *)(b8 + groups * 64);
++            unsigned fcap = (bufsize - groups * 64) / sizeof(float);
++            float in_sc = poperation->input_tensors[0]->scale;
++            const float *wsc = poperation->conv.weight_tensor->scales;
++            for (unsigned i = 1216; i < 1216 + 1456 && i < fcap; i++)
++               fs[i] = in_sc;
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               float wt = wsc ? wsc[oc] : poperation->conv.weight_tensor->scale;
++               unsigned slot = 2674 + oc;
++               if (slot < fcap)
++                  fs[slot] = -(float)biases_in[oc] * in_sc * wt;
++            }
++         } else if (!getenv("ROCKET_FS_ZERO") &&
++                    !getenv("ROCKET_FS_FLOATS") &&
++                    !getenv("ROCKET_FS_TABLE_OVER") &&
++                    !getenv("ROCKET_FS_HOLE")) {
++            /*
++             * ONE CONSTANT WORD at groups*64, and nothing else in the region.
++             *
++             * What used to be here was a float32 array with one entry per
++             * weight, MAX2(ic*oc*k*k, 8192) of them, 197888 bytes for
++             * conv2d-cal. Measured on hardware, per output channel:
++             *
++             *   keep 1936, 1600, 1024, 512, 256, 128, 64, 32, 16, 8, 4 bytes
++             *       of it and zero the rest        every channel still correct
++             *   keep 0                             no channel correct
++             *
++             * so only the first four bytes were ever doing anything. Varying
++             * that word then showed it is not read as a float at all: flipping
++             * its sign changes nothing, doubling it changes nothing, and
++             * clearing its low byte, worth 0.0005 as a float, destroys every
++             * output channel. Twenty four words later the requirement is
++             *
++             *   (w & 0x3f) == 0x04   and   ((w >> 6) & 0xff) >= T
++             *
++             * with T somewhere in (0x21, 0x3f]; bits 14, 15 and everything
++             * above them are free. 0x1004 satisfies it and is used here.
++             *
++             * ⚠ This is why the 3x3 kernel never worked. The old code filled
++             * that word with a dequantised weight, so whether a model computed
++             * came down to whether its FIRST WEIGHT happened to carry the right
++             * bits. conv2d-cal's did and cal_k3's did not, and every attempt to
++             * explain the difference in terms of kernel size was chasing that
++             * coincidence. With the constant, conv2d-cal, cal_s1, cal_oc16 and
++             * cal_k3 are all correct on every output channel.
++             *
++             * ROCKET_FS_FLOATS restores the old surface, ROCKET_FS_F0 sets this
++             * word to something else.
++             */
++            /*
++             * ROCKET_FS_FILL=<n>: write the word into the first n slots
++             * instead of just the first, 0 meaning fill the whole region.
++             *
++             * One word is enough at 128 output channels and at 16, measured
++             * both ways. It is NOT enough at 1024: mn_pw24 gets 297 of its
++             * 1024 channels with any single known-good word and 408 with the
++             * old per-weight float surface, which is worse than the surface it
++             * replaced. Whatever is consumed there scales with something this
++             * layer has more of, and the floats satisfy the requirement for
++             * more channels by accident than one word does on purpose.
++             */
++            /*
++             * ROCKET_SCALE_TABLE: write the per-channel weight scale as fp16,
++             * one entry per output channel, which is what the vendor puts here.
++             *
++             * Decoded from the runtime capture. The surface 0x5020 points at is
++             *
++             *    [A/B/C table]                 64 B per 8 channels regular,
++             *                                  48 B per 8 channels depthwise
++             *    [oc x fp16 weight scale]      2 bytes per channel
++             *    0x5024 ->  0x0E0E, then zeros
++             *
++             * and the 32 uint16 immediately before the 0x5024 target decode as
++             * fp16 matching the per-channel scale implied by A at +0.998.
++             *
++             * That is what this driver has been writing a single magic word
++             * into: mesa's 0x5024 is bias_addr + groups*64, which lands ON this
++             * table rather than past it, and the constant 0x1004 found by
++             * sweeping is simply fp16 0.00049, a plausible small scale. So the
++             * bitfield rule fitted in rounds 36 and 37 was describing valid
++             * fp16 encodings all along.
++             */
++            uint32_t *fs32 = (uint32_t *)(b8 + table_bytes);
++            /*
++             * ⚠ No `goto biases_done` here: that label is EARLIER in the
++             * function, so jumping to it re-executes everything between and
++             * spins forever. It did, on the board, and looked like a hang.
++             * Write the table and skip the constant word with a flag instead.
++             */
++            /*
++             * The slot holds the per-channel REQUANT MULTIPLIER, in_sc *
++             * wt_sc[oc] / out_sc, as fp16. Not the weight scale.
++             *
++             * Round 47 wrote the weight scale and every working shape broke,
++             * because conv2d-cal's weight scale is 3.9125464 and fp16 of that
++             * is 0x43d3, the value round 28 already proved fails. Reading the
++             * words rounds 36 and 37 swept, as fp16, gives the window directly:
++             *
++             *   pass   0.000474 0.00049 0.000521 0.002937 0.003059 0.003181 0.008331
++             *   fail   0.00013 and below, 2.13 and above
++             *
++             * and in_sc * wt_sc / out_sc for conv2d-cal is 0.00095521, inside
++             * it, while wt_sc alone is far outside. That also explains the
++             * magic word: 0x1004 is 0.00049, the same order as the real
++             * multiplier, and the vendor's captured entries are around 0.0012.
++             *
++             * ROCKET_SCALE_TABLE_WT writes the weight scale instead, which is
++             * what round 47 tested and is kept only so the comparison can be
++             * repeated.
++             */
++            /*
++             * DEFAULT since round 52, which measured it: the fp16 per-channel
++             * weight scale table, with the second operand moved past it, gives
++             * 128/128 on conv2d-cal, cal_k3 and cal_k1, the same as the old
++             * arrangement, and it is the vendor's layout rather than a
++             * constant sitting where a table belongs.
++             *
++             * ROCKET_SCALE_OFF restores the single word at groups*64.
++             */
++            /*
++             * The FIRST CONV wants this region left ZERO.
++             *
++             * conv0 is 32 of 32 channels constant with the arrangement round
++             * 52 made the default, and its output is exactly 128 plus the
++             * OUT_CVT offset with no accumulator contribution at all: sweeping
++             * the output shift over 2^16 does not move a bit of it. Both knobs
++             * that skip this block entirely, ROCKET_FS_ZERO and
++             * ROCKET_FS_FLOATS, bring the MAC back and bring it back
++             * IDENTICALLY, distinct 254 with 4 constant channels, so the
++             * content of the region is irrelevant and only writing to it is
++             * not. ROCKET_SCALE_OFF, which still writes one word there, sits
++             * in between at distinct 60.
++             *
++             * The mechanism is an address collision. fill_regcmd_firstconv
++             * points 0x5024, the second SDP operand, at bias_addr + 0x100 and
++             * always has, while the generic path computes it. For 32 output
++             * channels rkt_coef_table_bytes() is 4 * 64 = 256, which IS 0x100,
++             * so round 52 began writing the fp16 scale entries exactly on top
++             * of the first conv's operand.
++             *
++             * Round 52 changed this for every operation and was regression
++             * tested only on the shapes that already passed. conv0 was not
++             * among them, so this went unseen; it is in the regression set
++             * permanently now.
++             *
++             * ROCKET_FC_SCALE_TABLE forces the table on for a first conv, as
++             * the control.
++             */
++            bool first_conv = rkt_screen(pcontext->screen)->soc == RKT_SOC_RK3576 &&
++                              !rkt_is_depthwise(poperation) &&
++                              poperation->input_tensors[0]->dims[3] <= 4;
++            bool scale_table = getenv("ROCKET_SCALE_OFF") == NULL &&
++                               (!first_conv || getenv("ROCKET_FC_SCALE_TABLE"));
++            if (scale_table) {
++               uint16_t *sc16 = (uint16_t *)(b8 + table_bytes);
++               const float *wsc = poperation->conv.weight_tensor->scales;
++               float wt_sc = poperation->conv.weight_tensor->scale;
++               float in_sc = poperation->input_tensors[0]->scale;
++               float out_sc = poperation->output_tensors[0]->scale;
++               /* The capture's entries match the scale implied by A at +0.998,
++                * so the weight scale is the content; the requant multiplier is
++                * kept behind ROCKET_SCALE_MUL for comparison. */
++               bool raw = getenv("ROCKET_SCALE_MUL") == NULL;
++               for (unsigned oc = 0; oc < output_channels; oc++) {
++                  float w = wsc ? wsc[oc] : wt_sc;
++                  sc16[oc] = _mesa_float_to_half(raw ? w
++                                                     : in_sc * w / out_sc);
++               }
++               /*
++                * And the SECOND OPERAND surface, which round 46 forgot.
++                *
++                * The vendor's layout is [A/B/C][oc fp16 scales][0x0E0E, zeros],
++                * with 0x5024 pointing at that last part. mesa's 0x5024 points
++                * at groups*64, which is where the fp16 scales belong, so the
++                * word this driver writes there has been serving as the second
++                * operand all along. That is why sweeping it mattered and why
++                * the "bitfield rule" of round 36 exists at all: it describes
++                * what mesa's second operand tolerates, not a scale format.
++                *
++                * The vendor's second operand starts with 0x0E0E and is zero
++                * after it, identically in both captured models. Round 46 moved
++                * the pointer past the scale table but never wrote anything at
++                * the new target, so the DPU read zeros. Write it.
++                */
++               if (getenv("ROCKET_SCALE_OFF") == NULL) {
++                  /*
++                   * ⚠ The operand VALUE stays mesa's, not the vendor's.
++                   *
++                   * Round 49 wrote the vendor's 0x0E0E into the slot mesa's
++                   * 0x5024 already points at and got an empty convolution,
++                   * because 0x0E0E violates the round 36 rule that mesa's
++                   * configuration imposes. Round 51 then moved the pointer with
++                   * 0x0E0E at the new target and failed identically, whichever
++                   * content the table held. Same failure, same cause.
++                   *
++                   * So move the pointer but keep a value mesa's own
++                   * configuration accepts. ROCKET_OP2 overrides it.
++                   */
++                  const char *o2 = getenv("ROCKET_OP2");
++                  uint32_t *op2 = (uint32_t *)(b8 + table_bytes +
++                                               output_channels * 2);
++                  op2[0] = o2 ? (uint32_t)strtoul(o2, NULL, 0) : 0x1004;
++               }
++            }
++            unsigned cap = (bufsize - table_bytes) / sizeof(uint32_t);
++            const char *fill = getenv("ROCKET_FS_FILL");
++            unsigned n = fill ? strtoul(fill, NULL, 0) : 1;
++            if (n == 0 || n > cap)
++               n = cap;
++            if (!scale_table && !first_conv)
++               for (unsigned i = 0; i < n; i++)
++                  fs32[i] = 0x1004;
++         } else if (getenv("ROCKET_FS_FLOATS") ||
++                    getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
++            const float *wsc = poperation->conv.weight_tensor->scales; /* per-axis */
++            float wt_sc = poperation->conv.weight_tensor->scale;
++            unsigned iw = poperation->conv.weight_tensor->dims[1];
++            unsigned ih = poperation->conv.weight_tensor->dims[2];
++            unsigned icn = poperation->input_tensors[0]->dims[3];
++            int8_t (*wqi)[iw][ih][icn] = weights;  /* per-axis weights: int8, wt_zp=0 */
++            uint8_t (*wqu)[iw][ih][icn] = weights; /* per-tensor weights: uint8 */
++            float *fs = (float *)(b8 + groups * 64);
++            unsigned fcap = (bufsize - groups * 64) / sizeof(float);
++            unsigned fi = 0;
++            for (unsigned oc = 0; oc < output_channels; oc++) {
++               float sc = wsc ? wsc[oc] : wt_sc;
++               for (unsigned x = 0; x < iw; x++)
++                  for (unsigned y = 0; y < ih; y++)
++                     for (unsigned c = 0; c < icn; c++)
++                        if (fi < fcap)
++                           fs[fi++] = wsc ? sc * (int)wqi[oc][x][y][c]
++                                          : wt_sc * ((int)wqu[oc][x][y][c] - (int)wt_zp);
++            }
++         }
++      }
++
++      /*
++       * ROCKET_FS_PERCH=<u16>: write the region at groups*64 the way the VENDOR
++       * writes it, instead of as a float array.
++       *
++       * A vendor capture on 2026-08-09, of two convolutions with 128 output
++       * channels, shows that region holding 256 bytes of 128 uint16, one per
++       * output channel, values around 5400 to 6400 and correlating +0.87 with
++       * the per-channel weight scale, followed by 0e 0e and then zeros. It is a
++       * per-channel 16-bit multiplier.
++       *
++       * What this code writes by default is a float32 dequantised weight
++       * surface, thousands of entries, sized MAX2(ic*oc*k*k, 8192) floats. Same
++       * address, different element type, different length, different meaning.
++       *
++       * The value is passed in rather than derived because the exact formula is
++       * not known yet: the capture correlates with the weight scale but the two
++       * captured models carry different weights, so nothing separates the
++       * per-channel part from the geometry. A single constant is enough to ask
++       * whether the region is load bearing at all.
++       */
++      /*
++       * ROCKET_FS_TAIL=<path>: graft the vendor's coefficient tail on.
++       *
++       * A full 8192-byte dump of the vendor's buffer for two convolutions that
++       * differ in kernel size AND in weights is byte identical from 0x0b90
++       * onward: 5232 bytes made of a 13-byte pattern repeated 54 times, more
++       * constant content, zeros, and finally 1280 uint16 all equal to 0x3c00,
++       * which is fp16 1.0. Model independent, and the vendor's whole buffer is
++       * about 8 KB.
++       *
++       * What this file writes at the same address is one float32 per weight,
++       * MAX2(ic*oc*k*k, 8192) of them, which is 204800 bytes for conv2d-cal. So
++       * this writes the vendor's tail at its own offset and zeroes everything
++       * past the end of it, giving the buffer the vendor's shape while keeping
++       * the A/B/C table this driver computes.
++       *
++       * ⚠ conv2d-cal is the control and it must survive: it computes today with
++       * the float surface and fails when that surface is zeroed, so those floats
++       * are doing something for it. If it survives this, mesa's 200 KB of floats
++       * are not needed and the buffer is far simpler than assumed. If it breaks,
++       * the vendor's structure cannot be grafted on piecemeal.
++       */
++      /*
++       * ROCKET_FS_MIDZERO: zero the slice between the A/B/C table and the tail.
++       *
++       * With the tail grafted, everything from 0x0b90 on is byte identical
++       * between models, conv2d-cal is correct and cal_k3 is still flat at the
++       * zero point, so the kernel dependence is not in the tail. What is left
++       * k-dependent in this buffer is 0x400 to 0x0b90, still holding the first
++       * 1936 bytes of the float surface. Zeroing exactly that slice says
++       * whether the buffer carries the dependence at all.
++       */
++      if (getenv("ROCKET_FS_MIDZERO") && bufsize > 0x0b90)
++         memset(b8 + 0x400, 0, 0x0b90 - 0x400);
++
++      /*
++       * ROCKET_FS_KEEP=<n>: keep the first n bytes of the float surface and
++       * zero the rest of it, up to 0x0b90.
++       *
++       * The extent of what this driver actually needs there has never been
++       * measured. 0x0b90 was picked because that is where the VENDOR's constant
++       * tail begins, which says nothing about mesa. What is known is only that
++       * keeping 0x400..0x0b90 works and zeroing all of it fails, so the answer
++       * is somewhere in those 1936 bytes.
++       *
++       * Round 30 ruled out reading it as a per-channel table: changing the first
++       * 256 bytes destroys all 128 output channels uniformly rather than the 64
++       * a 4-byte-per-channel layout would touch, and substituting a plausible
++       * large float fails exactly like substituting zero. So stop assigning it a
++       * meaning and measure its size instead.
++       *
++       * Sizes worth landing on, for conv2d-cal at ic=16 oc=128 k=5:
++       *    512 = 128 floats = one per output channel
++       *   1600 = 400 floats = ic*k*k, one output channel's worth of weights
++       *   1936 = the whole slice, which must pass, and 0 must fail
++       */
++      /*
++       * ROCKET_FS_F0=<value>: overwrite the FIRST float of the surface, and
++       * nothing else. Accepts a decimal float or a 0x raw word, because it is
++       * not yet established that the hardware reads it as a float at all.
++       *
++       * Round 32 bisected the slice down to this one word: keeping 4 bytes
++       * leaves all 128 output channels correct and keeping 0 leaves none. A
++       * different nonzero value there fails too, 0x43d343d3 which is about
++       * 423.3, while the value mesa happens to write, -109.55, works. So one
++       * scalar decides the whole layer and it has to be the right one, and the
++       * question is what "right" means: the exact dequantised weight, a sign, a
++       * magnitude, or a bit pattern that is not a float at all.
++       */
++      const char *f0 = getenv("ROCKET_FS_F0");
++
++      /*
++       * ⚠ The surface starts at groups*64, which is 0x400 only because oc=128
++       * in every model probed so far. With oc=16 it is 0x80, and the knobs
++       * below would have written into the A/B/C table instead of the surface,
++       * making any result on such a model meaningless.
++       */
++      unsigned fs_off = groups * 64;
++      const char *keep = getenv("ROCKET_FS_KEEP");
++      if (keep && bufsize > 0x0b90) {
++         unsigned n = strtoul(keep, NULL, 0);
++         if (fs_off + n < 0x0b90)
++            memset(b8 + fs_off + n, 0, 0x0b90 - fs_off - n);
++      }
++
++      if (f0) {
++         uint32_t w;
++         if (f0[0] == '0' && (f0[1] == 'x' || f0[1] == 'X')) {
++            w = strtoul(f0, NULL, 16);
++         } else {
++            float v = strtof(f0, NULL);
++            memcpy(&w, &v, sizeof(w));
++         }
++         memcpy(b8 + fs_off, &w, sizeof(w));
++      }
++
++      /*
++       * ROCKET_FS_TABLE_OVER / ROCKET_FS_HOLE: separate the two things round 28
++       * changed together.
++       *
++       * Round 27 zeroed 0x400..0x0b90 and conv2d-cal broke. Round 28 wrote the
++       * per-channel fp16 table at 0x400 and left everything after it zero, and
++       * it broke too, while the old float surface computes and the zeroed-table
++       * control fails as it should. Neither round says whether what the model
++       * needs is the table's own bytes or the rest of the surface behind it,
++       * because both rounds moved both.
++       *
++       * TABLE_OVER writes the float surface exactly as the configuration that
++       * computes does, then overwrites only the table's 2*oc bytes, so the
++       * table is the ONLY difference from a passing run. HOLE is its
++       * complement: the same surface with only those bytes zeroed.
++       *
++       *   TABLE_OVER computes  the table is compatible and the earlier
++       *                        breakage was the zeroed remainder
++       *   TABLE_OVER breaks    those bytes must hold mesa's floats, and the
++       *                        offline reading does not carry over to what this
++       *                        driver puts in the rest of the buffer
++       *   HOLE breaks          confirms the slice is load bearing by itself,
++       *                        which is what makes TABLE_OVER readable
++       *   HOLE computes        the slice is NOT load bearing on its own and
++       *                        round 27's failure was entirely the remainder
++       */
++      if (getenv("ROCKET_FS_TABLE_OVER") || getenv("ROCKET_FS_HOLE")) {
++         const float *wsc = poperation->conv.weight_tensor->scales;
++         float wt_sc = poperation->conv.weight_tensor->scale;
++         uint16_t *fs16 = (uint16_t *)(b8 + groups * 64);
++         for (unsigned oc = 0; oc < output_channels; oc++)
++            fs16[oc] = getenv("ROCKET_FS_HOLE")
++                          ? 0
++                          : _mesa_float_to_half(wsc ? wsc[oc] : wt_sc);
++      }
++
++      const char *tailf = getenv("ROCKET_FS_TAIL");
++      if (tailf && bufsize > 0x0b90) {
++         FILE *f = fopen(tailf, "rb");
++         if (f) {
++            size_t n = fread(b8 + 0x0b90, 1, bufsize - 0x0b90, f);
++            fclose(f);
++            if (0x0b90 + n < bufsize)
++               memset(b8 + 0x0b90 + n, 0, bufsize - 0x0b90 - n);
++         }
++      }
++
++      if (getenv("ROCKET_FS_PERCH")) {
++         uint16_t v = (uint16_t)strtoul(getenv("ROCKET_FS_PERCH"), NULL, 0);
++         uint8_t *p8 = b8 + groups * 64;
++         memset(p8, 0, bufsize - groups * 64);
++         for (unsigned oc = 0; oc < output_channels; oc++)
++            ((uint16_t *)p8)[oc] = v;
++         ((uint16_t *)p8)[output_channels] = 0x0e0e;
 +      }
 +
 +      if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
@@ -289,11 +1393,73 @@ index 82258e7..4f6ccc5 100644
     rsc = pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT,
                              output_channels * sizeof(uint32_t));
     biases = pipe_buffer_map(pcontext, rsc, PIPE_MAP_WRITE, &transfer_out);
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.h b/src/gallium/drivers/rocket/rkt_coefs.h
+index d670cec..508c8da 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.h
++++ b/src/gallium/drivers/rocket/rkt_coefs.h
+@@ -6,6 +6,8 @@
+ #ifndef RKT_COEFS_H
+ #define RKT_COEFS_H
+ 
++#include <stdlib.h>
++
+ #include "rkt_ml.h"
+ 
+ struct pipe_resource *
+@@ -17,4 +19,40 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+                 const struct pipe_ml_operation *poperation,
+                 unsigned *truncate_bits);
+ 
++/*
++ * Bytes of the per-channel coefficient table that sits at the start of the
++ * 0x5020 surface, before the fp16 weight scale table.
++ *
++ * Decoded from the vendor runtime capture of sv_rgu and sv_dwu, which differ
++ * only in `groups`. Both surfaces are [table][oc x fp16 weight scale] with
++ * 0x5024 pointing just past the fp16 entries, and the address registers give
++ * the sizes directly: the regular conv's 0x5024 is 320 bytes past its 0x5020
++ * and the depthwise one's is 448, with 32 output channels either way. Minus
++ * the 64 bytes of fp16 that leaves 256 and 384, that is four 64 byte records
++ * and eight 48 byte ones.
++ *
++ * ⚠ Eight records for 32 channels is twice what a record per eight channels
++ * would give, and this geometry CANNOT tell the doubling apart from a padding
++ * of the channel count up to 64: both give eight. The doubling is what is
++ * written here because it is the same doubling this driver already applies to
++ * the depthwise channel atomic in rkt_fill_weights. A depthwise capture at
++ * some other channel count would settle it; ROCKET_DW_RECS overrides the
++ * record count so the alternative can be tested from the board without a
++ * rebuild.
++ */
++static inline unsigned
++rkt_coef_table_bytes(bool depthwise, unsigned output_channels)
++{
++   unsigned groups = DIV_ROUND_UP(output_channels, 8);
++
++   if (!depthwise)
++      return groups * 64;
++
++   const char *recs = getenv("ROCKET_DW_RECS");
++   if (recs)
++      groups = (unsigned)strtoul(recs, NULL, 0) / 2;
++
++   return groups * 2 * 48;
++}
++
+ #endif /* RKT_COEFS_H */
+\ No newline at end of file
 diff --git a/src/gallium/drivers/rocket/rkt_device.c b/src/gallium/drivers/rocket/rkt_device.c
-index 9c2da6a..6025c06 100644
+index 9c2da6a..faf1e56 100644
 --- a/src/gallium/drivers/rocket/rkt_device.c
 +++ b/src/gallium/drivers/rocket/rkt_device.c
-@@ -9,12 +9,56 @@
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+@@ -9,12 +10,56 @@
  #include "drm-uapi/rocket_accel.h"
  
  #include <xf86drm.h>
@@ -350,7 +1516,7 @@ index 9c2da6a..6025c06 100644
  static const struct debug_named_value rocket_debug_options[] = {
     {"dbg_msgs", ROCKET_DBG_MSGS, "Print debug messages"},
     {"dump_bos", ROCKET_DBG_DUMP_BOS, "Dump buffers for analysis"},
-@@ -222,6 +266,19 @@ rkt_screen_create(int fd,
+@@ -222,6 +267,19 @@ rkt_screen_create(int fd,
  
     rkt_screen->fd = fd;
  
@@ -371,10 +1537,17 @@ index 9c2da6a..6025c06 100644
     screen->destroy = rkt_destroy_screen;
     screen->context_create = rkt_create_context;
 diff --git a/src/gallium/drivers/rocket/rkt_device.h b/src/gallium/drivers/rocket/rkt_device.h
-index 0425a42..7dd57c0 100644
+index 0425a42..56091a9 100644
 --- a/src/gallium/drivers/rocket/rkt_device.h
 +++ b/src/gallium/drivers/rocket/rkt_device.h
-@@ -29,11 +29,28 @@ extern int rocket_debug;
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+@@ -29,11 +30,28 @@ extern int rocket_debug;
                     ##__VA_ARGS__);                    \
     } while (0)
  
@@ -404,10 +1577,17 @@ index 0425a42..7dd57c0 100644
  
  static inline struct rkt_screen *
 diff --git a/src/gallium/drivers/rocket/rkt_ml.c b/src/gallium/drivers/rocket/rkt_ml.c
-index 1f616df..af3f902 100644
+index 1f616df..81e446e 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.c
 +++ b/src/gallium/drivers/rocket/rkt_ml.c
-@@ -86,6 +86,147 @@ calc_raw_output_size(struct rkt_operation *operation)
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+@@ -86,6 +87,203 @@ calc_raw_output_size(struct rkt_operation *operation)
            output_channels_1 * output_channels_2;
  }
  
@@ -448,6 +1628,18 @@ index 1f616df..af3f902 100644
 +   if (total_tasks == 0)
 +      return;
 +
++   /*
++    * ROCKET_DUP_TASK=N: replicate the WHOLE packed task region N times, so a
++    * single PROVEN op (conv2d-cal, byte-exact per-op) becomes N REAL identical
++    * tasks in ONE whole-graph job. Tests "does the PC run >1 REAL valid task"
++    * in the proven uint8/zp=128 regime -- WITHOUT the force=2 phantom garbage-
++    * task confound and WITHOUT a new (int8-activation) model. Default 1 = off.
++    */
++   unsigned dup = getenv("ROCKET_DUP_TASK")
++                     ? (unsigned)strtoul(getenv("ROCKET_DUP_TASK"), NULL, 0) : 1;
++   if (dup < 1)
++      dup = 1;
++
 +   /* Uniform stride (u64) = (pc_data_amount + 1) * scale, matching the kernel's
 +    * PC_DATA_AMOUNT = (amount + EXTRA(4) + scale(2) - 1)/scale - 1 from the max. */
 +   unsigned stride_amount = ((max_amount + 4 + 2 - 1) / 2) * 2;
@@ -455,14 +1647,14 @@ index 1f616df..af3f902 100644
 +
 +   subgraph->graph_regcmd =
 +      pipe_buffer_create(pcontext->screen, 0, PIPE_USAGE_DEFAULT,
-+                         stride_bytes * total_tasks);
-+   subgraph->graph_task_count = total_tasks;
++                         stride_bytes * total_tasks * dup);
++   subgraph->graph_task_count = total_tasks * dup;
 +   subgraph->graph_stride_amount = stride_amount;
 +
 +   struct pipe_transfer *wtransfer = NULL;
 +   uint8_t *dst = pipe_buffer_map(pcontext, subgraph->graph_regcmd,
 +                                  PIPE_MAP_WRITE, &wtransfer);
-+   memset(dst, 0, stride_bytes * total_tasks);
++   memset(dst, 0, stride_bytes * total_tasks * dup);
 +
 +   uint64_t graph_addr = rkt_resource(subgraph->graph_regcmd)->phys_addr;
 +   unsigned g = 0;
@@ -480,56 +1672,93 @@ index 1f616df..af3f902 100644
 +                task->regcfg_amount * sizeof(uint64_t));
 +
 +         /*
-+          * Replace the per-task in-stream broadcast OP_EN (target 0x81, reg
-+          * 0x08, value 0x1d) with FOUR per-unit OP_EN writes. The broadcast
-+          * engages the units but it writes reg 0x08, and the PC's own reg 0x08
-+          * is PC_OPERATION_ENABLE -> it RESTARTS the PC each task and stalls the
-+          * task iteration (PC_TASK_STATUS stuck). Each unit has its own OP_EN at
-+          * domain+0x08 (CNA 0x1008, CORE 0x3008, DPU 0x4008, RDMA 0x5008), so
-+          * writing those engages the units WITHOUT touching the PC -> the PC can
-+          * iterate task_number tasks. The 4 writes go into the broadcast slot +
-+          * the next 3 (padding within the stride; the broadcast is the task's
-+          * last real entry, the rest of the stride is zero-pad NOPs).
++          * Phase B (2026-07-05, runtime-CONFIRMED): emit the vendor's per-task
++          * self-iteration TRAILER in place of the single broadcast OP_EN the fill
++          * appended. A runtime dump of the vendor's task_number=8 submit buffer
++          * (rknpu.trailer_dump) matched the .rknn exactly -- each task ends with
++          *   [PC 0x10 = ABSOLUTE next task's packed addr]  (tgt 0x0101 reg 0x0010)
++          *   [PC 0x14 = next task's fetch amount]          (tgt 0x0101 reg 0x0014)
++          *   [SYNC 0x41]                                   (tgt 0x0041)
++          *   [BROADCAST OP_EN 0x1d]                        (tgt 0x0081 reg 0x0008)
++          * and the PC self-iterates: the next-pointer repoints the PC's own fetch,
++          * then the broadcast re-fires it INTO the next task. ORDER IS LOAD-BEARING
++          * -- the next-pointer must precede the broadcast, else the broadcast re-
++          * fires with reg 0x10 still on the current task (the old "broadcast
++          * restarts the PC" confound). The fill appends the broadcast right after
++          * the config, so its slot marks the config end; overwrite it + the next 3
++          * zero-pad slots with the trailer. Last task: next-ptr/amount = 0 to
++          * terminate. ROCKET_STRIP_OPEN keeps the old "no in-stream OP_EN" escape
++          * hatch. Kernel is unchanged: it still submits task_number=N as a stop-
++          * count and the PC walks the trailer chain.
 +          */
 +         uint64_t *task_dst = (uint64_t *)(dst + g * stride_bytes);
-+         static const struct { uint16_t tgt, reg; } unit_open[4] = {
-+            { 0x201, 0x1008 }, { 0x801, 0x3008 },
-+            { 0x1001, 0x4008 }, { 0x2001, 0x5008 },
-+         };
-+         /*
-+          * ROCKET_STRIP_OPEN: FULLY strip the in-stream OP_EN (zero the broadcast
-+          * slot to a NOP,RATHER than replace it with the 4 per-unit OP_EN writes).
-+          * This reproduces the EXACT vendor regcmd (pure config, no in-stream OP_EN)
-+          * so the units must engage from the kernel's single PC_OP_EN=0x1 pulse +
-+          * S_POINTER arming alone -- the vendor's proven path (post-op1 fingerprint:
-+          * every unit S_POINTER -> 0001000f with unit OP_EN 0x_008 staying 0). If
-+          * bit16 engages with this, the per-unit-OP_EN workaround is unnecessary and
-+          * the PC iterates; if not, engage needs HW state no register carries.
-+          */
 +         bool do_strip = getenv("ROCKET_STRIP_OPEN") != NULL;
-+         /*
-+          * ROCKET_UNIT_OPEN: the VALUE written to each unit's OP_EN (default 0x1).
-+          * STRIP proved bit16 engages from the pulse but the units never COMPLETE
-+          * (PC stuck OP_EN=1, 0/29 tasks, conv0 unwritten) -- so the in-stream OP_EN
-+          * drives completion, not just engage. The per-op broadcast that DOES
-+          * complete writes 0x1d (the RKNPU enable_mask), while the per-unit path used
-+          * only 0x1 (reaches 1/29 then stalls). Try 0x1d per-unit to give the units
-+          * the full enable the broadcast gives them, without touching the PC's 0x08.
-+          */
-+         const char *uo = getenv("ROCKET_UNIT_OPEN");
-+         uint32_t unit_open_val = uo ? (uint32_t)strtoul(uo, NULL, 0) : 0x1u;
++         uint32_t next_addr =
++            (g + 1 < total_tasks)
++               ? (uint32_t)(graph_addr + (uint64_t)(g + 1) * stride_bytes)
++               : 0;
++         uint32_t next_amt =
++            (g + 1 < total_tasks) ? ((max_amount + 4 + 2 - 1) / 2 - 1) : 0;
 +         for (unsigned e = 0; e < task->regcfg_amount; e++) {
-+            if (((task_dst[e] >> 48) & 0xffff) == 0x81 &&
-+                (task_dst[e] & 0xffff) == 0x08) {
-+               if (do_strip) {
-+                  task_dst[e] = 0; /* NOP: tgt=0 reg=0 val=0 */
-+               } else {
-+                  for (int k = 0; k < 4 && (e + k) < stride_amount; k++)
-+                     task_dst[e + k] = ((uint64_t)unit_open[k].tgt << 48) |
-+                                       ((uint64_t)unit_open_val << 16) |
-+                                       (uint64_t)unit_open[k].reg;
++            uint16_t etgt = (uint16_t)((task_dst[e] >> 48) & 0xffff);
++            uint16_t ereg = (uint16_t)(task_dst[e] & 0xffff);
++            /*
++             * Config end = the FIRST in-stream OP_EN the fill appended. conv0's
++             * firstconv fill emits the BROADCAST (tgt 0x81 reg 0x08); the dw/pw
++             * NORMAL fill emits FOUR PER-UNIT OP_ENs (reg 0x1008/0x3008/0x4008/
++             * 0x5008) by default. Match EITHER, so every task gets the trailer.
++             * (Keying only on the broadcast gave a next-pointer to conv0 alone --
++             * the sole firstconv task -- so the chain broke after one hop: board
++             * trlchk showed task0 match=YES but task1+ NO-PC10.) The trailer
++             * overwrites the OP_EN entries in place: for per-unit the 4 slots
++             * become [0x10][0x14][SYNC][broadcast]; for the broadcast, 1 slot + 3
++             * zero-pad.
++             */
++            bool is_open = (etgt == 0x81 && ereg == 0x08) ||
++                           ereg == 0x1008 || ereg == 0x3008 ||
++                           ereg == 0x4008 || ereg == 0x5008;
++            if (!is_open)
++               continue;
++            if (do_strip) {
++               for (unsigned k = 0; k < 4 && (e + k) < stride_amount; k++)
++                  task_dst[e + k] = 0; /* NOP */
++            } else if (e + 3 < stride_amount) {
++               task_dst[e + 0] = ((uint64_t)0x0101 << 48) |
++                                 ((uint64_t)next_addr << 16) | 0x0010;
++               task_dst[e + 1] = ((uint64_t)0x0101 << 48) |
++                                 ((uint64_t)next_amt << 16) | 0x0014;
++               task_dst[e + 2] = ((uint64_t)0x0041 << 48);
++               task_dst[e + 3] = ((uint64_t)0x0081 << 48) |
++                                 ((uint64_t)0x1d << 16) | 0x0008;
++            }
++            break;
++         }
++
++         /*
++          * ROCKET_CSC_REARM (measure-first, per-task CSC re-arm test). The cold-
++          * start pp_state_init issues S_POINTER POINTER_PP_CLEAR (0x1e) ONCE; the
++          * self-iterating whole-graph walk never re-arms the CSC/ping-pong per
++          * task (S_POINTER stays 0x0e). HYPOTHESIS (flagged, unproven -- RK3576
++          * compute regs undocumented, and the vendor does NOT itself emit PP_CLEAR
++          * per task, so this is a guess not a copy): set POINTER_PP_CLEAR (bit4,
++          * 0x0e -> 0x1e) in the CNA 0x1004 / CORE 0x3004 config entries of every
++          * CHAINED task (g>0), leaving task 0's cold-start unchanged, so the CSC
++          * weight-loader/consumer state re-arms per task. Oracle = the per-task
++          * output distinct (core wt_rd=0 is NORMAL, not an oracle). Default off.
++          */
++         if (getenv("ROCKET_CSC_REARM") && g > 0) {
++            for (unsigned e = 0; e < task->regcfg_amount; e++) {
++               uint16_t etgt = (uint16_t)((task_dst[e] >> 48) & 0xffff);
++               uint16_t ereg = (uint16_t)(task_dst[e] & 0xffff);
++
++               if ((etgt == 0x201 && ereg == 0x1004) ||
++                   (etgt == 0x801 && ereg == 0x3004)) {
++                  uint32_t v = (uint32_t)((task_dst[e] >> 16) & 0xffffffff);
++
++                  v |= 0x10; /* POINTER_PP_CLEAR: 0x0e -> 0x1e */
++                  task_dst[e] = ((uint64_t)etgt << 48) |
++                                ((uint64_t)v << 16) | ereg;
 +               }
-+               break;
 +            }
 +         }
 +
@@ -549,13 +1778,20 @@ index 1f616df..af3f902 100644
 +      pipe_buffer_unmap(pcontext, rtransfer);
 +   }
 +
++   /* ROCKET_DUP_TASK: replicate the packed total_tasks-block region dup-1 more
++    * times so the job has total_tasks*dup REAL contiguous tasks at the uniform
++    * stride (the PC strides through them; no phantom/garbage slot). */
++   for (unsigned d = 1; d < dup; d++)
++      memcpy(dst + (size_t)d * total_tasks * stride_bytes, dst,
++             (size_t)total_tasks * stride_bytes);
++
 +   pipe_buffer_unmap(pcontext, wtransfer);
 +}
 +
  static void
  compile_operation(struct rkt_ml_subgraph *subgraph,
                    struct rkt_operation *operation)
-@@ -119,8 +260,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+@@ -119,8 +317,15 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
        struct split_task *task =
           util_dynarray_element(&operation->tasks, struct split_task, i);
  
@@ -573,7 +1809,34 @@ index 1f616df..af3f902 100644
            * to end */
           unsigned reg_count = util_dynarray_num_elements(&regcfgs[i], uint64_t);
           uint64_t *next_address_reg =
-@@ -170,6 +318,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -151,6 +356,26 @@ compile_operation(struct rkt_ml_subgraph *subgraph,
+          rkt_dump_buffer(regcmd, "regcmd", 0, i, regcmd_offset,
+                          (size + 4) * sizeof(uint64_t));
+ 
++      /*
++       * ROCKET_DUMP_REGCMD=1 prints the assembled register stream to stderr,
++       * one entry per line, so two runs that differ in one model parameter can
++       * be diffed from the console log alone. dump_bos writes files, which do
++       * not come back from the board.
++       *
++       * The same ordered-write diff against the vendor is what found the
++       * PC_TASK_CON field layout; this is the same instrument pointed at two
++       * of our own runs instead.
++       */
++      if (getenv("ROCKET_DUMP_REGCMD")) {
++         const uint64_t *rc = (const uint64_t *)(regcmd + regcmd_offset);
++         for (unsigned e = 0; e < size; e++) {
++            uint64_t w = rc[e];
++            fprintf(stderr, "RC t%u %02u t=%04x r=%04x v=%08x\n", i, e,
++                    (unsigned)(w >> 48), (unsigned)(w & 0xffff),
++                    (unsigned)((w >> 16) & 0xffffffff));
++         }
++      }
++
+       regcmd_offset += ALIGN(size * sizeof(uint64_t), 64);
+    }
+ 
+@@ -170,6 +395,12 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
  {
     util_dynarray_init(&operation->tasks, NULL);
  
@@ -586,9 +1849,25 @@ index 1f616df..af3f902 100644
     operation->depthwise = rkt_is_depthwise(poperation);
     operation->padding_same = poperation->conv.padding_same;
     operation->stride = poperation->conv.stride_x;
-@@ -191,7 +345,26 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+@@ -190,8 +421,42 @@ lower_convolution(struct rkt_ml_subgraph *subgraph,
+ 
     operation->weights_width = poperation->conv.weight_tensor->dims[1];
     operation->weights_height = poperation->conv.weight_tensor->dims[2];
++   /*
++    * ROCKET_PW_AS_3X3: rkt_fill_weights synthesises a 3x3 kernel for a 1x1
++    * conv, with the outer ring at the weight zero point so it contributes
++    * nothing to the MAC. Widen the geometry here too so every derived value
++    * follows: the weight DMA counts, the CBUF weight bytes per kernel, the
++    * kernel word in 0x1024, and the SAME padding, which becomes 1 on each side
++    * and cancels against the ring.
++    */
++   if (getenv("ROCKET_PW_AS_3X3") && !operation->depthwise &&
++       operation->input_channels > 4 &&
++       operation->weights_width == 1 && operation->weights_height == 1) {
++      operation->weights_width = 3;
++      operation->weights_height = 3;
++      operation->padding_same = true;
++   }
     operation->weights_zero_point = poperation->conv.weight_tensor->zero_point;
 -   operation->weights_scale = poperation->conv.weight_tensor->scale;
 +   /*
@@ -614,7 +1893,23 @@ index 1f616df..af3f902 100644
  
     operation->weights = rkt_fill_weights(subgraph, poperation);
     operation->biases =
-@@ -357,13 +530,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -273,10 +538,12 @@ rkt_ml_operation_supported(struct pipe_context *pcontext,
+       struct pipe_tensor *bias_tensor = operation->conv.bias_tensor;
+       struct pipe_tensor *output_tensor = operation->output_tensors[0];
+ 
+-      // Dilation and per-axis quantization not yet implemented
++      // Dilation not yet implemented. Per-axis WEIGHTS/BIAS are now handled
++      // (rkt_coefs.c emits the per-channel C[oc] from weight_tensor->scales[],
++      // validated byte-exact on the board); activations stay per-tensor.
++      (void) weight_tensor;
++      (void) bias_tensor;
+       if (tensor_quantization_supported(input_tensor) &&
+-          tensor_quantization_supported(weight_tensor) &&
+-          tensor_quantization_supported(bias_tensor) &&
+           tensor_quantization_supported(output_tensor) &&
+           operation->conv.dilation_width_factor == 1 &&
+           operation->conv.dilation_height_factor == 1)
+@@ -357,13 +624,28 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
     }
  
     /* Create input tensors */
@@ -636,8 +1931,8 @@ index 1f616df..af3f902 100644
 +          * the board's feature BO). The generic atomic layout (32 B/pixel) makes
 +          * the CNA read garbage and the conv output collapses to the zero-point.
 +          */
-+         input_size = operation->input_width * operation->input_height *
-+                      operation->input_channels;
++         input_size = rkt_fc_width(operation->input_width) *
++                      operation->input_height * operation->input_channels;
 +      } else {
 +         unsigned input_channels_1 =
 +            DIV_ROUND_UP(operation->input_channels, FEATURE_ATOMIC_SIZE) * 2;
@@ -648,7 +1943,7 @@ index 1f616df..af3f902 100644
  
        create_tensor(subgraph, operation->input_index, input_size);
     }
-@@ -387,6 +575,46 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
+@@ -387,6 +669,46 @@ rkt_ml_subgraph_create(struct pipe_context *pcontext,
        compile_operation(subgraph, operation);
     }
  
@@ -695,7 +1990,7 @@ index 1f616df..af3f902 100644
     return &subgraph->base;
  }
  
-@@ -416,6 +644,26 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -416,6 +738,43 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
            !operation->addition_input && (operation->add_tensor == -1)) {
           pipe_buffer_copy(pcontext, &input_tensor->base, input, 0, 0,
                            pipe_buffer_size(input));
@@ -711,9 +2006,26 @@ index 1f616df..af3f902 100644
 +         uint8_t *map = pipe_buffer_map(pcontext, &input_tensor->base,
 +                                        PIPE_MAP_WRITE, &transfer_out);
 +
-+         memcpy(map, inputs[i],
-+                operation->input_width * operation->input_height *
-+                input_channels);
++         unsigned row = operation->input_width * input_channels;
++         unsigned stride = rkt_fc_width(operation->input_width) *
++                           input_channels;
++
++         if (stride == row) {
++            memcpy(map, inputs[i], row * operation->input_height);
++         } else {
++            /*
++             * The widened first-conv input. Every row keeps its real pixels and
++             * the columns past them hold the input zero point, so the last
++             * window reads a real byte where the hardware would otherwise
++             * generate a pad of zero. See rkt_fc_width().
++             */
++            const uint8_t *src = inputs[i];
++            for (unsigned y = 0; y < operation->input_height; y++) {
++               memcpy(map + y * stride, src + y * row, row);
++               memset(map + y * stride + row,
++                      (uint8_t)operation->input_zero_point, stride - row);
++            }
++         }
 +         pipe_buffer_unmap(pcontext, transfer_out);
 +
 +         if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS))
@@ -722,7 +2034,7 @@ index 1f616df..af3f902 100644
        } else {
           unsigned input_width = operation->input_width;
           unsigned input_height = operation->input_height;
-@@ -477,6 +725,86 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+@@ -477,6 +836,104 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
     struct util_dynarray jobs = {0};
     util_dynarray_init(&jobs, NULL);
  
@@ -796,6 +2108,24 @@ index 1f616df..af3f902 100644
 +         }
 +      }
 +
++      /*
++       * ROCKET_DUP_TASK: the packer replicated the region to graph_task_count
++       * blocks, but only task_count real split_tasks were iterated above. Fill
++       * the duplicate entries by striding from task[0] at the uniform pitch
++       * (the packer wrote a real copy of the regcmd at each), so the PC sees
++       * graph_task_count REAL contiguous tasks.
++       */
++      if (task_count > 0) {
++         unsigned stride_b = subgraph->graph_stride_amount * sizeof(uint64_t);
++         uint64_t base = tasks[0].regcmd;
++         uint32_t cnt0 = tasks[0].regcmd_count;
++         while (task_count < subgraph->graph_task_count) {
++            tasks[task_count].regcmd = base + (uint64_t)task_count * stride_b;
++            tasks[task_count].regcmd_count = cnt0;
++            task_count++;
++         }
++      }
++
 +      struct drm_rocket_job job = {0};
 +      job.task_struct_size = sizeof(struct drm_rocket_task);
 +      job.in_bo_handles = (uint64_t)(uintptr_t)in_bo_handles;
@@ -809,7 +2139,48 @@ index 1f616df..af3f902 100644
     util_dynarray_foreach (&subgraph->operations, struct rkt_operation,
                            operation) {
        unsigned num_inputs = operation->add_tensor != -1 ? 2 : 1;
-@@ -622,6 +950,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
+@@ -492,7 +949,7 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+       out_bo_handles[0] =
+          rkt_get_tensor(subgraph, operation->output_index)->handle;
+ 
+-      if (operation->reuse_weights_cbuf) {
++      if (operation->reuse_weights_cbuf && getenv("ROCKET_TILE_JOBS") == NULL) {
+          /* Submit all tasks to the same core, so weights can be reused */
+          unsigned num_tasks =
+             util_dynarray_num_elements(&operation->tasks, struct split_task);
+@@ -519,16 +976,29 @@ rkt_ml_subgraph_invoke(struct pipe_context *pcontext,
+             ktask->regcmd = task->regcfg_addr;
+             ktask->regcmd_count = task->regcfg_amount;
+ 
++            /* Each spread job needs its OWN copy of the BO-handle arrays: the
++             * cleanup loop frees per-job, so sharing the op-level arrays across
++             * N tile jobs would free them N times (double-free / heap corruption).
++             * Harmless when only one op-task spreads, but Path B (ROCKET_TILE_JOBS)
++             * routes multi-tile reuse ops here, triggering it. */
++            uint32_t *in_copy = malloc(num_inputs * sizeof(uint32_t));
++            memcpy(in_copy, in_bo_handles, num_inputs * sizeof(uint32_t));
++            uint32_t *out_copy = malloc(sizeof(uint32_t));
++            *out_copy = out_bo_handles[0];
++
+             struct drm_rocket_job job = {0};
+             job.task_struct_size = sizeof(struct drm_rocket_task);
+-            job.in_bo_handles = (uint64_t)(uintptr_t)in_bo_handles;
++            job.in_bo_handles = (uint64_t)(uintptr_t)in_copy;
+             job.in_bo_handle_count = num_inputs;
+-            job.out_bo_handles = (uint64_t)(uintptr_t)out_bo_handles;
++            job.out_bo_handles = (uint64_t)(uintptr_t)out_copy;
+             job.out_bo_handle_count = 1;
+             job.tasks = (uint64_t)ktask;
+             job.task_count = 1;
+             util_dynarray_append(&jobs, struct drm_rocket_job, job);
+          }
++         /* The op-level arrays are unused now (each job copied them). */
++         free(in_bo_handles);
++         free(out_bo_handles);
+       }
+    }
+ 
+@@ -622,6 +1092,8 @@ rkt_ml_subgraph_destroy(struct pipe_context *context,
        free_operation(operation);
     util_dynarray_fini(&subgraph->operations);
  
@@ -819,10 +2190,17 @@ index 1f616df..af3f902 100644
        if (tensor)
           pipe_resource_reference(tensor, NULL);
 diff --git a/src/gallium/drivers/rocket/rkt_ml.h b/src/gallium/drivers/rocket/rkt_ml.h
-index 04dea3d..60d309a 100644
+index 04dea3d..f991569 100644
 --- a/src/gallium/drivers/rocket/rkt_ml.h
 +++ b/src/gallium/drivers/rocket/rkt_ml.h
-@@ -11,10 +11,11 @@
+@@ -1,5 +1,6 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
+@@ -11,10 +12,11 @@
  #include "rkt_device.h"
  
  // http://nvdla.org/hw/v1/ias/unit_description.html#convolution-buffer
@@ -838,7 +2216,7 @@ index 04dea3d..60d309a 100644
  #define FEATURE_ATOMIC_SIZE   16
  #define WEIGHT_ATOMIC_SIZE    32
  #define ATOMIC_K_SIZE         16
-@@ -46,6 +47,11 @@ struct split_task {
+@@ -46,6 +48,23 @@ struct split_task {
     int input_line_stride;
     int input_surface_stride;
     unsigned input_offset;
@@ -847,10 +2225,22 @@ index 04dea3d..60d309a 100644
 +    * input row (-> CNA DATA_REUSE base, 0x103c low). */
 +   unsigned cbuf_input_row_start;
 +   unsigned cbuf_reuse_row;
++
++   /*
++    * Input rows this task actually STAGES, which is not the same as the rows
++    * its window covers once a window overlaps the one before it.
++    *
++    * The vendor's capture of a 112x112 stride-1 depthwise writes both numbers
++    * for its second window and they differ: 0x102c carries 23, the rows the
++    * window spans, while 0x1028, 0x1078 and 0x1098 all carry 21, the rows it
++    * brings in. The first two of the 23 are already in the CBUF from the
++    * window before, and the reuse base at 0x103c points back at them.
++    */
++   unsigned staged_rows;
  
     unsigned output_width;
     unsigned output_height;
-@@ -108,6 +114,13 @@ struct rkt_operation {
+@@ -108,6 +127,13 @@ struct rkt_operation {
  
     int add_tensor;
  
@@ -864,7 +2254,7 @@ index 04dea3d..60d309a 100644
     struct util_dynarray tasks; /* struct split_task */
  };
  
-@@ -116,6 +129,17 @@ struct rkt_ml_subgraph {
+@@ -116,6 +142,17 @@ struct rkt_ml_subgraph {
  
     struct util_dynarray operations; /* rkt_operation */
     struct util_dynarray tensors;    /* pipe_resource* */
@@ -882,17 +2272,62 @@ index 04dea3d..60d309a 100644
  };
  
  bool
+@@ -148,4 +185,40 @@ bool rkt_is_depthwise(const struct pipe_ml_operation *poperation);
+ void rkt_dump_buffer(const uint8_t *ptr, char *name, int operation_nr,
+                      int suboperation_nr, int offset, unsigned size);
+ 
++/*
++ * The RK3576 first conv's right hand edge.
++ *
++ * Board measurement, rounds 94 to 97: the last output column is the only one
++ * that reads a padded tap, and the byte it is fed is a raw zero, before the
++ * CNA's per-lane values are applied. With those set to -128, which is what the
++ * input's zero point of 128 requires for real pixels, that pad contributes
++ * -128 * w instead of nothing, and it is the whole of conv0's residual.
++ *
++ * Nothing steers that byte. 0x1084 was swept over 0x00, 0x40 and 0x80 and only
++ * the row pad moved; 0x1060 is inert; of the two trailing pad fields in 0x1080
++ * one is load bearing and the other changes nothing at all.
++ *
++ * So do not use the hardware's right pad. Widen the input in memory to a whole
++ * number of 16 byte units past what the last window reads, fill the extra
++ * columns with the input zero point, and tell the CNA the image is that wide.
++ * The last window then reads real bytes and no pad is generated. 240 is the
++ * first such width for a 224 wide image: 240 * 3 is 720, a whole 45 units, and
++ * the 0x1044 low field stays at the 15 the capture already held.
++ *
++ * ROCKET_FC_WIDE=0 restores the narrow input, which is the control.
++ */
++static inline bool
++rkt_fc_wide(void)
++{
++   const char *s = getenv("ROCKET_FC_WIDE");
++   return s ? atoi(s) != 0 : true;
++}
++
++static inline unsigned
++rkt_fc_width(unsigned input_width)
++{
++   return rkt_fc_wide() ? align(input_width + 1, FEATURE_ATOMIC_SIZE)
++                        : input_width;
++}
++
+ #endif /* RKT_ML_H */
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..3a00353 100644
+index be992fd..d1fe372 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
-@@ -3,10 +3,42 @@
+@@ -1,12 +1,80 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
   * SPDX-License-Identifier: MIT
   */
  
 +#include <stdlib.h>
 +
  #include "rkt_regcmd.h"
++#include "rkt_coefs.h"
  #include "rkt_ml.h"
  #include "rkt_registers.h"
  
@@ -926,10 +2361,44 @@ index be992fd..3a00353 100644
 +   return s ? (uint32_t)strtoul(s, NULL, 0) : def;
 +}
 +
++static int
++rkt_env_i32(const char *name, int def)
++{
++   const char *s = getenv(name);
++   return s ? atoi(s) : def;
++}
++
++/*
++ * How the 15 bit OUT_CVT multiplier is taken out of the fp32 requant scale.
++ *
++ * Both emitters do ((fui(M) >> 9) & 0x7fff) + 1, which always rounds the
++ * mantissa UP, and the +1 has never been questioned because "within one count"
++ * has been the pass mark since the first round, so a surface uniformly one
++ * count out and an exact one score the same.
++ *
++ * The hardware's final shift already rounds half up, so the direction of this
++ * one matters. Round to nearest is ((fui(M) >> 8) & 1): add one only when the
++ * bit below the field is set. ROCKET_RN selects, so all three can be measured
++ * against each other on one flash rather than argued about:
++ *
++ *   0, the default   +1, always up, what every result so far was measured with
++ *   1                round to nearest
++ *   2                truncate
++ */
++static unsigned
++rkt_cvt_round(uint32_t scale_bits)
++{
++   switch (rkt_env_u32("ROCKET_RN", 1)) {
++   case 0:  return 1;
++   case 2:  return 0;
++   default: return (scale_bits >> 8) & 1;
++   }
++}
++
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +60,454 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +96,1051 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -971,11 +2440,16 @@ index be992fd..3a00353 100644
 +#define R_RDMA(reg, val) emit_raw(regs, 0x2001, (reg), (val))
 +
 +   /* S_POINTER arming for all four units (POINTER=0, PP enabled). */
-+   R_CNA(0x1004, 0x0000000e);
-+   R_CORE(0x3004, 0x0000000e);
++   /* S_POINTER per task. 0x0e = ping-pong ON (producer/executer auto-alternate group
++    * each task) -> on the multi-task graph they desync and the geometry lands in a group
++    * the executer never reads -> tasks after the first run on h=0/w=0 (zero output). The
++    * vendor pins group 0 every task. ROCKET_SPTR overrides (0x00 = no PP, group 0 fixed). */
++   uint32_t sptr = rkt_env_u32("ROCKET_SPTR", 0x0000000e);
++   R_CNA(0x1004, sptr);
++   R_CORE(0x3004, sptr);
 +   R_CNA(0x1038, 0x00000007);
-+   R_DPU(0x4004, 0x0000000e);
-+   R_RDMA(0x5004, 0x0000000e);
++   R_DPU(0x4004, sptr);
++   R_RDMA(0x5004, sptr);
 +
 +   /* CNA config block. */
 +   R_CNA(0x100c, 0x2000a006);
@@ -986,20 +2460,75 @@ index be992fd..3a00353 100644
 +   R_CNA(0x1020, 0x00000030);
 +   R_CNA(0x1024, 0x0202001f);   /* out_ch-1 = 31 */
 +   R_CNA(0x1028, 0x0d20000b);
-+   R_CNA(0x102c, 0x00df00df);   /* (in_w-1, in_h-1) = (223,223) */
++   /*
++    * The input width the CNA is told about, which is no longer the tensor's.
++    * rkt_fc_width() widens it so the last window reads real bytes instead of
++    * the hardware's broken right pad; the five registers below are the ones
++    * that carry it. Each matches its captured literal exactly when the width
++    * is left narrow, which is how they were identified:
++    *
++    *   0x102c  (w-1, in_h-1)       0x00df00df at 224
++    *   0x1044  (w, blocks)         0x00e0000f, and the low field is 15 for
++    *                               both widths, so it is left alone
++    *   0x1078  (stride_units-1, in_h-1)   0x002900df, 42-1
++    *   0x1090  stride in 16 byte units    0x2a, 224*3/16
++    *   0x1094  and 0x1098  that times in_h  0x24c0
++    *   0x118c  (w/16, that-1)      0x000e000d, 224/16
++    *
++    * 0x1080 is deliberately NOT touched. The trailing pad is still requested;
++    * it simply stops being reached on the width axis once the real image
++    * covers the last window.
++    */
++   unsigned fc_w = rkt_fc_width(operation->input_width);
++   unsigned fc_h = operation->input_height;
++   unsigned fc_units = fc_w * 3 / FEATURE_ATOMIC_SIZE;
++   R_CNA(0x102c, ((fc_w - 1) << 16) | (fc_h - 1));
 +   R_CNA(0x1030, 0x0060006f);   /* out_w-1 = 111 */
 +   R_CNA(0x1034, 0x000030ff);   /* out_w*out_h-1 = 12543 */
 +   R_CNA(0x1038, 0x00000007);
 +   R_CNA(0x103c, 0x000f0000);
 +   R_CNA(0x1040, 0x10000000);   /* CBUF_CON0 — matches the vendor runtime capture */
-+   R_CNA(0x1044, 0x00e0000f);   /* in_w = 224 */
++   R_CNA(0x1044, (fc_w << 16) | 0x0f);
 +   R_CNA(0x1048, 0x000e38e0);
 +   R_CNA(0x104c, 0x40004000);   /* CVT (quant) */
 +   R_CNA(0x1050, 0x00014000);
-+   R_CNA(0x1054, 0xffffff80);
-+   R_CNA(0x1058, 0xffffff80);
-+   R_CNA(0x105c, 0xffffff80);
-+   R_CNA(0x1060, 0x00000000);
++   /*
++    * The three per-lane CVT values, one per ARGB colour lane. The generic path
++    * writes zero in all three and bypasses the CVT; this path enables it and
++    * writes -128 in each.
++    *
++    * -128 is what a raw byte of 0 becomes once 0x80 is subtracted, so as a
++    * DATA offset these say "the input's zero point is 0", which is true of the
++    * image tensor the capture came from and false of MobileNet's conv0, whose
++    * input zero point is 128. They are literals and nothing derives them.
++    *
++    * Round 95 measured that 0x1084 is not what makes the last output column
++    * wrong: every pad byte from 0x00 to 0x80 leaves colN at the same 2122
++    * pixels off by more than one, while the last ROW responds to it exactly as
++    * a pad value should and is best at the value already written. So the row
++    * padding is correct and the column padding is being fed from somewhere
++    * else, and these three are the only other CNA registers this path writes
++    * that the generic path does not.
++    *
++    * ROCKET_FC_LANE_OFF writes all three. If the surface INTERIOR breaks with
++    * it, they are data offsets and this is closed; if only the last column
++    * moves, they are the width-axis pad.
++    */
++   {
++      uint32_t lane = rkt_env_u32("ROCKET_FC_LANE_OFF", 0xffffff80);
++      R_CNA(0x1054, lane);
++      R_CNA(0x1058, lane);
++      R_CNA(0x105c, lane);
++   }
++   /*
++    * The fourth ARGB lane's CVT value. The three colour lanes above hold -128
++    * and this one holds zero, which is why it is a candidate for the right
++    * edge: round 96 measured that the last output column is fed a raw byte of
++    * zero BEFORE the lane values are applied, so whatever supplies it is not
++    * 0x1084, and this is the only neighbouring register left holding a value
++    * the three lanes do not. ROCKET_FC_1060 sweeps it.
++    */
++   R_CNA(0x1060, rkt_env_u32("ROCKET_FC_1060", 0x00000000));
 +   /*
 +    * FC_CON1 (0x1064) = 0x777, matching the vendor RUNTIME conv0 regcmd (captured
 +    * live via the instrumented rknpu, real IOMMU addresses present). An earlier
@@ -1014,22 +2543,70 @@ index be992fd..3a00353 100644
 +   R_CNA(0x106c, 0x00000000);
 +   R_CNA(0x1070, 0x00000000);
 +   R_CNA(0x1074, 0x00000000);
-+   R_CNA(0x1078, 0x002900df);
++   R_CNA(0x1078, rkt_env_u32("ROCKET_FC_1078",
++                             ((fc_units - 1) << 16) | (fc_h - 1)));
 +   R_CNA(0x107c, 0x00000002);
-+   R_CNA(0x1080, 0x00000101);
-+   R_CNA(0x1084, 0x00808080);
++   /*
++    * The PADDING register, derived rather than hardcoded.
++    *
++    * 0x00000101 is pad_left = 1 and pad_top = 1, which is symmetric padding of
++    * one on every side. That is what a torch conv with padding=1 asks for, and
++    * it is what the capture this function was written from contained. tflite
++    * SAME padding on MobileNet's conv0 is NOT symmetric: 224 to 112 at stride 2
++    * with a 3x3 kernel needs one pad in total, so pad_top and pad_left are 0
++    * and pad_bottom and pad_right are 1, which is 0x01010000, the opposite
++    * corner.
++    *
++    * Measured: an impulse first conv, one live tap per output channel, decodes
++    * on hardware to exactly the input shifted one pixel UP AND LEFT of where
++    * the CPU puts it, on all 32 channels at correlation 1.000. Every value is
++    * then wrong and no requant can rescue it, which is what the sweep in round
++    * 80 found.
++    *
++    * The generic path has derived this since the round that found CNA 0x1080
++    * was a padding register at all; the first conv kept the literal.
++    * ROCKET_FC_PAD forces a value, and 0x00000101 restores the old one.
++    */
++   R_CNA(0x1080, rkt_env_u32("ROCKET_FC_PAD",
++                             (task->pad_right << 24) | (task->pad_bottom << 16) |
++                             (task->pad_left << 8) | task->pad_top));
++   /*
++    * The PAD VALUE, derived rather than hardcoded, for the same reason 0x1080
++    * above is.
++    *
++    * A padded tap must contribute nothing, which means it has to read as the
++    * input zero point. The CMAC sees the input with 0x80 subtracted, so the
++    * byte to write is in_zp - 0x80, replicated across the three input lanes.
++    * 0x00808080 is that byte for an input whose zero point is 0, which is what
++    * a plain image tensor has and what the capture this function came from
++    * used. MobileNet's conv0 has zero point 128 and wants 0x00000000.
++    *
++    * The generic path already carries this fix, and its comment records the
++    * symptom: the output border ring is wrong, everything inside it is right.
++    * That is exactly what conv0 shows. Its impulse decodes to the right plane
++    * and tap at correlation 1.000 on a 32x32 interior crop, while an affine
++    * fit over the whole 112x112 surface only reaches 0.89.
++    *
++    * ROCKET_FC_PAD_VAL forces a value, and 0x00808080 restores the literal.
++    */
++   {
++      uint32_t pv = (uint32_t)(((int32_t)task->input_zero_point - 0x80) & 0xff);
++      R_CNA(0x1084, rkt_env_u32("ROCKET_FC_PAD_VAL",
++                                (pv << 16) | (pv << 8) | pv));
++   }
 +   R_CNA(0x1088, feature_addr); /* input feature base addr */
 +   R_CNA(0x108c, 0x000f000f);
-+   R_CNA(0x1090, 0x0000002a);   /* CBUF input line-stride = ceil(224/16)*3 */
-+   R_CNA(0x1094, 0x000024c0);
-+   R_CNA(0x1098, 0x000024c0);
++   R_CNA(0x1090, fc_units);
++   R_CNA(0x1094, fc_units * fc_h);
++   R_CNA(0x1098, fc_units * fc_h);
 +   R_CNA(0x109c, 0x00000000);
 +   R_CNA(0x1100, 0x00000000);
 +   R_CNA(0x1104, 0x00000000);
 +   R_CNA(0x1110, weight_addr);  /* weights base addr (DCOMP_ADDR0) */
 +   R_CNA(0x1140, 0x00000000);
 +   R_CNA(0x1144, 0x00000000);
-+   R_CNA(0x118c, 0x000e000d);
++   R_CNA(0x118c, rkt_env_u32("ROCKET_FC_118C",
++                             ((fc_w / 16) << 16) | (fc_w / 16 - 1)));
 +
 +   /* CORE. */
 +   R_CORE(0x3018, 0x10000081); /* MISC/MAC cfg (first-conv in_ch=3) */
@@ -1073,18 +2650,88 @@ index be992fd..3a00353 100644
 +   R_DPU(0x40a4, 0x80000000);
 +   R_DPU(0x40a8, 0x7fffffff);
 +   /*
-+    * OUT_CVT requant for conv0, vendor-exact. A register-by-register diff of
-+    * the live vendor RK3576 conv0 regcmd against this encoder showed these three
-+    * are this conv0's real captured values (offset -2, scale 0x5391, shift 25) --
-+    * NOT, as a previous comment guessed, leftovers from a random-weight conv.
-+    * Computing them instead (the block that used to live here) put offset -128 /
-+    * scale 0x76be / shift 22, which is wrong for conv0. The output saturation we
-+    * chased to here was actually the CNA FC_CON1=0x777 feature-offset bug below;
-+    * with that fixed these vendor values are the correct requant.
++    * OUT_CVT requant for the first conv: the generic computation with the
++    * shift four larger.
++    *
++    * The literals here were offset -2, scale 0x5391 and shift 25, and the
++    * comment that stood above them said computing them instead gives offset
++    * -128, scale 0x76be and shift 22, "which is wrong for conv0". Two thirds
++    * of that is now measured to be backwards.
++    *
++    * With an impulse first conv, whose output decodes to exactly the right
++    * input plane and tap on all 32 channels, the map from the hardware's
++    * surface to the reference is affine and the same for every channel. Fitted
++    * over unclipped pixels only:
++    *
++    *   shift 25   a 0.7096   b  -89.34     b/a = -125.90
++    *   shift 26   a 1.4197   b -178.84     b/a = -125.97
++    *   shift 27   a 2.8369   b -357.38     b/a = -125.98
++    *   shift 28   a 5.6522   b -711.90     b/a = -125.95
++    *
++    * correlation 0.9999, and a doubles with every halving of the multiplier,
++    * so a IS the ratio between the multiplier written and the one wanted, and
++    * it survived being halved three times.
++    *
++    * Two things fall out of it. The multiplier wanted is 0.000452413, and
++    * in_sc * wt_sc / out_sc is 0.007247427, a ratio of 16.02: the generic
++    * value with FOUR more bits of shift. And b/a is a constant -126 at every
++    * shift, which is the hardware adding 126, which is exactly the gap between
++    * the offset written here, -2, and the generic out_zp - 0x80, -128.
++    *
++    * So the old comment had the offset and the scale right and the shift short
++    * by four, and reading the three together as "the captured values" is what
++    * kept conv0 broken. The 16 is presumably the CNA CVT this path enables,
++    * 0x104c = 0x4000 against the generic path's bypass, leaving the
++    * accumulator four bits hot.
++    *
++    * ROCKET_FC_OFFSET, ROCKET_FC_SCALE and ROCKET_FC_SHIFT still override, so
++    * the old triple can be put back as a control.
 +    */
-+   R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", 0xfffffffe)); /* OUT_CVT offset */
-+   R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", 0x00005391));  /* OUT_CVT requant scale */
-+   R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", 0x00000019));  /* OUT_CVT shift */
++   {
++      float conv_scale =
++         (task->input_scale * task->weights_scale) / task->output_scale;
++      uint32_t sb = fui(conv_scale);
++      /* The generic path computes this then emits shift - 1; keep both. */
++      unsigned fc_shift = 127 + 31 - 32 - (sb >> 23) + 16 - 1 + 4;
++      unsigned fc_scale = ((sb >> 9) & 0x7fff) + rkt_cvt_round(sb);
++      if (fc_scale > 0x7fff) {
++         fc_scale = 1 << 14;
++         fc_shift--;
++      }
++      if (fc_scale < (1 << 14))
++         fc_scale |= (1 << 14);
++      int32_t fc_off = (int32_t)task->output_zero_point - 0x80;
++
++      /*
++       * ROCKET_FC_CVT_DOWN, the same trade the generic path makes.
++       *
++       * The OUT_CVT computes (accumulator * cvt_scale) >> shift in signed
++       * int32. conv0's accumulator reaches 27 * 128 * 151, which is 2^19, and
++       * cvt_scale is 0x76be, 2^14.9, so the product is 2^33.9 and wraps for
++       * every accumulator above 70646. Scaling the multiplier down by T bits
++       * and the shift by T is arithmetically identical and keeps the product
++       * in range.
++       *
++       * Measured: conv0 is 99.5 percent of pixels exact with a tail off by
++       * more than 8, and only 8 percent of the failures sit at an output rail,
++       * so the tail is not clipping. A wrap on the largest accumulators is the
++       * right size and the right shape for it.
++       *
++       * The generic path's ROCKET_CVT_DOWN does NOT reach here: it lives in
++       * the generic emitter and this is fill_regcmd_firstconv. Round 88 swept
++       * it against conv0 and measured nothing, twice over, because 2 would not
++       * have been enough either.
++       */
++      unsigned fc_down = rkt_env_u32("ROCKET_FC_CVT_DOWN", 0);
++      if (fc_down > fc_shift)
++         fc_down = fc_shift;
++      fc_scale >>= fc_down;
++      fc_shift -= fc_down;
++
++      R_DPU(0x40ac, rkt_env_u32("ROCKET_FC_OFFSET", (uint32_t)fc_off));
++      R_DPU(0x40b0, rkt_env_u32("ROCKET_FC_SCALE", fc_scale));
++      R_DPU(0x40b4, rkt_env_u32("ROCKET_FC_SHIFT", fc_shift));
++   }
 +   R_DPU(0x40b8, 0x00003100); /* out_w*out_h */
 +   R_DPU(0x40bc, 0x00000000);
 +   R_DPU(0x40c0, 0x04440100);
@@ -1127,6 +2774,13 @@ index be992fd..3a00353 100644
 +   R_RDMA(0x5078, 0x00000000);
 +   R_RDMA(0x507c, 0x00000000);
 +
++   /* ROCKET_NEXTPTR: RK3588-style next-pointer trailer (see fill_regcmd_rk3576_normal)
++    * before the op_en, so conv0 (task 0) chains to task 1. Packer fills the values. */
++   if (getenv("ROCKET_NEXTPTR")) {
++      EMIT(REG_PC_BASE_ADDRESS, 0);
++      EMIT(REG_PC_REGISTER_AMOUNTS, 0);
++   }
++
 +   /* Broadcast op_en (target 0x81): start all units. Kernel also pulses PC_OP_EN. */
 +   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d);
 +
@@ -1167,6 +2821,22 @@ index be992fd..3a00353 100644
 +    */
 +   unsigned ic = task->input_channels_real;
 +   unsigned oc = task->output_channels_real;
++   /*
++    * ROCKET_OC_OUT_ADD: what the OUTPUT side is told the channel count is.
++    *
++    * With the depthwise weight buffer laid out in groups of 64, a 1024 channel
++    * layer computes 992 of its 1024 channels and the last 32 come out
++    * constant. The dead tail does not move when the weight group size changes
++    * from 32 to 64 to 128, and it does not move when the coefficient table
++    * grows, so neither buffer owns it, and 992 is 1023 with its low five bits
++    * cleared. That is the shape of a channel count the output side rounds DOWN
++    * to a multiple of 32.
++    *
++    * This adds to the value written into the four registers that carry the
++    * output channel count, and nothing else, so a sweep says whether the tail
++    * is an off-by-a-group there or somewhere that does not take a count at
++    * all.
++    */
 +   bool dw = operation->depthwise;
 +
 +   /*
@@ -1178,14 +2848,76 @@ index be992fd..3a00353 100644
 +   unsigned full_inh = operation->input_height;
 +   unsigned full_oh = operation->output_height;
 +   unsigned win_orows = task->output_height;   /* this window's output rows */
-+   unsigned win_irows = task->input_height;     /* this window's staged input rows */
++   unsigned win_irows = task->input_height;     /* rows this window SPANS */
++   /*
++    * Rows this task actually STAGES. A window overlaps the one before it, and
++    * those rows are already in the CBUF, reachable through the reuse base at
++    * 0x103c. The vendor's capture of a 112x112 stride-1 depthwise writes both
++    * numbers for its second window: 0x102c carries 23, the span, while 0x1028,
++    * 0x1078 and 0x1098 carry 21, the rows brought in. Writing the span to all
++    * four stages the overlap twice, so every row after it sits two rows late
++    * and the window convolves shifted input.
++    */
++   unsigned stg_irows = task->staged_rows ? task->staged_rows : win_irows;
 +   bool capped = win_orows < full_oh;           /* a window of a larger output */
 +   unsigned wnum = task->num;
 +
-+   unsigned surf = inw * ic / 64;                /* input CBUF surface stride */
-+   unsigned wbpk = dw ? (k * k * ic / 8) : (ic * k * k * 2); /* weight bytes/kernel */
-+   unsigned k_word = (k >= 3) ? 0x0202 : 0;
-+   uint32_t reuse = (wnum > 0) ? task->cbuf_reuse_row * surf : 0;  /* DATA_REUSE base */
++   /*
++    * Input CBUF surface stride. A row costs inw * DIV_ROUND_UP(ic, 16) feature
++    * atomics of 16 bytes, and this counts them in 64 byte units, so it is
++    * inw * atomics / 4. Writing it as inw * ic / 64 is the same thing only
++    * when ic is a multiple of 16, and it truncates.
++    *
++    * Board: at 32 channels the truncation costs half a unit on every ODD
++    * width, and every odd width measured fails while every even one passes.
++    * dw32w71 is 2 of 32 channels and dw32w72 beside it is 32 of 32, one row
++    * window each and well inside the CBUF budget, so nothing else separates
++    * them. 64 channels never truncates, inw * 4 / 4 being exact, and 64
++    * channel layers fail for a different reason.
++    *
++    * This form reproduces the old value exactly on every case that passes
++    * today: 112 wide at 16, 32 and 64 channels, 96 wide at 16, 32 and 64, 44
++    * wide at 128, and 7 wide at 1024.
++    *
++    * ROCKET_SURF_TRUNC=1 restores the truncating form.
++    */
++   unsigned surf = getenv("ROCKET_SURF_TRUNC")
++                      ? inw * ic / 64
++                      : DIV_ROUND_UP(inw * DIV_ROUND_UP(ic, FEATURE_ATOMIC_SIZE),
++                                     4);
++   /*
++    * Weight bytes per kernel. The regular path stores ALIGN(ic, 32) * 2 bytes
++    * per output channel and tap, hence the 2. The RK3576 POINTWISE path stores
++    * ic bytes per output channel, one per input channel, so for it this is
++    * double what the buffer actually holds: 64 where there are 32, and 128
++    * where there are 64.
++    *
++    * That is an inconsistency between two places in this driver rather than a
++    * reading of the hardware, and it is the same factor at both channel counts,
++    * so it cannot by itself be what separates a working 32 from a failing 64.
++    * It may still be what makes the failure possible once there is more than
++    * one weight group to stride over.
++    *
++    * ROCKET_PW_WBPK=1 drops the doubling for a pointwise only.
++    */
++   bool pw1 = !dw && k == 1;
++   unsigned wbpk = dw ? (k * k * ic / 8)
++                      : (ic * k * k * (pw1 && getenv("ROCKET_PW_WBPK") ? 1 : 2));
++   /* k_word tracks the kernel extent: per-byte = (k-1) (k=3 -> 0x0202, k=5 ->
++    * 0x0404). Was hard-coded to the k=3 value, which mis-fetched weights for k=5. */
++   unsigned k_word = (k >= 3) ? (((k - 1) << 8) | (k - 1)) : 0;
++   /* ROCKET_TILE_JOBS (Path B): each row-tile runs as its OWN task_count=1 job.
++    * The original assumption was "spread => fresh CBUF => zero the reuse/cbuf-row
++    * offsets"; but the vendor-byte SPREAD replay (2026-07-03) PROVED the vendor's
++    * per-tile dw regcmd (cbuf_reuse_row/cbuf_input_row_start NONZERO, cumulative)
++    * computes when spread => the CBUF PERSISTS across back-to-back spread jobs, so
++    * the cumulative offsets are still valid and zeroing them made the CNA read the
++    * wrong CBUF window (dt_rd=0 -> zero output). ROCKET_TILE_CBUF re-enables the
++    * cumulative offsets under tile_jobs (the fix); leave it unset for the old
++    * offset=0 baseline (A/B in one image). */
++   bool tile_jobs = getenv("ROCKET_TILE_JOBS") != NULL;
++   bool tile_cbuf = getenv("ROCKET_TILE_CBUF") != NULL;
++   uint32_t reuse = (wnum > 0 && (!tile_jobs || tile_cbuf)) ? task->cbuf_reuse_row * surf : 0;  /* DATA_REUSE base */
 +
 +   /*
 +    * DPU/CORE output-height field: non-windowed layers pack two output rows per
@@ -1210,10 +2942,30 @@ index be992fd..3a00353 100644
 +   unsigned shift = 127 + 31 - 32 - (scale_bits >> 23) + 16;
 +   if (operation->truncate_bits > 0)
 +      shift--;
-+   unsigned cvt_scale = ((scale_bits >> 9) & 0x7fff) + 1;
++   unsigned cvt_scale = ((scale_bits >> 9) & 0x7fff) + rkt_cvt_round(scale_bits);
++   if (cvt_scale > 0x7fff) {
++      /* The mantissa's top 15 bits were all ones and the round carried out of
++       * the field. Renormalising is exact: half the multiplier, one less
++       * shift. Nothing has hit this yet, but the field is 15 bits wide and
++       * writing 0x8000 into it would be silent. */
++      cvt_scale = 1 << 14;
++      shift--;
++   }
 +   if (cvt_scale < (1 << 14))
 +      cvt_scale |= (1 << 14);
 +   int32_t out_offset = (int32_t)task->output_zero_point - 0x80;
++   /*
++    * ROCKET_CVT_DOWN=T: the OUT_CVT does (temp * cvt_scale) >> shift in (apparently)
++    * signed int32; with cvt_scale ~2^15 and the relu'd accumulator up to ~2^18 the
++    * product exceeds 2^31 and wraps for the high-output (~7%) pixels (confirmed: the
++    * overflow fraction == the residual error vs the relu reference). RK3576 has no
++    * accumulator pre-truncate register, so scale cvt_scale down by T bits and the shift
++    * by T -- math-identical while cvt_scale stays divisible (32052>>2=8013, *4=32052),
++    * keeping temp*cvt_scale under int32.
++    */
++   unsigned cvt_down = rkt_env_u32("ROCKET_CVT_DOWN", 0);
++   cvt_scale >>= cvt_down;
++   shift -= cvt_down;
 +
 +#define R_CNA(reg, val)  emit_raw(regs, 0x201, (reg), (val))
 +#define R_CORE(reg, val) emit_raw(regs, 0x801, (reg), (val))
@@ -1231,27 +2983,110 @@ index be992fd..3a00353 100644
 +    * group: the units engaged but the DPU wrote nothing (garbage cube, DST read
 +    * back as the width field) and every layer after the first produced zeros.
 +    */
-+   R_CNA(0x1004, 0x0000000e);
-+   R_CORE(0x3004, 0x0000000e);
++   /* S_POINTER per task. 0x0e = ping-pong ON (producer/executer auto-alternate group
++    * each task) -> on the multi-task graph they desync and the geometry lands in a group
++    * the executer never reads -> tasks after the first run on h=0/w=0 (zero output). The
++    * vendor pins group 0 every task. ROCKET_SPTR overrides (0x00 = no PP, group 0 fixed). */
++   /* Path B: single-task tiles have no next task to ping-pong to; depthwise
++    * single-task otherwise splits (CNA producer -> group1, consumers stay
++    * group0 -> read empty -> zero). Pin all 4 units PP_MODE OFF (0x06) so
++    * producer+consumers stay on group0 together. */
++   uint32_t sptr = tile_jobs ? rkt_env_u32("ROCKET_TILE_SPTR", 0x00000004u)
++                             : rkt_env_u32("ROCKET_SPTR", 0x0000000e);
++   R_CNA(0x1004, sptr);
++   R_CORE(0x3004, sptr);
 +   R_CNA(0x1038, 0x00000007);
-+   R_DPU(0x4004, 0x0000000e);
-+   R_RDMA(0x5004, 0x0000000e);
++   R_DPU(0x4004, sptr);
++   R_RDMA(0x5004, sptr);
 +
 +   /* CNA (verified geometry/channel formulas; CVT = bypass; quant via DPU). */
-+   R_CNA(0x100c, dw ? 0x1 : 0x0);
++   /* ROCKET_DW_STDMODE: DIAGNOSTIC -- force the depthwise op to CNA standard mode
++    * (0x100c=0) instead of dw-mode (1). The dw is fully configured + engaged +
++    * reads input yet the CMAC does NO MACs (exact-zero output). If forcing standard
++    * mode makes the CMAC produce a (wrong) NONZERO output, the dw-mode bit itself is
++    * what suppresses the MACs single-task -> the fix is to avoid dw-mode (decompose
++    * into per-channel standard convs). If still zero, the suppression is deeper. */
++   R_CNA(0x100c, (dw && !getenv("ROCKET_DW_STDMODE")) ? 0x1 : 0x0);
 +   R_CNA(0x1010, 0x00000fff);
 +   R_CNA(0x1014, (s << 3) | s);
-+   R_CNA(0x1018, 0x40000505 | (wnum > 0 ? 0x80000000 : 0));
++   /* stride-2 wants 0x...0404 (both the conv0 capture and this k=5 s=2 conv);
++    * 0x...0505 was the stride-1 value the generic path was calibrated on. */
++   /*
++    * ROCKET_CBUF_DERIVE: 0x1018 and 0x1040 are keyed off the stride here, and
++    * the vendor does not key them off the stride. Compiling .rknn across a width
++    * and channel sweep (vendor-capture/gen_geom.py) flips both exactly where the
++    * op stops fitting in one row window: 16 channels at 128x128 is one window
++    * and reads 0x40000404 / 0x10000000, 144x144 splits and reads 0x40000505 /
++    * 0x14000000, and holding 80x80 while raising the input channels flips at the
++    * same place (32 in one window, 48 split).
++    *
++    * ⚠ Not the default, because cal_s1 computes correctly WITH the stride-keyed
++    * value where the vendor would use the other one, so these two tolerate being
++    * wrong at least there. This is a knob to A/B, not a fix to ship.
++    */
++   bool cbuf_derive = getenv("ROCKET_CBUF_DERIVE") != NULL;
++   bool split = cbuf_derive ? capped : (s != 2);
++   /*
++    * ROCKET_DW_SPLITVALS: take the split values for a DEPTHWISE layer too.
++    *
++    * Comparing a vendor .rknn compiled as depthwise against one compiled as a
++    * regular conv, on the host, 41 registers differ and most of them are just
++    * geometry. These two are not: the vendor's depthwise carries 0x40000505
++    * here and 0x14000000 at 0x1040, which are exactly the values this file
++    * selects on `split`. A depthwise layer that is not split therefore gets
++    * 0x40000404 and 0x10000000 from mesa and 0x40000505 and 0x14000000 from
++    * the vendor.
++    *
++    * dwconv is 0 of 16 channels with every coefficient word tried and with the
++    * old float surface, so whatever is wrong with depthwise is elsewhere, and
++    * this is the first concrete difference found since.
++    */
++   /*
++    * A DEPTHWISE always takes the split pair, whatever its stride. Board,
++    * round 107, on mn_dw1 with only its stride patched to 2 in the flatbuffer:
++    * 2 of 32 channels with the whole surface at maxdiff 255 by the stride key,
++    * 32 of 32 at maxdiff 1 with this. mn_dw1 itself at stride 1 does not move,
++    * because it already took the split pair, and conv2d-cal, a stride 2
++    * REGULAR conv, is untouched by this because it is not depthwise.
++    *
++    * ROCKET_DW_NOSPLITVALS restores the stride key, and is the control.
++    *
++    * ROCKET_CBUF_DERIVE fixes the same case by the vendor's own rule, keying
++    * both registers off whether the op fits in one row window rather than off
++    * the stride at all. That is the more general answer and it is measured to
++    * work here too, but it changes REGULAR convs as well and only one of them
++    * has been checked against it, so it stays a knob until the whole set has.
++    */
++   bool dw_split = split || (dw && !getenv("ROCKET_DW_NOSPLITVALS"));
++   R_CNA(0x1018, (dw_split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
 +   R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
 +   R_CNA(0x1020, (dw ? oc : ic) * k * k);
 +   R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc - 1)));
-+   R_CNA(0x1028, ((surf * win_irows) << 16) | (ic - 1));
++   R_CNA(0x1028, ((surf * stg_irows) << 16) | (ic - 1));
 +   R_CNA(0x102c, ((inw - 1) << 16) | (win_irows - 1));
 +   R_CNA(0x1030, (wbpk << 16) | (ow - 1));
 +   R_CNA(0x1034, ow * win_orows - 1);
 +   R_CNA(0x1038, 0x07 | (wnum > 0 ? 0x80000000 : 0));
 +   R_CNA(0x103c, (surf << 16) | reuse);
-+   R_CNA(0x1040, 0x14000000 | (wnum > 0 ? task->cbuf_input_row_start * surf : 0));
++   /* CBUF_CON0: stride-2 captures (conv0 and this conv) use 0x10000000, not the
++    * generic-path 0x14000000 (the 0x04000000 bit is a stride-1 artifact). */
++   /* ROCKET_FC_BANK (Fork C, 2026-07-03): CBUF_CON0 FC_DATA_BANK (bits 8-10) is the
++    * data-bank offset. It is 0 (vendor-matched) so a chained layer's data lands in
++    * the SAME CBUF bank the previous layer left occupied -> the CNA sees its input
++    * window "already staged" and skips the DMA (dt_rd=0 -> zero). This path is the
++    * dw/pw (chained) layers only; conv0 uses fill_regcmd_firstconv. Giving them a
++    * DIFFERENT (empty) bank should force a fresh DMA from 0x1088 (which already
++    * points at the previous layer's DRAM output). Test: does dt_rd go 0 -> >0? */
++   /* ROCKET_WT_BANK (Fork A weight-fetch, 2026-07-04): give the POINTWISE (standard-
++    * mode, !dw) chained layers a CBUF WEIGHT_BANK different from the depthwise before
++    * them. The pw weight config is byte-identical to the vendor yet the pw weight DMA
++    * never fires (wt_rd=0) while the dw's small weights do -- an execution-state skip
++    * ("weights already staged"). A fresh (empty) weight bank should force the pw layer
++    * to DMA its weights. dw keeps bank 0 (it fetches fine). Test: pw wt_rd 0 -> >0? */
++   R_CNA(0x1040, (dw_split ? 0x14000000 : 0x10000000)
++                 | ((wnum > 0 && (!tile_jobs || tile_cbuf)) ? task->cbuf_input_row_start * surf : 0)
++                 | ((rkt_env_u32("ROCKET_FC_BANK", 0) & 0x7) << 8)
++                 | CNA_CBUF_CON0_WEIGHT_BANK(dw ? 0 : rkt_env_u32("ROCKET_WT_BANK", 0)));
 +   R_CNA(0x1044, (inw << 16) | surf);
 +   R_CNA(0x1048, 0x0000000b);
 +   R_CNA(0x104c, 0x00010001);   /* CVT bypass (requant is in DPU OUT_CVT) */
@@ -1265,18 +3100,75 @@ index be992fd..3a00353 100644
 +   R_CNA(0x106c, 0x00000000);
 +   R_CNA(0x1070, 0x00000000);
 +   R_CNA(0x1074, 0x00000000);
-+   R_CNA(0x1078, ((inw - 1) << 16) | (win_irows - 1));
++   R_CNA(0x1078, ((inw - 1) << 16) | (stg_irows - 1));
 +   R_CNA(0x107c, ic - 1);
-+   R_CNA(0x1080, s == 2 ? 0x101
-+                        : (dw ? (capped ? (wnum > 0 ? 0x01010100 : 0x01000101)
-+                                        : 0x01010101)
-+                              : 0));
-+   R_CNA(0x1084, 0xffffff80);
++   /* stride-2: depthwise (conv0) uses 0x00000101; a normal conv needs the
++    * 0x0202 SURF_STRIDE high field (vendor capture of this k=5 s=2 conv). */
++   /* The non-capped (ROCKET_NO_DW_TILE) single-task dw value 0x01010101 is a
++    * mesa invention the vendor NEVER emits -- its tiled dw alternates
++    * 0x01000101 (tile0) / 0x01010100 (tile>0).  ROCKET_DW_SURF0 forces the
++    * single-task dw to the vendor tile-0 value 0x01000101 to test whether the
++    * byte-2 flag gates the depthwise compute (clean: single-task, no multi-
++    * task PC confound). */
++   /*
++    * 0x1080 is the PADDING register, and it is derivable. Compiling vendor
++    * .rknn files at chosen geometries on the host (vendor-capture/gen_geom.py)
++    * and reading this register back (ladder.py) pins the encoding:
++    *
++    *   0x1080 = (pad_after_w << 24) | (pad_after_h << 16)
++    *          | (pad_before_w << 8) | pad_before_h
++    *
++    * Direct test at k=5 stride 1 on 80x80, ONNX pads 0/1/2:
++    *   pad 0 -> 0x00000000   pad 1 -> 0x01010101   pad 2 -> 0x02020202
++    * and the asymmetric pair confirms which half is which: conv2d.onnx
++    * (before 1, after 2) gives 0x02020101, the same geometry with symmetric
++    * pad 2 (before 2, after 1) gives 0x01010202. The vendor's tiled depthwise
++    * gives 0x01000101 on tile 0 and 0x01010100 after it, which is the top pad
++    * on the first window and the bottom pad on the last, and nothing in the
++    * middle.
++    *
++    * The ladder this replaces emitted 0x02020101 for every stride-2 conv,
++    * which is exactly SAME padding for a 5x5 stride-2 conv. That is
++    * conv2d-cal's own padding, taken from the capture it was fitted to, and it
++    * is the reason conv2d-cal is the only geometry that has ever computed
++    * correctly here: a stride-1 conv got 0 (no padding at all) and every other
++    * stride-2 conv got 5x5's.
++    *
++    * ROCKET_PAD_LADDER=1 restores the old constants as a control.
++    */
++   uint32_t pad_reg;
++   if (getenv("ROCKET_PAD_LADDER")) {
++      pad_reg = s == 2 ? (dw ? 0x101 : 0x02020101)
++                       : (dw ? (capped ? (wnum > 0 ? 0x01010100 : 0x01000101)
++                                       : (getenv("ROCKET_DW_SURF0")
++                                              ? 0x01000101 : 0x01010101))
++                             : 0);
++   } else {
++      /*
++       * rkt_split_tasks already computes these per task, with the windowing the
++       * vendor's tiled depthwise shows: pad_top only on the first row window,
++       * pad_bottom only on the last. Until now the RK3576 path ignored them and
++       * only the legacy RK3588 PAD_CON0 emit used them at all.
++       */
++      pad_reg = (task->pad_right << 24) | (task->pad_bottom << 16) |
++                (task->pad_left << 8) | task->pad_top;
++   }
++   R_CNA(0x1080, pad_reg);
++   /*
++    * CNA pad value = input_zero_point - 0x80 (the value the CMAC sees for padded taps,
++    * so a padded tap contributes 0 like tflite SAME padding). This was hardcoded to
++    * 0xffffff80 (-128), which is correct ONLY for in_zp=0 (image input, e.g. vendor
++    * conv0) and pads with the wrong value for any in_zp!=0 -> the output border ring was
++    * wrong (the entire ~6% residual on conv2d-cal, in_zp=128 -> should be 0).
++    */
++   R_CNA(0x1084, getenv("ROCKET_PAD_CON")
++                    ? rkt_env_u32("ROCKET_PAD_CON", 0)
++                    : (uint32_t)((int32_t)task->input_zero_point - 0x80));
 +   R_CNA(0x1088, feature_addr);
 +   R_CNA(0x108c, 0x000f000f);
 +   R_CNA(0x1090, inw * 4);
 +   R_CNA(0x1094, inw * full_inh);
-+   R_CNA(0x1098, (inw * win_irows + 3) & ~3u);
++   R_CNA(0x1098, (inw * stg_irows + 3) & ~3u);
 +   R_CNA(0x109c, 0x00000000);
 +   R_CNA(0x1100, 0x00000000);
 +   R_CNA(0x1104, 0x00000000);
@@ -1305,10 +3197,73 @@ index be992fd..3a00353 100644
 +   R_DPU(0x4034, (dpu_lines << 16) | (ow - 1));
 +   R_DPU(0x4038, dw ? 0x00100092 : 0x00120080);
 +   R_DPU(0x403c, 0x00000000);
-+   R_DPU(0x4044, dw ? 0x00000000 : 0x00000001);
++   /*
++    * DPU 0x4044, one bit, and it is one for a regular conv and zero for a
++    * depthwise. That difference has the shape of the residual.
++    *
++    * Modelling the requant offline against the CPU reference, with the exact
++    * accumulator these models produce, splits the three of them cleanly:
++    *
++    *   mn_dw1      board 85.50% exact, all low | half-up 99.97% | TRUNCATE 84.41%, all low
++    *   conv2d-cal  board 99.99% exact, none low | HALF-UP 99.98% | truncate 75.42%, all low
++    *
++    * So the regular path rounds the final shift half up and the depthwise path
++    * truncates it, and the only single-bit register that tracks that split is
++    * this one. ROCKET_DPU_4044 forces it either way on both paths.
++    */
++   R_DPU(0x4044, rkt_env_u32("ROCKET_DPU_4044", dw ? 0x00000000 : 0x00000001));
 +   R_DPU(0x4048, 0x80000000);
 +   R_DPU(0x404c, 0x7fffffff);
-+   R_DPU(0x4050, dw ? 0x00013133 : 0x80011111);
++   /*
++    * 0x4050 depends on the output channel count. Compiling vendor .rknn at ten
++    * output channel counts from 16 to 160 with everything else held fixed
++    * (vendor-capture/gen_geom.py) gives 0x80011111 for every multiple of 32 and
++    * 0x80011011 for every count that is 16 more than one, 10 out of 10, which is
++    * the bit that says whether the last 32-channel group is only half full.
++    *
++    * The constant here was the 128-channel value, so it was right for
++    * conv2d-cal and wrong for every conv with 16, 48, 80, 112 or 144 output
++    * channels. ROCKET_DPU4050_CONST=1 restores it as a control.
++    */
++   /*
++    * The depthwise value is NOT a constant either: its SIZE_E_2 field, bits
++    * 10 to 8, counts 16-channel atomics.
++    *
++    * Compiling vendor .rknn files at ten channel counts from 16 to 1024 and
++    * reading 0x4050 out of each gives 0, 1, 2, 3, 0, 1, 2, 3, 3, 3 in that
++    * field for 16, 32, 48, 64, 80, 96, 112, 128, 256 and 1024, which is
++    *
++    *     SIZE_E_2 = (DIV_ROUND_UP(oc, 16) - 1) & 3
++    *
++    * on all ten. Seven of those were fitted and three were PREDICTED before
++    * being compiled: 16 and 80 give 0, a value the fitted points never showed,
++    * and 112 gives 2. This driver hardcoded 0x00013133, which is the 32
++    * channel case, so every depthwise with a channel count outside 32, 96, 160
++    * and so on was configured with the wrong one.
++    *
++    * ROCKET_DW_OW_CFG forces a value, and setting it to 0x00013133 restores
++    * the old constant as the control.
++    */
++   uint32_t dw_ow = 0x00013033 |
++                    ((uint32_t)((DIV_ROUND_UP(oc, 16) - 1) & 3) << 8);
++
++   R_DPU(0x4050, dw ? rkt_env_u32("ROCKET_DW_OW_CFG", dw_ow)
++                    : (getenv("ROCKET_DPU4050_CONST") || (oc % 32) == 0
++                          ? 0x80011111 : 0x80011011));
++   /*
++    * BS_CFG (0x4040): the RK3576 emitter never set this, so BS_RELU_BYPASS (bit 6)
++    * defaults to 0 -> the BS stage applies a RELU, clamping the negative half of a
++    * conv WITHOUT a fused activation to out_zp (output min pinned at out_zp in every
++    * run, masking everything else). For fused_activation==NONE the RELU must be
++    * bypassed. ROCKET_BS_CFG lets us sweep the exact value (bit6=RELU_BYPASS,
++    * bit4=MUL_BYPASS, bit1=ALU_BYPASS, bits16-19=ALU_ALGO) to find the safe one that
++    * keeps the bias(ALU)/scale(MUL) path working while bypassing the RELU.
++    */
++   {
++      const char *bscfg = getenv("ROCKET_BS_CFG");
++      if (bscfg)
++         R_DPU(0x4040, (uint32_t)strtoul(bscfg, NULL, 0));
++   }
 +   R_DPU(0x4058, 0x80000000);
 +   R_DPU(0x405c, 0x7fffffff);
 +   R_DPU(0x4060, 0x00000903);
@@ -1326,9 +3281,33 @@ index be992fd..3a00353 100644
 +   R_DPU(0x409c, 0x00000000);
 +   R_DPU(0x40a4, 0x80000000);
 +   R_DPU(0x40a8, 0x7fffffff);
-+   R_DPU(0x40ac, (uint32_t)out_offset);          /* OUT_CVT offset */
++   {
++      /*
++       * OUT_CVT offset override (additive, in output units). After dropping the
++       * 0x80 from A (ROCKET_BIAS_NOSCALE) the output sits ~0x80 too high (min
++       * clips at out_zp, the negative half lost) -- the requant offset must
++       * re-align to out_zp. ROCKET_OUT_OFFSET=N forces it to test that.
++       */
++      const char *oo = getenv("ROCKET_OUT_OFFSET");
++      R_DPU(0x40ac, oo ? (uint32_t)atoi(oo) : (uint32_t)out_offset);
++   }
 +   R_DPU(0x40b0, cvt_scale);                      /* OUT_CVT scale */
-+   R_DPU(0x40b4, shift - 1 + rkt_out_shift_add()); /* OUT_CVT shift (+0x80 de-scale) */
++   {
++      /*
++       * requant-vs-MAC diagnostic knob. ROCKET_OUT_SHIFT_ABS=N forces the OUT_CVT
++       * shift to an ABSOLUTE N (small N = max amplify, no negative-wrap risk),
++       * to decide whether the zero-rail is a non-zero MAC crushed by requant
++       * (output lights up as the shift drops) or a genuine empty MAC (stays out_zp
++       * across the whole sweep). Also prints the computed shift for reference.
++       */
++      const char *abs_s = getenv("ROCKET_OUT_SHIFT_ABS");
++      uint32_t shift_val =
++         abs_s ? (uint32_t)atoi(abs_s) : (shift - 1 + rkt_out_shift_add());
++      fprintf(stderr,
++              "rocket: OUT_CVT computed_shift=%d scale=0x%x -> emitting shift=%u\n",
++              (int)shift - 1, cvt_scale, shift_val);
++      R_DPU(0x40b4, shift_val); /* OUT_CVT shift (+0x80 de-scale) */
++   }
 +   R_DPU(0x40b8, ow * ((dw ? 4 : 2) * full_oh - win_orows));
 +   R_DPU(0x40bc, 0x00000000);
 +   R_DPU(0x40c0, 0x04440100);
@@ -1354,11 +3333,49 @@ index be992fd..3a00353 100644
 +   R_RDMA(0x5010, dpu_lines);
 +   R_RDMA(0x5014, oc - 1);
 +   R_RDMA(0x5018, 0x00000000);
-+   R_RDMA(0x501c, dw ? 0x0510 : 0x0710);
-+   R_RDMA(0x5020, bias_addr);
-+   /* Second SDP operand points just past the [A|B|C] bias structure
-+    * (DIV_ROUND_UP(oc,8)*64 bytes); it lands in the zeroed pad of the bias bo. */
-+   R_RDMA(0x5024, bias_addr + DIV_ROUND_UP(oc, 8) * 64);
++   if (getenv("ROCKET_RK3588_SDP")) {
++      /*
++       * RK3588 SDP mode (the experiment): BRDMA reads ONLY the per-channel int32
++       * bias (Tomeu's RK3588 derivable buffer, via the ROCKET_RK3588_SDP path in
++       * rkt_fill_biases), DATA_USE=1, and we deliberately do NOT program the 0x5024
++       * second buffer -> the value-dependent float surface is never read. Tests
++       * whether RK3576 needs it at all, or whether (like RK3588) bias-only + OUT_CVT
++       * computes int8 correctly. Tomeu's RK3588 runs int8 MobileNet byte-correct
++       * with exactly this (BRDMA_DATA_USE(1), no second buffer).
++       */
++      R_RDMA(0x501c, 0x00000002); /* BRDMA_DATA_USE(1) = ALU/bias only */
++      R_RDMA(0x5020, bias_addr);
++      /* deliberately NOT setting 0x5024 (no float-surface second buffer) */
++   } else {
++      R_RDMA(0x501c, dw ? 0x0510 : 0x0710);
++      R_RDMA(0x5020, bias_addr);
++      /* Second SDP operand points just past the [A|B|C] bias structure
++       * (DIV_ROUND_UP(oc,8)*64 bytes); it lands in the zeroed pad of the bias bo. */
++      /*
++       * The second operand sits PAST the per-channel fp16 scale table, not on
++       * it. The runtime capture puts 0x5020 at the A/B/C table, then oc fp16
++       * scale entries, then 0x5024: for 32 output channels the vendor's
++       * 0x5020 to 0x5024 delta is 320 bytes, which is 256 of table plus 64 of
++       * scales, while this line computes 256. ROCKET_SCALE_TABLE fills those
++       * entries, so the pointer has to clear them.
++       */
++      /*
++       * ⚠ ROCKET_SCALE_PTR is SEPARATE from ROCKET_SCALE_TABLE on purpose.
++       * Round 46 changed both together, writing the fp16 table AND moving this
++       * pointer past it, and the shapes that already worked went from 128/128
++       * to 0/128. Two changes, one result, nothing learned. They are two knobs
++       * now so each can be attributed.
++       */
++      /*
++       * The table in front of the fp16 entries is a different size for a
++       * depthwise layer: 48 byte records rather than 64, and twice as many of
++       * them. rkt_coef_table_bytes() is what rkt_fill_biases() lays the buffer
++       * out with, so this pointer is computed from the same expression instead
++       * of repeating the regular conv's arithmetic here.
++       */
++      R_RDMA(0x5024, bias_addr + rkt_coef_table_bytes(dw, oc) +
++                     (getenv("ROCKET_SCALE_OFF") ? 0 : oc * 2));
++   }
 +   R_RDMA(0x5028, 0x00000000);
 +   R_RDMA(0x502c, 0x00000000);
 +   R_RDMA(0x5030, 0x00000000);
@@ -1373,7 +3390,56 @@ index be992fd..3a00353 100644
 +   R_RDMA(0x5078, 0x00000000);
 +   R_RDMA(0x507c, 0x00000000);
 +
-+   emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d);
++   /*
++    * ROCKET_NEXTPTR (RK3576 next-pointer experiment). Emit the RK3588-style trailer
++    * — two PC-register slots, PC next-data-ADDRESS (0x10) + next-data-AMOUNT — right
++    * before the op_en, so the whole-graph packer can chain each task to the next by
++    * patching them (rkt_pack_graph_regcmd). Tests whether the RK3576 PC follows
++    * next-pointers (RK3588's mechanism) rather than only task_number auto-striding,
++    * which walls (task_number>=2: only the cold-start task commits). Placeholders
++    * (0) here; the packer fills next-addr/amount. Off by default (path unchanged).
++    */
++   if (getenv("ROCKET_NEXTPTR")) {
++      EMIT(REG_PC_BASE_ADDRESS, 0);
++      EMIT(REG_PC_REGISTER_AMOUNTS, 0);
++   }
++
++   /*
++    * Engage the units. The broadcast op_en (0x81/0x08/0x1d) writes the PC's OWN
++    * PC_OPERATION_ENABLE and RESTARTS the PC mid-stream, engaging the units before
++    * the geometry is committed -> they run on an empty window (board: ds0_first=-1,
++    * core wt_rd=0, MAC=0). Fully stripping it lets the geometry latch (ds0_first=0,
++    * ds0=0x190) but the kernel's single 0x1 pulse never engages the units
++    * (exec_ever=0). So engage each unit at its OWN OP_EN (CNA 0x1008 / CORE 0x3008 /
++    * DPU 0x4008 / RDMA 0x5008) with the 0x1d enable mask: this engages AND completes
++    * the units (the broadcast's full enable) WITHOUT touching the PC's 0x08, so the
++    * committed geometry survives. (Same mechanism rkt_ml.c uses for the packed path.)
++    */
++   if (getenv("ROCKET_STRIP_OPEN")) {
++      /* test: kernel-pulse only — latches geometry but units never engage */
++   } else if (getenv("ROCKET_BCAST_OPEN")) {
++      emit_raw(regs, 0x81, REG_PC_OPERATION_ENABLE, 0x1d); /* legacy: restarts PC */
++   } else {
++      uint32_t uo = getenv("ROCKET_UNIT_OPEN")
++                       ? (uint32_t)strtoul(getenv("ROCKET_UNIT_OPEN"), NULL, 0) : 0x1d;
++      if (getenv("ROCKET_REV_OPEN")) {
++         /* NVDLA programming guide: op_enable MUST be issued in REVERSE (data-flow)
++          * order -- downstream units enabled first so the pipeline is ready before
++          * the input DMA starts feeding (CONV_ACC->..->CONV_DMA). mesa emitted the
++          * forward order (CNA input first), which leaves the multi-task executers
++          * enabled-but-never-running (exec_ever=0x0). Reverse: DPU/RDMA (output) ->
++          * CORE (MAC) -> CNA (input) last. */
++         emit_raw(regs, 0x1001, 0x4008, uo);  /* DPU  OP_EN (output, first) */
++         emit_raw(regs, 0x2001, 0x5008, uo);  /* RDMA OP_EN */
++         emit_raw(regs, 0x801, 0x3008, uo);   /* CORE OP_EN (MAC) */
++         emit_raw(regs, 0x201, 0x1008, uo);   /* CNA  OP_EN (input, LAST) */
++      } else {
++         emit_raw(regs, 0x201, 0x1008, uo);   /* CNA  OP_EN */
++         emit_raw(regs, 0x801, 0x3008, uo);   /* CORE OP_EN */
++         emit_raw(regs, 0x1001, 0x4008, uo);  /* DPU  OP_EN */
++         emit_raw(regs, 0x2001, 0x5008, uo);  /* RDMA OP_EN */
++      }
++   }
 +
 +#undef R_CNA
 +#undef R_CORE
@@ -1384,10 +3450,27 @@ index be992fd..3a00353 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,6 +521,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,13 +1154,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
++   /*
++    * ROCKET_FP16 (a8w16 experiment, run-once diagnostic). rkt_coefs.c dequantises
++    * the int8 weights to real-valued fp16 (bypassing the value-dependent int8 SDP
++    * coefficient blob). The regcmd half is wired here: PROC_PRECISION=2 (fp16) on
++    * the CNA + CORE MAC, and OUT_CVT drops the weights_scale (already baked into the
++    * fp16 weights) so the requant is the derivable in_sc/out_sc.
++    *
++    * The input activation stays uint8 (it arrives at RUNTIME, so mesa cannot pre-
++    * convert it at compile time) -> this is an a8w16 MAC, NOT the vendor's captured
++    * a16w4. Whether the RK3576 CMAC accepts a8w16 is UNKNOWN; that is what this one
++    * run decides: structured/non-zero output = a8w16 engages (next: add the per-
++    * channel -in_zp*Sum(w_real) bias); zero-rail = HW needs a16w16 (fp16 input),
++    * which requires a runtime input-convert pass (the multi-day port, out of scope).
++    * Weight path already gates on !depthwise; mirror that here.
++    */
++   bool fp16 = getenv("ROCKET_FP16") && !operation->depthwise;
++
 +   /*
 +    * PP_CLEAR fires at the END of this regcmd (just before 0x0041), after all
 +    * shadow registers have been written.  This ensures each job triggers its
@@ -1400,8 +3483,10 @@ index be992fd..3a00353 100644
 +    */
     uint32_t con0 = CNA_CBUF_CON0_WEIGHT_BANK(task->weights_banks) |
                     CNA_CBUF_CON0_DATA_BANK(task->input_banks);
-    if (task_num > 0 && operation->reuse_weights_cbuf)
-@@ -48,6 +538,35 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+-   if (task_num > 0 && operation->reuse_weights_cbuf)
++   if (task_num > 0 && operation->reuse_weights_cbuf &&
++       getenv("ROCKET_TILE_JOBS") == NULL)  /* Path B: each tile stages own weights */
+       con0 |= CNA_CBUF_CON0_WEIGHT_REUSE(1);
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1437,8 +3522,14 @@ index be992fd..3a00353 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -62,6 +581,10 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -60,8 +1230,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+    if (operation->depthwise)
+       con1 |= CNA_CONV_CON1_CONV_MODE(3);
  
++   /* fp16 MAC precision (a8w16): IN_PRECISION stays 0 (uint8 input). */
++   if (fp16)
++      con1 |= CNA_CONV_CON1_PROC_PRECISION(2);
++
     EMIT(REG_CNA_CONV_CON1, con1);
  
 +   /* Re-arm A: keep POINTER=0 so subsequent writes go to Group 0 shadow. */
@@ -1448,7 +3539,7 @@ index be992fd..3a00353 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +593,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +1248,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -1456,7 +3547,7 @@ index be992fd..3a00353 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +620,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +1275,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -1493,7 +3584,7 @@ index be992fd..3a00353 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,7 +743,25 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,10 +1398,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -1520,7 +3611,14 @@ index be992fd..3a00353 100644
     if (operation->depthwise)
        misc_cfg |= CORE_MISC_CFG_DW_EN(1);
  
-@@ -203,8 +775,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
++   /* fp16 MAC precision on the CORE array (matches CNA PROC_PRECISION). */
++   if (fp16)
++      misc_cfg |= CORE_MISC_CFG_PROC_PRECISION(2);
++
+    EMIT(REG_CORE_MISC_CFG, misc_cfg);
+    EMIT(REG_CORE_DATAOUT_SIZE_0,
+         CORE_DATAOUT_SIZE_0_DATAOUT_HEIGHT(task->output_height - 1) |
+@@ -203,8 +1434,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -1546,7 +3644,7 @@ index be992fd..3a00353 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +832,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +1491,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -1556,7 +3654,23 @@ index be992fd..3a00353 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -522,13 +1111,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -389,8 +1637,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+       EMIT(REG_DPU_EW_RELUX_CMP_VALUE, 0);
+       EMIT(REG_DPU_OUT_CVT_OFFSET, offset);
+ 
++      /*
++       * fp16: the weights_scale is already baked into the real-valued fp16 weights
++       * (rkt_coefs.c), so the remaining requant is just in_sc/out_sc (derivable,
++       * not the value-dependent blob). int8 keeps the in_sc*wt_sc/out_sc form.
++       */
+       float conv_scale =
+-         (task->input_scale * task->weights_scale) / task->output_scale;
++         fp16 ? (task->input_scale / task->output_scale)
++              : (task->input_scale * task->weights_scale) / task->output_scale;
+       // DBG("conv_scale %f\n", conv_scale);
+       uint32_t scale_bits = fui(conv_scale);
+       /* Taken from
+@@ -522,13 +1776,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -1587,7 +3701,7 @@ index be992fd..3a00353 100644
  }
  
  void
-@@ -536,7 +1136,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1801,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {
@@ -1612,10 +3726,22 @@ index be992fd..3a00353 100644
      * task in an operation, but for now set them all to be sure.
      */
 diff --git a/src/gallium/drivers/rocket/rkt_task.c b/src/gallium/drivers/rocket/rkt_task.c
-index 6dbb278..15e634e 100644
+index 6dbb278..91f4647 100644
 --- a/src/gallium/drivers/rocket/rkt_task.c
 +++ b/src/gallium/drivers/rocket/rkt_task.c
-@@ -30,7 +30,7 @@ calc_input_banks(struct rkt_operation *operation)
+@@ -1,8 +1,11 @@
+ /*
+  * Copyright (c) 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net>
++ * Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <stdlib.h>
++
+ #include "rkt_task.h"
+ #include "rkt_ml.h"
+ 
+@@ -30,7 +33,7 @@ calc_input_banks(struct rkt_operation *operation)
  {
     unsigned entries_per_slice = calc_entries_per_slice(operation);
     return DIV_ROUND_UP(entries_per_slice * operation->input_height,
@@ -1624,7 +3750,7 @@ index 6dbb278..15e634e 100644
  }
  
  static unsigned
-@@ -45,7 +45,7 @@ calc_weights_banks(struct rkt_operation *operation)
+@@ -45,7 +48,7 @@ calc_weights_banks(struct rkt_operation *operation)
     if (!operation->depthwise)
        bytes *= operation->output_channels;
     entries = DIV_ROUND_UP(bytes, CBUF_ENTRY_SIZE);
@@ -1633,7 +3759,28 @@ index 6dbb278..15e634e 100644
  
     /* Why do we need an extra bank? The calc above might be wrong on this HW */
     banks++;
-@@ -74,10 +74,10 @@ calc_explicit_padding(const struct rkt_operation *operation,
+@@ -59,6 +62,20 @@ calc_line_stride(unsigned width)
+    return width * ATOMIC_K_SIZE * sizeof(uint8_t);
+ }
+ 
++static uint32_t
++rkt_env_u32(const char *name, uint32_t def)
++{
++   const char *s = getenv(name);
++   return s ? (uint32_t)strtoul(s, NULL, 0) : def;
++}
++
++static bool
++rkt_env_bool(const char *name, bool def)
++{
++   const char *s = getenv(name);
++   return s ? atoi(s) != 0 : def;
++}
++
+ static void
+ calc_explicit_padding(const struct rkt_operation *operation,
+                       unsigned *pad_top, unsigned *pad_bottom,
+@@ -74,10 +91,10 @@ calc_explicit_padding(const struct rkt_operation *operation,
           MAX2((operation->output_height - 1) * operation->stride +
                   operation->weights_height - operation->input_height,
                0);
@@ -1648,7 +3795,7 @@ index 6dbb278..15e634e 100644
     } else {
        *pad_left = 0;
        *pad_right = 0;
-@@ -137,9 +137,9 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+@@ -137,9 +154,9 @@ fill_task(struct rkt_ml_subgraph *subgraph,
           task->input_surface_stride =
              (float)task->input_line_stride * (((float)task->input_height) - 1);
     } else {
@@ -1660,7 +3807,7 @@ index 6dbb278..15e634e 100644
     }
  
     if (task->input_width == 8 &&
-@@ -172,7 +172,15 @@ fill_task(struct rkt_ml_subgraph *subgraph,
+@@ -172,7 +189,15 @@ fill_task(struct rkt_ml_subgraph *subgraph,
     else
        task->weights_kernels = ALIGN(operation->output_channels, 2);
  
@@ -1677,7 +3824,7 @@ index 6dbb278..15e634e 100644
     if (operation->depthwise)
        task->surfaces_per_row *= 2;
  }
-@@ -186,7 +194,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -186,7 +211,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
     unsigned input_banks_required = calc_input_banks(operation);
     unsigned weights_banks_required = calc_weights_banks(operation);
     unsigned available_weights_banks = weights_banks_required;
@@ -1686,7 +3833,7 @@ index 6dbb278..15e634e 100644
     unsigned pad_top;
     unsigned pad_bottom;
     unsigned pad_left;
-@@ -195,14 +203,78 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -195,14 +220,223 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
     calc_explicit_padding(operation, &pad_top, &pad_bottom, &pad_left,
                           &pad_right);
  
@@ -1709,8 +3856,46 @@ index 6dbb278..15e634e 100644
 +    * (depthwise 3x3 / pointwise) is handled here; other shapes use the generic
 +    * path below.
 +    */
++   /*
++    * ROCKET_STRIDE_WIN=0 puts the stride == 1 gate back, which is the control:
++    * with it, a stride 2 layer falls through to the slice splitter below.
++    *
++    * That fall-through is what broke MobileNet. The splitter below is the
++    * RK3588 derived one and it fills top_slice and bottom_slice, not the
++    * RK3576 fields this encoder reads, so staged_rows, input_offset,
++    * cbuf_input_row_start and cbuf_reuse_row all stay zero. Round 104 measured
++    * op3, a 112 wide depthwise at stride 2, at 1 of 64 channels with the whole
++    * surface at maxdiff 255 and 95.6 percent of the bad pixels on a rail,
++    * while op2 before it matched the offline model exactly.
++    */
++   /*
++    * How much input CBUF one task may stage. Measured on a ROCK 4D by holding
++    * the channel count fixed and walking the width, on depthwise layers cut
++    * from mn_dw25 so nothing but the size changes:
++    *
++    *   2450 entries pass, 2592 fail, at 64 channels
++    *   1936 entries pass at 128 channels, a count that had only ever failed
++    *   3108 entries fail at 32 channels, a count that passes everywhere else
++    *
++    * So it is a capacity, not a channel count, and it sits at five banks. The
++    * 91 that was hardcoded here is that same capacity divided by the one case
++    * it was measured on: 2560 / 28 entries per row at 32 channels and 112 wide
++    * is 91.4. Deriving it reproduces that 91 exactly and fixes every size the
++    * literal got wrong.
++    *
++    * calc_input_banks is allowed fifteen banks, three times what the hardware
++    * will actually stage, and the generic path below never checks. The 112
++    * wide layers only ever worked because this path capped them by accident.
++    *
++    * ROCKET_CBUF_ENTRIES overrides the budget.
++    */
++   unsigned usable_entries =
++      rkt_env_u32("ROCKET_CBUF_ENTRIES", 5 * operation->cbuf_entries_per_bank);
++   bool over_budget = entries_per_slice * operation->input_height > usable_entries;
++
 +   if (operation->soc == RKT_SOC_RK3576 && operation->input_channels > 4 &&
-+       operation->input_width >= 112 && operation->stride == 1) {
++       (operation->input_width >= 112 || over_budget) &&
++       (operation->stride == 1 || rkt_env_bool("ROCKET_STRIDE_WIN", true))) {
 +      unsigned full_oh = operation->output_height;
 +      unsigned in_h = operation->input_height;
 +      /*
@@ -1725,19 +3910,89 @@ index 6dbb278..15e634e 100644
 +       * 0x30000000 flags). Window N's CNA CBUF input offset (0x1040 low) is the
 +       * cumulative staged input rows of the earlier windows, carried in the task.
 +       */
-+      unsigned max_iwin = 91;
-+      unsigned overlap = (operation->weights_height - 1) / 2;
++      /*
++       * ROCKET_ROWWIN=N overrides the input rows staged per task.
++       *
++       * Round 60 put the depthwise error exactly here. The row maxdiff profile
++       * of a 112x112 depthwise, sampled every eighth row, is
++       *
++       *     1 1 1 1 1 1 1 1 1 1 1 1 200 200
++       *
++       * so rows 0 to 88 are within one of the reference, which is rounding,
++       * and rows 96 and 104 are garbage. With max_iwin 91 this loop emits 90
++       * output rows then 22, so task 0 is right and task 1 is wrong. The
++       * vendor's own capture of the same layer carries 0x4024 = 0x59 then 0x15,
++       * 90 rows then 22, so the SPLIT matches and it is the second window's
++       * setup that does not.
++       *
++       * That also explains why every regular shape in this project is perfect:
++       * they are 80x80 or smaller and take the single-task path below.
++       *
++       * Moving the boundary is the cheapest way to tell a per-window bug from
++       * a bug at one particular row. N >= 113 gives one task and the whole
++       * surface should come out right; N = 46 gives three and the error should
++       * start at the second one wherever that now falls.
++       */
++      const char *rw = getenv("ROCKET_ROWWIN");
++      unsigned max_iwin = rw ? (unsigned)strtoul(rw, NULL, 0)
++                             : MAX2(usable_entries / entries_per_slice, 1u);
++      unsigned stride = operation->stride;
++      unsigned kh = operation->weights_height;
 +      unsigned line_in = calc_line_stride(operation->input_width);
 +      unsigned line_out = calc_line_stride(operation->output_width);
 +      unsigned out_start = 0;
 +      unsigned cbuf_rows = 0;
++      unsigned staged_end = 0;   /* input rows already in the CBUF */
++      /*
++       * The absolute input row that currently sits at CBUF row 0. Window 0
++       * writes at row 0 and every later window addresses the buffer by
++       * absolute input row, so the whole layer's input has to fit at once.
++       *
++       * It does not always. Measured on a ROCK 4D, a window may stage about
++       * 2560 entries but the WHOLE layer only about 5120, ten banks, and past
++       * that the surface comes back garbage:
++       *
++       *   pass  4608, 4802, 5000 entries    fail  5202, 5408, 6050, 6272
++       *
++       * Four predictions at three channel counts confirmed it and a channel
++       * count story cannot produce them: 32 channels passes at 136 wide, 4624,
++       * and fails at 152, 5776, while 128 channels passes at 64 wide, 4096,
++       * and fails at 80, 6400.
++       *
++       * So when the running total would run past the buffer, start again at
++       * CBUF row 0 and restage this window in full. Both bases are then
++       * relative to cbuf_base, which is what the emitter already multiplies by
++       * the surface stride.
++       *
++       * ROCKET_CBUF_TOTAL overrides the budget.
++       */
++      unsigned cbuf_base = 0;
++      unsigned total_entries =
++         rkt_env_u32("ROCKET_CBUF_TOTAL", 10 * operation->cbuf_entries_per_bank);
 +
 +      while (out_start < full_oh) {
 +         struct split_task task = {0};
-+         unsigned in_lo = (out_start >= overlap) ? out_start - overlap : 0;
-+         unsigned out_end = MIN2(full_oh, in_lo + max_iwin - overlap);
++         /*
++          * Output row o reads input rows o*stride - pad_top through
++          * o*stride - pad_top + kh - 1. The old form of this was written for
++          * stride 1 only, where that is o - overlap through o + overlap, and
++          * it under-staged a stride 2 layer by half: for a 112 to 56 layer it
++          * asked for 57 of the 112 input rows in a single window, so every
++          * output row past the middle convolved rows that were never there.
++          *
++          * At stride 1 this reduces to exactly the old numbers, which is the
++          * check that matters: 90 output rows then 22, staging 91 then 21.
++          */
++         unsigned base = out_start * stride;
++         unsigned in_lo = (base >= pad_top) ? base - pad_top : 0;
++         unsigned max_hi = in_lo + max_iwin - 1;
++         /* largest out_end whose last input row still fits the window */
++         unsigned span = max_hi + pad_top + 1;
++         unsigned out_end = (span >= kh) ? (span - kh) / stride + 1 : out_start + 1;
++         out_end = MIN2(full_oh, MAX2(out_end, out_start + 1));
 +         unsigned win_orows = out_end - out_start;
-+         unsigned in_hi = MIN2(in_h - 1, (out_end - 1) + overlap);
++         unsigned hi = (out_end - 1) * stride + kh - 1;
++         unsigned in_hi = MIN2(in_h - 1, (hi >= pad_top) ? hi - pad_top : 0);
 +         unsigned win_irows = in_hi - in_lo + 1;
 +         bool last = out_end >= full_oh;
 +
@@ -1747,12 +4002,48 @@ index 6dbb278..15e634e 100644
 +         task.input_banks = available_input_banks;
 +         task.weights_banks = available_weights_banks;
 +         task.input_data_entries = task.input_banks * operation->cbuf_entries_per_bank;
++         /*
++          * A window overlaps the one before it by `overlap` rows, and those
++          * rows are ALREADY in the CBUF. Staging them again writes them a
++          * second time at the next free CBUF row, so everything after them
++          * sits `overlap` rows too late and the window convolves shifted
++          * input. That is the whole of the depthwise error: round 60 measured
++          * rows 0 to 88 within one of the reference and rows 96 and 104
++          * garbage, on a split of 90 output rows then 22.
++          *
++          * The vendor's capture of this exact layer writes both numbers for
++          * its second window and they differ: 0x102c carries 23, the rows the
++          * window spans, while 0x1028, 0x1078 and 0x1098 carry 21, the rows it
++          * stages. mesa wrote 23 to all four.
++          *
++          * So stage from the first row that is not already there, and let the
++          * reuse base at 0x103c reach back for the rest.
++          *
++          * ROCKET_STAGE_ALL=1 restores the old behaviour, and is the control:
++          * it has to reproduce the broken second window exactly.
++          */
++         unsigned new_lo = MAX2(in_lo, staged_end);
++         unsigned staged = (in_hi >= new_lo) ? in_hi - new_lo + 1 : 0;
++
++         if (getenv("ROCKET_STAGE_ALL")) {
++            new_lo = in_lo;
++            staged = win_irows;
++         }
++
++         if ((cbuf_rows + staged) * entries_per_slice > total_entries) {
++            cbuf_base = in_lo;
++            cbuf_rows = 0;
++            new_lo = in_lo;
++            staged = win_irows;
++         }
++
 +         task.output_height = win_orows;
 +         task.input_height = win_irows;
-+         task.input_offset = in_lo * line_in;
++         task.staged_rows = staged;
++         task.input_offset = new_lo * line_in;
 +         task.output_offset = out_start * line_out;
 +         task.cbuf_input_row_start = cbuf_rows;
-+         task.cbuf_reuse_row = in_lo;
++         task.cbuf_reuse_row = in_lo - cbuf_base;
 +         task.pad_top = (out_start == 0) ? pad_top : 0;
 +         task.pad_bottom = last ? pad_bottom : 0;
 +         task.pad_left = pad_left;
@@ -1760,14 +4051,15 @@ index 6dbb278..15e634e 100644
 +         task.atomic_count = task.output_width * win_orows;
 +
 +         util_dynarray_append(&operation->tasks, struct split_task, task);
-+         cbuf_rows += win_irows;
++         cbuf_rows += staged;
++         staged_end = in_hi + 1;
 +         out_start = out_end;
 +      }
 +      return;
     }
  
     if (input_banks_required <= available_input_banks) {
-@@ -213,7 +285,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -213,7 +447,8 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
        task.num = 0;
        fill_task(subgraph, operation, &task);
        task.input_banks = input_banks_required;
@@ -1777,7 +4069,7 @@ index 6dbb278..15e634e 100644
        task.input_height = operation->input_height;
  
        task.pad_top = pad_top;
-@@ -230,7 +303,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -230,7 +465,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
     struct split_task task = {0};
     unsigned available_slices =
@@ -1786,7 +4078,7 @@ index 6dbb278..15e634e 100644
  
     task.num = 0;
     fill_task(subgraph, operation, &task);
-@@ -346,6 +419,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
+@@ -346,6 +581,7 @@ rkt_split_tasks(struct rkt_ml_subgraph *subgraph,
  
        cur_task->input_banks = available_input_banks;
        cur_task->weights_banks = available_weights_banks;
