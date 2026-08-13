@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..83f0a9d 100644
+index 82258e7..d84d0bd 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -1,9 +1,13 @@
@@ -37,7 +37,7 @@ index 82258e7..83f0a9d 100644
     struct pipe_transfer *transfer_in, *transfer_out;
     void *map =
        pipe_buffer_map(pcontext, poperation->conv.weight_tensor->resource,
-@@ -29,22 +47,432 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+@@ -29,22 +47,447 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint8_t *weights_out;
  
@@ -137,7 +137,7 @@ index 82258e7..83f0a9d 100644
 +   if (is_rk3576_firstconv)
 +      weights_size = weights_width * output_channels_real * 4 * 4;
 +   else if (is_rk3576_pointwise)
-+      weights_size = input_channels_real * output_channels_real;
++      weights_size = input_channels_real * ALIGN(output_channels_real, 2);
 +   else
 +      weights_size = ww * wh * output_channels *
 +                     ALIGN(input_channels, WEIGHT_ATOMIC_SIZE) * 2;
@@ -351,7 +351,15 @@ index 82258e7..83f0a9d 100644
 +    */
 +   if (is_rk3576_pointwise) {
 +      unsigned ic_n = input_channels_real;
-+      unsigned oc_n = output_channels_real;
++      /*
++       * Padded to a pair, because the CNA is told a whole number of output
++       * channel PAIRS and reads the weights for all of them. See the oc_pad
++       * comment in rkt_regcmd.c. The extra channel's weights stay zero: the
++       * CMAC computes it and the DPU, which is told the real count, never
++       * writes it.
++       */
++      unsigned oc_n = getenv("ROCKET_OC_ODD") ? output_channels_real
++                                              : ALIGN(output_channels_real, 2);
 +
 +      /*
 +       * The vendor's 1x1 weight buffer is 32x32 tiles, tiled in BOTH axes:
@@ -419,7 +427,14 @@ index 82258e7..83f0a9d 100644
 +                   + ic % WEIGHT_ATOMIC_SIZE;
 +            }
 +
-+            weights_out[n] = weights_in[oc][0][0][ic] - 0x80;
++            /*
++             * oc_n can be one past the real count, to give the CNA the whole
++             * pair it reads. That channel has no weights of its own, and the
++             * weight tensor has none to read, so it stays at the zero point.
++             */
++            weights_out[n] = oc < output_channels_real
++                                ? weights_in[oc][0][0][ic] - 0x80
++                                : 0;
 +         }
 +
 +      /*
@@ -472,7 +487,7 @@ index 82258e7..83f0a9d 100644
  
     unsigned input_channels_1 =
        DIV_ROUND_UP(input_channels, input_channel_groups);
-@@ -53,9 +481,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+@@ -53,9 +496,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
     unsigned n = 0;
     for (int oc1 = 0; oc1 < DIV_ROUND_UP(output_channels, WEIGHT_ATOMIC_SIZE);
          oc1++) {
@@ -489,7 +504,7 @@ index 82258e7..83f0a9d 100644
                 for (int oc2 = 0; oc2 < MIN2(output_channels, WEIGHT_ATOMIC_SIZE);
                      oc2++) {
                    for (int ic2 = 0; ic2 < input_channels_2; ic2++) {
-@@ -70,12 +502,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+@@ -70,12 +517,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
                       else if (ic >= input_channels_real) {
                          if (ic2 < 16 || (input_channels_real % 32) > 16)
                             weights_out[n++] =
@@ -509,7 +524,7 @@ index 82258e7..83f0a9d 100644
                    }
                 }
              }
-@@ -83,6 +516,22 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+@@ -83,6 +531,22 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
        }
     }
  
@@ -532,7 +547,7 @@ index 82258e7..83f0a9d 100644
     if (DBG_ENABLED(ROCKET_DBG_DUMP_BOS)) {
        static int task = 0;
        rkt_dump_buffer(weights_out, "weights", 0, task++, 0, weights_size);
-@@ -129,6 +578,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
+@@ -129,6 +593,31 @@ calculate_bias_correction(struct rkt_ml_subgraph *subgraph,
     return correction;
  }
  
@@ -564,7 +579,7 @@ index 82258e7..83f0a9d 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +621,869 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +636,869 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -2413,7 +2428,7 @@ index 04dea3d..b94ea24 100644
 +
  #endif /* RKT_ML_H */
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..d4da2a7 100644
+index be992fd..ea847c1 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -1,12 +1,80 @@
@@ -2497,7 +2512,7 @@ index be992fd..d4da2a7 100644
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +96,1068 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +96,1084 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -3174,9 +3189,25 @@ index be992fd..d4da2a7 100644
 +    */
 +   bool dw_split = split || (dw && !getenv("ROCKET_DW_NOSPLITVALS"));
 +   R_CNA(0x1018, (dw_split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
-+   R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc * k * k));
++   /*
++    * The CNA counts output channels in PAIRS, so an odd count is rounded up
++    * here and only here. The vendor does exactly that: at 64 input and 41
++    * output channels it emits 2688 weight bytes, which is 64 by 42, and 41 in
++    * 0x1024, which is 42 channels less one, while CORE 0x3020, DPU 0x402c and
++    * RDMA 0x5014 all still carry 40, the real count less one.
++    *
++    * Board, round 138: with the operand alignment fixed, every EVEN output
++    * count is correct and every ODD one is wrong in its whole second weight
++    * tile, 33, 41 and 47 alike. rkt_fill_weights lays the buffer out to match.
++    *
++    * ROCKET_OC_ODD leaves the odd count alone, which is the control. An even
++    * count is unaffected either way.
++    */
++   unsigned oc_pad = getenv("ROCKET_OC_ODD") ? oc : ALIGN(oc, 2);
++
++   R_CNA(0x101c, dw ? (oc * k * k * 2) : (ic * oc_pad * k * k));
 +   R_CNA(0x1020, (dw ? oc : ic) * k * k);
-+   R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc - 1)));
++   R_CNA(0x1024, (k_word << 16) | (dw ? 1 : (oc_pad - 1)));
 +   R_CNA(0x1028, ((surf * stg_irows) << 16) | (ic - 1));
 +   R_CNA(0x102c, ((inw - 1) << 16) | (win_irows - 1));
 +   R_CNA(0x1030, (wbpk << 16) | (ow - 1));
@@ -3566,7 +3597,7 @@ index be992fd..d4da2a7 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,13 +1171,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,13 +1187,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -3638,7 +3669,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -60,8 +1247,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -60,8 +1263,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     if (operation->depthwise)
        con1 |= CNA_CONV_CON1_CONV_MODE(3);
  
@@ -3655,7 +3686,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +1265,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +1281,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -3663,7 +3694,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +1292,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +1308,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -3700,7 +3731,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,10 +1415,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,10 +1431,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -3734,7 +3765,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_CORE_MISC_CFG, misc_cfg);
     EMIT(REG_CORE_DATAOUT_SIZE_0,
          CORE_DATAOUT_SIZE_0_DATAOUT_HEIGHT(task->output_height - 1) |
-@@ -203,8 +1451,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +1467,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -3760,7 +3791,7 @@ index be992fd..d4da2a7 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +1508,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +1524,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -3770,7 +3801,7 @@ index be992fd..d4da2a7 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -389,8 +1654,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -389,8 +1670,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
        EMIT(REG_DPU_EW_RELUX_CMP_VALUE, 0);
        EMIT(REG_DPU_OUT_CVT_OFFSET, offset);
  
@@ -3786,7 +3817,7 @@ index be992fd..d4da2a7 100644
        // DBG("conv_scale %f\n", conv_scale);
        uint32_t scale_bits = fui(conv_scale);
        /* Taken from
-@@ -522,13 +1793,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1809,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -3817,7 +3848,7 @@ index be992fd..d4da2a7 100644
  }
  
  void
-@@ -536,7 +1818,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1834,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {

@@ -2,63 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 138. The second operand has to be 16 byte aligned.
+# 2026-08-13 round 139. The CNA counts output channels in pairs.
 #
-# Round 137 ruled out its own candidate and its dumps found the real one.
+# Round 138 landed the operand alignment and it was the right call:
 #
-#   the record table padding did nothing   entries 2 and 3 read identically, so
-#                                          a partial group of 8 in the A/B/C
-#                                          table is not the fault
-#   every geometry register MATCHES        our stream at 34 output channels and
-#                                          at 40 differ from the vendor's in the
-#                                          same 15 entries, all of them
-#                                          addresses, requant values or the
-#                                          0x4050 nibble, and in nothing else
-#   the weight layout MATCHES              the tiled layout was checked against
-#                                          the vendor's compiler at 64 by 34 and
-#                                          64 by 56 as well, byte for byte
+#   oc 34   EMPTY -> 34 of 34 maxdiff 1      the control, ROCKET_SCALE_NOPAD=1,
+#   oc 36   EMPTY -> 36 of 36 maxdiff 1      put the empty convolution straight
+#   oc 40   40 of 40, untouched              back, and 40, 64, 48-input, mn_L03,
+#   oc 64   64 of 64, untouched              mn_L04, conv2d-cal and mn_conv0 all
+#                                            came out unchanged
 #
-# So it is a buffer, and it is the one address computed from the channel count:
+#   MOBILENET produced a real output for the first time: 995 of 1001 within one
+#   count of the CPU, with 10 distinct values against the CPU's 10, where every
+#   run before this was 1001 channels of zero.
 #
-#     0x5024 = bias + rkt_coef_table_bytes(oc) + oc * 2
+# What is left is exactly the ODD output channel counts. 33, 41 and 47 compute
+# now, but every one of their wrong channels is in the second weight tile:
 #
-# The record table in front is always a multiple of 64 bytes, so that address
-# is 16 byte aligned exactly when oc is a multiple of 8, and ODD when oc is odd.
-# Every count that comes back empty is one that lands unaligned and both counts
-# that work are already aligned:
+#   oc 33   wrong {32}                   oc 34, 36, 40, 64   nothing wrong
+#   oc 41   wrong {32, 35, 37, 40}
+#   oc 47   wrong {32, 35, 37, 40, 42, 45, 46}
 #
-#     oc 33  operand at  386  odd          oc 40  operand at  400  aligned
-#     oc 34               388  4 only      oc 64               640  aligned
-#     oc 36               392  4 only      oc 56               560  aligned
-#     oc 41               466  odd
-#     oc 47               478  odd         MobileNet's last operator, 1001
-#                                          output channels, lands at 10066, odd
+# and their COMPUTED-correct lists stop at channel 31 in all three.
 #
-# The fp16 scale table is now padded to a whole group of eight channels, with
-# the last real scale carried across the padding, which moves the operand to
-# 400, 480 and 10080. It CANNOT change 40, 64 or 56: their offsets are the same
-# number before and after, so they are a regression control built into the fix.
+# The vendor says why, in one number. At 64 input and 41 output channels it
+# emits 2688 weight bytes, which is 64 by 42, and 0x1024 reads 41, which is 42
+# channels less one. Its CORE 0x3020, DPU 0x402c and RDMA 0x5014 all still read
+# 40, the real count less one. So the CNA is told a whole number of output
+# channel PAIRS and reads the weights for all of them, and nothing else is.
+#
+# This driver emitted 2624 bytes and 40, and laid the weight tiles out with an
+# odd stride, which moves every address in the second tile.
 #
 # DECISION RULE, written before the run:
 #
-#   33, 34, 36, 41, 47 come alive and 40, 64 are untouched
-#             the alignment was it, and MobileNet should produce a real output
-#             for the first time.
-#   they stay empty
-#             wrong again. Then the operand VALUE, not its address, is what
-#             those shapes cannot satisfy, and ROCKET_OP2 sweeps it.
-#   40 or 64 changes
-#             impossible by construction, since their bytes are identical.
-#             That would mean the padding is writing somewhere it should not.
+#   33, 41 and 47 come out whole and the even counts do not move
+#             the pair padding was it, and the pointwise is finished.
+#   they improve but keep wrong channels in the second tile
+#             the stride is right and the padding channel's CONTENT matters.
+#             It is zeroed here; the vendor's blob suggests a copy.
+#   an even count moves at all
+#             impossible by construction: ALIGN(oc, 2) is oc for all of them,
+#             so their bytes and registers are identical. That would mean the
+#             change is reaching something it should not.
 #
-# CONTROL that can fail: entry 6 runs 34 with ROCKET_SCALE_NOPAD=1, which puts
-# the unpadded table back and must restore the empty convolution.
+# CONTROL that can fail: entry 4 runs 41 with ROCKET_OC_ODD=1, which puts the
+# unpadded count back and must reproduce today's 37 of 41 with the same four
+# wrong channels.
 #
-# ⚠ ORDER. pw64x56w56 TIMES OUT the NPU, and the entry that follows a timeout
-# comes back flat 128 with an rk_iommu reset error in the log. That is what
-# rounds 136 and 137 read as "33 is a flat 128" and "40 regressed": both were
-# collateral from the entry before them. It runs LAST here, after everything
-# that has to be believed.
+# ⚠ pw64x56w56 still TIMES OUT, and the entry after a timeout comes back flat
+# 128 with an rk_iommu reset error. It runs last, as in round 138.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -75,24 +68,24 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..5) THE TEST: every count that was an empty convolution ====="
-	p pw64x34w56.tflite ""
+	log "===== 1..3) THE TEST: the odd output channel counts ====="
 	p pw64x41w56.tflite ""
 	p pw64x33w56.tflite ""
-	p pw64x36w56.tflite ""
 	p pw64x47w56.tflite ""
 
 	log ""
-	log "===== 6) CONTROL: the same shape with the table unpadded ====="
-	p pw64x34w56.tflite "ROCKET_SCALE_NOPAD=1"
+	log "===== 4) CONTROL: 41 with the odd count left alone ====="
+	p pw64x41w56.tflite "ROCKET_OC_ODD=1"
 
 	log ""
-	log "===== 7..8) the aligned counts, whose bytes do not change at all ====="
+	log "===== 5..8) the even counts, whose bytes cannot change ====="
+	p pw64x34w56.tflite ""
+	p pw64x36w56.tflite ""
 	p pw64x40w56.tflite ""
 	p pw64x64w56.tflite ""
 
 	log ""
-	log "===== 9) the whole MobileNet, whose last operator has 1001 ====="
+	log "===== 9) the whole MobileNet ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
@@ -108,7 +101,7 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 6 must be EMPTY and entries 7 and 8 must be unchanged. ====="
+	log "===== Entry 4 must reproduce 37 of 41 with wrong {32,35,37,40}. ====="
 	sync
 }
 case "$1" in
