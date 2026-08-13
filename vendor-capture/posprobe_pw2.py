@@ -72,53 +72,58 @@ def build(name, levels):
     return open(rk, "rb").read(), q
 
 
-def locate(data, q):
-    """The blob is IC*OC bytes drawn from q's value set with q's multiplicities."""
+def locate(data, nlevels):
+    """Find the IC*OC window holding each level exactly once per counterpart.
+
+    Do not assume the byte values: rknn picks its own scale. The blob is the
+    only window of IC*OC bytes carrying exactly `nlevels` distinct values with
+    IC*OC/nlevels of each, which is a strong enough signature on its own.
+
+    A neighbouring offset can carry the same multiset when the byte just
+    outside happens to equal the one just inside, so every candidate is
+    returned and the caller keeps the one that decodes.
+    """
     need = IC * OC
-    vals, counts = np.unique(q.astype(np.uint8), return_counts=True)
-    want = dict(zip(vals.tolist(), counts.tolist()))
+    per = need // nlevels
     arr = np.frombuffer(data, dtype=np.uint8)
-    ok = np.isin(arr, vals)
-    run = 0
+    onehot = np.zeros((256, len(arr) + 1), dtype=np.int32)
+    onehot[arr, np.arange(len(arr))] = 1
+    cs = onehot.cumsum(axis=1)
+    hits = []
     for off in range(len(arr) - need + 1):
-        if not ok[off]:
-            continue
-        blk = arr[off:off + need]
-        if not ok[off:off + need].all():
-            continue
-        v2, c2 = np.unique(blk, return_counts=True)
-        if dict(zip(v2.tolist(), c2.tolist())) == want:
-            return off, blk
-        run += 1
-    return None, None
+        c = cs[:, off + need] - cs[:, off]
+        nz = c[c > 0]
+        if nz.size == nlevels and (nz == per).all():
+            hits.extend([off - 1, off, off + 1])
+    return sorted({h for h in hits if 0 <= h <= len(arr) - need})
 
 
 def main():
     levels_oc = np.repeat((np.arange(OC) - OC // 2)[:, None] * 2, IC, axis=1)
     levels_ic = np.repeat((np.arange(IC) - IC // 2)[None, :] * 2, OC, axis=0)
 
-    data_a, qa = build("pq_oc", levels_oc)
-    data_b, qb = build("pq_ic", levels_ic)
+    data_a, _ = build("pq_oc", levels_oc)
+    data_b, _ = build("pq_ic", levels_ic)
 
-    off_a, blk_a = locate(data_a, qa)
-    off_b, blk_b = locate(data_b, qb)
-    if blk_a is None or blk_b is None:
-        print("blob not found: A %s  B %s" % (off_a, off_b))
-        return 1
-    print("blob A at 0x%x, blob B at 0x%x, %d bytes each" % (off_a, off_b, IC * OC))
-
-    oc_of = {int(qa[o, 0]) & 0xff: o for o in range(OC)}
-    ic_of = {int(qb[0, i]) & 0xff: i for i in range(IC)}
-    pos = [(oc_of.get(int(a)), ic_of.get(int(b))) for a, b in zip(blk_a, blk_b)]
-    if any(p[0] is None or p[1] is None for p in pos):
-        print("some bytes did not decode; levels collided")
-        return 1
-
-    addr = {}
-    for i, (oc, ic) in enumerate(pos):
-        addr[(oc, ic)] = i
-    if len(addr) != IC * OC:
-        print("the map is not a bijection: %d distinct pairs" % len(addr))
+    cands = [o for o in locate(data_a, OC) if o in set(locate(data_b, IC))]
+    addr = None
+    for off in cands:
+        a = np.frombuffer(data_a, dtype=np.uint8)[off:off + IC * OC].astype(np.int8)
+        b = np.frombuffer(data_b, dtype=np.uint8)[off:off + IC * OC].astype(np.int8)
+        if len(set(a.tolist())) != OC or len(set(b.tolist())) != IC:
+            continue
+        # the levels are monotone in the index, so sorting recovers it
+        oc_of = {v: i for i, v in enumerate(sorted(set(a.tolist())))}
+        ic_of = {v: i for i, v in enumerate(sorted(set(b.tolist())))}
+        cand = {}
+        for i, (x, y) in enumerate(zip(a.tolist(), b.tolist())):
+            cand[(oc_of[x], ic_of[y])] = i
+        if len(cand) == IC * OC:
+            addr = cand
+            print("blob at 0x%x, %d bytes" % (off, IC * OC))
+            break
+    if addr is None:
+        print("blob not found; candidates %s" % ["0x%x" % c for c in cands[:8]])
         return 1
 
     def ours(oc, ic):

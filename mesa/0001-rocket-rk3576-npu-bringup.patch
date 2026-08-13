@@ -2314,7 +2314,7 @@ index 04dea3d..f991569 100644
 +
  #endif /* RKT_ML_H */
 diff --git a/src/gallium/drivers/rocket/rkt_regcmd.c b/src/gallium/drivers/rocket/rkt_regcmd.c
-index be992fd..d1fe372 100644
+index be992fd..94da81f 100644
 --- a/src/gallium/drivers/rocket/rkt_regcmd.c
 +++ b/src/gallium/drivers/rocket/rkt_regcmd.c
 @@ -1,12 +1,80 @@
@@ -2398,7 +2398,7 @@ index be992fd..d1fe372 100644
  static void
  emit_raw(struct util_dynarray *regs, uint32_t target, uint32_t reg,
           uint32_t value)
-@@ -28,6 +96,1051 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
+@@ -28,6 +96,1053 @@ emit(struct util_dynarray *regs, uint32_t reg, uint32_t value)
  
  #define EMIT(offset, value) emit(regs, offset, value);
  
@@ -3009,23 +3009,26 @@ index be992fd..d1fe372 100644
 +   R_CNA(0x100c, (dw && !getenv("ROCKET_DW_STDMODE")) ? 0x1 : 0x0);
 +   R_CNA(0x1010, 0x00000fff);
 +   R_CNA(0x1014, (s << 3) | s);
-+   /* stride-2 wants 0x...0404 (both the conv0 capture and this k=5 s=2 conv);
-+    * 0x...0505 was the stride-1 value the generic path was calibrated on. */
 +   /*
-+    * ROCKET_CBUF_DERIVE: 0x1018 and 0x1040 are keyed off the stride here, and
-+    * the vendor does not key them off the stride. Compiling .rknn across a width
-+    * and channel sweep (vendor-capture/gen_geom.py) flips both exactly where the
-+    * op stops fitting in one row window: 16 channels at 128x128 is one window
-+    * and reads 0x40000404 / 0x10000000, 144x144 splits and reads 0x40000505 /
-+    * 0x14000000, and holding 80x80 while raising the input channels flips at the
-+    * same place (32 in one window, 48 split).
++    * 0x1018 and 0x1040 say whether the layer is dispatched as more than one
++    * row window. They have nothing to do with the stride.
 +    *
-+    * ⚠ Not the default, because cal_s1 computes correctly WITH the stride-keyed
-+    * value where the vendor would use the other one, so these two tolerate being
-+    * wrong at least there. This is a knob to A/B, not a fix to ship.
++    * This used to be `s != 2`, fitted to the two captures the project had, and
++    * the derived form was left behind a knob because cal_s1 computes correctly
++    * with the stride keyed value where the vendor would use the other one. So
++    * these two tolerate being wrong, sometimes, which is why it took a shape
++    * that does not tolerate it to settle them.
++    *
++    * Settled against the vendor's own compiler rather than against captures.
++    * Reading 0x1018 out of 87 compiled .rknn and comparing it with each one's
++    * own window count, taken from its 0x102c, the pair carries 0x0505 and
++    * 0x14000000 exactly when the window holds fewer rows than the layer has,
++    * in 86 of the 87. The exception, g_cal_k1, is a 1x1 whose window is 79 of
++    * 80 rows, one row short of not splitting at all.
++    *
++    * ROCKET_CBUF_STRIDE restores the stride keyed form.
 +    */
-+   bool cbuf_derive = getenv("ROCKET_CBUF_DERIVE") != NULL;
-+   bool split = cbuf_derive ? capped : (s != 2);
++   bool split = getenv("ROCKET_CBUF_STRIDE") ? (s != 2) : capped;
 +   /*
 +    * ROCKET_DW_SPLITVALS: take the split values for a DEPTHWISE layer too.
 +    *
@@ -3051,11 +3054,10 @@ index be992fd..d1fe372 100644
 +    *
 +    * ROCKET_DW_NOSPLITVALS restores the stride key, and is the control.
 +    *
-+    * ROCKET_CBUF_DERIVE fixes the same case by the vendor's own rule, keying
-+    * both registers off whether the op fits in one row window rather than off
-+    * the stride at all. That is the more general answer and it is measured to
-+    * work here too, but it changes REGULAR convs as well and only one of them
-+    * has been checked against it, so it stays a knob until the whole set has.
++    * That case is now also covered by the general rule above, which keys the
++    * pair off the window count for every layer. A depthwise at stride 2 splits,
++    * so it takes the split pair either way. This stays because a depthwise that
++    * does NOT split still wants it, which the general rule does not say.
 +    */
 +   bool dw_split = split || (dw && !getenv("ROCKET_DW_NOSPLITVALS"));
 +   R_CNA(0x1018, (dw_split ? 0x40000505 : 0x40000404) | (wnum > 0 ? 0x80000000 : 0));
@@ -3450,7 +3452,7 @@ index be992fd..d1fe372 100644
  static void
  fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
                    const struct rkt_operation *operation,
-@@ -41,13 +1154,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -41,13 +1156,70 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     unsigned weights_zero_point = task->weights_zero_point;
     unsigned offset = output_zero_point - 0x80;
  
@@ -3522,7 +3524,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_CNA_DCOMP_REGNUM, 0);
     EMIT(REG_CNA_DCOMP_CTRL, 0);
  
-@@ -60,8 +1230,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -60,8 +1232,16 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     if (operation->depthwise)
        con1 |= CNA_CONV_CON1_CONV_MODE(3);
  
@@ -3539,7 +3541,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_DPU_S_POINTER, DPU_S_POINTER_POINTER_PP_MODE(1) |
                                DPU_S_POINTER_EXECUTER_PP_EN(1) |
                                DPU_S_POINTER_POINTER_PP_EN(1));
-@@ -70,6 +1248,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -70,6 +1250,7 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
             DPU_RDMA_RDMA_S_POINTER_EXECUTER_PP_EN(1) |
             DPU_RDMA_RDMA_S_POINTER_POINTER_PP_EN(1));
     EMIT(REG_CNA_CONV_CON1, con1);
@@ -3547,7 +3549,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_CNA_CONV_CON2,
          CNA_CONV_CON2_FEATURE_GRAINS(
             50 + task->stride_y + 1)); /* Magic: Seems to pass the most tests */
-@@ -96,6 +1275,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -96,6 +1277,36 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_CBUF_CON0, con0);
  
@@ -3584,7 +3586,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_CNA_CBUF_CON1, CNA_CBUF_CON1_DATA_ENTRIES(task->input_data_entries));
  
     if (task->input_channels_real == 1) {
-@@ -189,10 +1398,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -189,10 +1400,32 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_CNA_PAD_CON1, pad_con1);
  
@@ -3618,7 +3620,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_CORE_MISC_CFG, misc_cfg);
     EMIT(REG_CORE_DATAOUT_SIZE_0,
          CORE_DATAOUT_SIZE_0_DATAOUT_HEIGHT(task->output_height - 1) |
-@@ -203,8 +1434,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -203,8 +1436,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
          CORE_CLIP_TRUNCATE_CLIP_TRUNCATE(operation->truncate_bits));
     emit_raw(regs, CORE | 0x1, 0x3030, 0);
  
@@ -3644,7 +3646,7 @@ index be992fd..d1fe372 100644
     if (operation->depthwise)
        feat_mode_cfg |= DPU_FEATURE_MODE_CFG_CONV_MODE(3);
  
-@@ -244,7 +1491,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -244,7 +1493,8 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
     EMIT(REG_DPU_BS_OW_OP, DPU_BS_OW_OP_OW_OP(0x80 - weights_zero_point));
  
     EMIT(REG_DPU_WDMA_SIZE_0,
@@ -3654,7 +3656,7 @@ index be992fd..d1fe372 100644
     EMIT(REG_DPU_WDMA_SIZE_1,
          DPU_WDMA_SIZE_1_HEIGHT_WDMA(task->output_height - 1) |
             DPU_WDMA_SIZE_1_WIDTH_WDMA(task->output_width - 1));
-@@ -389,8 +1637,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -389,8 +1639,14 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
        EMIT(REG_DPU_EW_RELUX_CMP_VALUE, 0);
        EMIT(REG_DPU_OUT_CVT_OFFSET, offset);
  
@@ -3670,7 +3672,7 @@ index be992fd..d1fe372 100644
        // DBG("conv_scale %f\n", conv_scale);
        uint32_t scale_bits = fui(conv_scale);
        /* Taken from
-@@ -522,13 +1776,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -522,13 +1778,24 @@ fill_first_regcmd(struct rkt_ml_subgraph *subgraph,
  
     EMIT(REG_PC_REGISTER_AMOUNTS, 0);
  
@@ -3701,7 +3703,7 @@ index be992fd..d1fe372 100644
  }
  
  void
-@@ -536,7 +1801,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
+@@ -536,7 +1803,23 @@ rkt_fill_regcmd(struct rkt_ml_subgraph *subgraph,
                  const struct rkt_operation *operation,
                  struct util_dynarray *regs, unsigned task_num)
  {

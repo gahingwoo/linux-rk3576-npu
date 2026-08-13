@@ -334,6 +334,17 @@ def main():
     for ic in (33, 48):
         print(cut_pointwise(out, "pw%dx64w56" % ic, ic, 64, 56))
 
+    # Round 135: the cut tile, on each axis separately, and the one pixel
+    # surface. MobileNet's last operator is 1024 to 1001 at 1x1, so it has an
+    # OUTPUT channel tail and a single pixel, and neither had ever been run
+    # here. The input channel tails above fail on the board while the weight
+    # layout is confirmed against the vendor at those very shapes, so the fault
+    # is not the layout and the two axes have to be separated.
+    for ic, oc, w in ((64, 40, 56), (64, 33, 56),      # output channel tails
+                      (64, 64, 1), (64, 40, 1),        # one pixel, no tail then a tail
+                      (32, 64, 1)):                    # one pixel at a shape known good
+        print(cut_pointwise(out, "pw%dx%dw%d" % (ic, oc, w), ic, oc, w))
+
     # MobileNet cut off after each operator, rounds 103 and 104.
     for op, tensor in ((0, 7), (1, 33), (2, 37), (3, 39), (4, 43), (5, 45),
                        (6, 49), (7, 51), (8, 55), (12, 67), (18, 85),

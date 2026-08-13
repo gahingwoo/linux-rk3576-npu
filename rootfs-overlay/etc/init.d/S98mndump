@@ -2,58 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 134. How far up MobileNet does it go now.
+# 2026-08-13 round 135. The last operator, and the register that is not the
+# stride's.
 #
-# Round 133 landed the tiled 1x1 weight layout and every pointwise shape came
-# out correct: 64 to 64, 64 to 128 and 128 to 128 all at maxdiff 1, the tap
-# ladder went from 0 of 64 to 64 of 64, and the ROCKET_PW_ICGROUP control put
-# the old layout back and reproduced the old failure exactly, 25 of 64.
+# Round 134 walked the ladder and MobileNet is on the model from operator 3 to
+# operator 7 to the channel and to the maxdiff, and within a few channels the
+# rest of the way. The whole network is not, and the log says why: its output
+# is every value at the zero point, an empty convolution, and the operator that
+# produces it is number 28, 1024 to 1001 at ONE PIXEL. That shape has two
+# things nothing here has ever run: an output channel count that is not a
+# multiple of 32, and a 1x1 surface.
 #
-# More to the point, operators 3 and 4 of MobileNet came off the board at 21 of
-# 64 maxdiff 13 and 18 of 128 maxdiff 14, which is not "still failing". It is
-# EXACTLY what correct hardware scores against tflite there.
+# Two separate things are under test this round.
 #
-# That number now comes from a tool rather than a memory: chainmodel.py runs the
-# whole graph twice from the model file, once with tflite's requant and once
-# with the hardware's, and prints what a perfect accelerator would score. A
-# channel count means nothing past the first layer or two without it, because
-# tflite's double rounding compounds through the chain.
+# 1. WHICH AXIS THE CUT TILE BREAKS. pw48 and pw33 fail with 105 and 255
+#    maxdiff, and both are INPUT channel tails. Yet the tiled weight layout was
+#    checked against the vendor's own compiler at 48 by 64 and at 64 by 40 after
+#    that run, and it matches byte for byte at both, so the tail is not the
+#    layout. Operator 28's tail is on the OUTPUT axis, which no probe has ever
+#    had. pw64x40 and pw64x33 are that, and the w1 models are the single pixel.
 #
-# DECISION RULE, written before the run. For each operator, correct is the
-# model's own figure and nothing else:
+# 2. 0x1018 AND 0x1040 ARE NOT KEYED OFF THE STRIDE. They were `s != 2` here,
+#    fitted to two captures. Reading 0x1018 out of 87 compiled .rknn and
+#    comparing it against each one's own window count, the split pair appears
+#    exactly when the window holds fewer rows than the layer has, in 86 of 87.
+#    The one exception is a 1x1 whose window is 79 rows of 80.
 #
-#     op    correct hardware scores        was
-#      3    21/64   maxdiff 13    <- board matched this in round 133
-#      4    18/128  maxdiff 14    <- board matched this in round 133
-#      5     9/128  maxdiff 13
-#      6     4/128  maxdiff 23        0/128 maxdiff 255
-#      7     7/128  maxdiff 10
-#      8    36/256  maxdiff 7         0/256 maxdiff 255
-#     12   166/512  maxdiff 11
-#     18    92/512  maxdiff 7
-#     24   671/1024 maxdiff 6
-#     26   572/1024 maxdiff 25
+#    That rule now runs by default. It changes the value for every stride 1
+#    layer that fits in one window, which includes pw48x64w56, where the vendor
+#    emits 0x40000404 and this driver has been emitting 0x40000505.
 #
-#   every operator on its figure
-#             MobileNet is correct end to end and the next thing is accuracy on
-#             a real image, not a channel count.
-#   the first operator that reads maxdiff in the hundreds
-#             that operator is the defect and everything above it is downstream.
-#             Read its kind: a depthwise at 28 wide or narrower has never been
-#             run here, and neither has a 1x1 at 512 or 1024 channels.
-#   an operator far BELOW its figure with a small maxdiff
-#             not a defect, that is the reference artifact and the model says
-#             so. Do not chase it.
+# DECISION RULE, written before the run:
 #
-# CONTROLS that can fail: entries 1 and 2 are operators 3 and 4, which matched
-# the model yesterday and must match it again, and conv2d-cal and mn_conv0 must
-# stay whole. Nothing in mesa or the kernel changed since round 133, so a move
-# in any of those means the image, not the driver.
+#   pw48 and pw33 correct, everything else unchanged
+#             the split pair was the input tail fault. Ship the derived rule.
+#   pw48 and pw33 unchanged, and entry 3 reproduces today's numbers
+#             the pair is not it. Then read the dump in entry 11 against the
+#             vendor's stream for the same shape, which is already extracted.
+#   a shape that passes today FAILS
+#             the derived rule is wrong somewhere. pw32x64w56 is the one to
+#             watch: it fits in one window, so its pair changes this round,
+#             and it has been correct since round 133.
 #
-# The two tail shapes at the end are a known gap, not a MobileNet blocker: every
-# channel count in MobileNet is a multiple of 32 and pw33 is not. 48 is a 16
-# wide tail tile and 33 a one wide one, which says whether the cut edge is
-# wrong in general or only when it is very small.
+#   the w1 models empty or wrong while pw64x64w56 stays correct
+#             the single pixel surface is its own fault and is what stands
+#             between here and the whole network.
+#
+# CONTROL that can fail: entry 3 runs pw48 with ROCKET_CBUF_STRIDE=1, which
+# puts the stride keyed value back. It must reproduce round 134's 28 of 64 at
+# maxdiff 105. If entry 2 and entry 3 read the same, the knob is not reaching
+# the path and neither number means anything.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -70,43 +68,44 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) ANCHOR: operators 3 and 4, which must stay on the model ====="
-	p mn_L03.tflite ""
-	p mn_L04.tflite ""
-
-	log ""
-	log "===== 3..6) the next four operators: 9/128, 4/128, 7/128, 36/256 ====="
-	p mn_L05.tflite ""
-	p mn_L06.tflite ""
-	p mn_L07.tflite ""
-	p mn_L08.tflite ""
-
-	log ""
-	log "===== 7..10) deeper: 166/512, 92/512, 671/1024, 572/1024 ====="
-	p mn_L12.tflite ""
-	p mn_L18.tflite ""
-	p mn_L24.tflite ""
-	p mn_L26.tflite ""
-
-	log ""
-	log "===== 11) the whole MobileNet ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 12..13) the cut tile, a known gap and not a blocker ====="
-	p pw48x64w56.tflite ""
+	log "===== 1..2) the INPUT channel tails, with the derived split pair ====="
 	p pw33x64w56.tflite ""
+	p pw48x64w56.tflite ""
 
 	log ""
-	log "===== 14..16) REGRESSION ====="
-	p pw64x128w56.tflite ""
+	log "===== 3) CONTROL: the same shape with the stride keyed pair back ====="
+	p pw48x64w56.tflite "ROCKET_CBUF_STRIDE=1"
+
+	log ""
+	log "===== 4..5) the OUTPUT channel tails, which no probe has ever had ====="
+	p pw64x40w56.tflite ""
+	p pw64x33w56.tflite ""
+
+	log ""
+	log "===== 6..8) ONE PIXEL surfaces, which operator 28 runs on ====="
+	p pw64x64w1.tflite ""
+	p pw32x64w1.tflite ""
+	p pw64x40w1.tflite ""
+
+	log ""
+	log "===== 9..10) REGRESSION, both change their pair this round ====="
+	p pw32x64w56.tflite ""
+	p pw64x64w56.tflite ""
+
+	log ""
+	log "===== 11) our register stream for the failing shape ====="
+	p pw48x64w56.tflite "ROCKET_DUMP_REGCMD=1"
+
+	log ""
+	log "===== 12..15) REGRESSION ====="
+	p mn_L04.tflite ""
+	p mn_L03.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Compare each operator against the table in the header. A big  ====="
-	log "===== maxdiff is a defect; a low channel count with a small maxdiff ====="
-	log "===== is the reference and is not.                                  ====="
+	log "===== Entry 3 must reproduce 28 of 64 at maxdiff 105, or entry 2 ====="
+	log "===== proves nothing.                                            ====="
 	sync
 }
 case "$1" in
