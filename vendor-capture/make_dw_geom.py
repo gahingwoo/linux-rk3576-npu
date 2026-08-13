@@ -98,7 +98,8 @@ def cut_depthwise(out, name, channels, width, stride=1, base="mn_dw25.tflite"):
     return verify_dw(path, channels, width, ow, stride)
 
 
-def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False):
+def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False,
+                  taps=None, dead=None):
     """A standalone 1x1 convolution of ic to oc at `width`, cut from a bigger one.
 
     mn_pw24 is 512 to 1024 at 7x7, so every pair at or below that is reachable
@@ -108,6 +109,22 @@ def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False
 
     Added for round 126. Only one standalone pointwise had ever been run here,
     mn_pw2 at 32 to 64, and MobileNet's operator 4 is 64 to 128.
+
+    Three weight modes, and the model is otherwise identical in all of them, so
+    the register stream and every buffer size stay fixed and only the contents
+    move:
+
+      impulse   one live input channel per output channel, round 131
+      taps      a callable oc -> {input channel: offset from the weight zero
+                point}, everything else dead and a zero bias. A tap count of
+                one is the impulse; the point is to walk the count up, round
+                132. Offsets stay positive and small so the sum does not clip
+                at the output zero point or at 255, which pwsat.py checks
+                before anything is flashed.
+      dead      a callable input channel -> True to overwrite that channel's
+                REAL weights with the zero point, keeping the rest of the
+                model's own weights. Kills one group of 32 without changing
+                anything else.
     """
     b = bytearray(open(os.path.join(SRC, base), "rb").read())
     m = Model.GetRootAsModel(b, 0)
@@ -126,28 +143,37 @@ def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False
     for idx, nbytes in ((ins[1], oc * ic), (ins[2], 4 * oc)):
         struct.pack_into("<I", b, _buf_len_pos(m, g, idx), nbytes)
 
-    if impulse:
+    if impulse and taps is None:
         # One live input channel per output channel, everything else at the
         # weight zero point so it contributes nothing. Output channel k then
         # reproduces input channel k mod ic, and which one actually arrives
         # decodes the input layout the way the depthwise impulse did.
-        #
+        taps = lambda oc_i: {oc_i % ic: 100}
+
+    q = g.Tensors(ins[1]).Quantization()
+    wzp = int(q.ZeroPointAsNumpy()[0])
+    buf = m.Buffers(g.Tensors(ins[1]).Buffer())
+    base_off = buf._tab.Vector(buf._tab.Offset(4))
+
+    if taps is not None:
         # The weights are written in the tflite tensor's own order, [oc][ic],
         # because mesa reads them through weights_in[oc][0][0][ic]; whatever
         # mesa does to lay them out afterwards is what is under test.
-        q = g.Tensors(ins[1]).Quantization()
-        wzp = int(q.ZeroPointAsNumpy()[0])
-        buf = m.Buffers(g.Tensors(ins[1]).Buffer())
-        base_off = buf._tab.Vector(buf._tab.Offset(4))
         for oc_i in range(oc):
+            live = taps(oc_i)
             for ic_i in range(ic):
-                live = (ic_i == oc_i % ic)
-                b[base_off + oc_i * ic + ic_i] = (wzp + 100) & 0xff if live else wzp
-        # and a zero bias, so nothing but the one tap reaches the output
+                b[base_off + oc_i * ic + ic_i] = (wzp + live.get(ic_i, 0)) & 0xff
+        # and a zero bias, so nothing but the taps reaches the output
         bb = m.Buffers(g.Tensors(ins[2]).Buffer())
         boff = bb._tab.Vector(bb._tab.Offset(4))
         for k in range(4 * oc):
             b[boff + k] = 0
+
+    if dead is not None:
+        for oc_i in range(oc):
+            for ic_i in range(ic):
+                if dead(ic_i):
+                    b[base_off + oc_i * ic + ic_i] = wzp
 
     path = os.path.join(out, name + ".tflite")
     open(path, "wb").write(bytes(b))
@@ -272,6 +298,41 @@ def main():
     for ic, oc, w in ((32, 32, 40), (64, 64, 40)):
         print(cut_pointwise(out, "pwimp%dx%dw%d" % (ic, oc, w), ic, oc, w,
                             impulse=True))
+
+    # Round 132: the tap ladder. One live input channel is correct at 64 and
+    # sixty four are not, so walk the count and the placement between those two
+    # points. The weight buffer is grouped in 32 input channels, so channels
+    # 0..31 are group 0 and 32..63 are group 1, and the ladder asks whether the
+    # fault needs two groups or only needs density inside one.
+    #
+    # lo32 is the sharpest of them: it is the ic=32 computation carried out by
+    # the ic=64 configuration, since group 1 contributes nothing.
+    def _spread(lo, hi):
+        # every channel of the group live, alternating 5 and 1 so the sum is
+        # not the same smooth ramp for every pixel. Summing 32 channels of a
+        # ramp averages almost flat, and a reference that barely varies cannot
+        # show an accumulation fault, so the pattern and the seed below were
+        # both picked offline for output spread before anything was built.
+        return lambda oc_i: {i: (1 if i % 2 else 5) for i in range(lo, hi)}
+
+    for nm, fn in (
+            ("pwt_lo2", lambda k: {k % 32: 60, (k + 1) % 32: 55}),
+            ("pwt_hi2", lambda k: {32 + k % 32: 60, 32 + (k + 1) % 32: 55}),
+            ("pwt_x2", lambda k: {k % 32: 60, 32 + (k % 32): 55}),
+            ("pwt_lo32", _spread(0, 32)),
+            ("pwt_hi32", _spread(32, 64)),
+            ("pwt_all", lambda oc_i: {i: 1 + (i % 2) for i in range(64)})):
+        print(cut_pointwise(out, nm, 64, 64, 40, taps=fn))
+
+    # The same question with the model's own real weights, at the width that
+    # actually fails, by killing one group of 32 and leaving everything else
+    # alone. Both halves are dense, so this is the ladder's top rung.
+    print(cut_pointwise(out, "pwd_g0", 64, 64, 56, dead=lambda i: i >= 32))
+    print(cut_pointwise(out, "pwd_g1", 64, 64, 56, dead=lambda i: i < 32))
+
+    # And where the boundary is. 33 puts a single channel in the second group.
+    for ic in (33, 48):
+        print(cut_pointwise(out, "pw%dx64w56" % ic, ic, 64, 56))
 
     # MobileNet cut off after each operator, rounds 103 and 104.
     for op, tensor in ((0, 7), (1, 33), (2, 37), (3, 39), (4, 43), (5, 45),

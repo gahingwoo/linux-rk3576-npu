@@ -2,39 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 131. Which input channel actually arrives.
+# 2026-08-13 round 132. The tap ladder: how many live input channels does it
+# take to break, and does the break need two weight groups.
 #
-# Round 130 excluded the last register. 0x1030's weight bytes per kernel says
-# double what the pointwise buffer holds, and halving it moves nothing: 64
-# input channels stays at 25 of 64 and maxdiff 92, 128 output stays at 41 of
-# 128 and maxdiff 199, and 32 channels stays correct. With the nine registers
-# from round 129's diff all scaling correctly and the weight buffer now
-# matching the vendor's own compiled layout, what is left is the INPUT.
+# Round 131 left one live input channel per output channel correct at 64 input
+# channels, 64 of 64, and the real dense weights wrong at the same shape. So
+# what is fetched and where it lands is right and the SUM is wrong. This round
+# walks the count between one tap and sixty four.
 #
-# So decode it. pwimp32x32w40 and pwimp64x64w40 are 1x1 convolutions with one
-# live input channel per output channel, everything else at the weight zero
-# point, and a zero bias. Output channel k should then be input channel k and
-# nothing else, so the surface says directly which input channel arrived.
+# The weight buffer is grouped in 32 input channels, group 0 is channels 0..31
+# and group 1 is 32..63, so the ladder separates two different questions:
+# whether density alone breaks it, and whether crossing the group does.
 #
-# The 32 channel one is the control: it is the shape that works, so it must
-# decode cleanly, and if it does not the construction is wrong and the 64
-# channel one says nothing.
+# Nothing in mesa or the kernel changed for this round. Only the models are
+# new, so a regression here would mean the image is wrong, not the driver.
 #
-# DECISION RULE, written before the run:
-#   32 decodes as k, 64 decodes as a permutation
-#             the input surfaces are being read in the wrong order past the
-#             first two, and the permutation names the order
-#   64 decodes as k for the first 32 and rubbish above
-#             only the surfaces past the first are wrong, which points at the
-#             surface stride rather than the order
-#   both decode cleanly
-#             the input arrives correctly and the fault is in the accumulation
-#             across surfaces, not in what is fetched
+# The models are byte patches of one another with identical shapes, so every
+# register value and every buffer size is the same in all of them and the only
+# thing that moves is the weight contents. ROCKET_SEED=249 for the ladder: a
+# ramp summed over 32 channels is nearly flat, and offline the seed and the
+# alternating 5/1 tap pattern together take the reference from a 26 count
+# spread to 148, which is what makes a wrong sum visible. That was checked
+# before the image was built, not after.
 #
-# perch.py reports per output channel, and for these models the reference is
-# the CPU running the same impulse, so a channel that matches means the right
-# input channel arrived AND was scaled right. The interesting output is the
-# WRONG channel list, because for an impulse that list is the permutation.
+# DECISION RULE, written before the run. Read them in this order:
+#
+#   1) pwt_lo2 fails
+#             the control failed. Two taps in the group that already works
+#             cannot be wrong, so the construction is broken and nothing else
+#             in the round means anything.
+#   2) pwt_lo32 fails
+#             the ic=64 configuration is wrong even when only the FIRST group
+#             contributes, which is the ic=32 computation done by the ic=64
+#             setup. Then the fault is not the crossing at all, it is the
+#             configuration or the fetch at 64, and the next round goes at the
+#             input surface count rather than the weights.
+#   3) pwt_lo32 passes and pwt_hi32 fails
+#             the second group is right as a single tap and wrong dense, so
+#             the fault is inside group 1's own packing past the first lane.
+#   4) both pass and pwt_all fails
+#             each group is right alone and only the sum of the two is wrong.
+#             That is a partial sum across groups, and pwt_x2 says whether two
+#             taps are already enough to show it.
+#   5) everything passes
+#             density is not the variable. Then the difference between the
+#             ladder and pw64x64w56 is the width and the real weights, and
+#             pwd_g0 and pwd_g1 below answer the same question with the real
+#             weights at the width that actually fails.
+#
+# pwd_g0 and pwd_g1 are the top rung: the failing model itself with one group
+# of 32 overwritten at the weight zero point, so both halves are dense and
+# real. pw33 puts a single channel in the second group and says whether the
+# boundary is exactly the group size.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -51,31 +70,47 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) CONTROL: the impulse at 32 channels, which must decode ====="
-	p pwimp32x32w40.tflite ""
+	log "===== 1) CONTROL: two taps in group 0, which must pass ====="
+	p pwt_lo2.tflite "ROCKET_SEED=249"
 
 	log ""
-	log "===== 2) THE TEST: the same impulse at 64 ====="
+	log "===== 2..3) two taps in group 1, then one tap in each group ====="
+	p pwt_hi2.tflite "ROCKET_SEED=249"
+	p pwt_x2.tflite "ROCKET_SEED=249"
+
+	log ""
+	log "===== 4..5) all 32 of one group live, the other group dead ====="
+	p pwt_lo32.tflite "ROCKET_SEED=249"
+	p pwt_hi32.tflite "ROCKET_SEED=249"
+
+	log ""
+	log "===== 6) all 64 live ====="
+	p pwt_all.tflite "ROCKET_SEED=249"
+
+	log ""
+	log "===== 7..8) the SAME question with the real weights at 56 wide ====="
+	p pwd_g0.tflite "ROCKET_SEED=249"
+	p pwd_g1.tflite "ROCKET_SEED=249"
+
+	log ""
+	log "===== 9..10) where the boundary is: 33 and 48 input channels ====="
+	p pw33x64w56.tflite "ROCKET_SEED=249"
+	p pw48x64w56.tflite "ROCKET_SEED=249"
+
+	log ""
+	log "===== 11) CONTROL: round 131's impulse, which must stay 64 of 64 ====="
 	p pwimp64x64w40.tflite ""
 
 	log ""
-	log "===== 3) and with the flat weight layout, for comparison ====="
-	p pwimp64x64w40.tflite "ROCKET_PW_FLAT=1"
-
-	log ""
-	log "===== 4..5) the real shapes, for the record ====="
+	log "===== 12..15) REGRESSION ====="
 	p pw32x64w56.tflite ""
-	p pw64x64w56.tflite ""
-
-	log ""
-	log "===== 6..8) REGRESSION ====="
 	p mn_L03.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Read the WRONG channel list in 2. For an impulse that list   ====="
-	log "===== is the permutation.                                          ====="
+	log "===== Read 1, 4, 5 and 6 in that order. The first one that fails    ====="
+	log "===== picks the branch of the rule above.                           ====="
 	sync
 }
 case "$1" in
