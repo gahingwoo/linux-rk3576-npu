@@ -98,7 +98,7 @@ def cut_depthwise(out, name, channels, width, stride=1, base="mn_dw25.tflite"):
     return verify_dw(path, channels, width, ow, stride)
 
 
-def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite"):
+def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False):
     """A standalone 1x1 convolution of ic to oc at `width`, cut from a bigger one.
 
     mn_pw24 is 512 to 1024 at 7x7, so every pair at or below that is reachable
@@ -125,6 +125,29 @@ def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite"):
         struct.pack_into("<i", b, _shape_vec(g, o) + 4 * k, v)
     for idx, nbytes in ((ins[1], oc * ic), (ins[2], 4 * oc)):
         struct.pack_into("<I", b, _buf_len_pos(m, g, idx), nbytes)
+
+    if impulse:
+        # One live input channel per output channel, everything else at the
+        # weight zero point so it contributes nothing. Output channel k then
+        # reproduces input channel k mod ic, and which one actually arrives
+        # decodes the input layout the way the depthwise impulse did.
+        #
+        # The weights are written in the tflite tensor's own order, [oc][ic],
+        # because mesa reads them through weights_in[oc][0][0][ic]; whatever
+        # mesa does to lay them out afterwards is what is under test.
+        q = g.Tensors(ins[1]).Quantization()
+        wzp = int(q.ZeroPointAsNumpy()[0])
+        buf = m.Buffers(g.Tensors(ins[1]).Buffer())
+        base_off = buf._tab.Vector(buf._tab.Offset(4))
+        for oc_i in range(oc):
+            for ic_i in range(ic):
+                live = (ic_i == oc_i % ic)
+                b[base_off + oc_i * ic + ic_i] = (wzp + 100) & 0xff if live else wzp
+        # and a zero bias, so nothing but the one tap reaches the output
+        bb = m.Buffers(g.Tensors(ins[2]).Buffer())
+        boff = bb._tab.Vector(bb._tab.Offset(4))
+        for k in range(4 * oc):
+            b[boff + k] = 0
 
     path = os.path.join(out, name + ".tflite")
     open(path, "wb").write(bytes(b))
@@ -244,6 +267,11 @@ def main():
     for ic, oc, w in ((64, 128, 56), (32, 64, 56), (64, 64, 56), (128, 128, 56),
                       (64, 128, 28), (128, 256, 28)):
         print(cut_pointwise(out, "pw%dx%dw%d" % (ic, oc, w), ic, oc, w))
+    # round 131: one live input channel per output channel, so which input
+    # channel actually reaches the MAC can be read off the output directly.
+    for ic, oc, w in ((32, 32, 40), (64, 64, 40)):
+        print(cut_pointwise(out, "pwimp%dx%dw%d" % (ic, oc, w), ic, oc, w,
+                            impulse=True))
 
     # MobileNet cut off after each operator, rounds 103 and 104.
     for op, tensor in ((0, 7), (1, 33), (2, 37), (3, 39), (4, 43), (5, 45),

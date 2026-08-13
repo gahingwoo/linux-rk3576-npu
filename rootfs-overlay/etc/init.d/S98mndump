@@ -2,44 +2,39 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 130. The pointwise weight stride says twice what it holds.
+# 2026-08-13 round 131. Which input channel actually arrives.
 #
-# Round 129's diff of pw32x64w56, which works, against pw64x64w56, which does
-# not, differs in nine registers and every one scales exactly as its own
-# formula says: 0x101c is ic*oc, 0x1020 is ic, 0x1028 carries surf*rows and
-# ic-1, 0x1030 carries wbpk, 0x103c and 0x1044 carry surf, 0x107c is ic-1 and
-# 0x4018 is an address that moves with the bigger input BO. Nothing there is
-# wrong on its own terms.
+# Round 130 excluded the last register. 0x1030's weight bytes per kernel says
+# double what the pointwise buffer holds, and halving it moves nothing: 64
+# input channels stays at 25 of 64 and maxdiff 92, 128 output stays at 41 of
+# 128 and maxdiff 199, and 32 channels stays correct. With the nine registers
+# from round 129's diff all scaling correctly and the weight buffer now
+# matching the vendor's own compiled layout, what is left is the INPUT.
 #
-# What the arithmetic did turn up is an inconsistency inside this driver:
+# So decode it. pwimp32x32w40 and pwimp64x64w40 are 1x1 convolutions with one
+# live input channel per output channel, everything else at the weight zero
+# point, and a zero bias. Output channel k should then be input channel k and
+# nothing else, so the surface says directly which input channel arrived.
 #
-#   regular conv weight buffer   ALIGN(ic, 32) * 2 bytes per output channel
-#                                and tap, so two bytes per input channel
-#   pointwise weight buffer      ic bytes per output channel, so ONE
-#   wbpk at 0x1030               ic * k * k * 2, computed for the two byte form
-#
-# So for a pointwise the register says 64 bytes per kernel where the buffer
-# holds 32, and 128 where it holds 64. It is the same factor at both counts, so
-# it cannot by itself be what separates a working 32 from a failing 64, and it
-# is a real error either way: one of those two places is wrong about the same
-# buffer.
+# The 32 channel one is the control: it is the shape that works, so it must
+# decode cleanly, and if it does not the construction is wrong and the 64
+# channel one says nothing.
 #
 # DECISION RULE, written before the run:
-#   halving it fixes 64 and leaves 32 alone
-#             the stride was the fault and 32 survived it because one group
-#             gives the hardware nothing to stride over
-#   it fixes neither and breaks 32
-#             the doubling is what the hardware wants and the buffer is what
-#             should carry two bytes per input channel instead
-#   nothing moves at all
-#             0x1030's high half is not a stride the pointwise path uses, and
-#             the input BO layout is the last thing left
+#   32 decodes as k, 64 decodes as a permutation
+#             the input surfaces are being read in the wrong order past the
+#             first two, and the permutation names the order
+#   64 decodes as k for the first 32 and rubbish above
+#             only the surfaces past the first are wrong, which points at the
+#             surface stride rather than the order
+#   both decode cleanly
+#             the input arrives correctly and the fault is in the accumulation
+#             across surfaces, not in what is fetched
 #
-# Test 3 is the control and it is the one that can embarrass this: 32 channels
-# works today WITH the doubling, so if halving it also leaves 32 working then
-# the register is not load bearing there and the reading is weaker than it
-# looks. If halving BREAKS 32, the register is load bearing and the buffer is
-# the half that is wrong.
+# perch.py reports per output channel, and for these models the reference is
+# the CPU running the same impulse, so a channel that matches means the right
+# input channel arrived AND was scaled right. The interesting output is the
+# WRONG channel list, because for an impulse that list is the permutation.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -56,36 +51,31 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) THE TEST: halve the pointwise weight stride ====="
-	p pw64x64w56.tflite "ROCKET_PW_WBPK=1"
-	p pw64x128w56.tflite "ROCKET_PW_WBPK=1"
+	log "===== 1) CONTROL: the impulse at 32 channels, which must decode ====="
+	p pwimp32x32w40.tflite ""
 
 	log ""
-	log "===== 3) CONTROL: 32 channels, which works WITH the doubling ====="
-	p pw32x64w56.tflite "ROCKET_PW_WBPK=1"
+	log "===== 2) THE TEST: the same impulse at 64 ====="
+	p pwimp64x64w40.tflite ""
 
 	log ""
-	log "===== 4..5) the same two at the default, for the record ====="
-	p pw64x64w56.tflite ""
+	log "===== 3) and with the flat weight layout, for comparison ====="
+	p pwimp64x64w40.tflite "ROCKET_PW_FLAT=1"
+
+	log ""
+	log "===== 4..5) the real shapes, for the record ====="
 	p pw32x64w56.tflite ""
+	p pw64x64w56.tflite ""
 
 	log ""
-	log "===== 6) and the flat layout as well, in case they interact ====="
-	p pw64x64w56.tflite "ROCKET_PW_WBPK=1 ROCKET_PW_FLAT=1"
-
-	log ""
-	log "===== 7) op4 with whichever helps ====="
-	p mn_L04.tflite "ROCKET_PW_WBPK=1"
-
-	log ""
-	log "===== 8..11) REGRESSION ====="
+	log "===== 6..8) REGRESSION ====="
 	p mn_L03.tflite ""
-	p mn_dw1.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 1 vs 4 is the test, 3 vs 5 is what makes it mean something. ====="
+	log "===== Read the WRONG channel list in 2. For an impulse that list   ====="
+	log "===== is the permutation.                                          ====="
 	sync
 }
 case "$1" in
