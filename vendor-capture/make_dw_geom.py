@@ -99,7 +99,7 @@ def cut_depthwise(out, name, channels, width, stride=1, base="mn_dw25.tflite"):
 
 
 def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False,
-                  taps=None, dead=None):
+                  taps=None, dead=None, height=None):
     """A standalone 1x1 convolution of ic to oc at `width`, cut from a bigger one.
 
     mn_pw24 is 512 to 1024 at 7x7, so every pair at or below that is reachable
@@ -133,12 +133,17 @@ def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False
     ins = list(op.InputsAsNumpy())
     o = int(op.Outputs(0))
 
-    for k, v in ((1, width), (2, width), (3, ic)):
+    # height defaults to width, i.e. a square surface. A 1x1 convolution's
+    # output pixel count is height * width, and for a matmul read of the same
+    # op the HEIGHT is M, the number of rows. Setting them apart is how the
+    # M ladder below asks for M = 1, 2, 3, 4 with one column.
+    h = width if height is None else height
+    for k, v in ((1, h), (2, width), (3, ic)):
         struct.pack_into("<i", b, _shape_vec(g, ins[0]) + 4 * k, v)
     struct.pack_into("<i", b, _shape_vec(g, ins[1]) + 4 * 0, oc)
     struct.pack_into("<i", b, _shape_vec(g, ins[1]) + 4 * 3, ic)
     struct.pack_into("<i", b, _shape_vec(g, ins[2]) + 4 * 0, oc)
-    for k, v in ((1, width), (2, width), (3, oc)):
+    for k, v in ((1, h), (2, width), (3, oc)):
         struct.pack_into("<i", b, _shape_vec(g, o) + 4 * k, v)
     for idx, nbytes in ((ins[1], oc * ic), (ins[2], 4 * oc)):
         struct.pack_into("<I", b, _buf_len_pos(m, g, idx), nbytes)
@@ -182,6 +187,7 @@ def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite", impulse=False
     g2 = m2.Subgraphs(0)
     op2 = g2.Operators(0)
     i2 = list(op2.InputsAsNumpy())
+    assert list(g2.Tensors(i2[0]).ShapeAsNumpy()) == [1, h, width, ic], name
     assert list(g2.Tensors(i2[1]).ShapeAsNumpy()) == [oc, 1, 1, ic], name
     assert m2.Buffers(g2.Tensors(i2[1]).Buffer()).DataLength() == oc * ic, name
     at = (ic + 15) // 16
@@ -344,6 +350,19 @@ def main():
                       (64, 64, 1), (64, 40, 1),        # one pixel, no tail then a tail
                       (32, 64, 1)):                    # one pixel at a shape known good
         print(cut_pointwise(out, "pw%dx%dw%d" % (ic, oc, w), ic, oc, w))
+
+    # Round 139, charsiu: the LLM shapes. The vendor's .rkllm dispatches its
+    # projections as ONE ROW, M = 1, and its attention at M = 2, 3, 4 and up,
+    # which the RK3588 notes say computes uncorrelated output below a height of
+    # four. Round 135's w1 probes already came out correct at one pixel, so this
+    # asks the same question at an LLM's width and walks M across the boundary.
+    #
+    # mn_pw24 is 512 to 1024, so its own shape IS the largest projection
+    # reachable here without a converter, and no shrink is needed for it.
+    for h in (1, 2, 3, 4, 8):
+        print(cut_pointwise(out, "llm512x1024m%d" % h, 512, 1024, 1, height=h))
+    for ic, oc in ((512, 512), (256, 1024)):
+        print(cut_pointwise(out, "llm%dx%dm1" % (ic, oc), ic, oc, 1, height=1))
 
     # Round 136: how wide the output tail has to be. Board, round 135: a tail
     # of 8 is correct and a tail of 1 is an EMPTY convolution, nothing between

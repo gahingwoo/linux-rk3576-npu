@@ -46,6 +46,28 @@
 #             so their bytes and registers are identical. That would mean the
 #             change is reaching something it should not.
 #
+# ALSO IN THIS ROUND, independent of the fix above: the LLM shapes, for charsiu.
+# The vendor's .rkllm dispatches an LLM's projections as ONE ROW, M = 1, and its
+# attention at M = 2, 3, 4 and up. The RK3588 notes record a feature height below
+# four as computing output uncorrelated with the reference on every datatype.
+# Round 135's one pixel probes already came out correct here, so this asks the
+# same question at an LLM's width and walks M across that boundary: 512 to 1024
+# at M = 1, 2, 3, 4 and 8, which is mn_pw24's own shape and the largest
+# projection reachable without a converter.
+#
+# HOW TO READ THEM: a one row surface has nothing to vary within a channel, so
+# perch's COMPUTED count is 0 by construction and means nothing there. Read the
+# per channel match count and npu distinct against cpu distinct, the way round
+# 135's w1 probes were read.
+#
+#   M = 1 correct at 512 to 1024
+#             the height below four constraint is not on this chip, an LLM
+#             projection is a shape this hardware computes, and charsiu's
+#             premise holds at the real width rather than only at 64 channels.
+#   M = 1 wrong but M = 4 correct
+#             the constraint IS here and round 135's 64 channel pass was too
+#             small to show it. charsiu would then have to batch, as RK3588 does.
+#
 # CONTROL that can fail: entry 4 runs 41 with ROCKET_OC_ODD=1, which puts the
 # unpadded count back and must reproduce today's 37 of 41 with the same four
 # wrong channels.
@@ -97,7 +119,17 @@ start() {
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== 15) LAST, because it times out and poisons whatever follows ====="
+	log "===== 15..21) charsiu: the LLM shapes, and the M ladder ====="
+	p llm512x1024m1.tflite ""
+	p llm512x1024m2.tflite ""
+	p llm512x1024m3.tflite ""
+	p llm512x1024m4.tflite ""
+	p llm512x1024m8.tflite ""
+	p llm512x512m1.tflite ""
+	p llm256x1024m1.tflite ""
+
+	log ""
+	log "===== 22) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
