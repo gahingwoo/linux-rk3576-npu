@@ -2,53 +2,63 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 137. The output channel count and the group of 8.
+# 2026-08-13 round 138. The second operand has to be 16 byte aligned.
 #
-# Round 136 fixed the input side and drew a very clean line on the output side.
+# Round 137 ruled out its own candidate and its dumps found the real one.
 #
-#   pw48x64w56    28 of 64 maxdiff 105  ->  64 of 64 maxdiff 1
-#   the control   ROCKET_SURF_DIV=1 put back exactly 28 of 64 maxdiff 105
-#   pw33x64w56    unchanged at maxdiff 255, so 33 INPUT channels has a second
-#                 fault of its own
-#   regressions   pw64x64, pw32x64, mn_L04, conv2d-cal, mn_conv0 all unmoved
+#   the record table padding did nothing   entries 2 and 3 read identically, so
+#                                          a partial group of 8 in the A/B/C
+#                                          table is not the fault
+#   every geometry register MATCHES        our stream at 34 output channels and
+#                                          at 40 differ from the vendor's in the
+#                                          same 15 entries, all of them
+#                                          addresses, requant values or the
+#                                          0x4050 nibble, and in nothing else
+#   the weight layout MATCHES              the tiled layout was checked against
+#                                          the vendor's compiler at 64 by 34 and
+#                                          64 by 56 as well, byte for byte
 #
-# and the output tail ladder, at 64 input channels and 56 wide:
+# So it is a buffer, and it is the one address computed from the channel count:
 #
-#   oc 33   flat 128            oc 40   40 of 40, correct
-#   oc 34   EMPTY               oc 56   first 32 channels correct,
-#   oc 36   EMPTY                       channels 32..55 wrong
-#   oc 41   EMPTY               oc 64   64 of 64, correct
-#   oc 47   EMPTY
+#     0x5024 = bias + rkt_coef_table_bytes(oc) + oc * 2
 #
-# The empty ones are exactly the counts that are not a multiple of 8, and the
-# two that are correct are exactly the multiples of 8 whose last weight tile is
-# 8 or 32 channels. MobileNet's last operator has 1001 output channels, which is
-# not a multiple of 8, and it comes off the board empty.
+# The record table in front is always a multiple of 64 bytes, so that address
+# is 16 byte aligned exactly when oc is a multiple of 8, and ODD when oc is odd.
+# Every count that comes back empty is one that lands unaligned and both counts
+# that work are already aligned:
 #
-# The per-channel record table is read in whole groups of 8 channels, 64 bytes
-# each, and this driver only ever filled the channels the layer really has. The
-# rest of the last group stayed zero, which is a zero requant multiplier sitting
-# in the same group as live channels. This round carries the last real channel's
-# record across the rest of its group.
+#     oc 33  operand at  386  odd          oc 40  operand at  400  aligned
+#     oc 34               388  4 only      oc 64               640  aligned
+#     oc 36               392  4 only      oc 56               560  aligned
+#     oc 41               466  odd
+#     oc 47               478  odd         MobileNet's last operator, 1001
+#                                          output channels, lands at 10066, odd
+#
+# The fp16 scale table is now padded to a whole group of eight channels, with
+# the last real scale carried across the padding, which moves the operand to
+# 400, 480 and 10080. It CANNOT change 40, 64 or 56: their offsets are the same
+# number before and after, so they are a regression control built into the fix.
 #
 # DECISION RULE, written before the run:
 #
-#   34, 36, 41, 47 come alive
-#             the partial group was the fault. Then 56 is a separate matter,
-#             since it is a whole number of groups and still wrong past channel
-#             32, and MobileNet's last operator should move.
+#   33, 34, 36, 41, 47 come alive and 40, 64 are untouched
+#             the alignment was it, and MobileNet should produce a real output
+#             for the first time.
 #   they stay empty
-#             the group is not it. Entries 9 and 10 dump our register stream at
-#             34 and at 40, and the vendor's for both is already extracted here
-#             (ocp34, ocp40, ocp56, compiled at this exact shape), so the diff
-#             is one command.
-#   oc 56 changes at all
-#             unexpected, since 56 is 7 whole groups and the padding cannot
-#             touch it. That would mean the knob is doing something else.
+#             wrong again. Then the operand VALUE, not its address, is what
+#             those shapes cannot satisfy, and ROCKET_OP2 sweeps it.
+#   40 or 64 changes
+#             impossible by construction, since their bytes are identical.
+#             That would mean the padding is writing somewhere it should not.
 #
-# CONTROL that can fail: entry 3 runs oc 34 with ROCKET_OC_NOPAD=1, which must
-# put the empty convolution back. If entries 2 and 3 read the same, the padding
-# is not reaching the buffer and nothing else here means anything.
+# CONTROL that can fail: entry 6 runs 34 with ROCKET_SCALE_NOPAD=1, which puts
+# the unpadded table back and must restore the empty convolution.
+#
+# ⚠ ORDER. pw64x56w56 TIMES OUT the NPU, and the entry that follows a timeout
+# comes back flat 128 with an rk_iommu reset error in the log. That is what
+# rounds 136 and 137 read as "33 is a flat 128" and "40 regressed": both were
+# collateral from the entry before them. It runs LAST here, after everything
+# that has to be believed.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -65,45 +75,40 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) THE TEST: the counts that were empty ====="
+	log "===== 1..5) THE TEST: every count that was an empty convolution ====="
 	p pw64x34w56.tflite ""
 	p pw64x41w56.tflite ""
-
-	log ""
-	log "===== 3) CONTROL: the same shape with the group left unpadded ====="
-	p pw64x34w56.tflite "ROCKET_OC_NOPAD=1"
-
-	log ""
-	log "===== 4..6) the rest of the ladder ====="
+	p pw64x33w56.tflite ""
 	p pw64x36w56.tflite ""
 	p pw64x47w56.tflite ""
-	p pw64x33w56.tflite ""
 
 	log ""
-	log "===== 7..8) the whole number of groups, unchanged by the padding ====="
-	p pw64x56w56.tflite ""
+	log "===== 6) CONTROL: the same shape with the table unpadded ====="
+	p pw64x34w56.tflite "ROCKET_SCALE_NOPAD=1"
+
+	log ""
+	log "===== 7..8) the aligned counts, whose bytes do not change at all ====="
 	p pw64x40w56.tflite ""
+	p pw64x64w56.tflite ""
 
 	log ""
-	log "===== 9..10) our register stream at 34 and at 40 ====="
-	p pw64x34w56.tflite "ROCKET_DUMP_REGCMD=1"
-	p pw64x40w56.tflite "ROCKET_DUMP_REGCMD=1"
-
-	log ""
-	log "===== 11) the whole MobileNet, whose last operator has 1001 ====="
+	log "===== 9) the whole MobileNet, whose last operator has 1001 ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 12..16) REGRESSION ====="
+	log "===== 10..14) REGRESSION ====="
 	p pw48x64w56.tflite ""
-	p pw64x64w56.tflite ""
 	p mn_L04.tflite ""
+	p mn_L03.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Entry 3 must be EMPTY. If entries 2 and 3 read the same, the ====="
-	log "===== padding never reached the buffer.                            ====="
+	log "===== 15) LAST, because it times out and poisons whatever follows ====="
+	p pw64x56w56.tflite ""
+
+	log ""
+	log "===== Entry 6 must be EMPTY and entries 7 and 8 must be unchanged. ====="
 	sync
 }
 case "$1" in
