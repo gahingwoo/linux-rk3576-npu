@@ -2,61 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 136. The CBUF row cost, and how wide an output tail has to
-# be before it disappears.
+# 2026-08-13 round 137. The output channel count and the group of 8.
 #
-# Round 135 answered three of its four questions and left one clean lead.
+# Round 136 fixed the input side and drew a very clean line on the output side.
 #
-#   the ONE PIXEL surface is fine        64/64, 64/64 and 40/40 on three w1
-#                                        models, values distinct and matching
-#   an output tail of 8 is fine          pw64x40w56 is 40 of 40 at maxdiff 1
-#   an output tail of 1 is EMPTY         pw64x33w56 is every channel pinned at
-#                                        the zero point, npu distinct=1
-#   the split pair changed nothing       entries 2 and 3 came out byte for byte
-#                                        identical, so this shape was already
-#                                        on the same value either way
+#   pw48x64w56    28 of 64 maxdiff 105  ->  64 of 64 maxdiff 1
+#   the control   ROCKET_SURF_DIV=1 put back exactly 28 of 64 maxdiff 105
+#   pw33x64w56    unchanged at maxdiff 255, so 33 INPUT channels has a second
+#                 fault of its own
+#   regressions   pw64x64, pw32x64, mn_L04, conv2d-cal, mn_conv0 all unmoved
 #
-# That last one is not a void control, it is a measurement: the derived rule and
-# the stride keyed rule agree here, because this driver SPLITS pw48 into two
-# windows of 45 and 11 rows while the vendor runs it in one. The register dump
-# from entry 11 says so directly, 0x102c reading 0x0037002c against the vendor's
-# 0x00370037 for the same shape, and it says why: our 0x1028 high half is 1890,
-# which is 42 rows worth of a 42 unit row, where the vendor's is 3136, 56 by 56.
+# and the output tail ladder, at 64 input channels and 56 wide:
 #
-# So the row cost itself was wrong. A column costs DIV_ROUND_UP(ic, 16) atomics
-# of 16 bytes, four to a 64 byte unit, EXCEPT that when the last unit would hold
-# exactly three atomics nothing packs and the row costs a whole unit per column.
-# rkt_task.c has always had that rule and rkt_regcmd.c used a plain division.
-# They agree unless the atomic count is 3 modulo 4, which is 33 to 48 input
-# channels, or 113 to 128, and nothing else this project has ever run.
+#   oc 33   flat 128            oc 40   40 of 40, correct
+#   oc 34   EMPTY               oc 56   first 32 channels correct,
+#   oc 36   EMPTY                       channels 32..55 wrong
+#   oc 41   EMPTY               oc 64   64 of 64, correct
+#   oc 47   EMPTY
 #
-# The vendor sides with the rule, in its own compiled files: c_48 at 80 wide
-# carries 80 where the division says 60, pw48 at 56 wide carries 56 against 42,
-# dwbig_112 at 7 wide carries 14 against 13.
+# The empty ones are exactly the counts that are not a multiple of 8, and the
+# two that are correct are exactly the multiples of 8 whose last weight tile is
+# 8 or 32 channels. MobileNet's last operator has 1001 output channels, which is
+# not a multiple of 8, and it comes off the board empty.
+#
+# The per-channel record table is read in whole groups of 8 channels, 64 bytes
+# each, and this driver only ever filled the channels the layer really has. The
+# rest of the last group stayed zero, which is a zero requant multiplier sitting
+# in the same group as live channels. This round carries the last real channel's
+# record across the rest of its group.
 #
 # DECISION RULE, written before the run:
 #
-#   pw48 and pw33 correct, everything else unchanged
-#             the row cost was the input tail fault. Note that this also stops
-#             pw48 being split in two, so it tests the split path's absence.
-#   pw48 and pw33 still wrong but DIFFERENT
-#             the row cost was one of two faults there. Compare the new
-#             register dump against the vendor's, which now agrees on 0x103c.
-#   entry 3 does not reproduce round 135's 28 of 64 at maxdiff 105
-#             the control is void, because ROCKET_SURF_DIV is supposed to put
-#             back exactly what ran yesterday.
+#   34, 36, 41, 47 come alive
+#             the partial group was the fault. Then 56 is a separate matter,
+#             since it is a whole number of groups and still wrong past channel
+#             32, and MobileNet's last operator should move.
+#   they stay empty
+#             the group is not it. Entries 9 and 10 dump our register stream at
+#             34 and at 40, and the vendor's for both is already extracted here
+#             (ocp34, ocp40, ocp56, compiled at this exact shape), so the diff
+#             is one command.
+#   oc 56 changes at all
+#             unexpected, since 56 is 7 whole groups and the padding cannot
+#             touch it. That would mean the knob is doing something else.
 #
-#   the output tail ladder
-#             34, 36, 41, 47 and 56 output channels bisect between a tail of 1,
-#             which is empty, and a tail of 8, which is correct. MobileNet's
-#             last operator has a tail of 9, so if the ladder is clean from 4
-#             upwards then the empty final layer is NOT its tail and the next
-#             suspect is its 1024 input channels.
-#
-# CONTROLS that can fail: entry 3 restores the old row cost on the failing
-# shape, and pw64x64w56, pw32x64w56, conv2d-cal, mn_conv0 and mn_L04 are all
-# unchanged by the new rule on paper, since none of them is 3 atomics per row.
-# If any of those moves, the rule is not doing what its comment says.
+# CONTROL that can fail: entry 3 runs oc 34 with ROCKET_OC_NOPAD=1, which must
+# put the empty convolution back. If entries 2 and 3 read the same, the padding
+# is not reaching the buffer and nothing else here means anything.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -73,42 +65,45 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..2) THE TEST: the input tails, with the packed row cost ====="
-	p pw48x64w56.tflite ""
-	p pw33x64w56.tflite ""
-
-	log ""
-	log "===== 3) CONTROL: the same shape with the old row cost back ====="
-	p pw48x64w56.tflite "ROCKET_SURF_DIV=1"
-
-	log ""
-	log "===== 4..8) the OUTPUT tail ladder: 34, 36, 41, 47, 56 ====="
+	log "===== 1..2) THE TEST: the counts that were empty ====="
 	p pw64x34w56.tflite ""
-	p pw64x36w56.tflite ""
 	p pw64x41w56.tflite ""
-	p pw64x47w56.tflite ""
-	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== 9..10) the two ends of that ladder, for the record ====="
+	log "===== 3) CONTROL: the same shape with the group left unpadded ====="
+	p pw64x34w56.tflite "ROCKET_OC_NOPAD=1"
+
+	log ""
+	log "===== 4..6) the rest of the ladder ====="
+	p pw64x36w56.tflite ""
+	p pw64x47w56.tflite ""
 	p pw64x33w56.tflite ""
+
+	log ""
+	log "===== 7..8) the whole number of groups, unchanged by the padding ====="
+	p pw64x56w56.tflite ""
 	p pw64x40w56.tflite ""
 
 	log ""
-	log "===== 11) our register stream for the input tail shape ====="
-	p pw48x64w56.tflite "ROCKET_DUMP_REGCMD=1"
+	log "===== 9..10) our register stream at 34 and at 40 ====="
+	p pw64x34w56.tflite "ROCKET_DUMP_REGCMD=1"
+	p pw64x40w56.tflite "ROCKET_DUMP_REGCMD=1"
 
 	log ""
-	log "===== 12..16) REGRESSION, none of these is 3 atomics per row ====="
+	log "===== 11) the whole MobileNet, whose last operator has 1001 ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
+
+	log ""
+	log "===== 12..16) REGRESSION ====="
+	p pw48x64w56.tflite ""
 	p pw64x64w56.tflite ""
-	p pw32x64w56.tflite ""
 	p mn_L04.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Entry 3 must read 28 of 64 at maxdiff 105, and the ladder    ====="
-	log "===== says whether MobileNet's last operator is a tail problem.    ====="
+	log "===== Entry 3 must be EMPTY. If entries 2 and 3 read the same, the ====="
+	log "===== padding never reached the buffer.                            ====="
 	sync
 }
 case "$1" in

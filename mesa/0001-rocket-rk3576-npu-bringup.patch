@@ -1,5 +1,5 @@
 diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
-index 82258e7..8bdf5ac 100644
+index 82258e7..fc36db7 100644
 --- a/src/gallium/drivers/rocket/rkt_coefs.c
 +++ b/src/gallium/drivers/rocket/rkt_coefs.c
 @@ -1,9 +1,13 @@
@@ -564,7 +564,7 @@ index 82258e7..8bdf5ac 100644
  struct pipe_resource *
  rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
                  const struct pipe_ml_operation *poperation,
-@@ -147,6 +621,828 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
+@@ -147,6 +621,866 @@ rkt_fill_biases(struct rkt_ml_subgraph *subgraph,
     struct pipe_resource *rsc;
     uint32_t *biases;
  
@@ -953,6 +953,44 @@ index 82258e7..8bdf5ac 100644
 +            const char *cval = getenv("ROCKET_C_VALUE");
 +            *C = cval ? (int16_t)strtol(cval, NULL, 0)
 +                      : (int16_t)(16.0f * rel + 0.5f);
++         }
++
++         /*
++          * The per-channel record table is read in whole groups of 8 channels,
++          * and the loop above only fills the channels the layer really has, so
++          * an output channel count that is not a multiple of 8 leaves the rest
++          * of the last group at zero. A zero C is a zero requant multiplier.
++          *
++          * Board, round 136: with 64 input channels at 56 wide, 40 and 64
++          * output channels are correct and 34, 36, 41 and 47 are EMPTY
++          * convolutions, every channel pinned at the output zero point rather
++          * than merely wrong past 34. 33 comes back a flat 128. Those are
++          * exactly the counts that leave a partial group, and the two that
++          * work are exactly the multiples of 8.
++          *
++          * So carry the last real channel's record across the rest of its
++          * group. Nothing reads those channels, so any valid record will do,
++          * and a copy is the one that cannot introduce a new value.
++          *
++          * ROCKET_OC_NOPAD leaves them zero, which is the control: it has to
++          * put the empty convolution back.
++          */
++         if (!rkt_is_depthwise(poperation) && !getenv("ROCKET_OC_NOPAD") &&
++             output_channels % 8) {
++            unsigned last = output_channels - 1;
++            unsigned lg = last / 8, li = last % 8;
++            int32_t a_last = *(int32_t *)(b8 + lg * 64 + li * 4);
++            int16_t b_last = *(int16_t *)(b8 + lg * 64 + 32 + li * 2);
++            int16_t c_last = *(int16_t *)(b8 + lg * 64 + 48 + li * 2);
++
++            for (unsigned oc = output_channels; oc < ALIGN(output_channels, 8);
++                 oc++) {
++               unsigned g = oc / 8, i = oc % 8;
++
++               *(int32_t *)(b8 + g * 64 + i * 4) = a_last;
++               *(int16_t *)(b8 + g * 64 + 32 + i * 2) = b_last;
++               *(int16_t *)(b8 + g * 64 + 48 + i * 2) = c_last;
++            }
 +         }
 +biases_done:
 +
