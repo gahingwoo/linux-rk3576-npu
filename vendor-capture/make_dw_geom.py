@@ -98,6 +98,51 @@ def cut_depthwise(out, name, channels, width, stride=1, base="mn_dw25.tflite"):
     return verify_dw(path, channels, width, ow, stride)
 
 
+def cut_pointwise(out, name, ic, oc, width, base="mn_pw24.tflite"):
+    """A standalone 1x1 convolution of ic to oc at `width`, cut from a bigger one.
+
+    mn_pw24 is 512 to 1024 at 7x7, so every pair at or below that is reachable
+    by shrinking. Same rules as cut_depthwise: the graph input and output carry
+    no buffer so their shapes are free, and the weight and bias buffers have to
+    be cut to match exactly.
+
+    Added for round 126. Only one standalone pointwise had ever been run here,
+    mn_pw2 at 32 to 64, and MobileNet's operator 4 is 64 to 128.
+    """
+    b = bytearray(open(os.path.join(SRC, base), "rb").read())
+    m = Model.GetRootAsModel(b, 0)
+    g = m.Subgraphs(0)
+    op = g.Operators(0)
+    ins = list(op.InputsAsNumpy())
+    o = int(op.Outputs(0))
+
+    for k, v in ((1, width), (2, width), (3, ic)):
+        struct.pack_into("<i", b, _shape_vec(g, ins[0]) + 4 * k, v)
+    struct.pack_into("<i", b, _shape_vec(g, ins[1]) + 4 * 0, oc)
+    struct.pack_into("<i", b, _shape_vec(g, ins[1]) + 4 * 3, ic)
+    struct.pack_into("<i", b, _shape_vec(g, ins[2]) + 4 * 0, oc)
+    for k, v in ((1, width), (2, width), (3, oc)):
+        struct.pack_into("<i", b, _shape_vec(g, o) + 4 * k, v)
+    for idx, nbytes in ((ins[1], oc * ic), (ins[2], 4 * oc)):
+        struct.pack_into("<I", b, _buf_len_pos(m, g, idx), nbytes)
+
+    path = os.path.join(out, name + ".tflite")
+    open(path, "wb").write(bytes(b))
+
+    m2 = Model.GetRootAsModel(bytearray(open(path, "rb").read()), 0)
+    g2 = m2.Subgraphs(0)
+    op2 = g2.Operators(0)
+    i2 = list(op2.InputsAsNumpy())
+    assert list(g2.Tensors(i2[1]).ShapeAsNumpy()) == [oc, 1, 1, ic], name
+    assert m2.Buffers(g2.Tensors(i2[1]).Buffer()).DataLength() == oc * ic, name
+    at = (ic + 15) // 16
+    last = at % 8
+    eps = (at // 8) * width + (width if last == 3 else -(-last * width // 8))
+    return ("%-11s %4d->%-4d %3dwide  %3d entries/row  %5d entries  %s"
+            % (name, ic, oc, width, eps, eps * width,
+               "over the layer budget" if eps * width > 5120 else "fits"))
+
+
 def restride(out, name, src, op_index, stride, out_size):
     """The same model with one operator's stride changed."""
     b = bytearray(open(os.path.join(SRC, src), "rb").read())
@@ -193,6 +238,12 @@ def main():
     print(restride(out, "dw1_s2", "mn_dw1.tflite", 0, 2, 56))
     print(restride(out, "dw25_s2", "mn_dw25.tflite", 0, 2, 4))
     print(restride(out, "c0dw1_s2", "mn_conv0dw1.tflite", 1, 2, 56))
+
+    # Standalone pointwise, round 126. op4 of MobileNet is 64 to 128 at 56 wide
+    # and only 32 to 64 had ever been run on its own.
+    for ic, oc, w in ((64, 128, 56), (32, 64, 56), (64, 64, 56), (128, 128, 56),
+                      (64, 128, 28), (128, 256, 28)):
+        print(cut_pointwise(out, "pw%dx%dw%d" % (ic, oc, w), ic, oc, w))
 
     # MobileNet cut off after each operator, rounds 103 and 104.
     for op, tensor in ((0, 7), (1, 33), (2, 37), (3, 39), (4, 43), (5, 45),

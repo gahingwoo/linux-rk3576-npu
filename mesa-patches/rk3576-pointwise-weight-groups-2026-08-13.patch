@@ -1,0 +1,128 @@
+From 50a42d762eae610a6c23f0c173d0d741adbfa42a Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 13 Aug 2026 18:52:27 +1200
+Subject: [PATCH] rocket RK3576: the pointwise weight buffer is grouped in 32
+ input channels
+
+The 1x1 path wrote one flat oc-major run with every input channel contiguous.
+The vendor groups them in 32s: [ic/32][oc][ic%32].
+
+Read off a position encoded 1x1 compiled with the vendor toolkit at 64 input
+channels and 4 output, where the weight blob comes back as ic 0 to 31 for each
+oc in turn, then ic 32 to 63 for each oc in turn. At 32 channels or fewer there
+is one group and the two forms are the same buffer, which is why this went
+unnoticed: every pointwise verified here until now was 32 to 64.
+
+Board, on standalone 1x1 models under both CBUF budgets: 32 input channels is
+64 of 64 channels correct, while 64 and 128 fail at 40 of 128, 26 of 64, 35 of
+128 and 71 of 256, with the output channel count and the width both excluded by
+the same run. 64 to 128 gives an identical result at 56 wide and at 28.
+
+ROCKET_PW_FLAT restores the flat form.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ src/gallium/drivers/rocket/rkt_coefs.c | 69 ++++++++++++++++++++++++--
+ 1 file changed, 64 insertions(+), 5 deletions(-)
+
+diff --git a/src/gallium/drivers/rocket/rkt_coefs.c b/src/gallium/drivers/rocket/rkt_coefs.c
+index 265b0b0..95fe1b1 100644
+--- a/src/gallium/drivers/rocket/rkt_coefs.c
++++ b/src/gallium/drivers/rocket/rkt_coefs.c
+@@ -357,9 +357,44 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       unsigned ic_n = input_channels_real;
+       unsigned oc_n = output_channels_real;
+ 
++      /*
++       * The vendor groups the input channels in 32s: [ic/32][oc][ic%32], not
++       * one flat oc-major run. Read straight off a position encoded 1x1
++       * compiled on the host at 64 input channels and 4 output, where the
++       * blob comes back as ic 0 to 31 for every oc, then ic 32 to 63 for every
++       * oc.
++       *
++       * At 32 input channels or fewer there is one group and the two forms are
++       * the same buffer, which is why mn_pw2 has always passed and why the
++       * earlier host check at small ic read this as oc-major: it was, within
++       * its range.
++       *
++       * Board, round 126: a pointwise is correct at 32 input channels and
++       * wrong at 64 and 128, on standalone models under both CBUF budgets,
++       * with the output channel count and the width both excluded by the same
++       * run.
++       *
++       * ROCKET_PW_FLAT restores the flat form.
++       */
++      bool pw_flat = getenv("ROCKET_PW_FLAT") != NULL;
++
+       for (unsigned oc = 0; oc < oc_n; oc++)
+-         for (unsigned ic = 0; ic < ic_n; ic++)
+-            weights_out[oc * ic_n + ic] = weights_in[oc][0][0][ic] - 0x80;
++         for (unsigned ic = 0; ic < ic_n; ic++) {
++            unsigned n;
++
++            if (pw_flat) {
++               n = oc * ic_n + ic;
++            } else {
++               unsigned g = ic / WEIGHT_ATOMIC_SIZE;
++               unsigned r = ic % WEIGHT_ATOMIC_SIZE;
++               unsigned gsz = MIN2(ic_n - g * WEIGHT_ATOMIC_SIZE,
++                                   (unsigned)WEIGHT_ATOMIC_SIZE);
++
++               n = g * oc_n * WEIGHT_ATOMIC_SIZE + oc * gsz + r;
++            }
++
++            weights_out[n] = weights_in[oc][0][0][ic] - 0x80;
++         }
+ 
+       /*
+        * ROCKET_PW_WTEST: overwrite the whole pointwise weight buffer with one
+@@ -385,9 +420,29 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+       return rsc;
+    }
+ 
++   /*
++    * How many input channels go in one weight group. Board, round 126: a
++    * pointwise is correct at 32 input channels and wrong at 64 and 128, on
++    * standalone models under both CBUF budgets, and the width makes no
++    * difference at all: 64 to 128 gives the same 40 of 128 channels and the
++    * same maxdiff 149 at 56 wide and at 28.
++    *
++    * 32 is exactly this boundary. At or below it there is one ic1 group and
++    * the grouping never has to be right; above it there are two or more and it
++    * does. The depthwise path already needed 64 rather than 32 here.
++    *
++    * ROCKET_WT_GROUP overrides, ROCKET_WT_ORDER=1 walks the taps outside the
++    * groups instead of inside them.
++    */
+    unsigned input_channel_groups = WEIGHT_ATOMIC_SIZE;
+    if (rkt_is_depthwise(poperation))
+       input_channel_groups *= 2;
++   {
++      const char *g = getenv("ROCKET_WT_GROUP");
++      if (g && !rkt_is_depthwise(poperation))
++         input_channel_groups = (unsigned)strtoul(g, NULL, 0);
++   }
++   bool wt_taps_outside = getenv("ROCKET_WT_ORDER") != NULL;
+ 
+    unsigned input_channels_1 =
+       DIV_ROUND_UP(input_channels, input_channel_groups);
+@@ -396,9 +451,13 @@ rkt_fill_weights(struct rkt_ml_subgraph *subgraph,
+    unsigned n = 0;
+    for (int oc1 = 0; oc1 < DIV_ROUND_UP(output_channels, WEIGHT_ATOMIC_SIZE);
+         oc1++) {
+-      for (int ic1 = 0; ic1 < input_channels_1; ic1++) {
+-         for (int x = 0; x < ww; x++) {
+-            for (int y = 0; y < wh; y++) {
++      for (int g1 = 0; g1 < (wt_taps_outside ? ww * wh : input_channels_1); g1++) {
++         for (int g2 = 0; g2 < (wt_taps_outside ? input_channels_1 : ww * wh);
++              g2++) {
++            {
++               int ic1 = wt_taps_outside ? g2 : g1;
++               int xy  = wt_taps_outside ? g1 : g2;
++               int x = xy / wh, y = xy % wh;
+                for (int oc2 = 0; oc2 < MIN2(output_channels, WEIGHT_ATOMIC_SIZE);
+                     oc2++) {
+                   for (int ic2 = 0; ic2 < input_channels_2; ic2++) {
+-- 
+2.43.0
+

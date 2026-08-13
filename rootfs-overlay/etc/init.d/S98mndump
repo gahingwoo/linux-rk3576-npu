@@ -2,49 +2,42 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 124. Reuse the CBUF instead of running off the end of it.
+# 2026-08-13 round 128. The pointwise weight buffer is grouped in 32s.
 #
-# Round 123 confirmed the second budget with four predictions at three channel
-# counts, and a channel count story cannot produce them:
+# ⚠ Round 127's two knobs were BOTH null and the reason is mine, not the
+# hardware's. RK3576 1x1 convolutions take their own packing path,
+# is_rk3576_pointwise, which returns before the generic loop I had put the
+# knobs in. That is the fifth knob in this project that could not reach the
+# code it was meant to test, and this time nothing caught it but the numbers
+# being suspiciously identical: two different groupings cannot give the same
+# 40 of 128 channels AND the same maxdiff 149.
 #
-#   dw32w136   4624 entries   PASS, predicted    dw32w152  5776   FAIL, predicted
-#   dw128w64   4096 entries   PASS, predicted    dw128w80  6400   FAIL, predicted
-#   dw64w102   5202 entries   FAIL, which tightens the limit to [5000, 5202)
+# Settled offline instead, which needs no board. posprobe_pw.py compiles a
+# position encoded 1x1 with the vendor toolkit and reads the weight blob back
+# out of the .rknn. At 64 input channels and 4 output:
 #
-# Ten banks is 5120 and sits in that range. So a window may stage about 2560
-# entries, five banks, and the whole layer about 5120, ten.
+#   ic  0..31 for oc 0, then oc 1, oc 2, oc 3     first 128 bytes
+#   ic 32..63 for oc 0, then oc 1, oc 2, oc 3     second 128 bytes
 #
-# The reason is in the addressing. Window 0 writes at CBUF row 0 and every
-# later window addresses the buffer by ABSOLUTE input row: the write position
-# is the running staged count and the reuse base at 0x103c is in_lo, and those
-# two agree only because staging starts at row 0 and never skips. So the whole
-# layer's input has to be resident at once, and nothing ever checks that it
-# fits.
-#
-# The fix is to let it not fit. When the running total would run past the
-# buffer, start again at CBUF row 0, restage that window in full, and make both
-# bases relative to whatever input row now sits at row 0. For a restarted
-# window both come out zero, which is exactly what window 0 already writes.
-#
-# On dw64w112 that gives 45 rows, then 43 at CBUF row 45, then a restart: the
-# third window would have needed 6272 entries resident and instead stages its
-# own 26 rows from row 0, 1456 entries.
+# So the vendor writes [ic/32][oc][ic%32] and mesa writes one flat oc-major run
+# with all 64 input channels contiguous. At 32 channels or fewer there is one
+# group and the two are the SAME buffer, which is exactly why mn_pw2 has always
+# passed and why an earlier host check at small ic reported oc-major: it was,
+# within its range.
 #
 # DECISION RULE, written before the run:
-#   the four over-budget layers come good and nothing else moves
-#             the buffer simply had to be reused, and both faults are closed
+#   the four failing pointwise shapes come good
+#             the grouping is the fault and op4 should come with them
 #   they improve but are not exact
-#             reuse is right and one of the two bases is not
+#             the grouping is right and something else in this path is not
 #   they do not move
-#             the budget is real but this is not how the hardware wants it met
+#             the host probe and the board disagree, which would be the first
+#             time, and the probe would need re-running at another shape
 #
-# Test 10 is the control: ROCKET_CBUF_TOTAL=100000 makes the overflow test
-# never fire, so dw64w104 must break again exactly as it did in round 122.
-#
-# ⚠ mn_L03 is the one that matters. It is 64 channels, 112 wide, stride 2, and
-# 6272 entries, which is why the round 119 window budget left it at 1 of 64. If
-# the reuse is right it should come good too, and MobileNet's operator 3 with
-# it.
+# Test 5 is the control: ROCKET_PW_FLAT restores the flat form and
+# pw64x128w56 must go back to 40 of 128. Test 6 is the other control, 32
+# channels, where the two forms are the same buffer, so it must not move at
+# all under either setting.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -61,39 +54,36 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..4) the over-budget layers ====="
-	p dw64w104.tflite ""
-	p dw64w112.tflite ""
-	p dw32w152.tflite ""
-	p dw128w80.tflite ""
+	log "===== 1..4) the four pointwise shapes that failed ====="
+	p pw64x128w56.tflite ""
+	p pw64x64w56.tflite ""
+	p pw128x128w56.tflite ""
+	p pw128x256w28.tflite ""
 
 	log ""
-	log "===== 5) THE ONE THAT MATTERS: MobileNet operator 3 ====="
-	p mn_L03.tflite ""
+	log "===== 5) CONTROL: flat form back, must return to 40 of 128 ====="
+	p pw64x128w56.tflite "ROCKET_PW_FLAT=1"
 
 	log ""
-	log "===== 6..7) and the ladder either side of it ====="
-	p mn_L02.tflite ""
+	log "===== 6..7) CONTROL: 32 channels, same buffer either way ====="
+	p pw32x64w56.tflite ""
+	p mn_pw2.tflite ""
+
+	log ""
+	log "===== 8..10) MobileNet: op4 and the ladder past it ====="
 	p mn_L04.tflite ""
-
-	log ""
-	log "===== 8..9) CONTROL: under budget, must not move ====="
-	p dw64w100.tflite ""
-	p dw32w136.tflite ""
-
-	log ""
-	log "===== 10) CONTROL: no total budget, dw64w104 must break again ====="
-	p dw64w104.tflite "ROCKET_CBUF_TOTAL=100000"
+	p mn_L06.tflite ""
+	p mn_L08.tflite ""
 
 	log ""
 	log "===== 11..14) REGRESSION ====="
+	p mn_L03.tflite ""
 	p mn_dw1.tflite ""
-	p mn_dw25.tflite ""
 	p conv2d-cal.tflite ""
 	p mn_conv0.tflite ""
 
 	log ""
-	log "===== Test 5 first. If op3 is right, the ladder moves on.         ====="
+	log "===== 1..4 are the round, 5 says whether to believe it.           ====="
 	sync
 }
 case "$1" in
