@@ -8,7 +8,7 @@ outputs are within one count of the CPU reference. Details below.
 ## Companion projects
 
 Three repositories, one board. The third name is a joke about the second: char siu
-is Cantonese barbecue pork, a staple of Hong Kong and Malaysia, and a kiln is the
+is Cantonese barbecue pork, eaten across Guangdong, Hong Kong and Malaysia, and a kiln is the
 oven it is roasted in.
 
 | repo | what it is |
