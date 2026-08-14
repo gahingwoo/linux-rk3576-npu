@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-14 round 141. charsiu computes a matmul, or says why not.
+# 2026-08-14 round 142. charsiu computes a matmul, with the units engaged.
 #
 # Round 139 finished the pointwise: every odd output channel count came out
 # exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
@@ -48,6 +48,14 @@
 #     submit fails
 #               the stream is malformed and the kernel rejected it, which is a
 #               different and much shorter list of causes.
+#
+#   ROUND 141 hit a fifth outcome the rule did not name: the kernel ACCEPTED the
+#   stream and the job timed out, with the IOMMU failing its stall on the way
+#   down. The cause was that nothing in the stream engaged the units. A register
+#   stream is not a program until its last four entries turn the units on, at
+#   their own op enables, with the 0x1d mask, in reverse data flow order: DPU,
+#   RDMA, CORE, then CNA last. Round 142 adds exactly that, and the four
+#   S_POINTER writes at 0x1004, 0x3004, 0x4004 and 0x5004 rather than two.
 #
 #   open ok, dma in the window, readback ok
 #             charsiu's device layer works, and the next piece is the register
