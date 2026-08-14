@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-14 round 140. charsiu's own path to the hardware.
+# 2026-08-14 round 141. charsiu computes a matmul, or says why not.
 #
 # Round 139 finished the pointwise: every odd output channel count came out
 # exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
@@ -23,6 +23,31 @@
 # charsiu failure is easier to read once this line is known good.
 #
 # DECISION RULE, written before the run:
+#
+#   ROUND 141 adds the real thing: /opt/charsiu/charsiu_matmul packs the
+#   operands, builds the coefficient buffer, emits the whole register stream,
+#   submits it through rocket and compares what comes back against the same
+#   arithmetic on the cores. No Mesa, no vendor runtime, nothing borrowed at
+#   run time.
+#
+#   Every register value in that stream is ported from the Mesa RK3576 path,
+#   which is verified byte exact on this silicon, and the geometry is checked
+#   against the vendor's own LLM dispatches offline. Nothing in it was guessed.
+#
+#   DECISION RULE for entry 2, written before the run:
+#
+#     output written and within one count of the CPU
+#               charsiu computes. The runtime is then engineering.
+#     output written but wrong
+#               the operand packing or the coefficient buffer is wrong, and the
+#               values printed beside it say which: a wrong scale moves every
+#               byte together, a wrong layout moves some and not others.
+#     the sentinel 0xa5 survives
+#               an EMPTY convolution: nothing was written at all. That is the
+#               coefficient buffer, every time it has happened here.
+#     submit fails
+#               the stream is malformed and the kernel rejected it, which is a
+#               different and much shorter list of causes.
 #
 #   open ok, dma in the window, readback ok
 #             charsiu's device layer works, and the next piece is the register
@@ -68,7 +93,17 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2..5) REGRESSION, so the image is known sane ====="
+	log "===== 2) THE TEST: charsiu computes a matmul ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 4 64 32 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
+	log ""
+	log "  -- and at one row, the shape an LLM decodes with"
+	/opt/charsiu/charsiu_matmul 1 512 64 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
+
+	log ""
+	log "===== 3..6) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
