@@ -15,7 +15,7 @@ oven it is roasted in.
 |---|---|
 | **linux-rk3576-npu** | this one: the open RK3576 NPU driver and Mesa work. `rocket` on the list, Teflon in Mesa, and the register knowledge the other two are built on |
 | [kiln](https://github.com/gahingwoo/kiln) | the **vendor** RKLLM/RKNN stack on a mainline kernel. LLM and vision on the board today, through a closed runtime, and the yardstick the open stack is measured against |
-| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. Day one; it starts by reading what the vendor asks the hardware to do |
+| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own and computes a matmul, with no Mesa and no vendor runtime in the path |
 
 ## Upstream
 
@@ -60,6 +60,23 @@ Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
+
+## An LLM runtime runs on this driver (2026-08-14)
+
+[charsiu](https://github.com/gahingwoo/charsiu) submits its own register streams
+through `rocket` and gets answers back: no Mesa, no Teflon, no vendor runtime.
+Its stream for a matmul is identical to the one this driver's Mesa path emits for
+the same shape, entry for entry, which is checked on a desktop rather than on the
+board.
+
+Two things it found are the driver's business too. **The vendor's `.rkllm` files
+carry their register command streams**, exactly as `.rknn` files do, so what the
+closed LLM stack asks this NPU to do can be read offline; that is how the
+projections were found to be dispatched at one row per submit, split across the
+two cores. And **`0x102c` and `0x1078` carry the width minus one in their high
+half, not the row count** - every convolution those were read from was square, so
+the two readings were the same number. Nothing here is wrong because of it, since
+every shape this driver runs is square, but a non square input would be.
 
 ## MobileNet V1 runs end to end (2026-08-13)
 
