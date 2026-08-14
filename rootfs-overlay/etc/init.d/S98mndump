@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-14 round 144. Two streams for one shape, so the diff can name it.
+# 2026-08-14 round 156. 0x40ac is an addend with the sign the other way round.
 #
 # Round 139 finished the pointwise: every odd output channel count came out
 # exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
@@ -48,6 +48,22 @@
 #     submit fails
 #               the stream is malformed and the kernel rejected it, which is a
 #               different and much shorter list of causes.
+#
+#   ROUND 155's QUESTION, and its decision rule. charsiu's output saturates at
+#   127 where the reference reaches 180, so 128 to 255 cannot be represented at
+#   all. Every register in the stream matches Mesa's except the four that carry
+#   the model's own quantisation, and 0x40ac is among them. It is already known
+#   NOT to be an output domain addend (round 153 saturated the surface by
+#   writing the zero point there), so the sweep asks whether it selects the
+#   output's sign convention instead.
+#
+#     any value makes the ramp exceed 127
+#               that value is the unsigned output mode and charsiu can finish
+#               the calibration.
+#     all four cap at 127
+#               the mode is elsewhere, and the next place to look is the four
+#               DPU registers whose values were excluded from the stream diff
+#               as "quantisation" without checking what they do.
 #
 #   ROUND 141 hit a fifth outcome the rule did not name: the kernel ACCEPTED the
 #   stream and the job timed out, with the IOMMU failing its stall on the way
@@ -107,9 +123,22 @@ start() {
 	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DUMP_REGCMD=1 \
 		python3 "$NPU_DIR/perch.py" "$NPU_DIR/pw64x64w1.tflite" > "$C" 2>&1
 	log ""
-	log "  -- CHARSIU's stream for the same shape: M=1 K=64 N=64"
-	CHARSIU_DUMP=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log "  -- CONST: the ramp must now match the CPU, top of the byte included"
+	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- IMPULSE: output channel c is input channel c"
+	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- DENSE at M=1, the shape an LLM decodes with"
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
+	log ""
+	log "  -- DENSE at M=4"
+	/opt/charsiu/charsiu_matmul 4 64 32 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
+	log ""
+	log "  -- CONTROL: 0x40ac back to 0, which must cap the ramp at 127"
+	CHARSIU_CONST=1 CHARSIU_OUT_OFF=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
 	log "===== 3..6) REGRESSION, so the image is known sane ====="
