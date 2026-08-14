@@ -1,0 +1,27 @@
+In-Reply-To: [RFC PATCH 4/9] iommu/rockchip: skip orphaned-fault banks in rk_iommu_is_stall_active
+(Chaoyi Chen: "I'm not sure what's happening here. Does this issue still
+occur when you reset the MMU?")
+
+---
+
+Hi Chaoyi, thanks for looking.
+
+You're right -- this was treating the symptom. I traced it:
+
+The bank carries PAGE_FAULT_ACTIVE from boot firmware, and rk_iommu_enable()
+runs rk_iommu_enable_stall() *before* rk_iommu_force_reset(). So the stale
+fault is still set when enable_stall() polls for STALL_ACTIVE, and that bank
+never stalls -- that's the timeout the two "skip" patches worked around.
+(On the RK3576 NPU force_reset() was itself returning -EFAULT, "MMU_DTE_ADDR
+is not functioning", until the MMU clocks were fixed, so the fault never got
+cleared that way either.)
+
+For v2 I dropped both skip patches and instead acknowledge the stale fault
+with CMD_PAGE_FAULT_DONE before enabling stall, so every bank starts from a
+clean state and the normal stall path applies to all of them -- which is
+what you were getting at, deal with the fault rather than route around it.
+
+v2 posted here: <lore link to v2 0/8>
+
+Thanks,
+Jiaxing

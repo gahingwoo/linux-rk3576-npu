@@ -1,0 +1,117 @@
+From b74181facc714c94d654de1e72981e4a3f99a4c4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 3 Aug 2026 21:37:12 +1200
+Subject: [RFC PATCH v4 0/6] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This is a fixes only revision. Nothing here changes what the NPU does; it
+is six bugs found in v3, five of them by the Sashiko review bot and each
+one checked against the vendor DT, the vendor driver or the hardware
+before being believed.
+
+Tested on a Radxa ROCK 4D, on next-20260730.
+
+Changes in v4
+-------------
+
+  * rk3576.dtsi: rknn_core_1 was at the wrong address. The vendor node is
+    reg = <0x27700000 0x8000>, <0x27708000 0x8000> and its driver takes
+    base[i] straight from those, so core 1 lives at 0x27708000, not
+    0x27710000. rknn_mmu_1 at 0x2770a000 was consistent with the vendor
+    layout all along.
+
+  * rk3576.dtsi: both cores carried five reg entries including dpu and
+    dpu_rdma, which the binding does not allow and the driver does not
+    map. Cut to the three the binding defines. I had validated the
+    binding itself in v3 but never ran dtbs_check against it.
+
+  * rk3576.dtsi: rknn_core_1 was missing the CBUF clocks, so it could
+    never have probed on RK3576, where the driver asks for six by name.
+
+  * rk3576.dtsi: each core now lists both NPU power domains. With one
+    domain the driver core auto-attaches it and
+    devm_pm_domain_attach_list() then returns -EEXIST, so the driver
+    could only ever have worked on a board that overrode this, which is
+    exactly what rk3576-rock-4d.dts was doing. The board override is
+    dropped. The IOMMUs keep a single domain each, since they rely on
+    that same auto-attach.
+
+  * accel/rocket: rocket_job_fini() did not cancel the completion poll
+    timer or its work, so unbind could leave them running against freed
+    memory.
+
+  * accel/rocket: a poll work already queued when the interrupt lands
+    could finalise the next job as well. It now carries the sequence
+    number of the job it was started for.
+
+Verified on hardware: the NPU probes with the two domain list, a known
+byte exact convolution stays byte exact six times over, and an
+unbind/rebind cycle rebinds cleanly and runs again with no warning.
+
+Igor Paunovic gave a Tested-by on the v3 driver patch. I have not
+carried it over, since patch 4 changed after it. Igor, the changes are
+in the poll_completion path and in rocket_job_fini, so RK3588 never
+reaches either, but it is your tag to give.
+
+What is still wrong
+-------------------
+
+Unchanged from v3, and the search has narrowed rather than moved.
+
+A single convolution is byte exact, and re-running that same one is byte
+exact every time. What fails is running a different one after it: the
+second configuration computes nothing and writes out a zero point
+surface, while the one already resident keeps working. Going back to it
+is byte exact again.
+
+Tomeu suggested this looked like the ping-pong register bank never
+switching, which fits, and the readback agrees that the pointer is stuck:
+we write S_POINTER bit 0 as 0 and it reads back 1, on every job, for the
+rest of the session. But the driver cannot move it. Flipping bit 0 per
+submit, in the direct writes and in all four regcmd entries, changes
+neither the readback nor the result. Selecting a bank the way
+rk3576_state_init does, with the PP bits cleared, stops the units arming
+at all. Pulsing POINTER_PP_CLEAR, with or without EXECUTER_PP_CLEAR,
+moves nothing. The vendor does not switch banks per submit either; it
+writes 0xe exactly as we do, and only does the 0, 1, 0x1e dance once per
+reset. Adding that sequence verbatim, at the same point the vendor calls
+it, changes nothing.
+
+A read snapshot of every block the driver can reach, pc, cna, core, dpu
+and rdma, 20 KB in total, taken at the same point in a job that computed
+and one that did not, differs in exactly one word, and that word is
+OPERATION_ENABLE. At completion the register state carries no trace of
+which job worked.
+
+So it is not the register writes (both drivers enumerated), not the
+regcmd payload (vendor bytes replayed through rocket still fail), not the
+register state at completion, not the ping-pong controls, and not
+clocks, genpd, IOMMU, cache or resets. The vendor computes different
+configurations correctly on this silicon and this kernel, so a difference
+exists and it is somewhere none of that reaches. Suggestions very
+welcome.
+
+I used Claude Opus 5 to trim this series out of my debugging tree and
+generate the diffs.
+
+Jiaxing Hu (6):
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  15 +-
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  10 +
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  76 ++++-
+ drivers/accel/rocket/rocket_core.c            |  53 ++-
+ drivers/accel/rocket/rocket_core.h            |  21 +-
+ drivers/accel/rocket/rocket_device.c          |   4 +
+ drivers/accel/rocket/rocket_drv.c             |  25 +-
+ drivers/accel/rocket/rocket_job.c             | 306 ++++++++++++++++++
+ drivers/pmdomain/rockchip/pm-domains.c        |  71 ++--
+ 9 files changed, 550 insertions(+), 31 deletions(-)
+
+-- 
+2.43.0
+

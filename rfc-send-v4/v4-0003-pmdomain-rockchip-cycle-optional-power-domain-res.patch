@@ -1,0 +1,88 @@
+From c49b36b248a0d8f4f53417887246f1d5366322c2 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Fri, 31 Jul 2026 14:32:21 +1200
+Subject: [RFC PATCH v4 3/6] pmdomain/rockchip: cycle optional power-domain
+ resets on power-on
+
+Some Rockchip domains come out of power-on with their bus interface in
+an undefined state. On the RK3576 NPU this shows up as a hang on the
+first access after a cold power-on; the vendor kernel cycles the
+domain's resets at this point and that clears it.
+
+Take the domain node's resets if it has any, and pulse them between
+releasing idle and restoring QoS. The resets are optional, so domains
+that do not declare any behave exactly as before.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index e1857f878..82051f600 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -19,6 +19,7 @@
+ #include <linux/of_clk.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
++#include <linux/reset.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/mfd/syscon.h>
+@@ -103,6 +104,7 @@ struct rockchip_pm_domain {
+ 	struct clk_bulk_data *clks;
+ 	struct device_node *node;
+ 	struct regulator *supply;
++	struct reset_control *resets;
+ };
+ 
+ struct rockchip_pmu {
+@@ -688,6 +690,13 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ 		if (pd->info->delay_us)
+ 			udelay(pd->info->delay_us);
+ 
++		/* Optional: some domains need their resets cycled after power-on. */
++		if (pd->resets) {
++			reset_control_assert(pd->resets);
++			udelay(10);
++			reset_control_deassert(pd->resets);
++		}
++
+ 		rockchip_pmu_restore_qos(pd);
+ 	}
+ 
+@@ -857,6 +866,14 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	if (error)
+ 		goto err_put_clocks;
+ 
++	pd->resets = of_reset_control_array_get_optional_exclusive(node);
++	if (IS_ERR(pd->resets)) {
++		error = PTR_ERR(pd->resets);
++		dev_err(pmu->dev, "%pOFn: failed to get resets: %d\n", node, error);
++		pd->resets = NULL;
++		goto err_unprepare_clocks;
++	}
++
+ 	pd->num_qos = of_count_phandle_with_args(node, "pm_qos",
+ 						 NULL);
+ 
+@@ -927,6 +944,7 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	clk_bulk_unprepare(pd->num_clks, pd->clks);
+ err_put_clocks:
+ 	clk_bulk_put(pd->num_clks, pd->clks);
++	reset_control_put(pd->resets);
+ 	return error;
+ }
+ 
+@@ -945,6 +963,7 @@ static void rockchip_pm_remove_one_domain(struct rockchip_pm_domain *pd)
+ 
+ 	clk_bulk_unprepare(pd->num_clks, pd->clks);
+ 	clk_bulk_put(pd->num_clks, pd->clks);
++	reset_control_put(pd->resets);
+ 
+ 	/* protect the zeroing of pm->num_clks */
+ 	mutex_lock(&pd->pmu->mutex);
+-- 
+2.43.0
+

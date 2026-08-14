@@ -1,0 +1,28 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH 2/3] media: rockchip: add VEPU510 H.264 encoder driver for RK3576
+In-Reply-To: <3096814.BaHzMo0RvP@diego>
+References: <20260722073417.2064667-1-gahing@gahingwoo.com>
+ <20260722073417.2064667-3-gahing@gahingwoo.com>
+ <3096814.BaHzMo0RvP@diego>
+
+On Wed, 22 Jul 2026 12:00:27 +0200, Heiko Stübner wrote:
+> At least the comment and from a casual look also the code get this
+> backwards. The idea is to explicitly _not_ expose multiple video
+> devices.
+> [...]
+> Any (future) scheduling should happen inside the driver, and not get
+> offloaded onto _every_ userspace application individually.
+
+You're right, thanks. Exposing rkvenc0/rkvenc1 as two nodes and pushing
+the core choice onto userspace is backwards; rkvdec_disable_multicore()
+is the pattern to follow -- probe only the first core, keep any
+multi-core scheduling inside the driver. I'll fix that.
+
+Depending on where the interface discussion in the 0/3 thread lands
+(Nicolas is pointing at a lower-level stateless / Vulkan-Video direction
+that Detlev is already building for RK3588) this driver's shape may
+change quite a bit, but the "don't offload core selection to userspace"
+point holds either way.
+
+Thanks,
+Jiaxing

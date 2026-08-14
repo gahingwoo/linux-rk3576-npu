@@ -1,0 +1,309 @@
+From c3bcc40ad1578d795151073a5f381759f8d2cde8 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Fri, 31 Jul 2026 14:34:39 +1200
+Subject: [RFC PATCH v3 4/6] accel/rocket: add RK3576 NPU (RKNN) support
+
+The RK3576 carries the same RKNN block as the RK3588, with two cores
+instead of three and a few platform differences:
+
+ - the CBUF (convolution buffer) has its own clock domain, so the core
+   needs six clocks rather than four;
+ - the BIU reset moved into the power domain, leaving one reset here;
+ - the NPU spans two power domains, and a device with more than one is
+   skipped by the driver-core single-domain auto-attach, so the list has
+   to be attached explicitly;
+ - the DPU completion interrupt is armed exactly as on RK3588 but never
+   reaches the GIC. The completion is visible in INTERRUPT_RAW_STATUS,
+   so sample that from an hrtimer rather than wait for an interrupt that
+   does not come. The interrupt stays armed, so if it ever does arrive
+   the normal handler finalises the job first.
+
+Select all of that from of_device_id match data so the RK3588 path keeps
+its existing counts and behaviour unchanged.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_core.c   | 26 ++++++++++++-
+ drivers/accel/rocket/rocket_core.h   | 17 ++++++++-
+ drivers/accel/rocket/rocket_device.c |  4 ++
+ drivers/accel/rocket/rocket_drv.c    | 22 +++++++++--
+ drivers/accel/rocket/rocket_job.c    | 55 ++++++++++++++++++++++++++++
+ 5 files changed, 118 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b3b2fa9ba..e08288c8c 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -8,6 +8,7 @@
+ #include <linux/err.h>
+ #include <linux/iommu.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ 
+@@ -21,14 +22,22 @@ int rocket_core_init(struct rocket_core *core)
+ 	u32 version;
+ 	int err = 0;
+ 
++	/* RK3576 moves the BIU reset into its power domain and takes only srst_a. */
+ 	core->resets[0].id = "srst_a";
+ 	core->resets[1].id = "srst_h";
+-	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, ARRAY_SIZE(core->resets),
++	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, core->soc->num_resets,
+ 						    core->resets);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+ 
+-	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
++	core->clks[0].id = "aclk";
++	core->clks[1].id = "hclk";
++	core->clks[2].id = "npu";
++	core->clks[3].id = "pclk";
++	/* RK3576 clocks the CBUF separately; the compute path stalls without these. */
++	core->clks[4].id = "aclk_cbuf";
++	core->clks[5].id = "hclk_cbuf";
++	err = devm_clk_bulk_get(dev, core->soc->num_clks, core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+ 
+@@ -65,6 +74,19 @@ int rocket_core_init(struct rocket_core *core)
+ 		return err;
+ 	}
+ 
++	/*
++	 * RK3576 spans two power domains, and a multi-domain device is skipped
++	 * by the driver-core single-domain auto-attach, so attach the list here.
++	 */
++	if (core->soc->multi_power_domain) {
++		struct dev_pm_domain_list *pd_list;
++
++		err = devm_pm_domain_attach_list(dev, NULL, &pd_list);
++		if (err < 0)
++			return dev_err_probe(dev, err,
++					     "failed to attach NPU power domains\n");
++	}
++
+ 	pm_runtime_use_autosuspend(dev);
+ 
+ 	/*
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index f6d738285..6afb8180a 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -6,6 +6,7 @@
+ 
+ #include <drm/gpu_scheduler.h>
+ #include <linux/clk.h>
++#include <linux/hrtimer.h>
+ #include <linux/io.h>
+ #include <linux/mutex_types.h>
+ #include <linux/reset.h>
+@@ -27,16 +28,25 @@
+ #define rocket_core_writel(core, reg, value) \
+ 	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+ 
++/* Per-SoC differences, selected by the of_device_id match data. */
++struct rocket_soc_data {
++	unsigned int num_clks;		/* clk_bulk count: 4 base, 6 with CBUF */
++	unsigned int num_resets;	/* reset_bulk count: 2 base, 1 on RK3576 */
++	bool multi_power_domain;	/* device spans more than one PM domain */
++	bool poll_completion;		/* completion IRQ never reaches the GIC */
++};
++
+ struct rocket_core {
+ 	struct device *dev;
+ 	struct rocket_device *rdev;
++	const struct rocket_soc_data *soc;
+ 	unsigned int index;
+ 
+ 	int irq;
+ 	void __iomem *pc_iomem;
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+-	struct clk_bulk_data clks[4];
++	struct clk_bulk_data clks[6];
+ 	struct reset_control_bulk_data resets[2];
+ 
+ 	struct iommu_group *iommu_group;
+@@ -52,6 +62,11 @@ struct rocket_core {
+ 		atomic_t pending;
+ 	} reset;
+ 
++	struct hrtimer poll_timer;
++	struct work_struct poll_work;
++	atomic_t poll_active;
++	unsigned int poll_ticks;
++
+ 	struct drm_gpu_scheduler sched;
+ 	u64 fence_context;
+ 	u64 emit_seqno;
+diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
+index 46e6ee1e7..bfb00f967 100644
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -31,6 +31,10 @@ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 		if (of_device_is_available(core_node))
+ 			num_cores++;
+ 
++	for_each_compatible_node(core_node, NULL, "rockchip,rk3576-rknn-core")
++		if (of_device_is_available(core_node))
++			num_cores++;
++
+ 	rdev->cores = devm_kcalloc(dev, num_cores, sizeof(*rdev->cores), GFP_KERNEL);
+ 	if (!rdev->cores)
+ 		return ERR_PTR(-ENOMEM);
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 8bbbce594..7f7dfa374 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -176,6 +176,7 @@ static int rocket_probe(struct platform_device *pdev)
+ 
+ 	rdev->cores[core].rdev = rdev;
+ 	rdev->cores[core].dev = &pdev->dev;
++	rdev->cores[core].soc = of_device_get_match_data(&pdev->dev);
+ 	rdev->cores[core].index = core;
+ 
+ 	rdev->num_cores++;
+@@ -213,8 +214,23 @@ static void rocket_remove(struct platform_device *pdev)
+ 	}
+ }
+ 
++static const struct rocket_soc_data rk3588_soc_data = {
++	.num_clks = 4,
++	.num_resets = 2,
++	.multi_power_domain = false,
++	.poll_completion = false,
++};
++
++static const struct rocket_soc_data rk3576_soc_data = {
++	.num_clks = 6,
++	.num_resets = 1,
++	.multi_power_domain = true,
++	.poll_completion = true,
++};
++
+ static const struct of_device_id dt_match[] = {
+-	{ .compatible = "rockchip,rk3588-rknn-core" },
++	{ .compatible = "rockchip,rk3588-rknn-core", .data = &rk3588_soc_data },
++	{ .compatible = "rockchip,rk3576-rknn-core", .data = &rk3576_soc_data },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+@@ -240,7 +256,7 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 	if (core < 0)
+ 		return -ENODEV;
+ 
+-	err = clk_bulk_prepare_enable(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
++	err = clk_bulk_prepare_enable(rdev->cores[core].soc->num_clks, rdev->cores[core].clks);
+ 	if (err) {
+ 		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
+ 		return err;
+@@ -260,7 +276,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
+ 	if (!rocket_job_is_idle(&rdev->cores[core]))
+ 		return -EBUSY;
+ 
+-	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
++	clk_bulk_disable_unprepare(rdev->cores[core].soc->num_clks, rdev->cores[core].clks);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index bb77b6bf0..e9103a930 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -7,6 +7,7 @@
+ #include <drm/drm_file.h>
+ #include <drm/drm_gem.h>
+ #include <drm/rocket_accel.h>
++#include <linux/hrtimer.h>
+ #include <linux/interrupt.h>
+ #include <linux/overflow.h>
+ #include <linux/iommu.h>
+@@ -21,6 +22,15 @@
+ 
+ #define JOB_TIMEOUT_MS 500
+ 
++/*
++ * RK3576 arms the same DPU completion as RK3588, but the interrupt never
++ * reaches the GIC. The completion itself is visible in INTERRUPT_RAW_STATUS,
++ * so sample that instead. The tick cap bounds jobs that never raise it at all,
++ * which is the same open problem as the wrong inference results.
++ */
++#define RK3576_POLL_INTERVAL_NS	1000000LL	/* 1 ms */
++#define RK3576_POLL_MAX_TICKS	8
++
+ static struct rocket_job *
+ to_rocket_job(struct drm_sched_job *sched_job)
+ {
+@@ -151,6 +161,13 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 
+ 	rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
+ 
++	if (core->soc->poll_completion) {
++		core->poll_ticks = 0;
++		atomic_set(&core->poll_active, 1);
++		hrtimer_start(&core->poll_timer, ns_to_ktime(RK3576_POLL_INTERVAL_NS),
++			      HRTIMER_MODE_REL);
++	}
++
+ 	dev_dbg(core->dev, "Submitted regcmd at 0x%llx to core %d", task->regcmd, core->index);
+ }
+ 
+@@ -341,8 +358,42 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 	return ERR_PTR(ret);
+ }
+ 
++static void rocket_job_handle_irq(struct rocket_core *core);
++
++static enum hrtimer_restart rocket_poll_timer_fn(struct hrtimer *timer)
++{
++	struct rocket_core *core = container_of(timer, struct rocket_core, poll_timer);
++	u32 raw;
++
++	if (!atomic_read(&core->poll_active))
++		return HRTIMER_NORESTART;
++
++	raw = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
++	if ((raw & (PC_INTERRUPT_RAW_STATUS_DPU_0 | PC_INTERRUPT_RAW_STATUS_DPU_1)) ||
++	    ++core->poll_ticks >= RK3576_POLL_MAX_TICKS) {
++		atomic_set(&core->poll_active, 0);
++		schedule_work(&core->poll_work);
++		return HRTIMER_NORESTART;
++	}
++
++	hrtimer_forward_now(timer, ns_to_ktime(RK3576_POLL_INTERVAL_NS));
++	return HRTIMER_RESTART;
++}
++
++static void rocket_poll_work_fn(struct work_struct *work)
++{
++	struct rocket_core *core = container_of(work, struct rocket_core, poll_work);
++
++	rocket_job_handle_irq(core);
++}
++
+ static void rocket_job_handle_irq(struct rocket_core *core)
+ {
++	if (core->soc->poll_completion) {
++		atomic_set(&core->poll_active, 0);
++		hrtimer_cancel(&core->poll_timer);
++	}
++
+ 	pm_runtime_mark_last_busy(core->dev);
+ 
+ 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+@@ -460,6 +511,10 @@ int rocket_job_init(struct rocket_core *core)
+ 	int ret;
+ 
+ 	INIT_WORK(&core->reset.work, rocket_reset_work);
++	INIT_WORK(&core->poll_work, rocket_poll_work_fn);
++	hrtimer_setup(&core->poll_timer, rocket_poll_timer_fn, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL);
++	atomic_set(&core->poll_active, 0);
+ 	spin_lock_init(&core->fence_lock);
+ 	mutex_init(&core->job_lock);
+ 
+-- 
+2.43.0
+

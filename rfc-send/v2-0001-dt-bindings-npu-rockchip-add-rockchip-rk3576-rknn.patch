@@ -1,0 +1,50 @@
+From 006bdb947c72b5423394d201df9d3b712e561c88 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sat, 18 Jul 2026 11:25:32 +1200
+Subject: [RFC PATCH v2 1/8] dt-bindings: npu: rockchip: add
+ rockchip,rk3576-rknn-core
+
+Document the RK3576 NPU core: add rockchip,rk3576-rknn-core to the
+compatible enum.  The RK3576 has no NPU SRAM supply, so make sram-supply
+required only for rockchip,rk3588-rknn-core via an allOf/if-then instead
+of dropping it from the shared required list (which would have weakened
+validation for RK3588).
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ .../bindings/npu/rockchip,rk3588-rknn-core.yaml      | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+index caca2a490..985cde6b2 100644
+--- a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
++++ b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+@@ -21,6 +21,7 @@ properties:
+ 
+   compatible:
+     enum:
++      - rockchip,rk3576-rknn-core
+       - rockchip,rk3588-rknn-core
+ 
+   reg:
+@@ -75,7 +76,16 @@ required:
+   - resets
+   - reset-names
+   - npu-supply
+-  - sram-supply
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: rockchip,rk3588-rknn-core
++    then:
++      required:
++        - sram-supply
+ 
+ additionalProperties: false
+ 
+-- 
+2.43.0
+

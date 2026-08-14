@@ -1,0 +1,56 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH] accel/rocket: request the core clocks by name
+In-Reply-To: <20260729092939.118779-1-royalnet026@gmail.com>
+References: <20260729072019.105907-1-royalnet026@gmail.com>
+ <20260729092939.118779-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+Thanks for asking first rather than just sending it -- and for the way
+you did it. Sending it standalone is the right call; it should not have
+been sitting in my RFC.
+
+The analysis matches what I see. devm_clk_bulk_get() calls
+clk_get(dev, clks[i].id) per entry, and with a NULL id of_parse_clkspec()
+never looks at "clock-names", so all four resolve to index 0. The ids and
+their order match both the binding
+
+  Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+    clock-names: aclk, hclk, npu, pclk
+
+and the in-tree DT (rk3588-base.dtsi, all three cores). It also mirrors
+the core->resets[].id block right above it, so it reads consistently.
+
+Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
+
+I can't give you a Tested-by: I don't have an RK3588 board at hand at the
+moment. What I can say is that the same four assignments are board-tested
+on RK3576 -- they are byte-for-byte the ones in my v2 6/8, running on a
+ROCK 4D, where the NPU probes, powers up and down through runtime PM and
+executes jobs. So between us the change has been exercised on two SoCs.
+
+One thing I would put in the commit message, because it is a real
+behaviour change and not obvious from the diff: before this, the four
+requests resolved by index and therefore always succeeded, whatever the
+DT said. After it they resolve by name, so a DT that does not carry all
+four names now fails probe with -ENOENT instead of quietly working. That
+is fine in-tree -- rk3588-base.dtsi has all four and the binding makes
+clock-names required with exactly those items -- but it is worth a
+sentence, particularly for the RK3568 series you mention: a DT there that
+does not list all four names would go from silently working to not
+probing at all, and that is a much easier failure to diagnose if the log
+message says so.
+
+On the rebase, your reading is right, with one correction: v3 is not out
+yet. I have not posted it. When I do, that hunk shrinks to just the two
+new CBUF ids (aclk_cbuf, hclk_cbuf) at clks[4] and clks[5] with
+ARRAY_SIZE going to 6. Nothing of yours has to move either way.
+
+On the iommu patches: confirmed, and it was Will who applied them
+himself. Both are in linux-next as of next-20260727:
+
+  841363ebb508 iommu/rockchip: Take all DT clocks
+  b10d5920cafa iommu/rockchip: Clear stale page faults before enabling stall
+
+Thanks again,
+Jiaxing

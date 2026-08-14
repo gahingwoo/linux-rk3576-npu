@@ -1,0 +1,49 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC] accel/rocket: DVFS on RK3588 - a hardware constraint, and some numbers
+In-Reply-To: <20260801131656.58450-1-royalnet026@gmail.com>
+References: <20260801131656.58450-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+> all three NPU domains already list the NPU clock (rk3588-base.dtsi
+> lines 864, 877 and 885)
+
+Those lines list CLK_NPU_DSU0, but the clock the driver holds as "npu",
+and the one devfreq scales, is <&scmi_clk SCMI_CLK_NPU>. The driver never
+holds CLK_NPU_DSU0 at all. They may share a root, but if they do not then
+the handshake is not breaking because you scaled the clock it needs, and
+the notifier is treating a symptom. Worth a look at clk_summary first.
+
+On RK3576 they really are the same clock ("npu" is CLK_RKNN_DSU0, which
+PD_NPUTOP also lists), so that comparison at least is easy here.
+
+Also relevant: the vendor does not scale the handshake side at all. Live
+sample from a 6.1.115 BSP during a working inference, captured by
+Olaf001au:
+
+  clk_npu 950 MHz, clk_dsu 198 MHz, aclk_cbuf 198 MHz
+
+Compute at 950, everything else left at boot rate. If something similar
+exists on RK3588 you may be able to pick a clock that is not in any
+domain's list and avoid the constraint rather than veto around it.
+
+Two smaller data points:
+
+We get an async SError from NPU domain power-on here too, which is why my
+v3 has the settle delay and the reset cycling. But our DSU0 sits at 594 to
+786 MHz permanently and only the cold power-on fails; later transitions at
+the same rate are fine. So either your constraint is RK3588 specific or my
+settle delay is masking it and my explanation is wrong. No idea which.
+
+You said you had not tried PVTPLL because reading its registers is
+supposed to hang. I tried it from the other end on RK3576, routing the NPU
+clock through SCMI: zero jobs completed, 83 scheduler timeouts, everything
+else unchanged. Not a drop-in for the CRU clock.
+
+On the OPP table, your plateau looks memory bound, and the vendor pinning
+aclk_cbuf at 198 while compute runs at 950 points the same way. If so, 600
+is where MobileNetV1 stops scaling rather than where the hardware does.
+Maybe worth one compute dense model before cutting the table there.
+
+Cheers,
+Jiaxing

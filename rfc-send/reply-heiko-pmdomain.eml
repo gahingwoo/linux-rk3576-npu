@@ -1,0 +1,33 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v2 2/8] pmdomain/rockchip: add optional per-domain power-on settle delay
+In-Reply-To: <3322194.D8ZAKjAxdT@diego>
+References: <20260718031146.3368811-3-gahing@gahingwoo.com>
+ <3322194.D8ZAKjAxdT@diego>
+
+Hi Heiko,
+
+Thanks for looking.
+
+Understood on the naming. The suffixes describe the fields the macro
+sets, so a variant that also carries a wakeup delay should say so. In v3
+I will add
+
+  DOMAIN_M_O_R_G_W(..., g_mask, delay, wakeup)
+
+and leave DOMAIN_M_O_R_G with its current signature, with DOMAIN_RK3576
+switched over to the _W form. That also keeps the diff off the macro
+every other SoC goes through, which is nicer than what I sent.
+
+One note while I am there: DOMAIN_RK3576 is DOMAIN_M_O_R_G's only
+in-tree user, so after this the plain form has no callers left. I will
+keep it as you asked; say the word if you would rather it just gained
+the parameter after all.
+
+I will also drop the stray whitespace hunk that crept into this patch,
+an unrelated blank line removal in rockchip_do_pmu_set_power_domain().
+
+v3 is not out yet. The RK3576 inference bug is still open and I would
+rather not respin the series twice, but this is on the list for it.
+
+Thanks,
+Jiaxing

@@ -1,0 +1,47 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v6 3/9] dt-bindings: iommu: rockchip: allow the RK3576 NPU MMU clock set
+In-Reply-To: <DKHR2P0XJF0B.OY937NT39DR7@cknow-tech.com>
+References: <20260806063413.350184-1-gahing@gahingwoo.com>
+ <20260806063413.350184-4-gahing@gahingwoo.com>
+ <DKHR2P0XJF0B.OY937NT39DR7@cknow-tech.com>
+
+Hi Diederik,
+
+> Now every MMU with "rockchip,rk3568-iommu", "rockchip,rk3588-iommu" or
+> "rockchip,rk3576-iommu" is allowed to have a minimum of 2 clocks, instead
+> of having exactly 2 clocks. That does not sound desirable.
+
+You are right, and it is worse than sounding undesirable, it actually
+happens. I gave an RK3588 NPU MMU a bogus third clock and v6's schema
+accepted it without a word. That is a real loss of coverage for every
+existing Rockchip IOMMU and I should not have sent it that way.
+
+Fixed for v7 the way you and the bot suggest, with a compatible of its
+own:
+
+  compatible = "rockchip,rk3576-npu-iommu", "rockchip,rk3568-iommu";
+
+and an allOf that pins each side:
+
+  if compatible contains rockchip,rk3576-npu-iommu
+    then clocks/clock-names minItems: 5
+    else clocks/clock-names maxItems: 2
+
+so the NPU MMUs are required to carry all five and everything else is
+back to exactly two. Checked in both directions: the three clock RK3588
+node is rejected again, an NPU MMU with only aclk and iface is rejected,
+and every rockchip dtb in the tree validates clean.
+
+No driver change goes with it. rk_iommu matches only "rockchip,iommu"
+and "rockchip,rk3568-iommu", and the fallback stays, so the new string
+is documentation only.
+
+The name is the part I am least sure of. Everything else in that binding
+ends in -iommu, which is why I did not use -mmu to pair with the
+rknn-core node it belongs to. Happy to change it if Heiko or Krzysztof
+prefer something else.
+
+Thanks for catching it.
+
+Cheers,
+Jiaxing

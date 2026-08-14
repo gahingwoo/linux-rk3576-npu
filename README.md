@@ -112,11 +112,16 @@ and none in the kernel:
   back an **empty convolution**, which is why MobileNet's last operator, 1024 to
   1001, produced nothing at all.
 
-Still open, all in Mesa: an **odd** output channel count is wrong across its
-whole second weight tile (the CNA counts output channels in pairs and is told a
-padded count by the vendor; the fix is written and not yet on the board), a
-pointwise with **56** output channels times the NPU out, and **33** input
-channels is wrong for a reason the packed row cost did not cover.
+A fifth followed on 2026-08-14: **the CNA counts output channels in pairs.** At 41
+output channels the vendor emits weights for 42 and writes 41 in `0x1024`, while
+its CORE, DPU and RDMA all still carry 40. Rounding the count up there, and laying
+the weight tiles out to match, took every odd output channel count from wrong
+across its whole second tile to exact, and MobileNet from 995 of 1001 to
+**1000 of 1001**.
+
+Still open, both in Mesa: a pointwise with **56** output channels times the NPU
+out, and **33** input channels is wrong for a reason the packed row cost did not
+cover.
 
 ## Every regular convolution shape computes, and so does depthwise
 

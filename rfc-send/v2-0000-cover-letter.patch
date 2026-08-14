@@ -1,0 +1,75 @@
+From b069f9049e9929ecfb9bdbea4b1644d0d10d2ee4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sat, 18 Jul 2026 14:46:46 +1200
+Subject: [RFC PATCH v2 0/8] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This adds RK3576 NPU support to accel/rocket.  RFC: the NPU brings up and
+runs, but full inference is not correct yet, and I would rather get
+feedback now than sit on it.
+
+Tested on a Radxa ROCK 4D.  The NPU probes, powers on, brings up its
+IOMMUs, and runs jobs to completion (rocket + Mesa Teflon).  Getting there
+took a few fixes outside the driver too: a power-domain settle delay and
+reset cycling (else a cold power-on throws an async SError), the full
+clock set on the MMU nodes, clearing a stale firmware page fault, and both
+NPU power domains on the core.
+
+Not solved: only the first operation in a power session gives the right
+answer.  Every later one engages and DMAs its input, but the compute
+output never lands, so the readback is the zero-point.  I chased it
+through the whole software surface (registers, IOMMU/TLB, cache,
+power/clock/reset, dispatch) and it reproduces even with the driver
+environment matched to the vendor's on the same kernel, so it looks to be
+below software, in the fixed-function block.  Traces available.
+
+Two asks: review of the bring-up and the shared pmdomain/iommu changes;
+and if anyone knows the RK3576 NPU internals, whether that
+per-power-session arm can be driven from software at all.
+
+The series is split by subsystem (binding, pmdomain, iommu, driver, DT).
+The board DT keeps vdd_npu_s0 always-on for now; happy to switch to
+proper runtime control if preferred.
+
+Changes in v2 (thanks to Chaoyi Chen and the Sashiko review bot):
+  - dt-bindings: keep sram-supply required for rk3588 via allOf/if-then
+    instead of dropping it from the shared required list
+  - pmdomain: release the resets in rockchip_pm_remove_one_domain()
+  - iommu: drop the redundant "err == 0" check in the clock probe
+  - iommu: replace the two "skip orphaned-fault banks" patches with one
+    that clears the stale firmware page fault (CMD_PAGE_FAULT_DONE) before
+    enabling stall, so no bank needs special-casing -- Chaoyi asked
+    whether dealing with the fault avoids the skip, and it does
+  - accel/rocket: gate every RK3576-specific difference (extra clocks,
+    single reset, multi power-domain attach, polled completion) behind
+    of_device_id match data so the RK3588 path is byte-for-byte unchanged;
+    drop the unused DPU register mapping (the driver did no pre-arm)
+  - series is now 8 patches (was 9)
+
+I used Claude Opus 4.8 to help trim this series out of my debugging tree
+and generate the diffs.
+
+Jiaxing Hu (8):
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  iommu/rockchip: take all DT clocks
+  iommu/rockchip: clear stale page faults before enabling stall
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  12 +-
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  16 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  78 ++++++++++-
+ drivers/accel/rocket/rocket_core.c            |  39 +++++-
+ drivers/accel/rocket/rocket_core.h            |  22 ++-
+ drivers/accel/rocket/rocket_device.c          |   4 +
+ drivers/accel/rocket/rocket_drv.c             |  22 ++-
+ drivers/accel/rocket/rocket_job.c             | 127 ++++++++++++++++--
+ drivers/iommu/rockchip-iommu.c                |  41 +++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  69 ++++++----
+ 10 files changed, 371 insertions(+), 59 deletions(-)
+
+-- 
+2.43.0
+

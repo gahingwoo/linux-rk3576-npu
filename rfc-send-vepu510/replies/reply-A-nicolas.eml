@@ -1,0 +1,52 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH 0/3] media: rockchip: VEPU510 H.264 encoder for RK3576
+In-Reply-To: <082e1141c38205222a91abf13b1a97d9a00e117a.camel@collabora.com>
+References: <20260722073417.2064667-1-gahing@gahingwoo.com>
+ <082e1141c38205222a91abf13b1a97d9a00e117a.camel@collabora.com>
+
+On Tue, 22 Jul 2026 20:29:53 +0200, Nicolas Dufresne wrote:
+> This is really nice to see interest in enabling encoder for this chips
+> set. I'm adding Detlev in CC here, as he's actively working on RK3588
+> encoder, which is quite a similar chip.
+
+Thanks, and thanks for looping Detlev in.
+
+> So Detlev driver, which finally got P-Frames support few days ago
+> (he'll explain why this didn't work initially for him) [...]
+
+This is the most useful sentence in the thread for me. RK3576's VEPU510
+and RK3588's VEPU580 are the same VEPU5xx family -- same vendor HAL flow,
+identical reconstruction/reference-read (recn_refr) path -- and that
+reference read is exactly where every P-frame stalls for me: the first
+inter frame of a session hangs the encoder watchdog fetching the previous
+frame's reconstruction, even though the reconstruction is valid and my
+register writes match the vendor byte for byte. So whatever Detlev hit is
+very likely the same bug.
+
+Detlev -- whatever you can share about why P-frames didn't work at first
+would help me enormously.
+
+> While this isn't invalid [...] the community agreed direction was to
+> introduce V4L2 Stateless Encoder specification [...]
+> [...] we decided to look into making drivers similar to how we do GPU
+> drivers today. This is possible today thanks to the Vulkan Video
+> standard.
+
+I'm not attached to the stateful interface -- I used it to get something
+running on real silicon, not out of conviction. Before I commit to
+reworking, I'd like to be sure I understand what "converge" means here,
+because I see two fairly different directions in the thread: Paul's V4L2
+stateless H.264 encoder (kernel-side reflist/rbsp/RC core), and the
+Vulkan-Video split you describe for Detlev (thin kernel module + Mesa
+userspace). Those differ a lot in kind and in effort. Which is the
+intended target for the Rockchip encoders, or is that still open? Is
+there a branch, early code or spec draft I should read beyond Paul's
+series?
+
+Either way the RK3576 hardware enablement and the reference-read fix are
+shared with RK3588, so I'd much rather contribute the VEPU510 side to a
+common base than maintain a parallel one -- I'd just like to know which
+base that is before rebuilding on it.
+
+Thanks,
+Jiaxing

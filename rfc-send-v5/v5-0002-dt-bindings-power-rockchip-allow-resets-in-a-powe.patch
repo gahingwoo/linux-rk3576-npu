@@ -1,0 +1,41 @@
+From 6bb4e8a6301ee7dcca76c11bc00f4a136a18e1c7 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 5 Aug 2026 14:31:09 +1200
+Subject: [RFC PATCH v5 v5 2/8] dt-bindings: power: rockchip: allow resets in a
+ power domain node
+
+Some domains do not come up in a usable state on their own and need
+their resets cycled once power is on. The RK3576 NPU domains are one
+case: without it the first access after power-on takes an async SError.
+
+pd-node has no resets property and every nesting level is
+unevaluatedProperties: false, so describing that in DT is rejected
+today. Add it alongside clocks.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ .../bindings/power/rockchip,power-controller.yaml         | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml b/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
+index b41db576f..f23c1a118 100644
+--- a/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
++++ b/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
+@@ -136,6 +136,14 @@ $defs:
+           A number of phandles to clocks that need to be enabled
+           while power domain switches state.
+ 
++      resets:
++        minItems: 1
++        maxItems: 30
++        description: |
++          A number of phandles to resets that need to be cycled once the power
++          domain has been switched on, for domains whose logic does not come up
++          in a usable state by itself.
++
+       domain-supply:
+         description: domain regulator supply.
+ 
+-- 
+2.43.0
+

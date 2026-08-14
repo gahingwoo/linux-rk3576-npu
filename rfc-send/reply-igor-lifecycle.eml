@@ -1,0 +1,76 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH 2/2] accel/rocket: keep core slots stable across unbind and rebind
+In-Reply-To: <20260730080355.177422-3-royalnet026@gmail.com>
+References: <20260730080355.177422-1-royalnet026@gmail.com>
+ <20260730080355.177422-3-royalnet026@gmail.com>
+
+Hi Igor,
+
+I like this one. Making .dev the liveness marker is the right shape, and
+the analysis of the three jobs num_cores was doing is exactly right.
+
+But making .dev load-bearing needs one more site than the patch touches:
+rocket_probe()'s failure path never clears it.
+
+  rdev->cores[core].dev = &pdev->dev;
+  ...
+  ret = rocket_core_init(&rdev->cores[core]);
+  if (ret) {
+          rdev->num_cores--;
+          if (rdev->num_cores == 0) {
+                  rocket_device_fini(rdev);
+                  rdev = NULL;
+                  devres_release_group(&drm_dev->dev, rdev_group);
+          }
+  }
+
+Before this patch that was harmless, because every lookup was bounded by
+num_cores and the slot fell outside it. After it, the slot stays marked
+live while its rocket_core is half-initialised.
+
+It only bites when the failing core is not the last one bound. If
+num_cores drops to zero the whole cores array is freed by the devres
+release from patch 1, and the stale .dev goes with it. So the case to
+test is core N failing to init while cores 0..N-1 are already up,
+easiest with a forced error return in rocket_core_init(), since a real
+-EPROBE_DEFER retries rather than failing.
+
+What that leaves behind:
+
+ - find_core_for_dev() finds the slot, so the runtime PM callbacks run
+   against a core whose clocks/resets/IRQ were never set up;
+ - rocket_first_live_core() can return it, and rocket_open() then builds
+   the IOMMU domain against that device;
+ - rocket_job_open() adds &cores[core].sched to the scheds array, and
+   that scheduler was never drm_sched_init()ed.
+
+That last one also overflows. scheds is sized rdev->num_cores, but the
+loop now counts live slots, and after a failed init there is one more
+live slot than num_cores, so the last scheds[n++] writes one element
+past the allocation.
+
+One line fixes all of it:
+
+  if (ret) {
+          rdev->cores[core].dev = NULL;
+          rdev->num_cores--;
+          ...
+
+Two smaller things, neither blocking:
+
+The slot scan in rocket_probe() is a scan-then-claim with nothing
+serialising it against another core's probe. Platform probing is
+synchronous today so it cannot bite, and the old code had the same
+property via num_cores, so it is no worse. Just worth knowing it is
+still there if rocket ever gains async probe.
+
+sched_to_core() scanning max_cores now walks slots whose .sched is not
+initialised. Comparing &cores[core].sched against a live scheduler
+pointer can never match on those, so it is correct as written; a .dev
+check would make it obviously correct to a reader.
+
+I have only RK3576 here, so this is a code review rather than a
+Tested-by. I cannot exercise the multi-core unbind matrix.
+
+Thanks,
+Jiaxing

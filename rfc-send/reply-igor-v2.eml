@@ -1,0 +1,23 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v2 2/2] accel/rocket: keep core slots stable across unbind and rebind
+In-Reply-To: <20260731064933.12548-3-royalnet026@gmail.com>
+References: <20260731064933.12548-1-royalnet026@gmail.com>
+ <20260731064933.12548-3-royalnet026@gmail.com>
+
+Hi Igor,
+
+All three are addressed, and in the right places. The .dev = NULL lands
+in the rocket_core_init() failure path before num_cores is decremented,
+which is what keeps the live slot count and the scheds allocation in
+step. The .dev check in sched_to_core() and the note about synchronous
+probe are both what I had in mind. Thanks for exercising the forced
+init failure path on hardware too.
+
+Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
+
+And thanks for the Tested-by on my v3. RK3588 is the part I cannot
+check here, so having the soc_data conversion confirmed on all three
+cores is worth a lot.
+
+Cheers,
+Jiaxing

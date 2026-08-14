@@ -1,0 +1,157 @@
+From 23d25ef41c8b0e6bd2c7f7a8f0a2b9e4d5c6f7a8 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 5 Aug 2026 16:40:00 +1200
+Subject: [RFC PATCH v5 0/8] accel/rocket: RK3576 NPU (RKNN) enablement
+
+v4 was supposed to be a fixes only revision and its patch 4 was not.
+I trimmed the series out of my debugging tree and the trim missed
+rocket_job.c entirely, so 202 lines of ping-pong experiment went out
+with it, including a rocket_core_state_init() call that runs
+unconditionally from rocket_device_runtime_resume() and would therefore
+have replayed the RK3576 vendor init on RK3588 as well. Igor Paunovic
+caught it when he went to re-test, before it cost anyone else time.
+Sorry for the noise.
+
+That code is gone. rocket_job.c is back to +72 lines, which is v3 plus
+the two fixes v4 was meant to carry.
+
+Tested on a Radxa ROCK 4D, on next-20260730.
+
+Changes in v5
+-------------
+
+  * accel/rocket: the experiment code v4 shipped by mistake is removed.
+    No module parameters, no snapshot ioremap, no regcmd patching.
+
+  * dt-bindings: the RK3576 nodes never validated against the RK3588
+    binding, which still described RK3588's shape only. Igor ran
+    dt-validate and found ten failures across the two cores: six clocks
+    and two power domains where the schema allowed four and one, and a
+    single reset where dtschema infers minItems from maxItems and so
+    requires two. The property ranges are widened and each SoC is pinned
+    back to its own shape in allOf, so nothing loosens for RK3588. I
+    checked that by giving an RK3588 node a fifth clock and confirming
+    the schema still rejects it.
+
+  * dt-bindings: new patch. The resets that patch 5 adds to the NPU power
+    domain nodes had no binding at all, and pd-node is
+    unevaluatedProperties: false at every level, so the DTS could not
+    validate. Also found by Igor.
+
+  * dt-bindings: new patch. The NPU MMU nodes carry five clocks and no
+    clock-names, which rockchip,iommu.yaml does not allow either. This
+    one is not cosmetic: with only aclk and iface enabled the MMU accepts
+    reads and silently drops register writes, which is what commit
+    841363ebb508 ("iommu/rockchip: Take all DT clocks") was for. The
+    schema is widened to match, minItems stays at 2 so every existing
+    devicetree is unaffected, and the DTS gets its clock-names back.
+    Found by the Sashiko bot.
+
+  * accel/rocket: the poll work checked its sequence number outside
+    job_lock, which narrowed the race it was meant to close rather than
+    closing it. poll_seq only moves under job_lock, in hw_submit, so the
+    check belongs there too. The shared part of the completion path is
+    split into a helper both callers use. Also from the bot.
+
+  * accel/rocket: rocket_job_fini() cancelled the poll after
+    drm_sched_fini(), but the completion path submits the job's next
+    task, and drm_sched_fini() does not wait for work already queued, so
+    a poll could arm the hardware while teardown was disabling clocks.
+    A dying flag now stops that before the scheduler goes away, and the
+    cancel stays after it so a job running at that moment cannot re-arm
+    the timer behind it. Also from the bot.
+
+  * rk3576-rock-4d.dts: the commit message now says why the supply is
+    marked always-on and why only core 0 is enabled, rather than leaving
+    both to be asked about.
+
+Igor, this is not the mechanical respin I said it would be. The last two
+items restructure rocket_job_handle_irq(), which is the RK3588 path as
+well, so it needs characterising rather than a repeat of your v3 bench.
+Both are gated on soc->poll_completion for behaviour, but the code
+underneath is shared. Thanks for reading the diff instead of trusting
+the cover letter.
+
+Verified on hardware, twice, with every debug knob off: the NPU probes
+with the two domain list, a known byte exact convolution stays byte exact
+six times over, running a different one and coming back is unchanged, and
+unbind/rebind rebinds cleanly and runs again with no warning.
+
+What is still wrong
+-------------------
+
+A single convolution is byte exact, and re-running it is byte exact every
+time. A different one after it computes nothing, while the resident one
+keeps working, and going back to it is byte exact again.
+
+Igor suggested on the v4 thread that this reads less like a register we
+fail to write and more like something the block never re-fetches, and
+that the useful question is whether the regcmd is read at all. That
+turned out to be the right question, and the answer is now measured.
+
+Overwriting the head of the regcmd buffer in place, just before OP_EN,
+changes nothing for a repeat submit: it computes byte exact from a buffer
+full of 0xdeadbeef. The same corruption on the first submit after a
+resume makes that job wrong. So some submits load their configuration and
+some run from resident state, and the write itself is confirmed by
+reading it back.
+
+Filling the output BOs with a marker byte just before OP_EN says what the
+failing submit does with that state. On a submit that computes, the
+marker is gone from every byte and the result is correct. On the submit
+that walls, the marker survives in 100% of the buffer.
+
+So the failing submit is a no-op. It does not read its configuration, it
+does not compute, and it never writes its output, which means it does not
+know where the output goes. It still looks like a completion, because
+INTERRUPT_RAW_STATUS PC_DONE is permanently latched and the poll
+condition is therefore always already true.
+
+I have to correct something in the v3 and v4 cover letters here. Both
+said the failing job "writes out a zero point surface", and I read that
+as the MAC producing nothing. That was wrong. A fresh shmem BO is zeroed,
+0x00 plus the +0x80 that teflon applies on readback is 128, and 128 is
+exactly what I had been calling the zero point fill. The buffer was never
+written at all. Nothing was ever measured about the MAC on this path.
+
+That also retires the ping-pong lead from the v3 thread, and not because
+the observation was wrong. The pointer is stuck, S_POINTER bit 0 reads
+back 1 whatever we write, but flipping it, selecting a bank the way
+rk3576_state_init does, and pulsing POINTER_PP_CLEAR are all null, the
+vendor does not switch banks per submit either, and adding its state_init
+verbatim changes nothing. The bank is about where a configuration lands,
+and the configuration is not being read in the first place.
+
+What is left is the condition under which the block loads at all. That is
+what I am chasing now, and suggestions are very welcome.
+
+I used Claude Opus 5 to trim this series out of my debugging tree and
+generate the diffs. It is also what missed the hunk in v4, so this time
+the trimmed tree was diffed against v3 patch by patch and grepped for
+every experiment symbol before sending.
+
+Jiaxing Hu (8):
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: allow the RK3576 NPU MMU clock set
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../devicetree/bindings/iommu/rockchip,iommu.yaml  |   8 ++
+ .../bindings/npu/rockchip,rk3588-rknn-core.yaml    |  47 +++++++-
+ .../bindings/power/rockchip,power-controller.yaml  |   8 ++
+ arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts    |  10 ++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi           |  80 +++++++++++++-
+ drivers/accel/rocket/rocket_core.c                 |  26 ++++-
+ drivers/accel/rocket/rocket_core.h                 |  20 +++-
+ drivers/accel/rocket/rocket_device.c               |   4 +
+ drivers/accel/rocket/rocket_drv.c                  |  22 +++-
+ drivers/accel/rocket/rocket_job.c                  | 121 +++++++++++++++++++--
+ drivers/pmdomain/rockchip/pm-domains.c             |  71 ++++++++----
+ 11 files changed, 373 insertions(+), 44 deletions(-)
+
+--
+2.43.0

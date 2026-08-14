@@ -1,0 +1,78 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH 0/3] media: rockchip: VEPU510 H.264 encoder for RK3576
+In-Reply-To: <210b72e32d1bd757a36b2baf532dd9f7d46ca5dc.camel@collabora.com>
+References: <20260722073417.2064667-1-gahing@gahingwoo.com>
+ <20260723004642.2075233-1-gahing@gahingwoo.com>
+ <210b72e32d1bd757a36b2baf532dd9f7d46ca5dc.camel@collabora.com>
+
+Hi Nicolas, Paul, Detlev,
+
+Thanks both for laying out the trade-offs so clearly.
+
+Decision from my side: I'll converge on the DRM-ish / Vulkan Video
+direction and sync with Detlev, rather than push the stateful V4L2
+driver further. Nicolas' point about UAPI lock-in is the deciding one
+for me -- I don't want to expose an encoder UAPI that then has to be
+supported forever -- and if RK3576 is just a minor delta on Detlev's
+RK3588 base, that's exactly where my hardware work is worth the most.
+
+Paul -- thank you for the generous offer. I read both your Media Summit
+decks and your posted series ([PATCH 00/14], the generic in-kernel
+h264-enc core + rbsp + rate control on VC8000E); it's clearly further
+along than I'd assumed. I'm not closing the door on a V4L2 version
+later, but I'd rather not commit to maintaining two drivers up front, so
+I'll treat that as a possible follow-up, not the primary path.
+
+Where I think I can be useful right now is the hardware, since that part
+is shared with RK3588 regardless of interface:
+
+> I know in his case he was trying to avoid reconstructed frame
+> compression, and it only started working when he enable that
+> compression. Though, he had mmu faults prior to that.
+
+Useful data point, but let me be precise about where I already am, so I
+don't send Detlev chasing something I've done. This driver already runs
+with reconstruction compression enabled (enc_pic.rec_fbc_dis = 0) -- the
+state Detlev needed -- and the first inter frame still hangs. Disabling
+it (rec_fbc_dis = 1) was one of my experiments and also hung, so FBC
+state alone doesn't explain my stall.
+
+The part that does line up is the mmu fault. I still have a residual
+rk_iommu write fault on this path; I traced it from a boot-varying
+garbage IOVA down to a benign IOVA 0, and I'd concluded it was a
+separate AXI transaction from the recon write, independent of the
+P-frame hang. Detlev's report -- that his mmu faults and his missing
+P-frames cleared together -- is a direct reason to distrust that
+"independent" conclusion and re-check whether the fault and the stall
+share a root cause on RK3576 too.
+
+Detlev -- when you have a moment: on RK3588, were the mmu fault and the
+P-frame failure the same underlying problem? And did enabling
+reconstruction compression clear the fault on its own, or did the
+reference-read mapping (how the previous frame's reconstruction is
+mapped for the encoder to fetch) need a separate change as well?
+Whatever you can share, I'm happy to test on RK3576 and feed back a
+Tested-by.
+
+One point on the current code, since it came up:
+
+> A lot of the code is hex tables generated from inspecting a running
+> driver.
+
+Fair, and I won't pretend otherwise -- the PARAM/SQI classes are
+currently shipped as fixed tables taken from a captured encode rather
+than computed. The one thing I'd add is that those particular values are
+mpp's public default-tuning tables (the RDO lambda/cost and
+subjective-quality tables in Rockchip's open-source mpp HAL, Apache-2.0),
+so they're constants I can cite to mpp source rather than opaque state.
+But I fully agree the driver needs significant cleanup before it's
+upstream-worthy, and in the DRM-ish model most of that tuning moves to
+userspace anyway, so a lot of it won't survive the transition in its
+current form.
+
+So: please point me at Detlev's shared branch / early code whenever it's
+in a shape to build against, and I'll start porting the RK3576 hardware
+bring-up onto it.
+
+Thanks,
+Jiaxing

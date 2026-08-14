@@ -1,0 +1,55 @@
+From 0e01163d25879b1db78dafe543d29a2a094f1dca Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 5 Aug 2026 14:31:22 +1200
+Subject: [RFC PATCH v5 v5 3/8] dt-bindings: iommu: rockchip: allow the RK3576
+ NPU MMU clock set
+
+The RK3576 NPU MMUs need more than aclk and iface. With only those two
+enabled the MMU accepts reads but silently drops register writes: a
+DTE_ADDR value written from the power domain, while the domain clocks
+are still on, reads back correctly, and the write rk_iommu_resume() does
+microseconds later does not land at all. The vendor DT names the CBUF
+clocks as that MMU's interface clocks and its driver keeps every NPU
+clock on for as long as the device is powered.
+
+The driver side of this is already upstream, commit 841363ebb508
+("iommu/rockchip: Take all DT clocks"), which switched rk_iommu to
+devm_clk_bulk_get_all(). Widen the schema to match so those nodes can
+be described. minItems stays at 2, so every existing devicetree, which
+all carry exactly aclk and iface, is unaffected.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ .../devicetree/bindings/iommu/rockchip,iommu.yaml         | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
+index 6ce41d11f..a3cedcaaa 100644
+--- a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
++++ b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
+@@ -42,14 +42,22 @@ properties:
+     minItems: 1
+ 
+   clocks:
++    minItems: 2
+     items:
+       - description: Core clock
+       - description: Interface clock
++      - description: Compute clock, RK3576 NPU MMUs only
++      - description: Convolution buffer core clock, RK3576 NPU MMUs only
++      - description: Convolution buffer interface clock, RK3576 NPU MMUs only
+ 
+   clock-names:
++    minItems: 2
+     items:
+       - const: aclk
+       - const: iface
++      - const: npu
++      - const: aclk_cbuf
++      - const: hclk_cbuf
+ 
+   "#iommu-cells":
+     const: 0
+-- 
+2.43.0
+

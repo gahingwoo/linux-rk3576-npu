@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 22 Jul 2026 19:00:00 +1200
+Subject: [RFC PATCH 0/3] media: rockchip: VEPU510 H.264 encoder for RK3576
+
+This is an RFC for a from-scratch mainline V4L2 driver for the H.264
+hardware video encoder (VEPU510) on the Rockchip RK3576.  It is a
+stateful mem2mem encoder (NV12 in, H.264 Annex-B out) modelled on the
+verisilicon/hantro driver, not on the downstream MPP-service model.
+
+I'm posting it as an RFC because intra frames work but inter frames do
+not, and I'd like a second pair of eyes on the inter-frame problem
+before this is worth a real submission.
+
+What works
+----------
+
+Intra-only (I-frame) encoding is confirmed on real hardware (Radxa
+ROCK 4D).  With GOP size 1 the driver produces a valid H.264 stream the
+reference decoder accepts.  This already exercises the full path: V4L2
+m2m, the register programming, the software SPS/PPS prepend, and the
+hardware slice output.
+
+There is no upstream userspace involved (an encoder needs no request
+API); I drive it with a small ioctl test program that feeds NV12 frames
+and writes the CAPTURE buffers to a .h264 file.
+
+The open problem: inter (P-frame) frames hang
+---------------------------------------------
+
+Every P-frame stalls the encoder's own hardware watchdog (INT_STA bit 8,
+~20 ms after the kick) and produces essentially no bitstream.  I have
+spent a lot of time narrowing this; it is sharply localized but I cannot
+close it:
+
+  - The P-frame register writes match a real register-write trace of the
+    vendor stack encoding the same content, byte for byte (I traced the
+    vendor kernel's writes and diffed against this driver's).
+
+  - The reconstruction the previous frame writes is *valid*: dumping the
+    recon buffer after the I-frame shows correct reconstructed pixels.
+
+  - If the P-frame reads its own (older, settled) recon slot instead of
+    the immediately-preceding frame's, it completes.  Reading the
+    immediately-preceding frame's *fresh* reconstruction as the
+    reference is what hangs.
+
+  - It is not FBC: storing the reconstruction uncompressed
+    (enc_pic.rec_fbc_dis = 1) still hangs.
+
+  - The first frame of a session always works; the first P-frame hangs;
+    after a couple of failures + core resets, later frames sometimes
+    start completing.  It behaves like a warm-up / settling problem on
+    the reference-read path, not a wrong register value.
+
+So the encoder programs identically to the vendor and reads a valid
+reference, but stalls fetching the previous frame's reconstruction as
+the inter reference on the first inter frame of a session.  My best
+guess is that the vendor does something between consecutive frame
+submissions -- a completion/drain wait, a cache/coherency step, or a
+per-frame re-arm -- that I am missing, but I have not found it.  If
+anyone recognizes this on VEPU5xx, or knows what the reference-read path
+needs between frames, a pointer would be very welcome.
+
+The shape of this -- the first operation of a power session works, the
+next stalls, and a reset/warm-up sometimes helps -- is the same one I
+ran into bringing up this SoC's NPU (accel/rocket RKNN), where the
+second/chained submit in a session would not fire [1].  I can't claim
+they share a root cause, but if this is a known RK3576-wide submit /
+re-arm quirk rather than an encoder-specific bug, that would be good to
+know.
+
+[1] https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/
+
+Notes for review
+----------------
+
+  - The PARAM/SQI register classes are programmed from mpp's constant
+    "default tuning" tables (not derived per-frame), as noted in the
+    code.  They are required: leaving them unwritten stalls even the
+    I-frame.
+
+  - Rate control is fixed-QP only for now (the bitrate control is
+    advisory).
+
+  - H.264 baseline/main, single slice, 4:2:0 only.
+
+  - Tested at 176x144; other resolutions are not yet validated.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+
+Jiaxing Hu (3):
+  dt-bindings: media: add Rockchip RK3576 VEPU H.264 encoder
+  media: rockchip: add VEPU510 H.264 encoder driver for RK3576
+  arm64: dts: rockchip: rk3576: add VEPU H.264 encoder nodes
+
+ .../bindings/media/rockchip,rk3576-vepu.yaml       |   94 ++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi           |   50 +
+ drivers/media/platform/rockchip/Kconfig            |    1 +
+ drivers/media/platform/rockchip/Makefile           |    1 +
+ drivers/media/platform/rockchip/rkvenc/Kconfig     |   14 +
+ drivers/media/platform/rockchip/rkvenc/Makefile    |    6 +
+ .../media/platform/rockchip/rkvenc/rkvenc-h264.c   | 1095 ++++++++++++++++++++
+ .../media/platform/rockchip/rkvenc/rkvenc-regs.h   |  929 +++++++++++++++++
+ drivers/media/platform/rockchip/rkvenc/rkvenc.c    |  892 ++++++++++++++++
+ drivers/media/platform/rockchip/rkvenc/rkvenc.h    |  212 ++++
+ 10 files changed, 3294 insertions(+)
+--
+2.43.0
+

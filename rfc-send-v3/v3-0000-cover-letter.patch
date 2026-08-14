@@ -1,0 +1,86 @@
+From a7c25f05202d3587ef369912daf5a5c4cf160bd4 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Fri, 31 Jul 2026 16:34:36 +1200
+Subject: [RFC PATCH v3 0/6] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This adds RK3576 NPU support to accel/rocket. Still RFC: the NPU brings up
+and runs, but inference is not correct yet. The open bug moved a long way
+since v2, so it is worth describing.
+
+Tested on a Radxa ROCK 4D, on next-20260730.
+
+The two iommu patches from v2 are gone from this series. Will picked them
+up and they are in linux-next as 841363ebb508 and b10d5920cafa.
+
+What is still wrong
+===================
+
+A single convolution is byte exact. Running that same convolution again,
+six times in one power session, is byte exact every time. What fails is
+running a different one after it: the second configuration loaded into the
+block computes nothing and writes out a zero point surface, while the one
+already resident keeps working. Going back to it is byte exact again, and
+the same holds with the two models swapped, so it is not about which model
+is which.
+
+The register command list is identical in both positions, byte for byte, so
+it is not what we program. A full NPU reset clears it. With one before every
+op, per layer input and weight fetch return at the graph's real shapes and
+the DPU writes back, but what lands is still zero point. So dispatch, DMA
+and write back are all fine, and the multiply accumulate is what produces
+nothing.
+
+That is as far as I have got. If anyone knows the RK3576 NPU internals, the
+question is what a second configuration load has to do that the first does
+not.
+
+Changes in v3
+=============
+
+  * dt-bindings: reject sram-supply on non-rk3588 via an allOf else, and
+    drop the commit message paragraph explaining the schema (Krzysztof)
+
+  * pmdomain: rename DOMAIN_M_O_R_G to DOMAIN_M_O_R_G_W rather than
+    extending it, since the suffixes name the fields it sets and RK3576 is
+    its only user (Heiko). Drop a stray whitespace hunk.
+
+  * accel/rocket: v2 said PC_DONE could not be routed to the GIC and polled
+    it instead. That reason was wrong, and the bits it polled turn out to be
+    permanently latched, so the poll condition was always already true.
+    RK3576 now arms the same DPU completion as RK3588 and samples
+    INTERRUPT_RAW_STATUS for it, because on this SoC the interrupt does not
+    reach the GIC. Verified on hardware: without the sampling every job sits
+    until the scheduler timeout (525 ms per job, 195 timeouts in one run);
+    with it, jobs finish in 10.8 ms and six repeats are byte exact.
+
+  * iommu: both patches dropped, now in linux-next.
+
+Note on overlap: patch 4 sets core->clks[].id for all six clocks. Igor
+Paunovic has a standalone fix for the first four in flight
+(20260729092939.118779-1-royalnet026@gmail.com). Once that lands this hunk
+reduces to the two CBUF entries.
+
+I used Claude Opus 4.8 to help prepare this series and its diffs.
+
+Jiaxing Hu (6):
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 15 +++-
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 16 ++++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 78 ++++++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 26 ++++++-
+ drivers/accel/rocket/rocket_core.h            | 17 +++-
+ drivers/accel/rocket/rocket_device.c          |  4 +
+ drivers/accel/rocket/rocket_drv.c             | 22 +++++-
+ drivers/accel/rocket/rocket_job.c             | 55 +++++++++++++
+ drivers/pmdomain/rockchip/pm-domains.c        | 71 +++++++++++------
+ 9 files changed, 273 insertions(+), 31 deletions(-)
+
+-- 
+2.43.0
+

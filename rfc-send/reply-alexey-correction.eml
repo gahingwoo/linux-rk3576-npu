@@ -1,0 +1,56 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC PATCH v2 6/8] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260725121601.2970185-1-gahing@gahingwoo.com>
+References: <CAKTNdwHL2Z3h-FN7LLPshz5B0duiMw_pyfe=VG4UDhfm8igZ6Q@mail.gmail.com>
+ <20260725121601.2970185-1-gahing@gahingwoo.com>
+
+Correcting myself before anyone builds on it.
+
+I wrote yesterday:
+
+> The per-op reset is not a workaround, to be clear -- after 90 of them the
+> NPU power domain can't reach idle at power-off and that times out the
+> shared regulator path (-110) and takes the box down.
+
+That mechanism is wrong. There is no power-domain problem. What I was
+looking at was a serial console printk flood: my test script ran
+'dmesg -n 8', the debug kernel emits several hundred register-dump lines
+per op, and at 115200 baud that blocks interrupts long enough to time out
+the PMIC I2C. The symptoms I misread --
+
+  dwmmc_rockchip: Unexpected interrupt latency
+  cpu4: _set_opp_voltage: failed to set voltage: -110
+  rcu: INFO: rcu_preempt detected stalls on CPUs/tasks
+  rockchip-pm-domain: failed to set idle on domain 'nputop', val=0
+
+-- are that signature, not the NPU's. It reproduces with zero resets, a
+single-op model and the whole probe disabled, and 'dmesg -n 4' makes it
+go away entirely. So please disregard that paragraph; if you were about
+to look at RK3576 genpd on account of it, don't.
+
+The conclusion it was attached to still stands, for a different and duller
+reason: the per-op reset is not a workaround because it does not make the
+MAC produce anything, not because it breaks power-down.
+
+Two other numbers from that mail need tightening, both re-measured on a
+quiet console:
+
+- The wall itself is unchanged and is not a console artifact. op0 fetches
+  and computes (top dt_rd=9408 wt_rd=96, core dt_wr=25088, output
+  distinct=238); every later op reads exactly nothing and writes a
+  degenerate surface.
+
+- "90 resets, 87 interrupts" was one run and I implied a 1:1. It isn't:
+  90 resets now give 63 interrupts. What holds is the qualitative part --
+  dozens of completion interrupts in a single power session against
+  exactly one without resets, and the per-layer input and weight fetch
+  returning in full.
+
+The part of that mail I'd still stand behind is the first half: the vendor
+is interrupt-driven on the same GIC lines, INTERRUPT_MASK 0x300 is writable
+and the line does fire, bit 31 is hardware-set and no register write clears
+it, and the v3 fixes I listed.
+
+Sorry for the noise.
+
+Jiaxing
