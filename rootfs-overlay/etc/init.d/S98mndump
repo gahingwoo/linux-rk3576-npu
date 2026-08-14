@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-14 round 143. charsiu computes a matmul, with the RDMA finished too.
+# 2026-08-14 round 144. Two streams for one shape, so the diff can name it.
 #
 # Round 139 finished the pointwise: every odd output channel count came out
 # exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
@@ -101,13 +101,14 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: charsiu computes a matmul ====="
+	log "===== 2) THE TEST: two streams for ONE shape, side by side ====="
 	log ""
-	/opt/charsiu/charsiu_matmul 4 64 32 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
+	log "  -- MESA's stream for pw64x64w1, which COMPUTES on this hardware"
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DUMP_REGCMD=1 \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/pw64x64w1.tflite" > "$C" 2>&1
 	log ""
-	log "  -- and at one row, the shape an LLM decodes with"
-	/opt/charsiu/charsiu_matmul 1 512 64 > "$C" 2>&1
+	log "  -- CHARSIU's stream for the same shape: M=1 K=64 N=64"
+	CHARSIU_DUMP=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
