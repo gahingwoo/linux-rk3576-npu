@@ -2,78 +2,50 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-13 round 139. The CNA counts output channels in pairs.
+# 2026-08-14 round 140. charsiu's own path to the hardware.
 #
-# Round 138 landed the operand alignment and it was the right call:
+# Round 139 finished the pointwise: every odd output channel count came out
+# exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
+# and MobileNet reached 1000 of its 1001 outputs within one count of the CPU.
+# It also settled the question charsiu starts from: 512 to 1024 at M = 1, 2, 3,
+# 4 and 8 are all exact, so a single row matmul is a shape this silicon computes
+# and the RK3588 height-below-four constraint is not on it.
 #
-#   oc 34   EMPTY -> 34 of 34 maxdiff 1      the control, ROCKET_SCALE_NOPAD=1,
-#   oc 36   EMPTY -> 36 of 36 maxdiff 1      put the empty convolution straight
-#   oc 40   40 of 40, untouched              back, and 40, 64, 48-input, mn_L03,
-#   oc 64   64 of 64, untouched              mn_L04, conv2d-cal and mn_conv0 all
-#                                            came out unchanged
+# Nothing in Mesa or the kernel changed for this round. The new thing is a
+# BINARY, /opt/charsiu/charsiu_probe, which is charsiu talking to the NPU
+# through the rocket uAPI directly, with no Mesa and no delegate in the path.
 #
-#   MOBILENET produced a real output for the first time: 995 of 1001 within one
-#   count of the CPU, with 10 distinct values against the CPU's 10, where every
-#   run before this was 1001 channels of zero.
-#
-# What is left is exactly the ODD output channel counts. 33, 41 and 47 compute
-# now, but every one of their wrong channels is in the second weight tile:
-#
-#   oc 33   wrong {32}                   oc 34, 36, 40, 64   nothing wrong
-#   oc 41   wrong {32, 35, 37, 40}
-#   oc 47   wrong {32, 35, 37, 40, 42, 45, 46}
-#
-# and their COMPUTED-correct lists stop at channel 31 in all three.
-#
-# The vendor says why, in one number. At 64 input and 41 output channels it
-# emits 2688 weight bytes, which is 64 by 42, and 0x1024 reads 41, which is 42
-# channels less one. Its CORE 0x3020, DPU 0x402c and RDMA 0x5014 all still read
-# 40, the real count less one. So the CNA is told a whole number of output
-# channel PAIRS and reads the weights for all of them, and nothing else is.
-#
-# This driver emitted 2624 bytes and 40, and laid the weight tiles out with an
-# odd stride, which moves every address in the second tile.
+# It computes nothing. It opens /dev/accel/accel0, allocates a buffer object,
+# checks the DMA address it gets back is inside the 32 bit window a register
+# stream can address, writes a pattern through the CPU mapping, hands the buffer
+# back with FINI, takes it again with PREP, and reads the pattern back. That is
+# the whole of the path a real submit needs underneath it, and every later
+# charsiu failure is easier to read once this line is known good.
 #
 # DECISION RULE, written before the run:
 #
-#   33, 41 and 47 come out whole and the even counts do not move
-#             the pair padding was it, and the pointwise is finished.
-#   they improve but keep wrong channels in the second tile
-#             the stride is right and the padding channel's CONTENT matters.
-#             It is zeroed here; the vendor's blob suggests a copy.
-#   an even count moves at all
-#             impossible by construction: ALIGN(oc, 2) is oc for all of them,
-#             so their bytes and registers are identical. That would mean the
-#             change is reaching something it should not.
+#   open ok, dma in the window, readback ok
+#             charsiu's device layer works, and the next piece is the register
+#             stream, which already matches the vendor's geometry offline.
+#   the DMA address is above the 32 bit window
+#             a register stream BO has to be allocated differently, and that is
+#             better learned now than while debugging a wrong result.
+#   readback MISMATCH
+#             the cache maintenance is wrong, which would silently corrupt every
+#             weight buffer later. Nothing else charsiu does could be trusted
+#             until it is fixed.
 #
-# ALSO IN THIS ROUND, independent of the fix above: the LLM shapes, for charsiu.
-# The vendor's .rkllm dispatches an LLM's projections as ONE ROW, M = 1, and its
-# attention at M = 2, 3, 4 and up. The RK3588 notes record a feature height below
-# four as computing output uncorrelated with the reference on every datatype.
-# Round 135's one pixel probes already came out correct here, so this asks the
-# same question at an LLM's width and walks M across that boundary: 512 to 1024
-# at M = 1, 2, 3, 4 and 8, which is mn_pw24's own shape and the largest
-# projection reachable without a converter.
+# The rest is regression, so the image itself is known sane, plus the two shapes
+# still open in Mesa, measured rather than chased:
 #
-# HOW TO READ THEM: a one row surface has nothing to vary within a channel, so
-# perch's COMPUTED count is 0 by construction and means nothing there. Read the
-# per channel match count and npu distinct against cpu distinct, the way round
-# 135's w1 probes were read.
+#   pw33x64w56    33 input channels, still wrong after the packed row cost that
+#                 fixed 48.
+#   pw64x56w56    56 output channels TIMES the NPU out. Even, and its coefficient
+#                 operand is aligned, so none of the last three fixes touch it.
 #
-#   M = 1 correct at 512 to 1024
-#             the height below four constraint is not on this chip, an LLM
-#             projection is a shape this hardware computes, and charsiu's
-#             premise holds at the real width rather than only at 64 channels.
-#   M = 1 wrong but M = 4 correct
-#             the constraint IS here and round 135's 64 channel pass was too
-#             small to show it. charsiu would then have to batch, as RK3588 does.
-#
-# CONTROL that can fail: entry 4 runs 41 with ROCKET_OC_ODD=1, which puts the
-# unpadded count back and must reproduce today's 37 of 41 with the same four
-# wrong channels.
-#
-# ⚠ pw64x56w56 still TIMES OUT, and the entry after a timeout comes back flat
-# 128 with an rk_iommu reset error. It runs last, as in round 138.
+# The timing out shape runs LAST, as it has since round 138: the entry after a
+# timeout comes back flat 128 with an rk_iommu reset error beside it, and that
+# collateral was read as a result twice before it was understood.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -90,50 +62,33 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1..3) THE TEST: the odd output channel counts ====="
+	log "===== 1) THE TEST: charsiu opens the NPU on its own ====="
+	log ""
+	/opt/charsiu/charsiu_probe > "$C" 2>&1
+	log "  charsiu_probe exit $?"
+
+	log ""
+	log "===== 2..5) REGRESSION, so the image is known sane ====="
+	p mn_conv0.tflite ""
+	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
-	p pw64x33w56.tflite ""
-	p pw64x47w56.tflite ""
+	p llm512x1024m1.tflite ""
 
 	log ""
-	log "===== 4) CONTROL: 41 with the odd count left alone ====="
-	p pw64x41w56.tflite "ROCKET_OC_ODD=1"
-
-	log ""
-	log "===== 5..8) the even counts, whose bytes cannot change ====="
-	p pw64x34w56.tflite ""
-	p pw64x36w56.tflite ""
-	p pw64x40w56.tflite ""
-	p pw64x64w56.tflite ""
-
-	log ""
-	log "===== 9) the whole MobileNet ====="
+	log "===== 6) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 10..14) REGRESSION ====="
-	p pw48x64w56.tflite ""
-	p mn_L04.tflite ""
-	p mn_L03.tflite ""
-	p conv2d-cal.tflite ""
-	p mn_conv0.tflite ""
+	log "===== 7) still open: 33 input channels ====="
+	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 15..21) charsiu: the LLM shapes, and the M ladder ====="
-	p llm512x1024m1.tflite ""
-	p llm512x1024m2.tflite ""
-	p llm512x1024m3.tflite ""
-	p llm512x1024m4.tflite ""
-	p llm512x1024m8.tflite ""
-	p llm512x512m1.tflite ""
-	p llm256x1024m1.tflite ""
-
-	log ""
-	log "===== 22) LAST, because it times out and poisons whatever follows ====="
+	log "===== 8) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 4 must reproduce 37 of 41 with wrong {32,35,37,40}. ====="
+	log "===== Read entry 1 first. If the readback mismatches, nothing charsiu ====="
+	log "===== does later can be trusted.                                      ====="
 	sync
 }
 case "$1" in
