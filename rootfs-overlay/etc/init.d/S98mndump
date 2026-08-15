@@ -2,6 +2,310 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 180. The element is 16 bits AND its low byte is inert, which
+# only a float can do. Feed a real fp16.
+#
+# ROUND 179 CONFIRMED THE PAIRING and the layout for k under 16 is now complete.
+# With each value in the high byte of a 16 bit slot, --kpair reads
+#
+#   byte 0 low -> k 0    byte 0 high -> k 1    byte 1 low -> k 2
+#   byte 7 high -> k 15  byte 8 low  -> k 16 on channel 1
+#   byte 512 low -> k 0 on channel 32
+#
+# which is exactly k = 2b + h, where the 8 bit packing read 2k + 1. So the
+# element is 16 bits wide, and the intra row order is the interleaved one, order
+# 0, not the halved one. Together with the row measured in round 172:
+#
+#   channel n is read from byte (n / 32) * 512 + (n % 32) * 8,
+#   byte b nibble h is k = 2b + h, with an element two bytes wide
+#
+# and every part of that has now been measured and then confirmed by a second,
+# different probe. It also retires "the fetch is a quarter of the buffer", which
+# this project carried from round 172: it was never short, it is a full fetch of
+# half as many elements, each twice as wide.
+#
+# THE VALUES ARE STILL AT THE RAILS, and the reason is in the same log. In the
+# sweep, a one hot of 100 placed in the LOW byte of an element never lit a
+# channel. A 16 bit INTEGER cannot do that: 100 would be about 100 output counts,
+# which is plainly visible. A FLOAT must do it, because a value whose exponent
+# byte is zero is a subnormal near zero.
+#
+# So the activation is an fp16 here, which is the only way the vendor runs int4,
+# as w4a16. Writing an int8 byte into the high half of an fp16 makes a float with
+# that byte as its sign and exponent: garbage of a wildly varying magnitude, and
+# the impulse duly rails.
+#
+# I could not predict the observed values from an fp16 reinterpretation either,
+# and that is recorded rather than smoothed over. Every integer domain model of
+# the arithmetic fails on them, which is what a float datapath would look like,
+# but "the element is 16 bits" is measured and "the element is a float" is an
+# inference from one negative.
+#
+# ROUND 180's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3, --f16. A REAL fp16 activation, small integers a half holds exactly
+#   so the packing adds no error of its own, with one live nibble per channel at
+#   k = c mod 16.
+#
+#     the output tracks the activation
+#               int4 computes, w4a16 is the configuration it needs, and what is
+#               left is only where k = 16 and above go.
+#     the output is still at the rails
+#               the element being 16 bits stands, since that was measured twice,
+#               and its being a FLOAT is what comes down. The next suspect is
+#               then the weight nibble's own format rather than the activation.
+#     the sentinel survives
+#               nothing was written at all, and an fp16 activation needs
+#               register changes this round did not make.
+#
+#   ENTRY 4 keeps the integer impulse as the baseline being explained, and
+#   ENTRY 5 is int8, which must be untouched.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 179. int4 CONSUMES THE ACTIVATION AS 16 BITS. Measured, and
+# this round packs the input that way.
+#
+# ROUND 178's RESULT, and it is the cleanest reading in this whole stretch. One
+# live nibble in the whole buffer, a one hot input, sweeping k:
+#
+#   byte 0 low  -> k 1     byte 0 high -> k 3
+#   byte 1 low  -> k 5     byte 1 high -> k 7
+#   byte 2 low  -> k 9     byte 2 high -> k 11
+#   byte 3 low  -> k 13    byte 3 high -> k 15
+#   byte 4 low  -> k 17    byte 4 high -> k 19
+#   byte 7 low  -> k 29    byte 7 high -> k 31
+#
+# EVERY nibble paired with EXACTLY ONE k, 1 of 64 on all twelve offsets. So the
+# layout is a permutation, nothing is broadcast, and the "a nibble reaches more
+# than one input" reading that has stood since round 171 is dead.
+#
+# The pairing is k = 4b + 2h + 1, and against what the packer intends, k = 2b + h,
+# that is exactly
+#
+#     k_hardware = 2 * k_ours + 1
+#
+# with no exception in twelve. That is what a 16 BIT ELEMENT does to an 8 bit
+# buffer: the hardware's element k is our bytes 2k and 2k+1, and it pairs with
+# the high one. int4 weights consume the activation as 16 bits whatever the
+# stream asks for, which is also the only way the vendor ever runs int4, as
+# w4a16.
+#
+# It settles the rest at a stroke. A row of 8 bytes is 16 nibbles and therefore
+# 16 of the HARDWARE's elements, not 16 of ours, so channel 0 takes our k = 1 to
+# 31 odd and channel 1 takes our k = 33 to 63 odd. Byte 8 measured exactly that.
+# And "the fetch is a quarter of the buffer" was never a short fetch: it is a
+# full fetch of half as many elements, each twice as wide.
+#
+# ROUND 179's QUESTION, and its decision rule, written before the run. The input
+# packer now writes each value into the HIGH byte of a 16 bit slot, and the atom,
+# the surface stride and the packing all come from one place,
+# charsiu_effective_adtype, so they cannot describe different buffers. surf for
+# K = 64 int4 goes from 1 to 2, which is the 16 bit atom of 8 rather than the 8
+# bit atom of 16.
+#
+#   ENTRY 3, the int4 impulse.
+#
+#     byte exact against a reference that is not flat
+#               int4 computes, and the last thing between charsiu and a 2x on
+#               every token is where k = 16 and above go.
+#     the right channels light with wrong values
+#               the pairing is right and something in the arithmetic is not,
+#               which is a much smaller place to look than a layout.
+#     unchanged from round 177
+#               the 16 bit reading is wrong despite fitting twelve of twelve,
+#               and the control below says whether the change even took.
+#
+#   ENTRY 4 IS THE CONTROL. CHARSIU_A8_STRIDE1 restores the 8 bit packing, so
+#   round 177's saturated rails must come back. A fix whose control does not
+#   bring the fault back has not been shown to be the fix.
+#
+#   ENTRY 5 is int8, which must be untouched: charsiu_effective_adtype returns
+#   the asked for type for every precision except int4.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 178. Sparse on BOTH sides, which is the one thing that has
+# never been tried, and which two unexplained results already point at.
+#
+# ROUND 177 FIXED THE INSTRUMENT AND THE ANSWER GOT WORSE, which is the useful
+# kind of worse. The impulse's reference now reads 16 distinct values from 9 to
+# 247, no TOO FLAT warning, so it can discriminate. Both intra row orders came
+# back 0 of 64 byte exact, and the output is BIMODAL AT THE RAILS:
+#
+#   cpu[0..15]  136 173 210 247  28  65 102 154 191 228   9  46  83 120 172 209
+#   npu[0..15]  128 128 127 127 128 127 127 128 127 127 128 128 127 128 144 127
+#
+# 128 is a requant clamped to zero and 127 is saturation. That is not a
+# permutation of the reference, it is a scale that has blown up.
+#
+# AND THE SAME SCALE WORKS IN THE MAP PROBE. --map runs weight_scale 1.7857 with
+# a single live nibble and produces clean small values, and on int8 it produces
+# v = k + 1 exactly. The only difference is how many live nibbles exist: one in
+# the whole buffer for the map, sixty four for the impulse, one per channel. If
+# the layout were right each channel would still see exactly one, so saturation
+# says channels are seeing each other's.
+#
+# That lines up with the one fact this project has left standing as unexplained
+# since round 171: the map's k column is unusable because A NIBBLE REACHES MORE
+# THAN ONE INPUT. Cross talk between channels and a nibble touching several
+# inputs are the same statement.
+#
+# It has never been measured because every probe so far is sparse in one operand
+# and DENSE in the other, so every output is a sum over whatever the nibble
+# touches and no single k can be named.
+#
+# ROUND 178's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3, --kpair. ONE live nibble in the whole buffer, a ONE HOT input at a
+#   single k, sweeping k across all of K. The output is nonzero exactly when that
+#   nibble is paired with that k, so the set of inputs a nibble touches is read
+#   directly with no sum to unpick. Eight byte offsets, both nibbles.
+#
+#     exactly one k lights per nibble
+#               the pairing is one to one, the layout is a permutation after
+#               all, and the k column can finally be built from these hits
+#               rather than from a value.
+#     several k light per nibble
+#               a nibble is broadcast across inputs and the count says by how
+#               much. That would explain the map's unusable k column AND round
+#               177's saturation with one mechanism, and it would mean the
+#               weight buffer is not a plain tiling at this precision.
+#     no k lights at an offset the map says is live
+#               the one hot input is below what the output stage can show, and
+#               the amplitude has to come up before anything else is read.
+#
+#   ENTRY 4 keeps round 177's impulse as the baseline, so the saturation this
+#   round is explaining stays on the same page as the explanation.
+#
+#   ENTRY 5 IS THE CONTROL and int8 must still be byte exact.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 177. The measured row is RIGHT. The impulse that says which
+# nibble order goes with it was under-scaled, which is round 169's mistake one
+# probe over.
+#
+# ROUND 176's RESULT, and the good half is unambiguous. Packing k = 0 to 15 into
+# the measured row, the int4 impulse lights 60 of 64 channels at one intra row
+# order and 64 of 64 at the other, where the reference itself lights 56. Round
+# 170b, with the old packer, lit FOURTEEN. And the output repeats with a period
+# of 16, which is exactly what an impulse at k = c mod 16 should do. So
+#
+#   channel n is read from byte (n / 32) * 512 + (n % 32) * 8
+#
+# is right, and it is the first thing about the int4 layout that has both been
+# measured and then confirmed by a second, different test.
+#
+# THE BAD HALF IS MINE AGAIN. Both orders came back TOO FLAT TO JUDGE A MATCH
+# with 7 distinct reference values, so neither can be told from the other. One
+# live nibble of 7 against an input spanning 30 either side of the zero point
+# cannot fill a byte. The dense int4 test was rescaled in round 170 and the
+# impulse was simply left behind; that is round 169's mistake, one probe over,
+# and the TOO FLAT warning added in round 170 is what caught it.
+#
+# The npu values ran to 31 where the reference reached 3, and the ratio is 8 on
+# channel 0, 15 on channel 1 and of the opposite SIGN on channel 2. Fitting
+# anything to that would be the fifth time in this stretch that a rule got fitted
+# to a badly conditioned measurement. The instrument gets fixed first.
+#
+# ROUND 177's QUESTION, and its decision rule, written before the run. The
+# impulse now uses a multiplier of 1/7 and an input spanning 120, so its
+# reference is a nibble of 7 times the input, fills the byte, and one count means
+# one count. Both probes also print their SCALES and zero points now, because
+# three rounds have been lost to a setting that existed only in the source.
+#
+#   ENTRY 3 and ENTRY 4 are the two intra row orders, with a reference that can
+#   now discriminate:
+#     order 0   byte j holds k = 2j low and k = 2j+1 high, interleaved
+#     order 1   low nibbles are k = 0 to 7, high nibbles are k = 8 to 15
+#
+#     one of them is byte exact, with a reference that is not flat
+#               the layout for k under 16 is complete, and what is left is only
+#               where k = 16 and above go.
+#     both light every channel and neither matches
+#               the order is a third thing, and the next probe walks ONE k at a
+#               time through the row rather than testing two whole orders.
+#     the reference is STILL flat
+#               the rescale did not take, and nothing below it can be read. The
+#               banner now prints the scales, so this is checkable from the log
+#               rather than from the source.
+#
+#   ENTRY 5 IS THE CONTROL and int8 must still be byte exact.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 176. Pack int4 where the hardware was MEASURED to look, and
+# nowhere else.
+#
+# ROUND 175 GOT THE COMPARISON, and the probe is now known good. With the weight
+# zero point taken from the precision:
+#
+#   int8  K=64  N=64  4096 bytes   512 of 512 probes light, NO dead region,
+#                                  n = byte / 32, k = byte % 32, v = k + 1
+#   int8  K=128 N=64  8192 bytes   1024 of 1024 light, no dead region
+#   int4  K=64  N=64  2048 bytes   128 of 512 light, a QUARTER, row 8 bytes
+#
+# The int8 map is exactly what src/regcmd.c packs, including its k column, so the
+# int8 layout is no longer only inferred from correct outputs: the hardware was
+# asked and it agrees, and the instrument is calibrated on a case whose answer is
+# known. That is what makes the int4 reading worth anything.
+#
+# WHAT IS DATA ABOUT int4, and only this:
+#
+#   channel n is read from byte (n / 32) * 512 + (n % 32) * 8, eight bytes,
+#   and nothing else in the buffer is fetched at all
+#
+# the same 8 byte row at K = 32, 64 and 128 and at N = 32 and 64, so it does not
+# grow with K. int8's row at the same K is 32 bytes, so the hardware's int4 k
+# group is 16 weights where int8's is 32.
+#
+# WHAT IS NOT DATA: which k those 16 nibbles are, in what order, and where k = 16
+# and above go. The map's k column is unusable for int4 because a nibble reaches
+# more than one input, and every byte outside those rows is dead. Rounds 167,
+# 168, 171 and 173 all went wrong by filling exactly this gap with a guess.
+#
+# ROUND 176's QUESTION, and its decision rule, written before the run.
+#
+#   The packer now writes k = 0 to 15 into the measured row and REFUSES the rest,
+#   so a K above 16 comes back short on purpose. The impulse puts its one live
+#   weight at k = c mod 16 so every channel's tap is inside the measured region.
+#   The host check in `make test` confirms all 1024 of those placements land where
+#   the map says and nowhere else.
+#
+#   ENTRY 3, the int4 impulse.
+#
+#     every channel lights
+#               the measured region is right, and what is left is only the order
+#               of the 16 nibbles inside it.
+#     every channel lights AND the values match the reference
+#               the intra row order is right as well, which would be the whole
+#               of the layout for k under 16.
+#     the channels lit are still strided
+#               the region reading is wrong too, and it is the only thing left
+#               that was actually measured, so the probe's own geometry becomes
+#               the suspect rather than the layout.
+#
+#   ENTRY 4 runs it again with CHARSIU_INT4_ORDER=1, the other intra row order:
+#   low nibbles k = 0 to 7 and high nibbles k = 8 to 15, against the default's
+#   byte j holding k = 2j and 2j+1. Whichever gives values matching the reference
+#   is the order, and if neither does then the order is a third thing.
+#
+#   ENTRY 5 IS THE CONTROL. int8 must still be byte exact: the packer changed and
+#   int8 goes through the same function.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 175. Round 174's int8 map was saturated by my own probe, so
 # the comparison it was for did not happen.
 #
@@ -1243,18 +1547,28 @@ start() {
 	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 3) THE TEST: the same map on an INT8 buffer, which is ====="
-	log "=====    byte exact, against the int4 one                    ====="
+	log "===== 3) THE TEST: a REAL fp16 activation against int4 weights ====="
 	log ""
-	log "  -- INT8 weights, K = 64, N = 64. This is what a correct map is."
-	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
+	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 	log "  charsiu_int4 exit $?"
+
 	log ""
-	log "  -- INT4 weights, the same shape and the same stride"
+	log "===== 4) the integer impulse, as the baseline being explained ====="
+	log ""
+	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and the pairing, which round 179 made k = k"
+	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
+
+	log ""
+	log "===== 5) THE CONTROL: the packer changed, int8 must be exact ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and the int4 map again, to see the fetch move or not"
 	/opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
-	log ""
-	log "  -- INT8 again at K = 128, to see its row move or not"
-	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 128 64 --map 8 > "$C" 2>&1
 
 	log ""
 	log "===== 4) the int4 impulse, as the round 170b baseline ====="
@@ -1292,8 +1606,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== If the INT8 map also has dead regions, the probe is wrong and ====="
-	log "===== rounds 172 and 173 come down with it. Check that first.        ====="
+	log "===== Entry 3 decides whether the element is a FLOAT. 16 bits wide  ====="
+	log "===== is measured twice already and does not depend on it.           ====="
 	sync
 }
 case "$1" in

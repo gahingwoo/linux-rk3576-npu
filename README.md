@@ -86,6 +86,15 @@ the cost is the weight fetch and neither the MAC nor the dispatch. Two jobs of
 eight tasks were about 5% worse than one job of sixteen, which is what a
 bandwidth bound workload does with a second core.
 
+**A weight layout can be asked rather than inferred.** Put one live weight in the
+whole buffer, sweep it, and record which output channel lights. Run against int8,
+which is byte exact through this driver, all 512 probes of a 64 by 64 buffer light
+exactly one channel with `n = byte / 32` and `k = byte % 32`, which is what the Mesa
+packer writes. So the int8 weight layout is no longer only inferred from correct
+outputs: the hardware was asked and it agrees. The same probe on int4 found the
+activation element to be two bytes wide, which is in
+[charsiu](https://github.com/gahingwoo/charsiu).
+
 Two other things charsiu found are the driver's business too. **The vendor's
 `.rkllm` files carry their register command streams**, exactly as `.rknn` files
 do, so what the closed LLM stack asks this NPU to do can be read offline; that is
