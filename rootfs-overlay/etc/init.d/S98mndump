@@ -2,6 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 187. Round 186's map is clean; its bisection failed by its
+# own written rule, and both of this round's probes exist because of that.
+#
+# THE MAP, all 64 channels, control passed (no live nibble, written region all
+# zero):
+#
+#   lit    0-7   16-23   32-39   48-63     40 channels, slots 0..39, no overlap
+#   dark   8-15  24-31   40-47             24 channels light nothing
+#   value  0x000013f8 = 5112 everywhere, independent of the channel
+#   extent 160 bytes = 40 slots, where N = 64
+#
+# NO RULE IS WRITTEN DOWN FROM THAT, because the word "channel" in it is an
+# assumption. The probe put its live nibble at row = (n/32)*512 + (n%32)*8, and
+# that formula came from --map in rounds 176 to 179, when the output still went
+# through the int8 requant and was read as BYTES. The w4a16 path writes 4 byte
+# integers into a 160 byte region. The two paths are not known to agree, and
+# three evenly spaced dead bands are exactly what a wrong row formula looks
+# like. --bmap drops the formula and walks the weight buffer a byte at a time.
+#
+# THE BISECTION FAILED, and the check that caught it was written before the run.
+#
+#   entry 4's Mesa recovery was itself broken, conv2d-cal 0 of 128, EMPTY conv,
+#   npu distinct 1. The header said in that case entries 5 and 7 say nothing.
+#   entry 6's Mesa run was fine, 128 of 128, so the recovery is real but its
+#   timing is not controlled.
+#
+#   entry 7, NO_DPU, wrote NOT ONE BYTE: 256 of 256 still held the sentinel. So
+#   "int8 was fine afterwards" only means no w4a16 job ever ran. Entry 8 wrote
+#   64 bytes of 0x7f807f80, which is the int8 rail, so that was not w4a16
+#   either. Only entry 5, NO_RDMA, actually ran one: 160 bytes written and
+#   element 0 = -3692, identical to the full port, which incidentally says the
+#   RDMA group changes nothing about the output and matches rounds 182 and 183.
+#
+#   and the COUNT was never controlled. The failing case had 65 w4a16 jobs
+#   behind it, from --osweep. The passing ones had one.
+#
+# SO --wedge DOES IT IN ONE PROCESS. Same fd, no Mesa in between, nothing
+# shared, and the count is the only thing that moves: N w4a16 jobs, then one
+# int8 job, then report whether the int8 job completed. N runs 0, 1, 2, 4, 8,
+# 16, 32, 64 and the totals ACCUMULATE, so the running total is printed beside
+# N and a threshold is in terms of the total.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   N = 0 fails            the int8 job is broken on its own and this has
+#                          nothing to do with w4a16. The control that can fail.
+#   first failure at a row the threshold is between that row's total and the
+#                          previous row's.
+#   every row passes       a plain w4a16 job wedges nothing, and whatever round
+#                          185 hit is in what --osweep does differently rather
+#                          than in the count.
+#
+# AND --bmap READS THE LAYOUT WITHOUT THE FORMULA. One live nibble in one byte,
+# every byte of the 2048, activation a single constant, output slot recorded,
+# then a summary per slot of how many bytes feed it and over what span.
+#
+#   contiguous run of bytes per slot   the run is the row size and the gap
+#                                      between runs is the row stride.
+#   scattered bytes per slot           the layout is interleaved, and the per
+#                                      slot min and max say over what span.
+#   a large part of the buffer dark    the fetch is shorter than the buffer,
+#                                      and this measures by how much.
+#
+# Its control is the all zero buffer, run FIRST, which must light nothing.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 186. Two results from round 185, and the second one is a
 # defect in the stream this project wrote.
 #
@@ -1913,85 +1978,59 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) int8 FIRST. This is the known good end of the control. ====="
+	log "===== 1) int8 FIRST, the known good end ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
-	log ""
-	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 2) THE MAP: one live nibble, sweeping ALL 64 channels.    ====="
-	log "=====    Row one has no live nibble and must be nonzero 0.      ====="
+	log "===== 2) THE TEST: N w4a16 jobs then one int8 job, one process, ====="
+	log "=====    nothing in between. Row N = 0 is the control.          ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --wedge > "$C" 2>&1
+	log "  charsiu_int4 --wedge exit $?"
+
+	log ""
+	log "===== 3) THE OTHER TEST: which weight BYTE feeds which output   ====="
+	log "=====    slot, with no row formula assumed. All zero control    ====="
+	log "=====    runs first and must light nothing.                     ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+	log "  charsiu_int4 --bmap exit $?"
+
+	log ""
+	log "===== 4) and the channel sweep again, so this round can be      ====="
+	log "=====    laid beside round 186 unchanged                        ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
-	log "  charsiu_int4 exit $?"
 
 	log ""
-	log "===== 3) int8 straight after w4a16, which round 185 measured    ====="
-	log "=====    as a timeout. Reproducing it is what makes 5 and 7     ====="
-	log "=====    readable.                                              ====="
+	log "===== 5) int8 last, after everything above ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 4) a Mesa model, to put the NPU back. If THIS is broken,  ====="
-	log "=====    entries 5 and 7 say nothing.                           ====="
-	p conv2d-cal.tflite ""
-
-	log ""
-	log "===== 5) w4a16 with the RDMA group taken back out, then int8    ====="
-	log ""
-	CHARSIU_W4_NO_RDMA=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after NO_RDMA exit $?"
-
-	log ""
-	log "===== 6) the Mesa model again, same recovery check             ====="
-	p conv2d-cal.tflite ""
-
-	log ""
-	log "===== 7) w4a16 with the DPU group taken back out, then int8     ====="
-	log ""
-	CHARSIU_W4_NO_DPU=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after NO_DPU exit $?"
-
-	log ""
-	log "===== 8) and both groups out, which is the round 180 stream     ====="
-	log "=====    with only the int4 weight format left                  ====="
-	p conv2d-cal.tflite ""
-	log ""
-	CHARSIU_W4_NO_DPU=1 CHARSIU_W4_NO_RDMA=1 \
-		/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after both out exit $?"
-
-	log ""
-	log "===== 9) REGRESSION, so the image is known sane ====="
+	log "===== 6) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 10) MobileNet end to end ====="
+	log "===== 7) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 11) still open: 33 input channels ====="
+	log "===== 8) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 12) LAST, because it times out and poisons whatever follows ====="
+	log "===== 9) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 2's table whole, no fitting. Then the four int8 ====="
-	log "===== exits in 3, 5, 7 and 8 against the rule in the header.     ====="
+	log "===== Entry 2's control row first, then its first failure. Then  ====="
+	log "===== entry 3's per slot summary, whole, without fitting.        ====="
 	sync
 }
 case "$1" in
