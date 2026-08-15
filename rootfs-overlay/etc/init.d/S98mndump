@@ -2,6 +2,352 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 175. Round 174's int8 map was saturated by my own probe, so
+# the comparison it was for did not happen.
+#
+# WHAT ROUND 174 SHOWED. Every int8 probe lit all 64 channels at 127, INCLUDING
+# the one with an all zero weight buffer. That is not the hardware, it is the
+# probe: this tool set weight_zero_point to 0 for both precisions, which is right
+# for a nibble and wrong for a byte. An int8 weight is stored biased by 0x80, so
+# its zero point is 0x80 and its B record should be 0; with 0 the B comes out
+# 0x80, and 0x80 * 2080 * mult saturates every channel whatever the buffer holds.
+#
+# The rule written before that run said an int8 map with dead regions would mean
+# the probe is measuring the wrong thing in both precisions. It saturated rather
+# than went dead, but the same conclusion applies to the int8 half: no comparison
+# was made. The int4 half is unaffected, since a zero point of 0 IS right for a
+# nibble, so rounds 172 and 173 stand.
+#
+# The probe now takes its zero point from the precision, and PRINTS both in its
+# banner, because nothing in round 174's output said which was in use.
+#
+# WHAT STANDS ABOUT int4, all of it measured:
+#
+#   the row is 8 bytes, 16 nibbles, at K = 32, 64 and 128 and at N = 32 and 64
+#   the fetch is N * 8 bytes and doubling K fetches nothing more
+#   64 of 256 byte offsets light, a QUARTER of the buffer
+#   every lit probe lights exactly one channel, 512 probes, no exceptions
+#   channels 0 to 31 read from bytes 0 to 255, channels 32 to 63 from 512 to
+#   767, and 256 to 511 is dead: stride 512 against a use of 256
+#
+# 16 nibbles is exactly the int8 activation feature atom these probes run with.
+#
+# ROUND 175's QUESTION, and its decision rule, written before the run. It is
+# round 174's, with a probe that can answer it.
+#
+#   ENTRY 3 maps int8 and int4 at the same shape, same stride, same probe, with
+#   the weight zero point now correct for each.
+#
+#     int8's map covers its whole buffer and int4's a quarter
+#               the fetch is short only for int4, and the difference between the
+#               two maps names what does it.
+#     int8's map is also short
+#               the shortfall is not about precision at all, and the probe's own
+#               geometry is the next suspect rather than the weight path.
+#     int8 saturates again
+#               the zero point was not the only thing wrong with it, and the
+#               int8 arm of this comparison should be abandoned in favour of
+#               reading Mesa's weight buffer instead, which is known correct.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 174. Map an INT8 buffer with the same probe, because int8 is
+# byte exact and its map is what a correct one looks like.
+#
+# ROUND 173's RESULT, and a correction to my own first reading of it. The first
+# pass through the log said the row grows with K. It does not: that number was
+# my analysis confusing the sweep stride with the row size. Recomputed from
+# where the channel index actually increments:
+#
+#   K = 32, 64, 128 at N = 64, and K = 64 at N = 32   ->  8 bytes per channel
+#
+# every time. The row is a fixed 8 bytes, which is 16 nibbles, and it moves with
+# neither K nor N. 128 of 512 probes light in every one of the four sweeps, so
+# the total fetched is N * 8 bytes and doubling K does not fetch one byte more.
+#
+# 16 nibbles is exactly the int8 activation feature atom these probes run with.
+# The hardware takes ONE atom of k per channel and ignores the rest of K, which
+# is a specific claim and not a permutation nobody has guessed yet.
+#
+# The n grouping has its own gap. Channels 0 to 31 read from bytes 0 to 255 and
+# channels 32 to 63 from bytes 512 to 767, with 256 to 511 dead: the stride is
+# 512 and the use is 256, off by exactly two.
+#
+# WHY THIS ROUND IS A DIFF AND NOT ANOTHER SWEEP. Rounds 171 and 173 both went
+# wrong the same way, by fitting a rule to part of a map. int8 is byte exact on
+# this hardware, so mapping an INT8 weight buffer with the identical probe gives
+# what a CORRECT map looks like at the same shape, and the difference between the
+# two is read rather than inferred. That is the method that has worked every time
+# in this project.
+#
+# ROUND 174's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3 maps int8 and int4 at the same 64 by 64 shape, same stride, same
+#   probe, one live byte or nibble at a time.
+#
+#     int8's map covers its whole buffer and int4's covers a quarter
+#               the fetch is short only for int4, and the difference between the
+#               two maps names the register or the tiling that does it.
+#     int8's map ALSO has dead regions
+#               then the probe is measuring something other than what it is
+#               meant to, in both, and the int4 readings from rounds 172 and 173
+#               come down with it. This is the outcome to check for first.
+#     int8's row is 32 bytes and int4's is 8
+#               the row is the k group in bytes and int4's is a quarter of what
+#               it should be, which is the same factor of four seen everywhere
+#               else this round.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 173. The map is DATA now. Vary K and see which of its numbers
+# move with it.
+#
+# ROUND 172's SWEEP, 512 probes over a 64 by 64 int4 weight buffer, one live
+# nibble each. 128 lit exactly one channel, 384 lit nothing, and NOT ONE lit more
+# than one. So the buffer is tiled rather than broadcast, and the map is
+#
+#   bytes 0 to 255      n = 0 to 31,  n = byte / 8
+#   bytes 256 to 511    dead
+#   bytes 512 to 767    n = 32 to 63, n = 32 + (byte - 512) / 8
+#   bytes 768 to 2047   dead
+#
+# which is one expression:
+#
+#   channel n is read from byte (n / 32) * 512 + (n % 32) * 8, eight bytes each
+#
+# Two things follow and both are measurements rather than readings. The hardware
+# fetches 512 of the 2048 bytes, a QUARTER and not the half round 171's eight
+# sample points suggested. And each channel gets 8 bytes, which is 16 nibbles,
+# where a K of 64 needs 32 bytes.
+#
+# The n group stride is 512, which is 32 channels of 16 bytes, while only 8 bytes
+# per channel are read. The stride and the fetch disagree by exactly two.
+#
+# ROUND 173's QUESTION, and its decision rule, written before the run. Is 8 bytes
+# a function of K?
+#
+#   ENTRY 3 sweeps three shapes: K = 64, K = 128 and K = 32, all at N = 64, plus
+#   one at N = 32 to move the other axis. Only the shape changes between them.
+#
+#     the row grows with K, 8 bytes at K = 64 and 16 at K = 128
+#               the row is K / 8 and the fetch is short by a constant factor,
+#               which points at a byte count register rather than at the layout.
+#     the row STAYS 8 bytes at every K
+#               the row is an atom and not a proportion. The first suspect is
+#               the activation feature atom, which is 16 elements for the int8
+#               activations these probes use and would be exactly 16 nibbles.
+#               That would make the weight tile depend on the ACTIVATION
+#               precision, which the vendor's own registers say the byte counts
+#               do not, so it would be a real and surprising result.
+#     the row moves with N instead
+#               the tile is organised the other way round from what every
+#               reading so far assumes.
+#
+#   The dead regions are as informative as the live ones this round: their size
+#   against the buffer says how short the fetch is at each K.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 172. Sweep the weight buffer instead of sampling it. Eight
+# points is not a map.
+#
+# ROUND 171 DID ITS JOB AND I OVER-READ IT. The sparse probe worked: one live
+# nibble lights exactly one channel, which is what a tiled layout should do.
+# What it does not support is the map I then wrote down. n = byte / 8 fits bytes
+# 0 to 128 and then fails at byte 512, which lit channel 32 where that rule
+# predicts 64; and every offset from 1023 up lit NOTHING while channel 32 was
+# reachable from below. Eight points is an invitation to theorise and that is
+# what I did with them.
+#
+# WHAT IS SOLID FROM 171. A single live nibble lights exactly one output channel
+# at every offset that lights at all, so the weight buffer is tiled and not
+# broadcast. And the k column is unusable: the values run past 127 for a K of 64
+# and step by about 20 per nibble, so a nibble reaches more than one input and
+# the calibration behind "value = k + 1" is wrong.
+#
+# THE OFFLINE HALF IS ANSWERED, and it closes the suspicion this round was
+# opened with. vendor-capture/int4_bytes.py fits the vendor's own int4 registers
+# across three shapes:
+#
+#   ic=2048 oc=256    0x101c 262144    0x1020 1024   0x1030hi 1024
+#   ic=2048 oc=1024   0x101c 1048576   0x1020 1024   0x1030hi 1024
+#   ic=4096 oc=1024   0x101c 2097152   0x1020 2048   0x1030hi 2048
+#
+# which is k*n/2, k/2 and k/2, exactly what charsiu emits. Every one of those
+# shapes appears in the file at BOTH activation precisions with the weight
+# registers bit identical, so the weight byte accounting does NOT move with the
+# activation the way surf does. So whatever leaves half the buffer unread, it is
+# not those registers.
+#
+# (One thing found on the way: 0x1030's high half is 1x the per channel byte
+# count for int4 AND for fp16, and 2x only for int8. charsiu's expression is
+# INT4 ? 1 : 2, which is right for the two precisions it runs and wrong for fp16
+# when that arrives.)
+#
+# ROUND 172's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3 sweeps the WHOLE weight buffer at a stride of 8, both nibbles, which
+#   is 256 probes over a 64 by 64 int4 buffer and one boot. The output is the map
+#   itself rather than an inference from it.
+#
+#     every probe lights exactly one channel, and the byte to channel map is a
+#     clean function
+#               read the layout off the table and write the packer from it. No
+#               hypothesis is involved.
+#     a contiguous region lights nothing
+#               that region is not fetched, and its size against the buffer's
+#               says by how much the fetch is short. 171 suggested a half.
+#     probes light more than one channel
+#               the buffer is being broadcast rather than tiled, which would
+#               contradict 171's own clean single hits.
+#
+#   The value column is printed RAW this round rather than as k, because 171's
+#   calibration for it was wrong and a wrong label is worse than a number.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 171. ROUNDS 167 AND 168 ARE WITHDRAWN. A probe that fills the
+# whole buffer cannot see a permutation, and both of theirs did.
+#
+# ROUND 170b's RESULT, once the scale discriminated. The int4 impulse puts one
+# live weight in every output channel, so every channel should be nonzero, and
+# the reference is. The hardware lit 14 of 64, at 0, 4, 8, 16, 20, 24, 28, 34,
+# 38, 42, 50, 54, 58 and 62. The live nibbles are landing in the wrong places, so
+# the layout is wrong.
+#
+# WHY THE EARLIER ROUNDS COULD NOT HAVE SEEN IT, which is the part worth keeping.
+# Round 167 filled EVERY low nibble, then EVERY high nibble. Round 168 filled
+# every low nibble and walked an input impulse. A full fill is invariant under
+# any layout that is a bijection: "all low live" gives "all channels equal"
+# whatever the placement, so the two probes agreed with each other and with
+# nothing else. They were measuring that the layout is a permutation, which was
+# never in doubt.
+#
+# A layout can only be read with a SPARSE probe. The int8 one was read with
+# position encoded models and this is the same idea.
+#
+# THE CONTROL EARNED ITS PLACE. Round 169's configuration under
+# CHARSIU_W4_SMALLSCALE came back 54 of 64 exact with "reference spread: 1
+# distinct, 0..0 TOO FLAT TO JUDGE A MATCH" beside it: the number and the reason
+# it means nothing, on the same line.
+#
+# AND ONE OF OUR OWN NUMBERS IS WEAKER THAN IT LOOKED. The int8 512 to 1024
+# matmul reads 1023 of 1024 byte exact against a reference with 7 distinct
+# values, so most of those matches are common values rather than computed ones.
+# The 64 wide result, 64 distinct and 64 of 64, is the strong one. The charsiu
+# README said 1023 of 1024 without that qualification and now says it.
+#
+# ROUND 171's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3, --map. ONE live nibble in the whole buffer at a time, sixteen byte
+#   offsets and both nibbles of each. The scales are set so the answer needs no
+#   arithmetic: the output CHANNEL that lights is n and its VALUE is k + 1.
+#
+#     each probe lights exactly one channel
+#               the map is read directly and the packer follows from it.
+#     a probe lights several channels
+#               one nibble reaches more than one output, which is not a
+#               permutation and would mean the weight buffer is being broadcast
+#               rather than tiled.
+#     NOTHING LIT on probes that should light
+#               a single live nibble is below what the output stage can show,
+#               and the probe needs a larger amplitude before anything else.
+#
+#   The layout withdrawn this round predicts byte b low to be n = b / 32 and
+#   k = b % 32, and byte b high the same n with k + 32. The log will say directly
+#   whether that is what happens, which is worth having on the record even though
+#   round 170b already ruled it out by another route.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 170b. The round 170 image did not carry round 170's binary.
+# int4 is not confirmed, including its layout.
+#
+# WHAT WENT WRONG WITH 170, because it is a process fault and not a hardware one.
+# Its script ran and its two int4 entries were byte identical to round 169's, 54
+# of 64 both at the new scale and under the control that was supposed to restore
+# the old one, and no line printed the reference spread the tool was supposed to
+# print. The binary was stale: the edit that raised the int4 weight scale and the
+# edit that added the spread line were in the same scripted change, that change
+# asserted on a third anchor that had gone stale, and the assert aborted the
+# write before ANY of the three landed. Only the third was re-applied, because
+# the abort was read as "the first two went in".
+#
+# The assert did its job. The reading of it did not. From here the check is
+# `strings` on the BINARY for the new text, not a look at the source, which is
+# the same rule this project already had about timestamps.
+#
+# Round 170b is round 170 with the binary that round 170 was supposed to have.
+#
+# WHAT ROUND 169 ACTUALLY SAID. The control passed, int8 unchanged at 1023 of
+# 1024 and 64 of 64 with NO_LIFT still 0 of 64, so the packer, both group helpers
+# and the B record all changed without moving it. Then:
+#
+#   int4 bias ramp   64 of 64 BYTE EXACT
+#   int4 impulse     54 of 64 exact, the other 10 off by 1 or 2
+#   int4 dense 64    6 of 64
+#   int4 dense 512   95 of 1024
+#
+# The first reading of that was "the layout is right and the accumulation is
+# not". THAT READING IS WITHDRAWN. The weight scale was left at int8's while a
+# nibble spans -7 to 7 instead of -128 to 127, so the whole reference vector fell
+# into -1 to +1. Of the impulse's 54 matches, essentially all are channels where
+# the reference is zero and the hardware is zero, which is not a match at all;
+# and every channel that carried any signal was wrong by about half of the range
+# it could hold. An error of one output count is 1250 accumulator units here, and
+# a single live tap can only produce 120 of them.
+#
+# So the only clean result in round 169 is the bias ramp, and the bias ramp does
+# not touch a weight: it holds the MAC at zero and measures the output stage
+# alone. int4's registers, requant, lift and offset are right. Its LAYOUT IS NOT
+# CONFIRMED, and neither is anything else about its weight path.
+#
+# A matching channel is not a computed one. This project has a rule about that,
+# from the Mesa side, and round 169 broke it.
+#
+# ROUND 170's QUESTION, and its decision rule, written before the run.
+#
+#   The int4 weight scale is 18 times int8's now, which puts the accumulator
+#   range where int8's is, so a match means something and one count means one
+#   count. Every result line also prints the REFERENCE's own spread beside the
+#   match count, and says TOO FLAT TO JUDGE A MATCH when it has fewer than eight
+#   distinct values, so round 169's mistake cannot be made quietly again. The
+#   impulse uses a real nibble of 7 rather than an int8 constant masked down to 4.
+#
+#   ENTRY 3, the int4 impulse. One live nibble per channel, and the output IS the
+#   layout read directly.
+#
+#     byte exact, with a reference that is not flat
+#               the layout decoded in rounds 167 and 168 is confirmed against
+#               real values, and the dense case is next.
+#     structurally right, wrong values
+#               layout right, arithmetic wrong, and B or the nibble sign
+#               convention is where to look.
+#     the live channels are in the wrong places
+#               the layout is wrong and the pattern rounds were reading
+#               something else. Position encoded weights, not live or dead ones,
+#               are then the next probe.
+#
+#   ENTRY 4 is the dense matmul, which only means anything if the impulse passes.
+#
+#   ENTRY 5 IS THE CONTROL, and it is round 169's own configuration under
+#   CHARSIU_W4_SMALLSCALE. It must reproduce round 169's flat reference and its
+#   54 of 64, or the scale is not what made this round different.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 169. THE int4 LAYOUT IS DECODED. This is the first round that
 # asks it for a NUMBER rather than a pattern.
 #
@@ -897,50 +1243,57 @@ start() {
 	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 3) THE TEST: a real int4 matmul against the CPU ====="
+	log "===== 3) THE TEST: the same map on an INT8 buffer, which is ====="
+	log "=====    byte exact, against the int4 one                    ====="
 	log ""
-	CHARSIU_W4=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
+	log "  -- INT8 weights, K = 64, N = 64. This is what a correct map is."
+	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
+	log "  charsiu_int4 exit $?"
 	log ""
-	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log "  -- INT4 weights, the same shape and the same stride"
+	/opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
 	log ""
-	CHARSIU_W4=1 CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	log "  -- and a projection's shape, 512 to 1024 in int4"
-	CHARSIU_W4=1 /opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  -- INT8 again at K = 128, to see its row move or not"
+	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 128 64 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 4) the nibble patterns again, as the round 167 baseline ====="
+	log "===== 4) the int4 impulse, as the round 170b baseline ====="
+	log ""
+	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 5) THE CONTROL: round 169's scale, flat and 54 of 64 ====="
+	log ""
+	CHARSIU_W4=1 CHARSIU_W4_SMALLSCALE=1 CHARSIU_IMPULSE=1 \
+		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 6) the nibble patterns, as the round 167 baseline ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 5) the bandwidth line again, so the image is comparable ====="
-	log ""
-	/opt/charsiu/charsiu_bench --shapes 32 50 > "$C" 2>&1
-
-	log ""
-	log "===== 6) REGRESSION, so the image is known sane ====="
+	log "===== 7) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 	p llm512x1024m1.tflite ""
 
 	log ""
-	log "===== 7) MobileNet end to end ====="
+	log "===== 8) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 8) still open: 33 input channels ====="
+	log "===== 9) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 9) LAST, because it times out and poisons whatever follows ====="
+	log "===== 10) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 2 first: the packer, the group helpers and the B record ====="
-	log "===== all changed, and int8 goes through every one of them.          ====="
+	log "===== If the INT8 map also has dead regions, the probe is wrong and ====="
+	log "===== rounds 172 and 173 come down with it. Check that first.        ====="
 	sync
 }
 case "$1" in
