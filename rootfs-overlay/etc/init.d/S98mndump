@@ -2,6 +2,74 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 193. The wedge is fixed and the fix survived the control
+# that could have taken it out, so this round goes back to the actual question:
+# what function of the weight and the activation the output is.
+#
+# ROUND 192, all three results.
+#
+#   THE WEDGE IS GONE. One default w4a16 job then int8: exit 0. Four more: exit
+#   0. That action timed out in every round from 185 to 191.
+#
+#   THE CONTROL THAT COULD HAVE UNDONE THE FIX PASSED, and in the strongest
+#   form available: the byte map with the RDMA group OFF and the byte map with
+#   it FORCED ON are identical line for line, all 40 rows, same histogram.
+#   "That group changes nothing about the output" is now one direct comparison
+#   rather than three separate old measurements.
+#
+#   AND IT WAS COSTING ONE PROBE. K=16 N=64 came back 159 probes at 2 non zero
+#   output bytes and 1 at 16 or more, twice, in rounds 190 and 191, both with
+#   the group on. With the group off it is 160 at 2 and no outlier. That is a
+#   cross round comparison, not a control, so entry 4 below runs both halves in
+#   the same log.
+#
+# WHAT IS ACTUALLY OPEN. The output is not weight times activation:
+#
+#   nibble  7 (signed  +7), activation 8.0   ->  +5112
+#   nibble 15 (signed  -1), activation 8.0   ->  -4896
+#   nibble  0                                ->  output all zero
+#
+# Fit a line through those two: out = 1251 * w - 3645, which predicts -3645 at
+# w = 0 where the measurement is 0. Fit out = C * w and the two points give
+# C = 730.3 and C = 4896. Neither works, so out is not an affine function of the
+# nibble either, and this has TWO points and a rule against fitting to part of a
+# map.
+#
+# So take more points, in ONE probe rather than across rounds. Round 184's
+# 0.930 ratio came from a different probe with a different activation and
+# cannot be laid beside these.
+#
+#   A. activation fixed at 8.0, nibble over 1, 2, 3, 4, 7, 8, 15
+#   B. nibble fixed at 7, activation over 1.0, 2.0, 4.0, 8.0
+#
+# Step 256, so each run is 8 probes of which 4 land in live bytes. Enough to
+# read the value; the layout is already mapped and is not what is being asked.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   A is proportional to the SIGNED nibble
+#             the MAC is right and everything left is scaling.
+#   A is proportional to the UNSIGNED nibble
+#             the weights are not being read as signed, which contradicts
+#             nibble 15 coming back negative and would need that explained.
+#   A is affine with a non zero intercept
+#             something is being added that the coefficient buffer should be
+#             setting and is not, and 0x40ac is where to look.
+#   A is neither
+#             the nibble is not entering the arithmetic as a number, and the
+#             next question is the packing rather than the output stage.
+#
+#   B is proportional to the activation
+#             the activation is entering as a number.
+#   B is flat
+#             the activation is not in the MAC at all and every reading that
+#             assumed it was comes back out.
+#   B moves but not proportionally
+#             the activation is not being read as fp16, and its own format is
+#             the next question.
+#
+# The all zero control runs first in every one of the eleven runs, as always.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 192. The register is named, so the fix goes in the default
 # stream, and this round is the fix plus the control that can undo it.
 #
@@ -2303,74 +2371,73 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) int8 alone, before any w4a16 job has ever run ====="
+	log "===== 1) int8 alone, and again after five w4a16 jobs, so the    ====="
+	log "=====    fix is re-confirmed before anything is read.           ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
-
-	log ""
-	log "===== 2) THE FIX: one w4a16 job on the DEFAULT stream, then int8 ====="
-	log "=====    in its own process. This timed out in every round from  ====="
-	log "=====    185 to 191.                                             ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --pre 1 > "$C" 2>&1
+	log "  int8 first: exit $?"
+	/opt/charsiu/charsiu_int4 1 64 64 --pre 5 > "$C" 2>&1
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after one default w4a16 job: exit $?"
-	log ""
-	log "  -- and four more, since one was enough to wedge it before"
-	/opt/charsiu/charsiu_int4 1 64 64 --pre 4 > "$C" 2>&1
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after four more: exit $?"
+	log "  int8 after five w4a16 jobs: exit $?"
 
 	log ""
-	log "===== 3) THE CONTROL THAT CAN UNDO THE FIX. This map must be     ====="
-	log "=====    IDENTICAL to round 191's: 640 lit, 1408 dark, output    ====="
-	log "=====    byte = (weight byte / 8) * 4, value 5112.               ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+	log "===== 2) A: activation fixed at 8.0, the nibble swept.          ====="
+	log "=====    Read the value column against the signed nibble.       ====="
+	for W in 1 2 3 4 7 8 15; do
+		log ""
+		log "  -- nibble $W"
+		CHARSIU_INT4_LIVE=$W /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 4) the same map with the group forced back ON. If 3 and 4  ====="
-	log "=====    differ, the group DOES affect the output and the fix    ====="
-	log "=====    comes out.                                              ====="
-	log ""
-	CHARSIU_W4_RDMA_MASK=0xf /opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+	log "===== 3) B: nibble fixed at 7, the activation swept.            ====="
+	for A in 1.0 2.0 4.0 8.0; do
+		log ""
+		log "  -- activation $A"
+		CHARSIU_BMAP_ACT=$A /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 5) the K=16 outlier, now printed whatever the line limit   ====="
-	log "=====    says. 159 probes at 2 bytes and one at 16 or more,      ====="
-	log "=====    twice, so which weight byte is it.                      ====="
+	log "===== 4) the K=16 outlier, both halves in ONE log this time.    ====="
+	log "=====    Round 192 compared it across rounds, which is not a    ====="
+	log "=====    control.                                               ====="
 	log ""
+	log "  -- RDMA group OFF, which is the default now"
 	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
+	log ""
+	log "  -- RDMA group FORCED ON, where the outlier was seen twice"
+	CHARSIU_W4_RDMA_MASK=0xf /opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
 
 	log ""
-	log "===== 6) int8 once more, after all of the above ====="
+	log "===== 5) int8 last. Entry 4's second half wedges on purpose, so ====="
+	log "=====    this one is EXPECTED to fail and says nothing if it    ====="
+	log "=====    does.                                                  ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
+	log "  int8 last: exit $?"
 
 	log ""
-	log "===== 7) REGRESSION, so the image is known sane ====="
+	log "===== 6) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 8) MobileNet end to end ====="
+	log "===== 7) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 9) still open: 33 input channels ====="
+	log "===== 8) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 10) LAST, because it times out and poisons whatever follows ====="
+	log "===== 9) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 2 says whether the wedge is gone. Entries 3 and 4     ====="
-	log "===== together say whether the fix cost anything, and they are    ====="
-	log "===== the ones that can take it back out.                         ====="
+	log "===== Read entry 2's seven values against the signed nibble, and ====="
+	log "===== entry 3's four against the activation. Two curves, not two ====="
+	log "===== points from two different probes.                          ====="
 	sync
 }
 case "$1" in
