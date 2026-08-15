@@ -2,6 +2,80 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 185. The output element is not two bytes wide, and every
+# w4a16 number this file has printed was read at the wrong width.
+#
+# ROUND 184'S RESULT, and it settled two of its three questions.
+#
+#   THE CONTROL PASSED. With no live nibble anywhere the output came back all
+#   0x0000, one distinct value, TOO FLAT fired. So the weight buffer IS read
+#   and the output is not invented. The worst case in the handoff is gone.
+#
+#   THE NIBBLE RULE FIRED, and it was the independent and harder of the two.
+#   7 -> 3 has to scale the output by 3/7 = 0.43. Every non zero slot instead
+#   moved by exactly 0.930: 4260 -> 3960, 4686 -> 4356, 4899 -> 4554,
+#   5041 -> 4686. So the weights are in the arithmetic but the output is not
+#   weight times activation.
+#
+#   THE PERMUTATION HALF WAS UNREADABLE, AND THAT WAS THIS FILE'S FAULT. Only
+#   4 of the 16 slots moved when the activation was permuted; the other 12 were
+#   byte identical. The tool's filter excluded nan, inf and zero and called
+#   what was left "finite varying channels", so four constants went into both
+#   fits and poisoned them (3873 against 3999, neither readable). WHETHER A
+#   SLOT VARIES CAN ONLY BE SEEN ACROSS RUNS. A single run cannot say it, and
+#   this is the third round lost to a variant of that sentence.
+#
+# WHAT THE FOUR SLOT PERIOD MEANS. Read as halves the outputs went in a period
+# of four: %4==0 moved with the activation, %4==1 was always 0xffff, %4==2
+# moved with the nibble only, %4==3 was always 0x0000. Pair them little endian:
+#
+#   [94 f1][ff ff] -> 0xfffff194 = -3692
+#   [a4 10][00 00] -> 0x000010a4 = +4260
+#
+# 0xffff and 0x0000 are the high halves of a negative and a positive 32 bit
+# integer. Sixteen halves are eight integers of alternating sign, and the four
+# slot period is an artefact of reading a 4 byte element 2 bytes at a time.
+#
+# THIS CORRECTS ROUND 181. Registers 0x40b0 = 1 and 0x40b4 = 0 say the stage
+# does not REQUANTISE. "So the output is a float" was added on top of that and
+# never measured. An un-requantised output is the raw accumulator, which is an
+# integer. The int32 reading is now printed beside the half reading in every
+# --f16 run so that whichever is wrong can be seen to be wrong.
+#
+# ROUND 185'S QUESTION. Stop assuming the width and read it the way the weight
+# layout was read, with a sparse probe. --osweep puts ONE live nibble in the
+# entire weight buffer, in ONE channel, holds the activation at a single
+# constant so nothing in the output can track an activation index, and dumps
+# the output bytes with no assumption at all. Then it sweeps the channel.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   one run of bytes moves and its start tracks the channel
+#             the run length is the element width and the difference between
+#             starts is the channel stride. Both read, neither fitted.
+#
+#   the same bytes move whatever the channel is
+#             the output is not written per channel, and every per channel
+#             reading in this tree is wrong, not just the width.
+#
+#   nothing non zero for any channel
+#             one nibble against a constant 8.0 is below whatever the stage
+#             keeps. The probe needs a bigger weight, not a new theory.
+#
+# THE CONTROL THAT CAN FAIL is the first row of the sweep, with NO live nibble
+# anywhere. Round 184 measured that as all zero. Anything non zero there means
+# the output does not come from the weight buffer and the sweep is unreadable.
+#
+# AND THE ORDER CHANGED BACK. Round 184 moved the int8 regression to AFTER five
+# w4a16 runs and every int8 job then timed out, output left holding the 0xa5
+# sentinel, with rk_iommu "Error during raw reset" beside it. The register
+# stream is not the cause: int8's stream at 1 512 1024 and at 1 64 64 is BYTE
+# IDENTICAL before and after the w4a16 port (checked offline against e46a56d,
+# no board needed). Mesa's own regressions ran fine afterwards, so nothing is
+# permanently broken. That leaves the order itself, so int8 goes FIRST again
+# here. If it passes first and fails last, a w4a16 job leaves the NPU unable to
+# start the next one, which is a defect in the stream this project just wrote.
+# ---------------------------------------------------------------------------
 # 2026-08-15 round 184. Every w4a16 reading since round 181 rests on a
 # confound, and this round does nothing but break it.
 #
@@ -1770,51 +1844,13 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) charsiu opens the NPU on its own ====="
-	log ""
-	/opt/charsiu/charsiu_probe > "$C" 2>&1
-	log "  charsiu_probe exit $?"
-
-	log ""
-	log "===== 2) BASELINE, plain ramp and nibble 7. This must reproduce ====="
-	log "=====    round 183. If it does not, read nothing below it.      ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-	log "  charsiu_int4 exit $?"
-
-	log ""
-	log "===== 3) THE TEST: the activation PERMUTED, nibble still 7.     ====="
-	log "=====    Same sixteen values, only the pairing with k moves.    ====="
-	log "=====    The two fits are now against different things, and     ====="
-	log "=====    the smaller rms residual names the real variable.      ====="
-	log ""
-	CHARSIU_INT4_PERM=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 4) THE SECOND TEST: nibble 7 -> 3, plain ramp. A real MAC ====="
-	log "=====    must drop the activation slope from about 7 to about 3.====="
-	log ""
-	CHARSIU_INT4_LIVE=3 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 5) both at once, which is the shape the real thing has    ====="
-	log ""
-	CHARSIU_INT4_PERM=1 CHARSIU_INT4_LIVE=3 \
-		/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 6) and the nibble at 0, which must give a dead output.    ====="
-	log "=====    This is the control that can fail: if the output is    ====="
-	log "=====    unchanged with NO live weight anywhere, the numbers    ====="
-	log "=====    above never came from the weight buffer.               ====="
-	log ""
-	CHARSIU_INT4_LIVE=0 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 7) THE int8 REGRESSION. The tool moved, the packer did    ====="
-	log "=====    not, so these must come back exactly as before.        ====="
+	log "===== 1) int8 FIRST, which is where it was until round 184.     ====="
+	log "=====    It timed out last round when it ran after five w4a16   ====="
+	log "=====    jobs. Its register stream is unchanged, so if it       ====="
+	log "=====    passes here the order is the variable.                 ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
 	log ""
 	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log ""
@@ -1822,16 +1858,53 @@ start() {
 	log ""
 	log "  -- and NO_LIFT, which must still bring the floor back"
 	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
 	log ""
-	log "  -- and the int8 map, which is the layout known to be right"
-	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
+	log "===== 2) THE TEST: one live nibble, one channel, sweep the      ====="
+	log "=====    channel, dump the bytes. The first row has NO live     ====="
+	log "=====    nibble and must come back with nothing non zero.       ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
+	log "  charsiu_int4 exit $?"
+
+	log ""
+	log "===== 3) the same sweep with a bigger nibble, in case one is    ====="
+	log "=====    below what the stage keeps                             ====="
+	log ""
+	CHARSIU_INT4_LIVE=15 /opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
+
+	log ""
+	log "===== 4) the round 184 probe again, now printing the SAME bytes ====="
+	log "=====    as int32 beside the halves. If the int32 column is the ====="
+	log "=====    readable one, round 181's float claim comes down.      ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
+	log ""
+	log "===== 5) and with the nibble at 3, so the 0.930 ratio can be    ====="
+	log "=====    checked against the int32 reading rather than halves   ====="
+	log ""
+	CHARSIU_INT4_LIVE=3 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
+	log ""
+	log "===== 6) THE CONTROL, nibble 0. Round 184 had this all zero.    ====="
+	log ""
+	CHARSIU_INT4_LIVE=0 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
+	log ""
+	log "===== 7) int8 AGAIN, LAST, after the w4a16 jobs. Entry 1 and    ====="
+	log "=====    this one differ only in what ran between them.         ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
+	log ""
+	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
 	log "===== 8) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
-	p llm512x1024m1.tflite ""
 
 	log ""
 	log "===== 9) MobileNet end to end ====="
@@ -1846,8 +1919,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 3's two rms residuals first, then entry 4's     ====="
-	log "===== slope. If entry 6 is not dead, none of the rest counts.    ====="
+	log "===== Read entry 2's control row first. Then compare entry 1     ====="
+	log "===== against entry 7: same binary, same stream, different order.====="
 	sync
 }
 case "$1" in
