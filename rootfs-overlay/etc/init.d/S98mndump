@@ -2,6 +2,316 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 169. THE int4 LAYOUT IS DECODED. This is the first round that
+# asks it for a NUMBER rather than a pattern.
+#
+# ROUND 168's RESULT, and it is unambiguous. With the low nibbles live, an input
+# impulse walking k moved the output for k = 0 through 31 and did nothing at all
+# for k = 32, 33, 62 and 63:
+#
+#   k     0   1   2   3   15  16  30  31  32  33  62  63
+#   delta +3  +5  +3  +3  +3  +3  +3  +3  +0  +0  +0  +0
+#
+# So it is not k with k+1 interleaved, which would have moved on even k only. A
+# byte holds k and k+32, the two halves of a group of 64. With round 167's result
+# that both nibbles are the same output channel, the layout is
+#
+#   [n/32][k/64][n%32][k%64],  byte = k % 32,  nibble = (k % 64) / 32
+#
+# which is the int8 tile with its K group doubled and folded, so a row is 32
+# bytes at either precision and the tile shape does not change with it. The
+# RK3588 table is wrong here in both places: the N group is 32 and not 64, and
+# the K group is 64 and not 32.
+#
+# The packer is written and unit checked on the host, 4096 single weight
+# placements each landing at the right byte and nibble and nowhere else, which is
+# `make test` in the charsiu tree. An off by one in a packer is invisible in an
+# output vector and costs a whole board round.
+#
+# AND THE 105 IS EXPLAINED. Round 167's every-nibble-dead pattern returned 105
+# where the output stage says 0, while round 168's --kmap baseline returned 0.
+# The difference between them is the input, not the weights: 105 is the input
+# leaking through the B record. B is the weight zero point correction in the
+# domain the weight is stored in, and a nibble is NOT biased by 0x80 the way a
+# byte weight is, so int4's B is 0 and this tree was writing 0x80. With the input
+# 32 above its zero point over 64 taps, 0x80 * 2048 * mult is 210, which is twice
+# what was seen. Corrected.
+#
+# ROUND 169's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3. CHARSIU_W4 runs the same dense matmul, impulse and bias ramp that
+#   int8 passes byte exact, with int4 weights confined to a nibble and the
+#   reference reading the same two's complement nibble.
+#
+#     byte exact, or within a count
+#               int4 computes. Halving the weight bytes halves a token, so this
+#               is the 2x the bandwidth measurement said was the only one left.
+#     the impulse is right and the dense one is not
+#               the layout is right and something in the accumulation across
+#               nibbles is not, which is a much smaller place to look.
+#     both wrong but the impulse structurally right
+#               the layout holds and the arithmetic does not: B, the nibble sign
+#               convention, or 0x1030's one-times branch, in that order.
+#     nothing resembling the reference
+#               the layout reading from two rounds of patterns does not survive
+#               contact with real values, and the packer goes back to the board
+#               with position encoded weights rather than live-or-dead ones.
+#
+#   ENTRY 2 IS THE CONTROL. The packer, the group helpers and the B record all
+#   changed this round and int8 goes through every one of them. If int8 is not
+#   still byte exact, nothing int4 does can be read.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 168. A byte's two nibbles are the SAME output channel at two
+# different k. Which two k is what is left, and an input impulse reads it.
+#
+# ROUND 167's RESULT. The control passed first: every nibble dead came back flat
+# 105 and every nibble live came back 127, so int4 weights with int8 activations
+# do compute, which the vendor never does and which nothing guaranteed.
+#
+# Then low nibbles live and high nibbles live gave the IDENTICAL output, a single
+# value across all 64 channels in both. That rules out every N pairing there is.
+# n with n+1 would have made them complementary on even and odd channels; n with
+# n+32 would have split them at the group boundary and the summary line says
+# "distinct 1" for the whole vector, not just the printed half. So both nibbles
+# of a byte feed the SAME output channel, and the group of 64 that charsiu
+# carries from the RK3588 notes is not what this silicon does.
+#
+# The "only the first byte live" line is NOT a second confirmation, though it
+# reads like one. It lit channel 0 alone, which both hypotheses predict, because
+# only the low nibble was set. What it does say is that the origin is at n = 0.
+#
+# WHAT IS WRONG AND WORTH SAYING. The absolute values are not right. Every nibble
+# dead returned 105 where the output stage says 0, and the low nibble delta was
+# 14 where the tap count says about 6. The layout signal is a DIFFERENCE between
+# patterns so it survives that, but int4 is not computing correctly, and the
+# coefficient buffer, the nibble's own zero point convention and 0x1030's
+# one-times branch are all still unchecked.
+#
+# ROUND 168's QUESTION, and its decision rule, written before the run. A byte
+# holds two k for one channel, but which two: k and k+1, adjacent, or k and k+32,
+# the two halves of a group? Low against high cannot see it, because both put the
+# pair in the same channel.
+#
+#   ENTRY 3, --kmap. Hold the weights at low nibbles live and high dead, and make
+#   the INPUT an impulse at one k with everything else at the zero point. Then
+#   the output moves off its baseline exactly when that k sits in a low nibble,
+#   and walking k reads the map directly. k = 0, 1, 2, 3, 15, 16, 30, 31, 32, 33,
+#   62, 63 is enough to separate the two.
+#
+#     a delta on EVEN k only
+#               a byte holds k and k+1, so the packer interleaves
+#     a delta on k %% 64 < 32
+#               a byte holds k and k+32, so the packer splits a group in half
+#     a delta on every k
+#               the weights are not being read the way this assumes, and round
+#               167's low against high was reading something else. That would
+#               retract the pairing result too, so it is the outcome to hope
+#               against rather than the one to explain away.
+#     no delta anywhere
+#               the input impulse is not reaching the MAC, which is about the
+#               input packing and not about int4 at all.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 167. int4, because it is the only 2x left. The registers for
+# it are confirmed offline; the LAYOUT is what the board has to say.
+#
+# ROUND 166 DID NOT BREAK THE READING. Seven shapes at 32 chained tasks, and the
+# two pairs put in to break it held:
+#
+#   1.05 MB as K=1024 N=1024 and as K=2048 N=512   111.56 and 111.24 us, 0.3% apart
+#   2.10 MB as K=2048 N=1024 and as K=1024 N=2048  208.06 and 211.21 us, 1.5% apart
+#
+# Fitting all seven together gives us per task = 26.3 + weight_MB * 84.3, which is
+# 11.9 GB/s plus 26 us, every point inside 10% of the line and most inside 4%. A
+# further 172 us of fixed cost sits on each submit and is what chaining removes.
+# The CPU denominator works now and reads 5078 us against the NPU's 201.
+#
+# So decode is DRAM bound. Llama-3.2-1B reads about 973 M projection weights per
+# token, once each: int8 is 85 ms and 11.8 tokens a second, int4 is 44 ms and
+# 22.7, against the vendor's shipped 13. int4 is the only 2x on the table.
+#
+# WHAT IS ALREADY SETTLED ABOUT int4, offline, from the vendor's own file. The
+# .rkllm carries 3328 four bit streams and 40 eight bit ones, so the precisions
+# can be diffed against each other with no board at all
+# (vendor-capture/int4_regs.py):
+#
+#   0x100c   0x00000000 int8, 0x00600120 int4, plus 0x20000000 for 16 bit
+#            activations
+#   0x101c   real bytes, k * n / 2
+#   0x1020   k / 2, and 0x1030's high half the same, where int8 carries twice
+#   surf     follows the ACTIVATION precision and not the weight precision
+#
+# All of those were already right in charsiu EXCEPT 0x100c, which its job emitter
+# wrote as 0 for int4 as well as int8, so an int4 job would have asked for an
+# int8 weight fetch and any layout read from it would have been noise. Its other
+# emitter had the right constant. Fixed this round.
+#
+# ROUND 167's QUESTION, and its decision rule, written before the run. What no
+# file contains is the LAYOUT: a .rkllm gives geometry, not the order the nibbles
+# sit in, and the group of 64 in charsiu is copied from the RK3588 notes and has
+# never been confirmed here. The question is which two weights share a byte:
+#
+#   K PAIRING   [n/32][k/64][n%32][k%64], the low nibble is an even k
+#   N PAIRING   [n/64][k/32][n%64][k%32], the low nibble is an even n
+#
+#   ENTRY 3 fills every low nibble live and every high nibble dead, and the two
+#   answer differently in a way no scale or requant can disguise, because the
+#   signal is WHICH CHANNELS ARE NONZERO rather than what value they hold.
+#
+#     every channel nonzero and roughly equal
+#               nibbles pair along K. Half of each channel's taps are live.
+#     even and odd channels split, half live and half dead
+#               nibbles pair along N.
+#     something else
+#               neither hypothesis, and the first byte entry says where the
+#               origin is before guessing again.
+#
+#   THE FIRST TWO LINES ARE THE CONTROL and must be read first. Every nibble
+#   dead must come back flat; every nibble live must not. The vendor only ever
+#   runs int4 weights with 16 bit activations and charsiu has never run a 16 bit
+#   activation at all, so this asks for int4 weights with the int8 activations
+#   that are known to work.
+#
+#     dead and live look the same
+#               that combination does not compute, no layout can be read from
+#               the rest of the entry, and the next round is fp16 activations
+#               rather than another layout guess.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 166. The cost is the WEIGHT FETCH, not dispatch and not MAC.
+# This round tries to break that reading rather than build on it.
+#
+# ROUND 165's NUMBERS, on this board. Sweeping chained tasks from 1 to 128 at
+# three shapes, the marginal cost of one more task is
+#
+#   M=1  K=2048 N=1024   2.10 MB of weights   201.9 us   10.4 GB/s
+#   M=1  K=512  N=1024   0.52 MB               57.4 us    9.1 GB/s
+#   M=32 K=2048 N=1024   2.10 MB              217.6 us    9.6 GB/s
+#
+# M IS NEARLY FREE. The same weights at M = 32 cost 1.08 times what they cost at
+# M = 1 while doing 32 times the arithmetic. So the cost is not the MAC and not
+# the row count, and it tracks the weight bytes at close to 10 GB/s, which is
+# about half of what this board's LPDDR5 delivers.
+#
+# There is a fixed cost of 180 to 195 us per submit on top, which chaining
+# removes: a 0.5 MB projection gains 4.4 times from batching and a 2 MB one only
+# 1.9 times, because the fixed part is a bigger share of the small one.
+#
+# Two jobs of eight were consistently about 5 percent WORSE than one job of
+# sixteen, at all three shapes. That is what a DRAM bound workload does: a
+# second core cannot add bandwidth.
+#
+# WHY IT MATTERS ENOUGH TO ATTACK. Llama-3.2-1B reads about 973 M projection
+# weights per token, once each. At 10 GB/s that is 97 ms a token in int8 and
+# 49 ms in int4, against the vendor's shipped 13 tokens a second. If this reading
+# holds, decode is DRAM bound, int4 is the only 2x available, and the plan
+# changes; so it should be attacked before anything is built on it.
+#
+# ROUND 166's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRY 3 is the falsifier. charsiu_bench --shapes runs seven shapes at 32
+#   chained tasks and prints the implied GB/s for each, and TWO OF THE PAIRS HAVE
+#   THE SAME WEIGHT BYTES IN DIFFERENT SHAPES:
+#
+#     K=2048 N=1024 and K=1024 N=2048   both 2.10 MB
+#     K=1024 N=1024 and K=2048 N=512    both 1.05 MB
+#
+#     both pairs match and the GB/s column is flat within about 15 percent
+#               the cost IS the weight fetch. Decode is DRAM bound, int4 is the
+#               lever, and nothing about dispatch is worth optimising.
+#     a pair comes apart
+#               there is a shape term the bytes reading does not have, the
+#               token rate arithmetic above comes down, and the next round is
+#               about what that term is.
+#
+#   ENTRY 4 repeats the task sweep at the projection shape and prints the
+#   marginal and fixed costs separately, computed from 128 tasks against 64 so
+#   there is no submit cost in the difference at all.
+#
+#   THE CPU DENOMINATOR was broken in round 165: it printed 0.0 us because the
+#   compiler deleted the loop, whose result went into a local compared against a
+#   value it could never take. A denominator that reads zero is worse than none,
+#   since the ratio it feeds is the whole RK3588 argument. It is volatile now and
+#   its sink is printed.
+#
+#   ENTRY 2 IS THE CONTROL, and it also caught something. The BYTE EXACT counter
+#   added last round immediately showed 512 to 1024 is 1023 of 1024 exact with
+#   one channel off by one, not the 1024 the README claimed. The 64 wide probes
+#   are all 64 of 64. Entry 2 must reproduce both, or the buffer lifetime change
+#   in this round moved something.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 165. The matmul is correct. The question is now whether it is
+# worth computing here at all, which is a RATIO and not a number.
+#
+# ROUND 164 LANDED. Every value identical to the CPU reference rather than close
+# to it, and the control brought the fault straight back:
+#
+#   dense          M=1 K=64  N=64      64 of 64 bytes exact
+#   negative MAC   M=1 K=64  N=64      64 of 64, output -66 to +63
+#   bias ramp      M=1 K=64  N=64      64 of 64
+#   impulse        M=1 K=64  N=64      64 of 64
+#   dense          M=1 K=512 N=1024    1024 of 1024, fit slope 1.0000
+#   CHARSIU_NO_LIFT control            0 of 64, floor back at the rail
+#
+# So charsiu computes a signed int8 matmul end to end. Both of the bugs behind
+# the last twelve rounds were things this tree had written down backwards: the
+# input needed the same -0x80 bias the weight had, and the output stage is
+# clamp(max(requant, 0) + offset, -128, 127), an int8 with a real fused ReLU
+# under it that stops mattering once the accumulator is lifted by 128 and the
+# offset takes the same 128 back.
+#
+# ROUND 165's QUESTION. A projection at M = 1, K = 2048, N = 1024 is about 4 MOP.
+# At this hardware's rated 6 TOPS that is UNDER A MICROSECOND of arithmetic, so
+# anything measurable around it is dispatch and not MAC. The RK3588 open stacks
+# measured that and concluded a single row matmul belongs on the CPU; the RK3576
+# vendor dispatches 3752 of them in its own Llama file and ships about 13 tokens
+# a second. Both cannot be right for the same shape.
+#
+# /opt/charsiu/charsiu_bench sweeps tasks per job from 1 to 128 and prints
+# microseconds per submit, per matmul, and GOP/s, then two jobs of eight to see
+# whether the scheduler uses the second core, then the same matmul on one CPU
+# thread as the denominator. Tasks inside a job are chained on one core with no
+# further ioctl; jobs are what can be spread.
+#
+#   DECISION RULE, written before the run.
+#
+#     us/matmul FALLS as tasks per job rises
+#               the floor is the submit and the fence, chaining gets under it,
+#               and a runtime batches a token's projections into one submit.
+#               The number to carry is the one at 32 or 64 tasks.
+#     us/matmul is FLAT
+#               the cost is per task and batching cannot help. Then the CPU line
+#               decides whether M = 1 belongs on this hardware at all, and if it
+#               does not, the RK3588 conclusion holds here too and the runtime
+#               is built around prefill rather than decode.
+#     two jobs of eight beats one job of sixteen
+#               the second core is reachable from one process, which doubles
+#               whatever the answer above turns out to be.
+#
+#   ENTRY 2 IS THE CONTROL, and it is not about speed. charsiu_submit was
+#   rewritten this round to take a list of jobs and tasks, with the old single
+#   task call becoming a wrapper over it. The 512 to 1024 matmul MUST still come
+#   back 1024 of 1024 BYTE EXACT. If the refactor moved a byte, no timing taken
+#   through it means anything.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 164. The ReLU IS real, round 163 disproved its own headline,
 # and the way past it is a lift of 128 that the offset takes straight back.
 #
@@ -575,32 +885,39 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: negative MAC with the LIFT, predicted ====="
-	log "=====    every one of the 64 exact, -66 through +63      ====="
+	log "===== 2) THE CONTROL: the submit path was rewritten. 512 to ====="
+	log "=====    1024 MUST still be 1024 of 1024 BYTE EXACT.        ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
 	log ""
 	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
-
 	log ""
-	log "===== 3) THE CONTROL: CHARSIU_NO_LIFT, which MUST bring the ====="
-	log "=====    floor back: negative half flat 0, positive exact   ====="
-	log ""
+	log "  -- and NO_LIFT, which must still bring the floor back"
 	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 4) the bias ramp with the lift, predicted exact ====="
+	log "===== 3) THE TEST: a real int4 matmul against the CPU ====="
 	log ""
-	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_W4=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
+	log ""
+	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	CHARSIU_W4=1 CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and a projection's shape, 512 to 1024 in int4"
+	CHARSIU_W4=1 /opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 
 	log ""
-	log "===== 5) a dense matmul and an impulse, signed ====="
+	log "===== 4) the nibble patterns again, as the round 167 baseline ====="
 	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	/opt/charsiu/charsiu_int4 1 64 64 > "$C" 2>&1
+
 	log ""
-	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log "===== 5) the bandwidth line again, so the image is comparable ====="
 	log ""
-	log "  -- and a projection sized one, 512 to 1024 at M = 1"
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	/opt/charsiu/charsiu_bench --shapes 32 50 > "$C" 2>&1
 
 	log ""
 	log "===== 6) REGRESSION, so the image is known sane ====="
@@ -622,8 +939,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 3 first. A lift whose control does not bring the   ====="
-	log "===== floor back has not been shown to be why anything moved.        ====="
+	log "===== Entry 2 first: the packer, the group helpers and the B record ====="
+	log "===== all changed, and int8 goes through every one of them.          ====="
 	sync
 }
 case "$1" in

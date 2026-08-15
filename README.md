@@ -2,8 +2,10 @@
 
 Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
-MobileNet V1 runs end to end on the NPU as of 2026-08-13: 995 of its 1001
-outputs are within one count of the CPU reference. Details below.
+MobileNet V1 runs end to end on the NPU: **1000 of its 1001 outputs are within
+one count of the CPU reference**, and an open LLM runtime computes a signed int8
+matmul through this driver **byte exact**, at 11.9 GB/s of weight bandwidth.
+Details below.
 
 ## Companion projects
 
@@ -15,7 +17,7 @@ oven it is roasted in.
 |---|---|
 | **linux-rk3576-npu** | this one: the open RK3576 NPU driver and Mesa work. `rocket` on the list, Teflon in Mesa, and the register knowledge the other two are built on |
 | [kiln](https://github.com/gahingwoo/kiln) | the **vendor** RKLLM/RKNN stack on a mainline kernel. LLM and vision on the board today, through a closed runtime, and the yardstick the open stack is measured against |
-| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own and computes a matmul, with no Mesa and no vendor runtime in the path |
+| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own and computes a signed int8 matmul byte exact, with no Mesa and no vendor runtime in the path |
 
 ## Upstream
 
@@ -61,29 +63,50 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
-## An LLM runtime runs on this driver (2026-08-14)
+## An LLM runtime computes on this driver, and it has been timed (2026-08-15)
 
 [charsiu](https://github.com/gahingwoo/charsiu) submits its own register streams
-through `rocket` and gets answers back: no Mesa, no Teflon, no vendor runtime.
-Its stream for a matmul is identical to the one this driver's Mesa path emits for
-the same shape, entry for entry, which is checked on a desktop rather than on the
-board.
+through `rocket` and gets answers back: no Mesa, no Teflon, no vendor runtime. Its
+matmul is **byte exact** against a CPU reference, not close to it, including at
+M = 1 with K = 512 and N = 1024, which is a projection's own shape.
 
-Two things it found are the driver's business too. **The vendor's `.rkllm` files
-carry their register command streams**, exactly as `.rknn` files do, so what the
-closed LLM stack asks this NPU to do can be read offline; that is how the
-projections were found to be dispatched at one row per submit, split across the
-two cores. And **`0x102c` and `0x1078` carry the width minus one in their high
-half, not the row count** - every convolution those were read from was square, so
-the two readings were the same number. Nothing here is wrong because of it, since
-every shape this driver runs is square, but a non square input would be.
+**What that measures about this driver.** A submit carries jobs and a job carries
+tasks; tasks in one job are chained on a single core with no further ioctl, which
+is the path the `PC_TASK_CON` fix in v7 opened. Sweeping seven shapes at 32
+chained tasks and fitting them together:
+
+```
+us per task = 26.3 + weight_MB * 84.3        i.e. 11.9 GB/s, plus 26 us per task
+```
+
+with a further **172 us of fixed cost per submit** that chaining removes. Two
+pairs of shapes with the same weight bytes but different geometry came out 0.3%
+and 1.5% apart, and M = 32 costs 1.08 times M = 1 for 32 times the arithmetic, so
+the cost is the weight fetch and neither the MAC nor the dispatch. Two jobs of
+eight tasks were about 5% worse than one job of sixteen, which is what a
+bandwidth bound workload does with a second core.
+
+Two other things charsiu found are the driver's business too. **The vendor's
+`.rkllm` files carry their register command streams**, exactly as `.rknn` files
+do, so what the closed LLM stack asks this NPU to do can be read offline; that is
+how the projections were found to be dispatched at one row per submit, split
+across the two cores, and how its attention was found to be precompiled into
+exactly 128 KV buckets from 32 to 4096 in steps of 32. And **`0x102c` and
+`0x1078` carry the width minus one in their high half, not the row count** - every
+convolution those were read from was square, so the two readings were the same
+number. Nothing here is wrong because of it, since every shape this driver runs
+is square, but a non square input would be.
 
 ## MobileNet V1 runs end to end (2026-08-13)
 
 The whole network now produces a real classification on the NPU with the open
-stack: **995 of its 1001 outputs land within one count of the CPU reference**,
-with the same ten distinct values the CPU produces. Every run before this one
-was 1001 channels of zero.
+stack: **1000 of its 1001 outputs land within one count of the CPU reference**,
+with the same ten distinct values the CPU produces. Every run before this one was
+1001 channels of zero. The figure was 995 when this section was written; the odd
+output channel count that the CNA reads in pairs accounted for the other five.
+The per layer table below is from the 995 run and has not been retaken, because
+what it is there to show is the comparison against a perfect accelerator rather
+than the final vector.
 
 Layer by layer, against `vendor-capture/chainmodel.py`, which runs the graph
 twice from the model file, once with tflite's requant and once with the
