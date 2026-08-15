@@ -2,6 +2,83 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 194. The output is logarithmic in its inputs, and this round
+# writes down the numbers each explanation predicts before the board is asked.
+#
+# ROUND 193, two clean curves, eleven runs, every all zero control passing.
+#
+#   activation, nibble fixed at 7        nibble, activation fixed at 8.0
+#     1.0 ->  4260                         1 ->  4320       8 (signed -8) -> -4032
+#     2.0 ->  4544   +284                  2 ->  4608 +288 15 (signed -1) -> -4896
+#     4.0 ->  4828   +284                  3 ->  4752
+#     8.0 ->  5112   +284                  4 ->  4896 +288
+#                                          7 ->  5112
+#
+# DOUBLING AN INPUT ADDS A CONSTANT. Three times +284 on the activation, twice
+# +288 on the weight, exact each time. So the output is linear in log2 of its
+# inputs and not in the inputs, which is why nibble 7 to 3 gave 0.930 instead of
+# 3/7 and why no line fits two points of it.
+#
+# The nibble curve says more than that. The differences divided by 288 are
+# 0, 1, 1.5, 2, 2.75 at w = 1, 2, 3, 4, 7, and that is the cheap log2 you get
+# from taking the exponent and adding the mantissa: 3 = 2^1 * 1.5 gives 1 + 0.5,
+# 7 = 2^2 * 1.75 gives 2 + 0.75. Five points, no exceptions.
+#
+# THE WEDGE FIX HELD. int8 first exit 0, and exit 0 again after five w4a16 jobs.
+# The last int8 failed and was declared in advance to say nothing, since entry
+# 4's second half wedges on purpose.
+#
+# TWO EXPLANATIONS FIT EVERYTHING SO FAR, and they separate on values that are
+# not powers of two. Written before the run, with the numbers:
+#
+#   A  the activation is read as an INTEGER, its fp16 bit pattern
+#        out = 0.277344 * bits(a)
+#   B  the output is a true logarithm
+#        out = 4260 + 284 * log2(a)
+#
+#        a      fp16 bits    A says    B says    apart
+#      1.5          15872      4402      4426       24
+#      3.0          16896      4686      4710       24
+#      5.0          17664      4899      4919       20
+#      6.0          17920      4970      4994       24
+#     16.0          19456      5396      5396        0
+#     32.0          20480      5680      5680        0
+#
+#   C  the weight goes through the same cheap log2, exponent plus mantissa
+#        out = 4320 + 288 * (e + m)
+#   D  the weight goes through a true log2
+#        out = 4320 + 288 * log2(w)
+#
+#        w      C says    D says    apart
+#        5        4968      4989       21
+#        6        5040      5064       24
+#
+# THE DECISION RULE.
+#
+#   every non power of two lands within 5 of A
+#             the activation reaches the hardware as the integer 0x3C00 and so
+#             on, which means charsiu's fp16 packing is being read as an int and
+#             the whole activation format question reopens.
+#   every one lands within 5 of B
+#             the output really is a logarithm of the product, and the next
+#             question is what stage computes it.
+#   they land on neither
+#             both explanations are out and the curves need a third.
+#   they land on A for some and B for others
+#             no conclusion, and the run says the probe is not isolating one
+#             thing.
+#
+#   16.0 and 32.0 are NOT a discrimination, both explanations give 5396 and
+#   5680. They are an extrapolation check: if either misses, the linearity
+#   itself stops holding outside the range it was measured in, and that matters
+#   more than which of A or B is right.
+#
+#   w = 5 and 6 decide C against D on the same principle.
+#
+# THE CONTROL: activation 8.0 at nibble 7 is re-run and must come back 5112,
+# the value it has given in rounds 185 through 193. If it moves, the probe
+# changed underneath the comparison and nothing here can be read.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 193. The wedge is fixed and the fix survived the control
 # that could have taken it out, so this round goes back to the actual question:
 # what function of the weight and the activation the output is.
@@ -2371,73 +2448,82 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) int8 alone, and again after five w4a16 jobs, so the    ====="
-	log "=====    fix is re-confirmed before anything is read.           ====="
+	log "===== 1) int8, and the wedge fix re-confirmed ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  int8 first: exit $?"
-	/opt/charsiu/charsiu_int4 1 64 64 --pre 5 > "$C" 2>&1
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  int8 after five w4a16 jobs: exit $?"
 
 	log ""
-	log "===== 2) A: activation fixed at 8.0, the nibble swept.          ====="
-	log "=====    Read the value column against the signed nibble.       ====="
-	for W in 1 2 3 4 7 8 15; do
-		log ""
-		log "  -- nibble $W"
-		CHARSIU_INT4_LIVE=$W /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
-	done
+	log "===== 2) THE CONTROL: activation 8.0 at nibble 7 must be 5112,  ====="
+	log "=====    which it has been since round 185.                     ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
 
 	log ""
-	log "===== 3) B: nibble fixed at 7, the activation swept.            ====="
-	for A in 1.0 2.0 4.0 8.0; do
+	log "===== 3) A against B. Non powers of two first, since those are   ====="
+	log "=====    the ones that separate them.                            ====="
+	log "=====      1.5  A 4402  B 4426                                   ====="
+	log "=====      3.0  A 4686  B 4710                                   ====="
+	log "=====      5.0  A 4899  B 4919                                   ====="
+	log "=====      6.0  A 4970  B 4994                                   ====="
+	for A in 1.5 3.0 5.0 6.0; do
 		log ""
 		log "  -- activation $A"
 		CHARSIU_BMAP_ACT=$A /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
 	done
 
 	log ""
-	log "===== 4) the K=16 outlier, both halves in ONE log this time.    ====="
-	log "=====    Round 192 compared it across rounds, which is not a    ====="
-	log "=====    control.                                               ====="
-	log ""
-	log "  -- RDMA group OFF, which is the default now"
-	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
-	log ""
-	log "  -- RDMA group FORCED ON, where the outlier was seen twice"
-	CHARSIU_W4_RDMA_MASK=0xf /opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
+	log "===== 4) the extrapolation check. Both explanations say 5396    ====="
+	log "=====    and 5680, so a miss here breaks the linearity itself.  ====="
+	for A in 16.0 32.0; do
+		log ""
+		log "  -- activation $A"
+		CHARSIU_BMAP_ACT=$A /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 5) int8 last. Entry 4's second half wedges on purpose, so ====="
-	log "=====    this one is EXPECTED to fail and says nothing if it    ====="
-	log "=====    does.                                                  ====="
+	log "===== 5) C against D on the weight.                             ====="
+	log "=====      w=5  C 4968  D 4989                                   ====="
+	log "=====      w=6  C 5040  D 5064                                   ====="
+	for W in 5 6; do
+		log ""
+		log "  -- nibble $W"
+		CHARSIU_INT4_LIVE=$W /opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 6) and the control again at the end, same 5112 ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --bmap 256 > "$C" 2>&1
+
+	log ""
+	log "===== 7) int8 last. Nothing above wedges on purpose this time,  ====="
+	log "=====    so this one is expected to PASS.                        ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  int8 last: exit $?"
 
 	log ""
-	log "===== 6) REGRESSION, so the image is known sane ====="
+	log "===== 8) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 7) MobileNet end to end ====="
+	log "===== 9) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 8) still open: 33 input channels ====="
+	log "===== 10) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 9) LAST, because it times out and poisons whatever follows ====="
+	log "===== 11) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 2's seven values against the signed nibble, and ====="
-	log "===== entry 3's four against the activation. Two curves, not two ====="
-	log "===== points from two different probes.                          ====="
+	log "===== Read entry 2 first: 5112 or nothing below counts. Then     ====="
+	log "===== the four values in entry 3 against A and B as written.     ====="
 	sync
 }
 case "$1" in
