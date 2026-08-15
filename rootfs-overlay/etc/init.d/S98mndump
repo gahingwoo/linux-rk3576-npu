@@ -2,6 +2,65 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 184. Every w4a16 reading since round 181 rests on a
+# confound, and this round does nothing but break it.
+#
+# THE CONFOUND. The --f16 probe feeds an activation of (c mod 16) - 16 and puts
+# one live nibble per channel at k = c mod 16, and that nibble has been a
+# constant 7 in every run from 181 on. So the activation VALUE is a linear
+# function of the CHANNEL INDEX, and the two cannot be told apart by anything
+# the probe prints. Round 181's fit
+#
+#   npu = 319 * act - 2412
+#
+# rewrites as 319 * (c mod 16) + a constant without changing one measured
+# number. Worse, the weight has never varied, so no run has ever shown that the
+# output depends on the WEIGHTS at all. "The MAC is live, only the coefficient
+# path is dead", which is what rounds 182 and 183 were built on, is not
+# supported by any data this probe has produced.
+#
+# TWO KNOBS, and each one has a branch that kills the reading.
+#
+#   CHARSIU_INT4_PERM=1 permutes which k holds which activation value. The
+#     sixteen values, the range and the packing are all unchanged; only the
+#     pairing moves, so it is one variable. The tool then fits the outputs
+#     against the activation AND against the channel index and prints both,
+#     with the RMS residual of each. The residual decides it, not the slope.
+#
+#   CHARSIU_INT4_LIVE=3 changes the live nibble from 7 to 3. A real MAC has to
+#     scale with it. The activation slope has to fall from about 7 to about 3.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   activation residual small, channel residual large, and the slope falls
+#   7 -> 3 with the nibble
+#             the MAC is genuinely live. Rounds 181 to 183 stand and the open
+#             question stays the coefficient fetch.
+#
+#   channel residual small and activation residual large
+#             the output is a function of the channel index and NOT of the
+#             input. Nothing is being computed on this path; rounds 181 to 183
+#             are read wrong and the w4a16 port has to be re-argued from the
+#             registers, not from the outputs.
+#
+#   both residuals large, or fewer than 8 distinct values over the 16 channels
+#             the run says nothing and the tool prints TOO FLAT TO JUDGE A FIT.
+#             This is the branch round 169 needed and did not have.
+#
+#   the slope does not move when the nibble goes 7 -> 3
+#             the weights are not in the arithmetic, whatever the activation
+#             does. This one fires INDEPENDENTLY of the permutation result, and
+#             it is the stronger of the two.
+#
+# ENTRY 3 is the baseline, plain ramp and nibble 7, and it must reproduce round
+# 183's numbers. If it does not, the image is not the same experiment and
+# nothing below it can be read.
+#
+# ENTRY 6 is the int8 regression. The int4 branch of the tool moved and the
+# shared packer did not, so 1 512 1024 and the 64 wide probes must still come
+# back exactly as before. A tool change that quietly broke the known good path
+# would make every int4 number here unreadable.
+# ---------------------------------------------------------------------------
 # 2026-08-15 round 183. The coefficient surface is not being FETCHED, and the
 # vendor keeps that configuration in its own stream too.
 #
@@ -1711,88 +1770,84 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE TEST: charsiu opens the NPU on its own ====="
+	log "===== 1) charsiu opens the NPU on its own ====="
 	log ""
 	/opt/charsiu/charsiu_probe > "$C" 2>&1
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE CONTROL: the submit path was rewritten. 512 to ====="
-	log "=====    1024 MUST still be 1024 of 1024 BYTE EXACT.        ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
-	log ""
-	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	log "  -- and NO_LIFT, which must still bring the floor back"
-	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 3) BASELINE: the RDMA surface configured the vendor's way ====="
+	log "===== 2) BASELINE, plain ramp and nibble 7. This must reproduce ====="
+	log "=====    round 183. If it does not, read nothing below it.      ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 	log "  charsiu_int4 exit $?"
 
 	log ""
-	log "===== 4) THE CONTROL: no lift. Round 182 measured this as DEAD, ====="
-	log "=====    so if the surface is fetched it must move now.         ====="
+	log "===== 3) THE TEST: the activation PERMUTED, nibble still 7.     ====="
+	log "=====    Same sixteen values, only the pairing with k moves.    ====="
+	log "=====    The two fits are now against different things, and     ====="
+	log "=====    the smaller rms residual names the real variable.      ====="
 	log ""
-	CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+	CHARSIU_INT4_PERM=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 
 	log ""
-	log "===== 5) THE CONTROL: C = 1, also measured dead in round 182 ====="
+	log "===== 4) THE SECOND TEST: nibble 7 -> 3, plain ramp. A real MAC ====="
+	log "=====    must drop the activation slope from about 7 to about 3.====="
 	log ""
-	CHARSIU_COEF_C=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+	CHARSIU_INT4_LIVE=3 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 
 	log ""
-	log "===== 5) THE CONTROL: the packer changed, int8 must be exact ====="
+	log "===== 5) both at once, which is the shape the real thing has    ====="
 	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_INT4_PERM=1 CHARSIU_INT4_LIVE=3 \
+		/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
+	log ""
+	log "===== 6) and the nibble at 0, which must give a dead output.    ====="
+	log "=====    This is the control that can fail: if the output is    ====="
+	log "=====    unchanged with NO live weight anywhere, the numbers    ====="
+	log "=====    above never came from the weight buffer.               ====="
+	log ""
+	CHARSIU_INT4_LIVE=0 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
+	log ""
+	log "===== 7) THE int8 REGRESSION. The tool moved, the packer did    ====="
+	log "=====    not, so these must come back exactly as before.        ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log ""
 	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log ""
-	log "  -- and the int4 map again, to see the fetch move or not"
-	/opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
+	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and NO_LIFT, which must still bring the floor back"
+	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and the int8 map, which is the layout known to be right"
+	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 4) the int4 impulse, as the round 170b baseline ====="
-	log ""
-	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 5) THE CONTROL: round 169's scale, flat and 54 of 64 ====="
-	log ""
-	CHARSIU_W4=1 CHARSIU_W4_SMALLSCALE=1 CHARSIU_IMPULSE=1 \
-		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 6) the nibble patterns, as the round 167 baseline ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 7) REGRESSION, so the image is known sane ====="
+	log "===== 8) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 	p llm512x1024m1.tflite ""
 
 	log ""
-	log "===== 8) MobileNet end to end ====="
+	log "===== 9) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 9) still open: 33 input channels ====="
+	log "===== 10) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 10) LAST, because it times out and poisons whatever follows ====="
+	log "===== 11) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entries 4 and 5 were BYTE IDENTICAL to 3 last round. If they  ====="
-	log "===== still are, the surface is still not being fetched.             ====="
+	log "===== Read entry 3's two rms residuals first, then entry 4's     ====="
+	log "===== slope. If entry 6 is not dead, none of the rest counts.    ====="
 	sync
 }
 case "$1" in
