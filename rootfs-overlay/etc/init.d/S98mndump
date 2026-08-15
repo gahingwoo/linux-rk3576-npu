@@ -2,6 +2,60 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 192. The register is named, so the fix goes in the default
+# stream, and this round is the fix plus the control that can undo it.
+#
+# ROUND 191, six masks, every row valid: baseline recovered AND the w4a16 job
+# confirmed to have written, on all six.
+#
+#   0xf   all four        int8 TIMED OUT      the repro, run first
+#   0     none            int8 byte exact     the control
+#   1     0x501c only     int8 byte exact
+#   2     0x5034 only     int8 TIMED OUT
+#   4     0x5040 only     int8 byte exact
+#   8     0x5044 only     int8 TIMED OUT
+#
+# Two registers wedge the next job on their own. A LEAD AND NOT AN EXPLANATION:
+# both differ from int8 in bit 30 and in opposite directions, int8 being
+# (0x5034 clear, 0x5044 set) and w4a16 (0x5034 set, 0x5044 clear), so touching
+# one alone makes both set or both clear. But mask 0xf sets them the way the
+# vendor's own stream does and wedges anyway, so bit 30 does not close it.
+#
+# THE FIX. The RDMA coefficient fetch group is out of the default stream. It
+# buys nothing measurable: rounds 182 and 183 put two knobs on the coefficient
+# buffer and got four byte identical runs with the group ON, and round 186's run
+# without it produced element 0 = -3692, the same value as with it. A group that
+# alters no result and wedges the next job does not ship. It stays reachable one
+# bit per register through CHARSIU_W4_RDMA_MASK, because when the coefficient
+# surface does have to be fetched, this is where that starts.
+#
+# Checked offline: the default stream is now byte identical to mask 0, differs
+# from mask 0xf in exactly those four registers, and int8's stream is unchanged
+# from round 191's.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   entry 2, one w4a16 job then int8, comes back byte exact
+#             the wedge is gone from the default path.
+#   entry 2 still times out
+#             the fix is wrong and the two registers were not the whole of it.
+#
+#   THE CONTROL THAT CAN UNDO THE FIX is entry 3. The byte map at K=64 N=64 has
+#   to come back IDENTICAL to round 191's: 640 weight bytes lighting something,
+#   1408 lighting nothing, output byte = (weight byte / 8) * 4, value 5112, and
+#   the same histogram. If ANY of that moves, then this group did affect the
+#   output after all, three separate measurements were wrong, and the fix has to
+#   come back out. That is the branch this round is really being run for.
+#
+#   entry 4 runs the same map with the group forced back ON via the mask. It
+#   must match entry 3. Two maps, one with and one without, is what turns "it
+#   changes nothing" from three old measurements into one direct comparison.
+#
+# AND THE OUTLIER GETS NAMED. K=16 N=64 came back twice with 159 probes at 2 non
+# zero output bytes and exactly one at 16 or more, the same numbers both times,
+# so it is a feature and not noise. --bmap now prints any probe over 4 whatever
+# the line limit says, so the weight byte that does it will be in the log.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 191. Round 190 named the group. The group is four registers,
 # so name the register.
 #
@@ -2255,46 +2309,68 @@ start() {
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 2) the K=16 outlier, re-run. 159 probes gave 2 non zero    ====="
-	log "=====    output bytes and one gave 16 or more.                   ====="
+	log "===== 2) THE FIX: one w4a16 job on the DEFAULT stream, then int8 ====="
+	log "=====    in its own process. This timed out in every round from  ====="
+	log "=====    185 to 191.                                             ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --pre 1 > "$C" 2>&1
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  int8 after one default w4a16 job: exit $?"
+	log ""
+	log "  -- and four more, since one was enough to wedge it before"
+	/opt/charsiu/charsiu_int4 1 64 64 --pre 4 > "$C" 2>&1
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  int8 after four more: exit $?"
+
+	log ""
+	log "===== 3) THE CONTROL THAT CAN UNDO THE FIX. This map must be     ====="
+	log "=====    IDENTICAL to round 191's: 640 lit, 1408 dark, output    ====="
+	log "=====    byte = (weight byte / 8) * 4, value 5112.               ====="
+	log ""
+	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+
+	log ""
+	log "===== 4) the same map with the group forced back ON. If 3 and 4  ====="
+	log "=====    differ, the group DOES affect the output and the fix    ====="
+	log "=====    comes out.                                              ====="
+	log ""
+	CHARSIU_W4_RDMA_MASK=0xf /opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+
+	log ""
+	log "===== 5) the K=16 outlier, now printed whatever the line limit   ====="
+	log "=====    says. 159 probes at 2 bytes and one at 16 or more,      ====="
+	log "=====    twice, so which weight byte is it.                      ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
 
 	log ""
-	log "===== 3) WHICH RDMA REGISTER. One w4a16 job per mask, judged by  ====="
-	log "=====    charsiu_matmul in its own process. Read 0xf first: if   ====="
-	log "=====    it does not wedge, the repro is gone and so is the      ====="
-	log "=====    round.                                                  ====="
-
-	probe_cfg "mask 0xf, the full port"   "CHARSIU_W4_RDMA_MASK=0xf"
-	probe_cfg "mask 0, the same as NO_RDMA" "CHARSIU_W4_RDMA_MASK=0"
-	probe_cfg "mask 1, only 0x501c"       "CHARSIU_W4_RDMA_MASK=1"
-	probe_cfg "mask 2, only 0x5034"       "CHARSIU_W4_RDMA_MASK=2"
-	probe_cfg "mask 4, only 0x5040"       "CHARSIU_W4_RDMA_MASK=4"
-	probe_cfg "mask 8, only 0x5044"       "CHARSIU_W4_RDMA_MASK=8"
+	log "===== 6) int8 once more, after all of the above ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 4) REGRESSION, so the image is known sane ====="
+	log "===== 7) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 5) MobileNet end to end ====="
+	log "===== 8) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 6) still open: 33 input channels ====="
+	log "===== 9) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 7) LAST, because it times out and poisons whatever follows ====="
+	log "===== 10) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read the 0xf row first, then the 0 row, and only then the  ====="
-	log "===== four single bit rows. Each needs its baseline back and its ====="
-	log "===== job to have written before its verdict counts.             ====="
+	log "===== Entry 2 says whether the wedge is gone. Entries 3 and 4     ====="
+	log "===== together say whether the fix cost anything, and they are    ====="
+	log "===== the ones that can take it back out.                         ====="
 	sync
 }
 case "$1" in
