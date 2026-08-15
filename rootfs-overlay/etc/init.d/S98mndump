@@ -2,6 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 163. THERE IS NO FUSED RELU. The output is a signed byte,
+# the stage is solved, and the blocker this project has carried since round 158
+# was an artefact of reading those bytes as unsigned.
+#
+# ROUND 162'S RESULT. Its control did its job first: the pre-162 raw input
+# reproduced round 161's wrong numbers to the byte, so the new binary ran and the
+# input bias is what changed. With the input biased, the negative MAC probe came
+# back 128 for the first 32 channels and then EXACTLY the cpu row, 130 132 134
+# through to 191, irregular step at index 43 included. The bias ramp's residual,
+# the "about three counts" that six rounds wrote off as rounding, is gone.
+#
+# Then the fold entry gave the thing away. Folding the zero point into A and
+# leaving the offset at 0 produced the cpu row exactly for 32 channels and then
+# a flat 127, and 127 is not a number this hardware should have any reason for.
+#
+# Fitting all three entries at once, with one model and no exceptions:
+#
+#     out = clamp(requant + offset, -128, 127), stored as int8
+#
+# 64 of 64 bytes on each of the three, none off by a single count. The entries
+# differ in the input bias, the offset and the fold, so nothing in that model is
+# free.
+#
+# What it means, and it corrects two things this tree has said for ten rounds.
+#
+# There is no fused ReLU. The floor at "the output zero point" is the -128 rail
+# of a signed byte, and what parked every negative result on that rail was
+# writing -128 into 0x40ac. Rounds 152 to 158 wrote it because they were reading
+# signed bytes as unsigned and needed the 128 back, so the fix and the symptom
+# were the same line.
+#
+# And 0x40ac adds with the sign its name implies. Round 155 recorded the opposite
+# for the same reason.
+#
+# ROUND 163's QUESTION, and its decision rule, written before the run. The
+# output is int8, so the reference is int8 and the output zero point is 0, which
+# is what a projection wants anyway. Every prediction below is arithmetic.
+#
+#   ENTRY 2. The negative MAC, output zero point 0, offset 0, reference signed.
+#   requant = 2.048 * (c - 32) runs -66 to +63, inside a signed byte at both
+#   ends, so nothing clamps.
+#
+#     all 64 channels exact against the cpu
+#               charsiu computes a SIGNED matmul end to end. That is the whole
+#               of what it was blocked on, and the runtime is next.
+#     the negative half still on a rail
+#               the model is wrong somewhere and entry 3 says whether the
+#               binary even changed.
+#
+#   ENTRY 3, THE CONTROL. CHARSIU_UINT8_OUT with CHARSIU_OUT_OFF=-128, which is
+#   the configuration every round up to 162 used. It MUST reproduce round 162's
+#   entry 2 exactly: 128 for the first 32 channels, then 130 132 134 up to 191.
+#   If the old configuration no longer produces the old answer, nothing in this
+#   round can be read.
+#
+#   ENTRY 4. The bias ramp with the same signed settings. requant runs -48 to
+#   +53, so again nothing clamps.
+#
+#     all 64 exact
+#               the output stage is finished for both paths into it.
+#
+#   ENTRY 5. A dense matmul and an impulse, signed. These are the first runs in
+#   this project where the reference and the hardware are supposed to agree on
+#   every channel with nothing clamped anywhere.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 162. The input operand was never biased, and that is the
 # bug. The output stage is now solved arithmetic rather than a sweep.
 #
@@ -442,39 +511,33 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: negative MAC, input now BIASED by 0x80 ====="
-	log "=====    predicted 128 x32 then the cpu row, ending 191    ====="
+	log "===== 2) THE TEST: negative MAC, SIGNED output, offset 0 ====="
+	log "=====    predicted every one of the 64 exact, -66 to +63 ====="
 	log ""
 	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 3) THE CONTROL: the pre-162 raw input, which MUST come ====="
-	log "=====    back wrong, starting 16 12 7 3 254 250            ====="
+	log "===== 3) THE CONTROL: the pre-163 unsigned configuration, ====="
+	log "=====    which MUST give 128 x32 then 130 132 ... 191     ====="
 	log ""
-	CHARSIU_NEG=1 CHARSIU_INPUT_RAW=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 4) THE TEST: fold the zero point into A, offset 0.  ====="
-	log "=====    predicted the cpu row on ALL 64 channels.        ====="
-	log ""
-	CHARSIU_NEG=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
+	CHARSIU_NEG=1 CHARSIU_UINT8_OUT=1 CHARSIU_OUT_OFF=-128 \
 		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 5) the bias ramp, whose MAC is only now really zero ====="
+	log "===== 4) the bias ramp, signed, predicted exact everywhere ====="
 	log ""
 	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
 	log ""
-	log "  -- and the same ramp with the fold, which should be exact everywhere"
-	CHARSIU_CONST=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
-		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log "===== 5) a dense matmul and an impulse, signed ====="
 	log ""
-	log "  -- a dense matmul and an impulse, with everything on"
-	CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log ""
-	CHARSIU_IMPULSE=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
-		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and a projection sized one, 512 to 1024 at M = 1"
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 
 	log ""
 	log "===== 6) REGRESSION, so the image is known sane ====="
@@ -496,8 +559,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 3 first. If the control does not reproduce round   ====="
-	log "===== 161's wrong numbers, the new binary is not what ran.           ====="
+	log "===== Read entry 3 first. If the old configuration no longer gives  ====="
+	log "===== the old answer, nothing else in this round can be read.        ====="
 	sync
 }
 case "$1" in
