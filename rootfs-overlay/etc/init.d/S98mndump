@@ -2,6 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 191. Round 190 named the group. The group is four registers,
+# so name the register.
+#
+# ROUND 190'S BISECTION, and every clause of the rule mattered:
+#
+#   the full port   baseline OK on attempt 3   1 job wrote   int8 exit 1
+#   NO_DPU          baseline OK on attempt 2   0 jobs wrote  VOID
+#   NO_RDMA         baseline OK on attempt 1   1 job wrote   int8 exit 0
+#   both out        baseline OK on attempt 1   1 job wrote   int8 exit 0
+#
+# So the RDMA coefficient fetch group is what leaves the NPU unable to start the
+# next job. NO_DPU's row was thrown out by the written rule rather than read as
+# a pass, which is the trap round 186 fell into with the same configuration. And
+# the full port's baseline needed THREE attempts, so 186's bet that one Mesa
+# model would put the device back was never going to hold.
+#
+# THAT GROUP CHANGES NOTHING ABOUT THE OUTPUT. Round 182 put two knobs on the
+# coefficient buffer and got four byte identical runs, round 183 ported this
+# fetch and they stayed identical, and round 186's NO_RDMA run produced element
+# 0 = -3692, the same as the full port. Four registers that alter no result and
+# wedge the next job are pure liability, and which one of them it is, is worth
+# exactly one round.
+#
+#   bit 0  0x501c = 0          int8 writes 0x00000710
+#   bit 1  0x5034 = 4000004c   int8 writes 0x00000041
+#   bit 2  0x5040 = rows       int8 writes 0
+#   bit 3  0x5044 = 000280a1   int8 writes 0x40000010
+#
+# Verified offline that each bit moves exactly one register and one line of the
+# stream, that mask 0xf is the default stream and mask 0 is NO_RDMA, and that
+# int8's own stream is untouched by the mask at any value.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN. A row counts only if its baseline
+# came back AND its w4a16 job wrote, same as last round.
+#
+#   mask 0xf does not wedge      the repro is gone and the whole round is void.
+#                                It is the first row for that reason.
+#   mask 0 wedges                that contradicts round 190 and the round is
+#                                void as well.
+#   exactly one single bit row wedges
+#                                that register is it.
+#   several single bit rows wedge
+#                                each of them does it on its own.
+#   no single bit row wedges
+#                                it takes a combination, and the next round is
+#                                the six pairs rather than another guess.
+#
+# ALSO RE-RUN: the K=16 N=64 byte map. Round 190 got 159 probes at 2 non zero
+# output bytes and ONE at 16 or more, and that single outlier is what made
+# round 189's table at this geometry unreadable. Whether it repeats says whether
+# it is a real feature of the layout or a one off.
+#
+# The rest of the geometry is settled and both formulas held at four geometries
+# with every control passing:
+#
+#   written    = 2N + 32                   N=64 -> 160, N=32 -> 96
+#   live bytes = K * (N + 16) / 8          16, 32, 64, 128 at N=64, and 64x32
+#
+# 64x32 came out 384 here against 383 last round, so that off by one was noise.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 190. One w4a16 job is enough to wedge the NPU, so the
 # bisection that failed twice can finally be run against a one job repro.
 #
@@ -2195,31 +2255,23 @@ start() {
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 2) the byte map at the geometries still open. These run   ====="
-	log "=====    BEFORE the wedge work, because one w4a16 job is now    ====="
-	log "=====    known to be enough to wedge the device.                ====="
+	log "===== 2) the K=16 outlier, re-run. 159 probes gave 2 non zero    ====="
+	log "=====    output bytes and one gave 16 or more.                   ====="
 	log ""
-	log "  -- K=16 N=64, the row that was not clean last round"
 	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
-	log ""
-	log "  -- K=32 N=64"
-	/opt/charsiu/charsiu_int4 1 32 64 --bmap > "$C" 2>&1
-	log ""
-	log "  -- K=128 N=64 in steps of 2, where k >= 16 lives"
-	/opt/charsiu/charsiu_int4 1 128 64 --bmap 2 > "$C" 2>&1
-	log ""
-	log "  -- K=64 N=32, the one geometry never mapped"
-	/opt/charsiu/charsiu_int4 1 64 32 --bmap > "$C" 2>&1
 
 	log ""
-	log "===== 3) THE BISECTION, one w4a16 job per configuration.        ====="
-	log "=====    A verdict counts only if its baseline came back AND    ====="
-	log "=====    its w4a16 job actually wrote.                          ====="
+	log "===== 3) WHICH RDMA REGISTER. One w4a16 job per mask, judged by  ====="
+	log "=====    charsiu_matmul in its own process. Read 0xf first: if   ====="
+	log "=====    it does not wedge, the repro is gone and so is the      ====="
+	log "=====    round.                                                  ====="
 
-	probe_cfg "the full port"  ""
-	probe_cfg "NO_DPU"         "CHARSIU_W4_NO_DPU=1"
-	probe_cfg "NO_RDMA"        "CHARSIU_W4_NO_RDMA=1"
-	probe_cfg "both out"       "CHARSIU_W4_NO_DPU=1 CHARSIU_W4_NO_RDMA=1"
+	probe_cfg "mask 0xf, the full port"   "CHARSIU_W4_RDMA_MASK=0xf"
+	probe_cfg "mask 0, the same as NO_RDMA" "CHARSIU_W4_RDMA_MASK=0"
+	probe_cfg "mask 1, only 0x501c"       "CHARSIU_W4_RDMA_MASK=1"
+	probe_cfg "mask 2, only 0x5034"       "CHARSIU_W4_RDMA_MASK=2"
+	probe_cfg "mask 4, only 0x5040"       "CHARSIU_W4_RDMA_MASK=4"
+	probe_cfg "mask 8, only 0x5044"       "CHARSIU_W4_RDMA_MASK=8"
 
 	log ""
 	log "===== 4) REGRESSION, so the image is known sane ====="
@@ -2240,9 +2292,9 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== For each configuration read three lines: did the baseline  ====="
-	log "===== come back, did the w4a16 job write, and only then the      ====="
-	log "===== verdict. Two of those being wrong is what killed 186.      ====="
+	log "===== Read the 0xf row first, then the 0 row, and only then the  ====="
+	log "===== four single bit rows. Each needs its baseline back and its ====="
+	log "===== job to have written before its verdict counts.             ====="
 	sync
 }
 case "$1" in
