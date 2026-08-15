@@ -2,6 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 160. Stop sweeping. Mesa runs this shape across the whole
+# byte, so put the two streams side by side and read the difference.
+#
+# WHAT ROUND 159 SETTLED, AND WHAT IT DID NOT.
+#
+# Settled: CNA 0x1098 does not matter at M = 1. Entry 4 forced the vendor's 1
+# where charsiu writes Mesa's 4 and the output was byte identical, so the one
+# register where charsiu's whole stream differed from a vendor convolution at
+# this exact shape is closed.
+#
+# NOT settled, and the failure is mine: entry 3's control was UNFALSIFIABLE. It
+# set the stage minimum to 0, which can only floor the channels whose
+# accumulator is already negative, and those are exactly the channels the
+# symptom already floors. Both branches of the rule predicted the same bytes and
+# the run produced them. A control that cannot fail is not a control, and
+# "nothing moved" from that entry means nothing at all.
+#
+# What the new signed print did earn: the floor sits at exactly requant = 0, the
+# output zero point, and it is applied BEFORE 0x40ac's offset. Channels 31 to 63
+# track the CPU to about 3 counts; channels 0 to 30 are pinned at -128 signed.
+#
+# THE THING THAT CHANGES THE PLAN, and it was in the same log, in the regression
+# entries rather than in charsiu's:
+#
+#   llm512x1024m1.tflite out(1, 1, 1024): 1024/1024 channels match
+#     npu distinct=146 min=0 max=255 | out_zp=0
+#
+# That is M = 1, 512 to 1024, and MESA SPANS THE WHOLE BYTE on it. Mesa's rule
+# for 0x40ac is out_zp - 0x80 and that model's zero point is 0, so Mesa writes
+# -128 there, which is exactly what charsiu writes. Same M, same 0x40ac, no
+# floor for Mesa and a floor for charsiu. So the floor is not a property of this
+# silicon and not the meaning of 0x40ac: there is still a difference between the
+# two, and sweeping output registers is guessing at it.
+#
+# ROUND 160's QUESTION, and its decision rule, written before the run.
+#
+#   ENTRIES 2 AND 3, THE TEST. Mesa's stream and charsiu's stream for the SAME
+#   shape, M = 1, 512 to 1024, dumped in the same boot in the same format. This
+#   is the instrument that found the PC_TASK_CON field layout and it has worked
+#   every time it has been pointed at anything.
+#
+#     a register where the two differ
+#               that is the answer, and no sweep was needed.
+#     the streams are identical entry for entry
+#               then the difference is in the COEFFICIENT BUFFER, the one thing
+#               a register diff cannot see. Mesa's A is bias - (in_zp-0x80)*sw
+#               and charsiu's is its own; that becomes the next round and it is
+#               a much smaller place to look than the whole output stage.
+#
+#   ENTRY 4. CHARSIU_OUT_OFF=0, which is Mesa's own formula for charsiu's output
+#   zero point of 128, run on the bias ramp with the signed print. charsiu
+#   hardcodes -128 regardless of the zero point; conv2d-cal shows Mesa writing 0
+#   for a zero point of 128 and getting output that runs 128 to 255, so the
+#   hardware adds that 0x80 itself.
+#
+#     the ramp comes back 80 to 180 and matches the CPU
+#               charsiu's offset rule was simply wrong and Mesa's is right.
+#     the ramp caps at 127
+#               the clamp is real and independent of the offset, which is what
+#               round 157 recorded; entries 2 and 3 then carry the round.
+#
+#   ENTRIES 5 AND 6, THE CONTROLS, rewritten so they can fail. A minimum ABOVE
+#   the whole accumulator range and a maximum BELOW it, both of which bite where
+#   the output is currently CORRECT.
+#
+#     0x406c = 0x2000  every channel flattens high   the minimum is connected
+#     0x4070 = 0x100   every channel flattens low    the maximum is connected
+#     neither moves
+#               the whole 0x406c / 0x4070 stage is not in this datapath, and the
+#               activation registers the vendor's compiler names are being
+#               written into something that does not read them.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 159. There is no fused ReLU. The activation registers were
 # already off, and the clamp that looked like one is a sign convention.
 #
@@ -209,51 +285,58 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: the bias ramp, unsigned AND signed ====="
+	log "===== 2) THE TEST: MESA's stream for M=1 512 to 1024, which ====="
+	log "=====    spans 0 to 255 on this hardware.  Lines are RC ...  ====="
 	log ""
-	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DUMP_REGCMD=1 \
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/llm512x1024m1.tflite" > "$C" 2>&1
+
+	log ""
+	log "===== 3) THE TEST: CHARSIU's stream for the SAME shape.      ====="
+	log "=====    Lines are CS ...  Diff them by register.            ====="
+	log ""
+	CHARSIU_DUMP=1 /opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 3) THE CONTROL: 0x406c = 0, the vendor's ReLU minimum ====="
-	log "=====    If this does not move, entry 2's reading is wrong.  ====="
+	log "===== 4) MESA's offset rule on charsiu's ramp: 0x40ac = 0 ====="
 	log ""
-	CHARSIU_CONST=1 CHARSIU_DPU_406C=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_CONST=1 CHARSIU_OUT_OFF=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and the baseline it has to be read against, -128"
+	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 4) the one register the vendor writes differently: 0x1098 ====="
+	log "===== 5) CONTROL: minimum 0x2000, ABOVE the whole range ====="
 	log ""
-	CHARSIU_CONST=1 CHARSIU_CNA_1098=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_CONST=1 CHARSIU_DPU_406C=0x2000 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 5) a REAL matmul, once the ramp above is understood ====="
+	log "===== 6) CONTROL: maximum 0x100, BELOW the whole range ====="
 	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_CONST=1 CHARSIU_DPU_4070=0x100 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 6) REGRESSION, so the image is known sane ====="
+	log "===== 7) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
-	p llm512x1024m1.tflite ""
 
 	log ""
-	log "===== 7) MobileNet end to end ====="
+	log "===== 8) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 8) still open: 33 input channels ====="
+	log "===== 9) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 9) LAST, because it times out and poisons whatever follows ====="
+	log "===== 10) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 3 before entry 2. A control that does not move makes ====="
-	log "===== entry 2 unreadable, whatever entry 2 says.                       ====="
+	log "===== Entries 2 and 3 are the round. Everything else is a rule that ====="
+	log "===== was written before a stream diff was available.                ====="
 	sync
 }
 case "$1" in
