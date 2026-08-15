@@ -2,6 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 186. Two results from round 185, and the second one is a
+# defect in the stream this project wrote.
+#
+# THE OUTPUT ELEMENT IS FOUR BYTES, read rather than fitted. One live nibble in
+# the whole weight buffer lights exactly four bytes, aligned to four, and the
+# value is a signed integer: nibble 7 gave 0x000013f8 = +5112 and nibble 15,
+# which is -1 as a signed nibble, gave 0xffffece0 = -4896. The sign follows the
+# signed nibble. So round 181's "the output is a float" is dead: the registers
+# only ever said the stage does not requantise, and an un-requantised output is
+# the accumulator.
+#
+# THE CONTROL PASSED AGAIN. No live nibble anywhere and the written region came
+# back all zero.
+#
+# BUT NINE CHANNELS DID NOT AGREE, so no rule is being written down yet.
+#
+#   channel   0 1 2 3 4 5   8   16  32  63
+#   byte      0 4 8 12 16 20  none 32  64  156
+#
+# 0 to 5 land at 4n. 16 lands at 32 and 32 at 64, which is 2n. 63 lands at 156,
+# which is neither. And channel 8 lights NOTHING. Nine points cannot carry a
+# rule and fitting one to part of a map is exactly what cost rounds 171 and
+# 173, so round 186 sweeps ALL 64 and prints the table.
+#
+# The other unexplained number is the extent: the hardware writes 160 bytes,
+# which is 40 slots of 4, where 64 channels want 64. Nothing is assumed about
+# that either; the sweep prints the extent on every row.
+#
+# THE SECOND RESULT: A w4a16 JOB LEAVES THE NPU UNABLE TO START THE NEXT ONE.
+# This was as clean as this project gets. Same boot, same binary, same register
+# stream, same shape:
+#
+#   entry 1, int8 FIRST          1023 of 1024 byte exact, exit 0
+#   entry 7, int8 LAST           NPU job timed out, output still holding the
+#                                0xa5 sentinel, exit 1, rk_iommu "Error during
+#                                raw reset" beside it
+#
+# Only what ran in between differs. It is not the stream: int8's stream at both
+# shapes is byte identical before and after the w4a16 port, checked offline
+# against e46a56d. Mesa's own regressions ran fine afterwards, so the driver
+# recovers and nothing is permanently broken.
+#
+# ROUND 186 SPLITS THE PORT AND ASKS WHICH HALF. It went in as two groups from
+# two separate vendor streams, so each comes back out on its own:
+#
+#   CHARSIU_W4_NO_DPU    0x4010 0x4030 0x4038 0x4044 0x4050 0x40b0 0x40b4
+#   CHARSIU_W4_NO_RDMA   0x501c 0x5034 0x5040 0x5044
+#
+# Verified offline that each switch touches only its own group and that int8's
+# stream is untouched by both.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   int8 passes after NO_RDMA and fails after NO_DPU
+#             the RDMA coefficient fetch group is what wedges the next job.
+#   int8 passes after NO_DPU and fails after NO_RDMA
+#             the DPU output stage group is.
+#   int8 fails after both
+#             either group does it on its own, or it is 0x100c, the int4 weight
+#             format itself, which is in neither group and cannot be removed
+#             without the run stopping being w4a16.
+#   int8 passes after both
+#             it takes the two groups together, which is a real answer too.
+#
+# THE ASSUMPTION THIS RUN RESTS ON, and it is checked rather than assumed: that
+# a Mesa model in between puts the NPU back. Entries 4 and 6 are that check. If
+# either of those Mesa runs is itself broken, the recovery does not happen and
+# entries 5 and 7 say nothing at all.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 185. The output element is not two bytes wide, and every
 # w4a16 number this file has printed was read at the wrong width.
 #
@@ -1844,83 +1913,85 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) int8 FIRST, which is where it was until round 184.     ====="
-	log "=====    It timed out last round when it ran after five w4a16   ====="
-	log "=====    jobs. Its register stream is unchanged, so if it       ====="
-	log "=====    passes here the order is the variable.                 ====="
+	log "===== 1) int8 FIRST. This is the known good end of the control. ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 	log ""
 	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	log "  -- and NO_LIFT, which must still bring the floor back"
-	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 2) THE TEST: one live nibble, one channel, sweep the      ====="
-	log "=====    channel, dump the bytes. The first row has NO live     ====="
-	log "=====    nibble and must come back with nothing non zero.       ====="
+	log "===== 2) THE MAP: one live nibble, sweeping ALL 64 channels.    ====="
+	log "=====    Row one has no live nibble and must be nonzero 0.      ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
 	log "  charsiu_int4 exit $?"
 
 	log ""
-	log "===== 3) the same sweep with a bigger nibble, in case one is    ====="
-	log "=====    below what the stage keeps                             ====="
-	log ""
-	CHARSIU_INT4_LIVE=15 /opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
-
-	log ""
-	log "===== 4) the round 184 probe again, now printing the SAME bytes ====="
-	log "=====    as int32 beside the halves. If the int32 column is the ====="
-	log "=====    readable one, round 181's float claim comes down.      ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 5) and with the nibble at 3, so the 0.930 ratio can be    ====="
-	log "=====    checked against the int32 reading rather than halves   ====="
-	log ""
-	CHARSIU_INT4_LIVE=3 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 6) THE CONTROL, nibble 0. Round 184 had this all zero.    ====="
-	log ""
-	CHARSIU_INT4_LIVE=0 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
-
-	log ""
-	log "===== 7) int8 AGAIN, LAST, after the w4a16 jobs. Entry 1 and    ====="
-	log "=====    this one differ only in what ran between them.         ====="
+	log "===== 3) int8 straight after w4a16, which round 185 measured    ====="
+	log "=====    as a timeout. Reproducing it is what makes 5 and 7     ====="
+	log "=====    readable.                                              ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
-	log ""
-	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 8) REGRESSION, so the image is known sane ====="
+	log "===== 4) a Mesa model, to put the NPU back. If THIS is broken,  ====="
+	log "=====    entries 5 and 7 say nothing.                           ====="
+	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== 5) w4a16 with the RDMA group taken back out, then int8    ====="
+	log ""
+	CHARSIU_W4_NO_RDMA=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  int8 after NO_RDMA exit $?"
+
+	log ""
+	log "===== 6) the Mesa model again, same recovery check             ====="
+	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== 7) w4a16 with the DPU group taken back out, then int8     ====="
+	log ""
+	CHARSIU_W4_NO_DPU=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  int8 after NO_DPU exit $?"
+
+	log ""
+	log "===== 8) and both groups out, which is the round 180 stream     ====="
+	log "=====    with only the int4 weight format left                  ====="
+	p conv2d-cal.tflite ""
+	log ""
+	CHARSIU_W4_NO_DPU=1 CHARSIU_W4_NO_RDMA=1 \
+		/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  int8 after both out exit $?"
+
+	log ""
+	log "===== 9) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 9) MobileNet end to end ====="
+	log "===== 10) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 10) still open: 33 input channels ====="
+	log "===== 11) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 11) LAST, because it times out and poisons whatever follows ====="
+	log "===== 12) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 2's control row first. Then compare entry 1     ====="
-	log "===== against entry 7: same binary, same stream, different order.====="
+	log "===== Read entry 2's table whole, no fitting. Then the four int8 ====="
+	log "===== exits in 3, 5, 7 and 8 against the rule in the header.     ====="
 	sync
 }
 case "$1" in
