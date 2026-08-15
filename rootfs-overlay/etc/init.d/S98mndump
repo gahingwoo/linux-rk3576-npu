@@ -2,7 +2,80 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-14 round 156. 0x40ac is an addend with the sign the other way round.
+# 2026-08-15 round 159. There is no fused ReLU. The activation registers were
+# already off, and the clamp that looked like one is a sign convention.
+#
+# ROUND 159's QUESTION, and its decision rule, written before the run.
+#
+# Rounds 155 to 158 read charsiu's output as clamped into 0 to 127 before
+# 0x40ac's offset, called the floor a fused ReLU that no Teflon model has ever
+# needed switched off, and set out to sweep the DPU output registers for its
+# enable. Two things settled offline before this image was built say that plan
+# was aimed at nothing.
+#
+# FIRST, the enable has a name and charsiu already writes it. Compiling ONE int8
+# convolution twice, with and without a ReLU, and diffing the two register
+# streams (vendor-capture/gen_act.py) names three registers: 0x4060 is 0x0902
+# with the ReLU and 0x0903 without, and 0x406c and 0x4074 are stage minimums, 0
+# with it and INT32_MIN without. The maximums at 0x4070 and 0x4078 do not move,
+# which is what a ReLU is, a floor and not a ceiling. A third model, linear again
+# with different weights, is the control that separates activation from data, and
+# it bites: 0x40ac and 0x40b0 move between the two linears and those three do
+# not. charsiu has emitted all three at their linear values since round 143.
+#
+# SECOND, the 0x0310 that round 158 spent itself on was a misreading of mine.
+# The .rkllm streams that carry 0x03ff0310 have ONE output channel and ZERO
+# weight bytes, so they are not the vendor's matmuls; the 8308 streams that ARE
+# the projections do not write 0x4030 at all. The vendor's compiler, asked for
+# charsiu's exact shape, writes 0x003f0710, which is what charsiu already had.
+#
+# So the fused ReLU is refuted, and what is left is what 0x40ac actually means.
+# The vendor writes the output zero point there in the hardware's SIGNED domain:
+# -27 for a model whose zero point is 101. charsiu's is 128, so it writes -128,
+# and the byte that comes back is requant - 128 in two's complement, whose
+# UNSIGNED reading is the correct output byte because the wrap does the +128.
+# An output that is right is then indistinguishable from one stuck at 128 unless
+# the signed reading is printed beside it, and it never was.
+#
+#   ENTRY 2, the test. CHARSIU_CONST holds every input at the zero point so the
+#   MAC is exactly zero and the output is requant(bias) alone, a ramp the CPU
+#   says runs 80 to 180. charsiu_matmul now prints four rows: the npu unsigned,
+#   the cpu, the npu read as SIGNED, and the cpu's requant before the zero point.
+#
+#     npu unsigned tracks cpu across all 64 channels
+#               charsiu's arithmetic is finished and the runtime is next.
+#     npu signed tracks cpu requant while unsigned does not
+#               the output is signed, the clamp never existed, and only the
+#               comparison was wrong.
+#     the low channels come back at ONE value and the high ones ramp
+#               a real floor exists. It is not the activation stage, because
+#               entry 3 shows that stage responds, so the next suspect is the
+#               A record of the coefficient buffer.
+#
+#   ENTRY 3, THE CONTROL THAT CAN FAIL. The same run with CHARSIU_DPU_406C=0,
+#   which is the value the vendor's compiler emits for a ReLU.
+#
+#     the output loses its low half against entry 2
+#               0x406c IS the minimum, the offline identification holds, and
+#               entry 2's setting was already correct.
+#     nothing changes at all
+#               the identification is WRONG. 0x406c is not the activation
+#               minimum on this path and the offline diff has to be redone
+#               before any more board time goes on the output stage.
+#
+#   ENTRY 4. CHARSIU_CNA_1098=1, the vendor's value. It is the ONLY register in
+#   charsiu's whole 142 entry stream that differs from the vendor's convolution
+#   at this exact shape once addresses, this model's quantisation and the four op
+#   enables are set aside, and it has never been tested.
+#
+#     identical to entry 2   the register does not matter at M = 1.
+#     different              an input DMA size that has been wrong throughout.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-14 round 158. 0x0310 opened the clamp; where did the ramp go?
 #
 # Round 139 finished the pointwise: every odd output channel count came out
 # exact, its ROCKET_OC_ODD control reproduced the old failure to the channel,
@@ -48,6 +121,25 @@
 #     submit fails
 #               the stream is malformed and the kernel rejected it, which is a
 #               different and much shorter list of causes.
+#
+#   ROUND 157's QUESTION. The output stage clamps the requant result into 0 to
+#   127 before 0x40ac's offset is applied, so with the offset the top of the
+#   byte is reachable and the bottom is stuck at 128, and with the fold the
+#   bottom is right and the top caps at 127. One register has to open that
+#   clamp.
+#
+#   The vendor names a candidate. Its convolution streams carry exactly ONE DPU
+#   register, 0x4030, and its low half is 0x0310 where Mesa's regular
+#   convolution path writes 0x0710. Mesa uses 0x0310 for a DEPTHWISE layer, so
+#   the field is not "depthwise": it selects something about the output that a
+#   depthwise and a vendor matmul share and a Teflon convolution does not.
+#
+#     the ramp reaches both 80 and 180 under any of these
+#               the clamp is open and charsiu's arithmetic is finished
+#     nothing moves
+#               the field is elsewhere; the remaining unswept output registers
+#               are 0x40c0, 0x40d0 and 0x4060, and 0x40d0's 0x0040ffff looks
+#               most like a pair of limits
 #
 #   ROUND 155's QUESTION, and its decision rule. charsiu's output saturates at
 #   127 where the reference reaches 180, so 128 to 255 cannot be represented at
@@ -117,51 +209,51 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: two streams for ONE shape, side by side ====="
+	log "===== 2) THE TEST: the bias ramp, unsigned AND signed ====="
 	log ""
-	log "  -- MESA's stream for pw64x64w1, which COMPUTES on this hardware"
-	env TEFLON_LIB=/usr/lib/libteflon.so ROCKET_DUMP_REGCMD=1 \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/pw64x64w1.tflite" > "$C" 2>&1
-	log ""
-	log "  -- CONST: the ramp must now match the CPU, top of the byte included"
 	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	log "  -- IMPULSE: output channel c is input channel c"
-	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	log "  -- DENSE at M=1, the shape an LLM decodes with"
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
-	log ""
-	log "  -- DENSE at M=4"
-	/opt/charsiu/charsiu_matmul 4 64 32 > "$C" 2>&1
-	log "  charsiu_matmul exit $?"
-	log ""
-	log "  -- CONTROL: 0x40ac back to 0, which must cap the ramp at 127"
-	CHARSIU_CONST=1 CHARSIU_OUT_OFF=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 3..6) REGRESSION, so the image is known sane ====="
+	log "===== 3) THE CONTROL: 0x406c = 0, the vendor's ReLU minimum ====="
+	log "=====    If this does not move, entry 2's reading is wrong.  ====="
+	log ""
+	CHARSIU_CONST=1 CHARSIU_DPU_406C=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 4) the one register the vendor writes differently: 0x1098 ====="
+	log ""
+	CHARSIU_CONST=1 CHARSIU_CNA_1098=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 5) a REAL matmul, once the ramp above is understood ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 6) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 	p llm512x1024m1.tflite ""
 
 	log ""
-	log "===== 6) MobileNet end to end ====="
+	log "===== 7) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 7) still open: 33 input channels ====="
+	log "===== 8) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 8) LAST, because it times out and poisons whatever follows ====="
+	log "===== 9) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 1 first. If the readback mismatches, nothing charsiu ====="
-	log "===== does later can be trusted.                                      ====="
+	log "===== Read entry 3 before entry 2. A control that does not move makes ====="
+	log "===== entry 2 unreadable, whatever entry 2 says.                       ====="
 	sync
 }
 case "$1" in
