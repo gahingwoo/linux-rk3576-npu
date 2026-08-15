@@ -2,6 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 188. The byte to slot map is read; now make the geometry
+# move and let the shape of the map say the formula.
+#
+# ROUND 187'S --bmap, control passed, and NO byte lit more than one slot:
+#
+#   byte b feeds output slot b / 8      eight consecutive bytes per slot
+#   each slot fed by 16 bytes           two runs of eight, 256 apart
+#   640 bytes lit something             1408 lit nothing, and the whole
+#                                       second half of the buffer is dark
+#   value 5112 everywhere, write extent 160 bytes = 40 slots
+#
+# By 64 byte blocks the live ones are 0, 2, 4, 6, 8, 10, 11, 12, 14, 15 and the
+# dead ones 1, 3, 5, 7, 9, 13, with each slot group fed by two blocks four
+# apart: (0,4) (2,6) (8,12) (10,14) (11,15). Ten blocks alternate and then the
+# pattern breaks twice. NO RULE IS WRITTEN FROM THAT. A map read at ONE geometry
+# cannot separate what depends on K from what depends on N, and K = 64 with an
+# int4 k-group of 16 is exactly the case where the two get confused.
+#
+# So move the geometry. 40 slots where N = 64, and 640 live bytes where N * 8 is
+# 512, are both numbers that have to come from somewhere, and changing K and N
+# separately is what says which.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the slot count tracks N and ignores K
+#             a slot is an output channel, and the 40 at N = 64 is something
+#             else that has to be explained on its own.
+#   the slot count moves with K
+#             a slot is not an output channel, and every reading in this tree
+#             that called it one has to be redone.
+#   the write extent is always 4 * the slot count
+#             the element really is four bytes, at every geometry rather than
+#             at the one it was read at.
+#   K = 16 lights the WHOLE buffer and K = 128 lights no more than K = 64
+#             only k < 16 is ever fetched, and the dead bands at K = 64 are the
+#             k >= 16 half that has been missing since round 175.
+#   K = 128 lights proportionally more
+#             k >= 16 IS fetched and the K = 64 pattern is a real layout that
+#             has simply not been read yet.
+#
+# The control is the same at every geometry and runs first at each: an all zero
+# weight buffer must light nothing.
+#
+# AND --wedge GETS THE CLEAN START IT NEEDED. Round 187 asked how many w4a16
+# jobs it takes before the NPU cannot start an int8 one, and its N = 0 row had
+# FIVE w4a16 jobs behind it, because the five pattern probes in main() run
+# before every sub command and the weight dtype there is int4. Its control
+# caught that and the table was thrown away. Sub commands now skip that loop.
+#
+# TWO THINGS ALREADY KNOWN ABOUT THE WEDGE, neither needing a board:
+#
+#   w4a16 jobs do NOT wedge each other. --bmap ran 2049 of them back to back
+#   with no failure at all. Only an int8 job afterwards cannot start, so this is
+#   about the SWITCH rather than about the NPU dying.
+#
+#   it is not an uncovered register. int4's stream and int8's stream write the
+#   SAME 143 registers, checked offline; 18 of them differ in value and int8
+#   writes all 18. So nothing the w4a16 job set is left unwritten by the int8
+#   job that follows it.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 187. Round 186's map is clean; its bisection failed by its
 # own written rule, and both of this round's probes exist because of that.
 #
@@ -1984,53 +2044,61 @@ start() {
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 2) THE TEST: N w4a16 jobs then one int8 job, one process, ====="
-	log "=====    nothing in between. Row N = 0 is the control.          ====="
+	log "===== 2) THE TEST: the byte to slot map at six geometries.      ====="
+	log "=====    Each one runs its own all zero control first.          ====="
+	log ""
+	log "  -- K=64 N=64, the round 187 baseline, 2048 weight bytes"
+	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+	log ""
+	log "  -- K=16 N=64, 512 bytes: does k < 16 alone fill the buffer"
+	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
+	log ""
+	log "  -- K=32 N=64, 1024 bytes"
+	/opt/charsiu/charsiu_int4 1 32 64 --bmap > "$C" 2>&1
+	log ""
+	log "  -- K=64 N=32, 1024 bytes: N moves, K does not"
+	/opt/charsiu/charsiu_int4 1 64 32 --bmap > "$C" 2>&1
+	log ""
+	log "  -- K=64 N=16, 512 bytes"
+	/opt/charsiu/charsiu_int4 1 64 16 --bmap > "$C" 2>&1
+	log ""
+	log "  -- K=128 N=64, 4096 bytes in steps of 2: is k >= 16 fetched"
+	/opt/charsiu/charsiu_int4 1 128 64 --bmap 2 > "$C" 2>&1
+
+	log ""
+	log "===== 3) --wedge with the clean start it needed. Row N = 0 now   ====="
+	log "=====    really is zero w4a16 jobs.                              ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 --wedge > "$C" 2>&1
 	log "  charsiu_int4 --wedge exit $?"
 
 	log ""
-	log "===== 3) THE OTHER TEST: which weight BYTE feeds which output   ====="
-	log "=====    slot, with no row formula assumed. All zero control    ====="
-	log "=====    runs first and must light nothing.                     ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
-	log "  charsiu_int4 --bmap exit $?"
-
-	log ""
-	log "===== 4) and the channel sweep again, so this round can be      ====="
-	log "=====    laid beside round 186 unchanged                        ====="
-	log ""
-	/opt/charsiu/charsiu_int4 1 64 64 --osweep > "$C" 2>&1
-
-	log ""
-	log "===== 5) int8 last, after everything above ====="
+	log "===== 4) int8 last ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 6) REGRESSION, so the image is known sane ====="
+	log "===== 5) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 7) MobileNet end to end ====="
+	log "===== 6) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 8) still open: 33 input channels ====="
+	log "===== 7) still open: 33 input channels ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 9) LAST, because it times out and poisons whatever follows ====="
+	log "===== 8) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 2's control row first, then its first failure. Then  ====="
-	log "===== entry 3's per slot summary, whole, without fitting.        ====="
+	log "===== Compare the six per slot summaries in entry 2 against each  ====="
+	log "===== other, not against a theory. Then entry 3's control row.    ====="
 	sync
 }
 case "$1" in
