@@ -92,8 +92,20 @@ which is byte exact through this driver, all 512 probes of a 64 by 64 buffer lig
 exactly one channel with `n = byte / 32` and `k = byte % 32`, which is what the Mesa
 packer writes. So the int8 weight layout is no longer only inferred from correct
 outputs: the hardware was asked and it agrees. The same probe on int4 found the
-activation element to be two bytes wide, which is in
-[charsiu](https://github.com/gahingwoo/charsiu).
+activation element to be two bytes wide, and, once the vendor's `w4a16` output stage
+was ported, that this NPU writes a 4 byte **integer** accumulator on that path rather
+than a requantised byte, with weight byte `b` feeding output slot `b / 8`. All of that
+is in [charsiu](https://github.com/gahingwoo/charsiu).
+
+**And a job can leave this NPU unable to start the next one.** charsiu's `w4a16`
+stream, int4 weights against fp16 activations, completes and writes its output, and
+then the next int8 job on the same device times out with its output untouched and
+`rk_iommu: Error during raw reset` beside it. The same int8 binary and the same
+register stream is byte exact when it runs first, and its stream is byte identical
+before and after the w4a16 work, so it is not the int8 side that changed. Mesa's own
+models run correctly afterwards, so `rocket` does recover. Which registers do it is not
+localised yet, and it is recorded here rather than only in charsiu because if it turns
+out to be state the driver should be clearing between jobs, it is this driver's bug.
 
 Two other things charsiu found are the driver's business too. **The vendor's
 `.rkllm` files carry their register command streams**, exactly as `.rknn` files
