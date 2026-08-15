@@ -2,6 +2,188 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 183. The coefficient surface is not being FETCHED, and the
+# vendor keeps that configuration in its own stream too.
+#
+# ROUND 182's RESULT, and both branches of its rule fired at once. Four runs,
+# CHARSIU_NO_LIFT, CHARSIU_COEF_C=1, the baseline and both knobs together, came
+# back BYTE IDENTICAL. The rule said an intercept that does not move means A is
+# not reaching the output, and a slope that does not move means C is not read.
+# Both, which is the same sentence twice:
+#
+#   the coefficient buffer charsiu builds is not read at all on the w4a16 path
+#
+# The MAC is live, since the output still varies with the activation. Only the
+# coefficient path is dead.
+#
+# WHY, and it is the same shape of answer as round 181. The vendor keeps its
+# DPU_RDMA configuration in a separate stream as well: none of its 3328 int4
+# convolution streams carries a single RDMA register, and the 21 register block
+# that does is elsewhere in the same file. Against what charsiu emitted, exactly
+# four differ and not one of them is geometry:
+#
+#   0x501c   00000000 where int8 writes 00000710
+#   0x5034   4000004c where int8 writes 00000041
+#   0x5040   the ROW COUNT. Another vendor stream carries 0x20 beside a 0x1f in
+#            0x500c, so it is 0x500c + 1, and charsiu wrote 0
+#   0x5044   000280a1 where int8 writes 40000010
+#
+# So the DPU stage was ported in round 181 and the unit that FETCHES the surface
+# for it was not. That is the whole of why A and C are inert.
+#
+# ROUND 183's QUESTION, and its decision rule, written before the run.
+#
+#   THE CONTROL IS THE BEST ONE THIS PROJECT HAS HAD, because round 182 measured
+#   it as dead. CHARSIU_NO_LIFT and CHARSIU_COEF_C changed nothing, four runs
+#   byte identical. If the surface is fetched now, THEY MUST STOP BEING INERT.
+#
+#     both knobs move the output
+#               the surface is fetched, the coefficient path is live, and the
+#               slope and the intercept can be chased where round 182 could not
+#               touch them.
+#     neither moves
+#               the four registers are not what fetches it, and the next place
+#               is the record format rather than the configuration.
+#     the output stops varying with the activation
+#               something in these four broke the MAC as well, and they go back
+#               one at a time rather than as a unit.
+#
+#   ENTRY 3 is the baseline, ENTRY 4 and ENTRY 5 the two knobs that were dead.
+#   ENTRY 6 IS THE int8 CONTROL: all four values are inside an int4 branch and
+#   int8 emitted byte for byte what it did before, checked on the desktop.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 182. The datapath is LIVE. Two constants are wrong and each
+# has a named suspect, so each gets one entry.
+#
+# ROUND 181's RESULT. With the vendor's w4a16 output stage ported, the output
+# VARIES WITH THE ACTIVATION for the first time in the whole int4 arc. Every
+# round before this one came back flat against the input.
+#
+#   c    act    npu (half)
+#   0    -16    -11424
+#   4    -12    -10856
+#   8     -8    -10288
+#   12    -4     -9720
+#
+# Differences of +568, +568, +568, so a clean straight line: slope 142 per unit
+# of activation and intercept -9152, where the expected line is 7 * act + 0. So
+# the SHAPE is right and two constants are wrong, the slope by 20.3 times and an
+# intercept that should not be there at all.
+#
+# The other three channels in four came back -nan, about 0.001, and exactly zero.
+# The period is 4, while the impulse's own period is 16, so the channel to
+# coefficient mapping is not what it was under the integer stage either. That is
+# left alone this round: it needs the w4a16 coefficient RECORD, which is data
+# rather than registers and cannot be read out of a .rkllm.
+#
+# WHY THIS ROUND IS TWO KNOBS RATHER THAN A THEORY. Both constants have a named
+# suspect and both suspects are already reachable.
+#
+#   the intercept   THE LIFT. It exists to clear an integer floor, and w4a16
+#                   requantises with 0x40b0 = 1 and 0x40b4 = 0, an identity, so
+#                   there is no floor and A lands in the output raw.
+#   the slope       THE C RECORD, which this tree writes as 16, Q4 for a relative
+#                   scale of one. That is the int8 convention and nothing says it
+#                   means the same here. The whole coefficient buffer is still
+#                   built to int8 conventions; only the DPU stage was ported.
+#
+# ROUND 182's QUESTION, and its decision rule, written before the run. The probe
+# now prints a least squares FIT over the channels that come back finite and
+# varying, because round 181 was read by eyeballing four numbers and computing a
+# slope by hand, which is how a sweep stride got read as a row size in round 173.
+#
+#   ENTRY 3, CHARSIU_NO_LIFT=1.
+#     the intercept goes to about zero    the lift is the intercept, and it has
+#                                         no business on a float path.
+#     the intercept does not move         something else adds it, and A is not
+#                                         reaching the output the way this
+#                                         assumes.
+#
+#   ENTRY 4, CHARSIU_COEF_C=1 against the default 16.
+#     the slope moves by about 16         C is the gain, and the remaining
+#                                         factor is then the fp16 scale table.
+#     the slope does not move             C is not read on this path at all, and
+#                                         the gain is in the scale table or the
+#                                         weight nibble's own interpretation.
+#
+#   ENTRY 5 is round 181's baseline unchanged, so the two knobs are read against
+#   the same run rather than against a remembered one.
+#
+#   ENTRY 6 IS THE CONTROL and int8 must still be byte exact.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
+# 2026-08-15 round 181. The w4a16 OUTPUT STAGE, ported from the vendor's own
+# configuration stream. Round 180 could not have worked and this says why.
+#
+# ROUND 180's RESULT, and its rule does not apply. Feeding a real fp16 activation
+# gave an output that depends only on which nibble is live and not at all on the
+# activation: even channels pinned at -128, odd at +127, while the activation
+# swept -16 to -1 without moving anything. The rule written before that run said
+# a rail would bring down the float reading. It does not, because THE STREAM WAS
+# STILL CONFIGURED FOR int8. Only the packing was changed. That test could not
+# have tested what it was for, and saying so is cheaper than believing its
+# answer.
+#
+# WHAT THE VENDOR'S FILE SAYS, read offline this round and not guessed. The
+# .rkllm's 3328 int4 convolution streams carry NO DPU registers at all, because
+# the vendor configures the DPU in a SEPARATE stream and lets the state stand.
+# Those streams are in the same file: 2908 copies of one 71 register block. It is
+# not the int8 stage with a bit flipped.
+#
+#   0x4010  a0000002   int8 writes 0.  PROC_PRECISION 2, which is fp16
+#   0x4030  ..0310     int8's low half is 0710
+#   0x4038  00000053   int8 writes 00120080
+#   0x4044  00000002   int8 writes 1
+#   0x4050  00023333   int8's is 80011111
+#   0x40ac  00000000  |
+#   0x40b0  00000001  |  an IDENTITY requant. w4a16 does not requantise at all
+#   0x40b4  00000000  |  and the output leaves as a FLOAT
+#
+# That last is why every int4 round so far read the output as a byte and got
+# rails: there was never an integer there to read. 0x4030's low half being 0310
+# is also the value round 158 chased and dismissed, correctly, because that round
+# was running int8.
+#
+# ROUND 181's QUESTION, and its decision rule, written before the run. charsiu
+# now emits that stage for int4, computes the geometry registers as before, packs
+# the activation as real halves, and READS THE OUTPUT AS HALVES.
+#
+#   ENTRY 3, --f16. One live nibble of 7 per channel at k = c mod 16, an
+#   activation of small integers a half holds exactly, so the expected output is
+#   simply activation times 7.
+#
+#     the halves track activation * 7
+#               int4 computes. w4a16 is the configuration, and what is left is
+#               where k = 16 and above go.
+#     the halves are garbage but VARY with the activation
+#               the datapath is float and reaching the MAC, and what is wrong is
+#               narrower than the stage. Worth having either way, since every
+#               round so far has been flat against the activation.
+#     the sentinel survives, or the output is flat again
+#               the stage is not complete. The vendor's block has 71 registers
+#               and this ports the ones that differ by precision; the rest are
+#               geometry and could be wrong for this shape.
+#
+#   ENTRY 4 IS THE CONTROL. int8 must be untouched, and every one of these values
+#   is inside an int4 branch, so if int8 moves the branch is not where I think it
+#   is. The whole int8 stream against a vendor .rknn compiled at the same shape
+#   still shows one difference, checked on the desktop before this image.
+#
+#   THE STAGE IS NOT SWEPT ONE REGISTER AT A TIME, deliberately. An identity
+#   requant behind an integer output stage means nothing, so the unit that can be
+#   tested is the whole stage. int8 being untouched is what keeps that honest.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 180. The element is 16 bits AND its low byte is inert, which
 # only a float can do. Feed a real fp16.
 #
@@ -1547,18 +1729,21 @@ start() {
 	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 3) THE TEST: a REAL fp16 activation against int4 weights ====="
+	log "===== 3) BASELINE: the RDMA surface configured the vendor's way ====="
 	log ""
 	/opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 	log "  charsiu_int4 exit $?"
 
 	log ""
-	log "===== 4) the integer impulse, as the baseline being explained ====="
+	log "===== 4) THE CONTROL: no lift. Round 182 measured this as DEAD, ====="
+	log "=====    so if the surface is fetched it must move now.         ====="
 	log ""
-	CHARSIU_W4=1 CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
+
 	log ""
-	log "  -- and the pairing, which round 179 made k = k"
-	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
+	log "===== 5) THE CONTROL: C = 1, also measured dead in round 182 ====="
+	log ""
+	CHARSIU_COEF_C=1 /opt/charsiu/charsiu_int4 1 64 64 --f16 > "$C" 2>&1
 
 	log ""
 	log "===== 5) THE CONTROL: the packer changed, int8 must be exact ====="
@@ -1606,8 +1791,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 3 decides whether the element is a FLOAT. 16 bits wide  ====="
-	log "===== is measured twice already and does not depend on it.           ====="
+	log "===== Entries 4 and 5 were BYTE IDENTICAL to 3 last round. If they  ====="
+	log "===== still are, the surface is still not being fetched.             ====="
 	sync
 }
 case "$1" in
