@@ -2,6 +2,69 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 190. One w4a16 job is enough to wedge the NPU, so the
+# bisection that failed twice can finally be run against a one job repro.
+#
+# ROUND 189, BOTH ANSWERS.
+#
+# THE ELEMENT IS FOUR BYTES, and it was the fallback branch of the written rule
+# that said so rather than the main one:
+#
+#   nibble 7   ->  2 non zero output bytes, at all four geometries
+#   nibble 15  ->  4 non zero output bytes
+#
+# 7 gives 5112 = 0x000013F8, whose top half IS zero; 15 gives -4896 =
+# 0xFFFFECE0, which has no zero byte in it. Only a four byte element whose high
+# bytes may be zero explains both histograms, which is exactly the case the rule
+# named in advance and put nibble 15 in the run for. Round 185's reading stands
+# and the README does not come out.
+#
+#   K=64 N=64   output byte = (weight byte / 8) * 4
+#               16 weight bytes per output, two runs of 8 that are 256 apart
+#               40 output positions, written 160 = 40 * 4
+#   K=64 N=16   16 output positions, stride 4, written 64
+#               element count = N/2 + 8 holds at N = 16, 32 and 64
+#
+# ONE ROW IS NOT CLEAN and no conclusion is drawn from it: K=16 N=64 came back
+# with 8 or 9 weight bytes per output, first values of 0 and 1 sitting next to
+# each other, and only 20 output positions against K=64's 40. It is re-run here.
+#
+# A SINGLE w4a16 JOB WEDGES IT.
+#
+#   N = 0 (bare charsiu_matmul)   exit 0        the control passed
+#   --pre 1, 1 job that wrote     int8 exit 1
+#   --pre 2, 4, 8                 int8 exit 1, and those jobs no longer wrote
+#   --pre 16                      int8 exit 0
+#
+# The first row is the answer and the rest are downstream of it, which is what
+# the script said to read. A one job repro is what makes a bisection cheap.
+#
+# ROUND 190'S QUESTION, and its rule, written before the run.
+#
+# Four configurations, one w4a16 job each, judged by charsiu_matmul in its own
+# process. Before each one, charsiu_matmul is run up to four times as BOTH the
+# baseline and the recovery, because round 186 bet its bisection on a single
+# Mesa model recovering the device and that model was itself broken.
+#
+#   the baseline never comes back in four tries
+#             that configuration's verdict is VOID. Not a pass.
+#
+#   --pre reports 0 jobs wrote
+#             that configuration's verdict is VOID TOO, and this is the exact
+#             trap round 186 fell into: its NO_DPU run wrote not one byte, so
+#             "int8 was fine afterwards" only meant no w4a16 job had run.
+#
+#   full wedges, NO_DPU does not, and its job wrote
+#             the DPU output stage group does it.
+#   full wedges, NO_RDMA does not, and its job wrote
+#             the RDMA coefficient fetch group does it.
+#   neither wedges and both jobs wrote
+#             it takes the two groups together.
+#   both wedge
+#             each group does it alone, or it is 0x100c, the int4 weight format
+#             itself, which is what the "both out" row is there to ask: that row
+#             is the round 180 stream with only the int4 format left.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 189. Two of round 188's numbers are formulas now; the third
 # quantity it printed was one this file invented, and it is taken back out.
 #
@@ -2091,6 +2154,33 @@ p() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
+# charsiu_matmul is both the baseline and the recovery. Round 186 bet a
+# bisection on ONE Mesa model putting the device back and that model was itself
+# broken, so this retries and says out loud when it never comes back.
+recover() {
+	t=1
+	while [ "$t" -le 4 ]; do
+		if /opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1; then
+			log "  baseline OK on attempt $t"
+			return 0
+		fi
+		log "  baseline attempt $t FAILED"
+		t=$((t + 1))
+	done
+	log "  BASELINE NEVER CAME BACK: the verdict below is VOID"
+	return 1
+}
+
+# one w4a16 job under $2, judged by charsiu_matmul in its own process
+probe_cfg() {
+	log ""
+	log "  ---------------- $1 ----------------"
+	recover
+	env $2 /opt/charsiu/charsiu_int4 1 64 64 --pre 1 > "$C" 2>&1
+	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log "  VERDICT $1: int8 exit $?   (void unless the line above says 1 wrote)"
+}
+
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
@@ -2099,45 +2189,37 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) int8 alone. This is the N = 0 row of entry 3 and it     ====="
-	log "=====    must pass, or nothing below it can be read.             ====="
+	log "===== 1) int8 alone, before any w4a16 job has ever run ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 2) THE TEST: how wide is an output element. One live       ====="
-	log "=====    nibble per weight byte, and the histogram of how many   ====="
-	log "=====    output bytes come back non zero.                        ====="
+	log "===== 2) the byte map at the geometries still open. These run   ====="
+	log "=====    BEFORE the wedge work, because one w4a16 job is now    ====="
+	log "=====    known to be enough to wedge the device.                ====="
 	log ""
-	log "  -- K=64 N=64"
-	/opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
-	log ""
-	log "  -- K=16 N=64, where round 188's invented slot fell apart"
+	log "  -- K=16 N=64, the row that was not clean last round"
 	/opt/charsiu/charsiu_int4 1 16 64 --bmap > "$C" 2>&1
 	log ""
-	log "  -- K=32 N=64, the other one that fell apart"
+	log "  -- K=32 N=64"
 	/opt/charsiu/charsiu_int4 1 32 64 --bmap > "$C" 2>&1
 	log ""
-	log "  -- K=64 N=16, the smallest write extent"
-	/opt/charsiu/charsiu_int4 1 64 16 --bmap > "$C" 2>&1
+	log "  -- K=128 N=64 in steps of 2, where k >= 16 lives"
+	/opt/charsiu/charsiu_int4 1 128 64 --bmap 2 > "$C" 2>&1
 	log ""
-	log "  -- and the same at nibble 15, which is -1: a value whose bytes"
-	log "     are 0xff rather than 0x00 cannot hide inside itself"
-	CHARSIU_INT4_LIVE=15 /opt/charsiu/charsiu_int4 1 64 64 --bmap > "$C" 2>&1
+	log "  -- K=64 N=32, the one geometry never mapped"
+	/opt/charsiu/charsiu_int4 1 64 32 --bmap > "$C" 2>&1
 
 	log ""
-	log "===== 3) THE WEDGE, with the int8 side back to the code path     ====="
-	log "=====    that has been byte exact since round 164. Read the      ====="
-	log "=====    FIRST failure; everything after it is downstream of it. ====="
-	log ""
-	for N in 1 2 4 8 16; do
-		log ""
-		log "  -- $N w4a16 jobs, then charsiu_matmul in its own process"
-		/opt/charsiu/charsiu_int4 1 64 64 --pre "$N" > "$C" 2>&1
-		/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-		log "  int8 after $N w4a16 jobs: exit $?"
-	done
+	log "===== 3) THE BISECTION, one w4a16 job per configuration.        ====="
+	log "=====    A verdict counts only if its baseline came back AND    ====="
+	log "=====    its w4a16 job actually wrote.                          ====="
+
+	probe_cfg "the full port"  ""
+	probe_cfg "NO_DPU"         "CHARSIU_W4_NO_DPU=1"
+	probe_cfg "NO_RDMA"        "CHARSIU_W4_NO_RDMA=1"
+	probe_cfg "both out"       "CHARSIU_W4_NO_DPU=1 CHARSIU_W4_NO_RDMA=1"
 
 	log ""
 	log "===== 4) REGRESSION, so the image is known sane ====="
@@ -2158,8 +2240,9 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 2's histograms first, all five of them together.     ====="
-	log "===== Then the first failing N in entry 3, and only the first.   ====="
+	log "===== For each configuration read three lines: did the baseline  ====="
+	log "===== come back, did the w4a16 job write, and only then the      ====="
+	log "===== verdict. Two of those being wrong is what killed 186.      ====="
 	sync
 }
 case "$1" in
