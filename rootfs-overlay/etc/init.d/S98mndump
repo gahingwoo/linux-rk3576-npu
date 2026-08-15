@@ -2,6 +2,70 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 164. The ReLU IS real, round 163 disproved its own headline,
+# and the way past it is a lift of 128 that the offset takes straight back.
+#
+# ROUND 163 CORRECTED ROUND 163. Its entry 2 was written to be the milestone and
+# instead falsified the model that entry was built on. With the offset at 0 the
+# negative half came back at 0 rather than negative, while the positive half was
+# exact to the byte, 0 2 4 6 8 10 12 14 16 18 20 23 ... 63 with the irregular
+# step at index 43 included. The three entries the old model was fitted to all
+# had an offset that made a floor at zero and a rail at -128 predict the same
+# bytes, so none of them could tell the two apart. This one could.
+#
+#     out = clamp(max(requant, 0) + offset, -128, 127), stored as int8
+#
+# 64 of 64 on every entry of round 163. Dropping the floor from the model gives
+# 32 of 64 and 34 of 64 on the two entries that distinguish, so it is not a free
+# parameter. There IS a fused ReLU, which round 163's headline and this file both
+# said there was not.
+#
+# The control did its job first, as it is supposed to: the pre-163 unsigned
+# configuration reproduced round 162's answer to the byte, so the binary changed
+# and the reading is about the hardware.
+#
+# WHAT MAKES IT STOP MATTERING. The floor takes a negative requant before the
+# offset can do anything with it. Lift the accumulator by 128 in the requant
+# domain, by adding 128/mult to A, and the floor no longer reaches any value a
+# signed byte can hold; take the same 128 back in the offset and the lift cancels
+# exactly:
+#
+#     max(rq + 128, 0) + (out_zp - 128) = rq + out_zp   for every rq >= -128
+#
+# Nothing is approximated. The lift is added to an int32 accumulator and removed
+# in the output domain, so the only rounding is the one the requant already had.
+# The offset rule that falls out, out_zp - 0x80, is the one Mesa has used since
+# the beginning; the half that was missing here was the lift.
+#
+# ROUND 164's QUESTION, and its decision rule, written before the run. Every
+# prediction is arithmetic and the whole round is one change.
+#
+#   ENTRY 2. The negative MAC with the lift on. requant runs -66 to +63 and the
+#   lift puts it at 62 to 191 before the floor, which therefore never bites, and
+#   the offset of -128 brings it back.
+#
+#     all 64 exact against the signed reference
+#               charsiu computes a SIGNED matmul end to end, and the thing this
+#               project has called its blocker since round 158 is finished.
+#     the negative half still flat at 0
+#               the lift is not reaching A, and entry 3 says whether anything
+#               changed at all.
+#
+#   ENTRY 3, THE CONTROL. CHARSIU_NO_LIFT, which is every round up to 163. It
+#   MUST come back with the negative half flat at 0 and the positive half exact.
+#   A lift whose control does not bring the floor back has not been shown to be
+#   the reason anything moved.
+#
+#   ENTRY 4. The bias ramp with the lift. requant runs -48 to +53, same rule.
+#
+#   ENTRY 5. A dense matmul, an impulse, and a projection sized 512 to 1024 at
+#   M = 1. These are the first runs here where the reference and the hardware are
+#   meant to agree on every channel with nothing clamped and nothing floored.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 163. THERE IS NO FUSED RELU. The output is a signed byte,
 # the stage is solved, and the blocker this project has carried since round 158
 # was an artefact of reading those bytes as unsigned.
@@ -511,21 +575,20 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) THE TEST: negative MAC, SIGNED output, offset 0 ====="
-	log "=====    predicted every one of the 64 exact, -66 to +63 ====="
+	log "===== 2) THE TEST: negative MAC with the LIFT, predicted ====="
+	log "=====    every one of the 64 exact, -66 through +63      ====="
 	log ""
 	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 3) THE CONTROL: the pre-163 unsigned configuration, ====="
-	log "=====    which MUST give 128 x32 then 130 132 ... 191     ====="
+	log "===== 3) THE CONTROL: CHARSIU_NO_LIFT, which MUST bring the ====="
+	log "=====    floor back: negative half flat 0, positive exact   ====="
 	log ""
-	CHARSIU_NEG=1 CHARSIU_UINT8_OUT=1 CHARSIU_OUT_OFF=-128 \
-		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_NEG=1 CHARSIU_NO_LIFT=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 4) the bias ramp, signed, predicted exact everywhere ====="
+	log "===== 4) the bias ramp with the lift, predicted exact ====="
 	log ""
 	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
@@ -559,8 +622,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 3 first. If the old configuration no longer gives  ====="
-	log "===== the old answer, nothing else in this round can be read.        ====="
+	log "===== Read entry 3 first. A lift whose control does not bring the   ====="
+	log "===== floor back has not been shown to be why anything moved.        ====="
 	sync
 }
 case "$1" in
