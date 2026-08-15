@@ -2,6 +2,81 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-15 round 162. The input operand was never biased, and that is the
+# bug. The output stage is now solved arithmetic rather than a sweep.
+#
+# ROUND 161'S RESULT. CHARSIU_NEG, a zero bias with a MAC walking through zero,
+# came back as a line with the WRONG SIGN and a gain of about -2.2, saturating at
+# the zero point for the half where the true value is positive. That is not a
+# clamp being read wrongly. An input byte of 168, which means +40 against a zero
+# point of 128, is arriving as -88, and 168 as a SIGNED byte is exactly -88.
+#
+# The hardware reads BOTH operands as signed bytes. Round 150 established that
+# for the weight and charsiu has biased it by 0x80 ever since; the input went in
+# raw for another eleven rounds, and every comment in the tree said the hardware
+# subtracted 0x80 from it by itself.
+#
+# The model that follows from it accounts for every byte of both probes:
+#
+#     out = (clamp(mult * (acc + A), 0, 255) - offset) mod 256
+#
+# On round 161's negative MAC entry that predicts all 64 bytes with not one off
+# by a single count, where taking the input as unbiased misses 63 of the 64. On
+# the bias ramp entry it also accounts for the residual that six rounds wrote off
+# as "about three counts of rounding": an input held at 128 arrives as -128
+# rather than 0, so that probe's MAC was -128 * weight_sum instead of the exact
+# zero it was built to have, which is plus or minus 3 at that scale. It was never
+# rounding.
+#
+# Two other things from round 161, both closed. 0x4030's low half at 0x0750 is
+# byte identical to 0x0710 on both probes, so bit 6 is not a ReLU bypass here and
+# that lead is dead. And a requant of 144 came back as byte 16 rather than
+# saturating at 255, so the offset add WRAPS and is not re-clamped.
+#
+# ROUND 162's QUESTION, and its decision rule, written before the run. The
+# predictions below are arithmetic, not expectations, so each entry either
+# matches its number or the model is wrong.
+#
+#   ENTRY 2. The negative MAC with the input biased, everything else as before.
+#   acc = 40 * K * (c - 32), so requant = 2.048 * (c - 32) and the clamp takes
+#   the negative half.
+#
+#     channels 0 to 31 flat at 128 and 32 to 63 equal to the cpu row, ending
+#     at 191
+#               the input bias was the bug.
+#     anything else
+#               it was not, and entry 3 says whether the change even took.
+#
+#   ENTRY 3, THE CONTROL. CHARSIU_INPUT_RAW writes the input the way every round
+#   up to 161 did. It MUST reproduce round 161's wrong numbers exactly, starting
+#   16 12 7 3 254 250. A fix whose control does not bring the fault back has not
+#   been shown to be the fix.
+#
+#   ENTRY 4. The same negative MAC with CHARSIU_ZP_FOLD=1 and CHARSIU_OUT_OFF=0.
+#   Folding out_zp/mult into A lifts the surface to 62..191, clear of the clamp
+#   at both ends, and the offset then has nothing to do.
+#
+#     all 64 channels equal to the cpu row
+#               the output stage is finished and a projection can be signed.
+#               That is the last thing charsiu was blocked on.
+#     the negative half still flat
+#               the fold is not reaching A, and the coefficient buffer is next.
+#
+#   Note the fold amount CHANGED this round. It was (out_zp - 0x80)/mult, which
+#   is exactly zero for the zero point of 128 every probe here uses, so the fold
+#   has never actually been tested despite being switched on in round 157.
+#
+#   ENTRY 5. The bias ramp with the input biased. Its MAC is now genuinely zero.
+#
+#     channels 31 to 63 equal to the cpu row exactly, ending at 181
+#               the three count residual is gone and it was this bug.
+#     the residual survives
+#               something else makes it and it is worth its own round.
+#
+# ---------------------------------------------------------------------------
+# What earlier rounds settled, kept because the rules below were written against
+# it.
+#
 # 2026-08-15 round 161. Round 160's premise was mine and it was wrong. The
 # floor is real, it is not the DPU activation stage, and two probes left.
 #
@@ -367,25 +442,39 @@ start() {
 	log "  charsiu_probe exit $?"
 
 	log ""
-	log "===== 2) BASELINE: the bias ramp, everything else reads against it ====="
+	log "===== 2) THE TEST: negative MAC, input now BIASED by 0x80 ====="
+	log "=====    predicted 128 x32 then the cpu row, ending 191    ====="
 	log ""
-	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log "  charsiu_matmul exit $?"
 
 	log ""
-	log "===== 3) THE TEST: 0x4030 low half 0x0750, one bit, BS_RELU_BYPASS ====="
+	log "===== 3) THE CONTROL: the pre-162 raw input, which MUST come ====="
+	log "=====    back wrong, starting 16 12 7 3 254 250            ====="
 	log ""
-	CHARSIU_CONST=1 CHARSIU_DPU_4030=0x750 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_NEG=1 CHARSIU_INPUT_RAW=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 4) THE TEST: a NEGATIVE MAC with zero bias, the mirror of 2 ====="
+	log "===== 4) THE TEST: fold the zero point into A, offset 0.  ====="
+	log "=====    predicted the cpu row on ALL 64 channels.        ====="
 	log ""
-	CHARSIU_NEG=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_NEG=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
+		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
-	log "===== 5) the same negative MAC with 0x0750, if 3 moved anything ====="
+	log "===== 5) the bias ramp, whose MAC is only now really zero ====="
 	log ""
-	CHARSIU_NEG=1 CHARSIU_DPU_4030=0x750 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	CHARSIU_CONST=1 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- and the same ramp with the fold, which should be exact everywhere"
+	CHARSIU_CONST=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
+		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	log "  -- a dense matmul and an impulse, with everything on"
+	CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 /opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	CHARSIU_IMPULSE=1 CHARSIU_ZP_FOLD=1 CHARSIU_OUT_OFF=0 \
+		/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 
 	log ""
 	log "===== 6) REGRESSION, so the image is known sane ====="
@@ -407,8 +496,8 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 4 against entry 2 is the round. They differ in ONE thing, ====="
-	log "===== which side of the requant the number that goes negative sits on. ====="
+	log "===== Read entry 3 first. If the control does not reproduce round   ====="
+	log "===== 161's wrong numbers, the new binary is not what ran.           ====="
 	sync
 }
 case "$1" in
