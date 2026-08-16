@@ -2,6 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 207. Third crash from the same assumption, so this time all
+# three places got found at once, and a second thing in round 206 was my own
+# script ordering.
+#
+# ROUND 206: four controls at every channel correct again, pw33x64w56 at 64 of
+# 64, and `interior EMPTY` printed where round 205 crashed. Then it crashed
+# somewhere else, at `got[y, 1:17, wc]`, which is an IndexError rather than an
+# empty reduction but the same assumption underneath: THAT THERE IS A SURFACE.
+# MobileNet's classifier is 1x1x1001 and has no row 1, no row 2 and no column
+# 16.
+#
+# Round 206's own written rule for a third crash was to stop patching call
+# sites and find every one at once. Done: three places index space, and all
+# three are now guarded and listed in a comment beside the last one.
+#
+#   ~156  inner maxdiff     prints -1
+#   ~299  interior stats    falls back to the whole surface
+#   ~352  the RAW row dump  prints the whole channel instead
+#
+# Checked on the host at 1x1x1001, 5x5x8 and 56x56x64 before flashing. All
+# three pass. That check costs nothing and would have caught all three of these
+# rounds ago.
+#
+# AND THE SECOND MOBILENET RUN IN ROUND 206 WAS UNREADABLE, BY MY OWN SCRIPT'S
+# DESIGN. It came back 983 of 1001 with npu at ONE distinct value, against 1000
+# of 1001 and nine distinct in the first run of the same model in the same log.
+# The difference is that I put it AFTER pw64x56w56, which times out, and the
+# entry after a timeout has come back poisoned since round 138. That is why the
+# timing out shape has run LAST in this script for seventy rounds, and this
+# round I inserted an entry behind it. The repeat is moved back in front.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   MobileNet prints every line, twice, with no traceback and the two runs
+#   agree
+#             the tool is finally out of the way and the remaining fault is one
+#             channel of 1001 at maxdiff 4.
+#   the two MobileNet runs disagree while both are BEFORE the timeout
+#             the model is not deterministic on this driver, which would be a
+#             much bigger finding than the one channel.
+#   it crashes again
+#             the assumption is somewhere a grep for got[ and ref[ does not
+#             reach, and the next step is running perch.py on the host against
+#             a saved 1x1 surface rather than reading it.
+#
+# Mesa, the kernel and charsiu are byte identical to round 205.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 206. The MobileNet regression set is clean and the last
 # thing in the way of reading it is still my own tool.
 #
@@ -3112,14 +3159,15 @@ start() {
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 3) the other open shape, 56 output channels ====="
-	p pw64x56w56.tflite ""
+	log "===== 3) MobileNet a second time, BEFORE the timing out shape.   ====="
+	log "=====    Round 206 put this after it and got 983 of 1001 with    ====="
+	log "=====    one distinct value, which is the poisoning that has     ====="
+	log "=====    followed a timeout since round 138 and not a result.    ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 4) MobileNet a second time, since a one pixel output is    ====="
-	log "=====    where the tool has been wrong twice and a repeat is    ====="
-	log "=====    cheap                                                  ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
+	log "===== 4) LAST, because it times out and poisons whatever follows ====="
+	p pw64x56w56.tflite ""
 
 	log ""
 	log "===== 5) charsiu, unchanged ====="

@@ -347,12 +347,30 @@ if n1:
     # a shift and a rounding constant, and the coordinates are fixed so the
     # accumulator can be recomputed for exactly these pixels.
     wc = int(order[-1])
-    print(f"    RAW ch {wc} rows 1,2 cols 1..16", flush=True)
-    for y in (1, 2):
-        g = got[y, 1:17, wc].tolist()
-        r = ref[y, 1:17, wc].tolist()
-        print(f"      y{y} npu {g}", flush=True)
-        print(f"      y{y} ref {r}", flush=True)
+    # ⚠ EVERY HARDCODED COORDINATE IN THIS FILE ASSUMES A SURFACE. Rows 1 and 2
+    # and columns 1 to 16 do not exist on a 1x1x1001 classifier, and this raised
+    # IndexError on MobileNet after the useful lines had printed, which is round
+    # 206's third crash from the same assumption. The rule that round said out
+    # loud was to stop patching call sites one at a time, so the three places
+    # that index space are listed here and all of them are guarded:
+    #
+    #   line ~156  inner maxdiff       guarded, prints -1
+    #   line ~299  interior stats      guarded, falls back to the whole surface
+    #   here       the RAW row dump    guarded below
+    rows = [y for y in (1, 2) if y < got.shape[0]]
+    cols = min(17, got.shape[1])
+    if not rows or cols <= 1:
+        print(f"    RAW ch {wc}: surface is {got.shape[0]}x{got.shape[1]}, "
+              f"no rows 1,2 cols 1..16 to show; whole channel is "
+              f"npu {got[:, :, wc].ravel().tolist()[:16]} "
+              f"ref {ref[:, :, wc].ravel().tolist()[:16]}", flush=True)
+    else:
+        print(f"    RAW ch {wc} rows {rows} cols 1..{cols - 1}", flush=True)
+        for y in rows:
+            g = got[y, 1:cols, wc].tolist()
+            r = ref[y, 1:cols, wc].tolist()
+            print(f"      y{y} npu {g}", flush=True)
+            print(f"      y{y} ref {r}", flush=True)
 
 if not bad:
     print("    every channel correct", flush=True)
