@@ -118,6 +118,33 @@ convolution those were read from was square, so the two readings were the same
 number. Nothing here is wrong because of it, since every shape this driver runs
 is square, but a non square input would be.
 
+## Every shape in the regression set computes (2026-08-16)
+
+`pw64x56w56`, a 1x1 convolution with 56 output channels, had timed out in every
+round it was ever run. It now comes back **56 of 56, every channel correct**,
+with the old behaviour reproducible in the same log through
+`ROCKET_DPU4050_MOD32=1`.
+
+**`0x4050` follows the parity of `DIV_ROUND_UP(oc, 16)`, not `oc % 32`.** The
+modulo rule was fitted honestly, on ten vendor models compiled at 16 to 160
+output channels in steps of 16, 10 for 10. But every one of those counts is a
+multiple of 16, and on that set the two predicates are the same predicate. They
+differ only where a count is a multiple of neither 32 nor 16, and 56 is such a
+count: `DIV_ROUND_UP(56,16)` is 4, so the parity form asks for `0x80011111`.
+
+**How it was found is worth more than the fix.** charsiu drives this same
+hardware through the same driver with its own register streams, and it computes
+the identical arithmetic, 64 input and 56 output channels over 3136 rows, to
+200344 of 200704. So the hardware was never the limit. `ROCKET_PW_RESHAPE`
+then re-expressed this driver's 1x1 surface as N columns until its geometry
+matched charsiu's exactly, and with that matched the diff between the two
+streams collapsed to six addresses, three requant registers and **one**
+remaining difference, which was `0x4050`.
+
+What that ruled out on the way, each with a control that could have failed: the
+register stream itself, the output buffer, the input CBUF budget at six
+settings, rounding the output count to the feature atom, and the spatial axis.
+
 ## Any input channel count computes (2026-08-16)
 
 A 1x1 convolution with **33 input channels** went from 18 of 64 channels correct

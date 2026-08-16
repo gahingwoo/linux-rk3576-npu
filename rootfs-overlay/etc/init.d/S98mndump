@@ -2,6 +2,570 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 218. One register is left, and it was fitted on a sweep that
+# never contained the failing case.
+#
+# ROUND 217. The reshape printed `56x56 -> 1x3136`, the control pw64x41w56 at
+# one column stayed 41 of 41, and pw64x56w56 at one column STILL TIMED OUT. So
+# the axis is not the fault either, which was the rule's second branch and it
+# named what comes next.
+#
+# WITH THE GEOMETRY MATCHED, the diff against charsiu's own stream for the same
+# shape and the same channel counts comes down to:
+#
+#   6 addresses, 3 requant registers, and ONE other:
+#
+#     0x4050    charsiu 80011111    mesa 80011011
+#
+# charsiu computes this shape. Mesa cannot. They now differ in one register.
+#
+# WHERE MESA'S VALUE COMES FROM, and it is in the driver's own comment: ten
+# vendor .rknn files compiled at output channel counts from 16 to 160 IN STEPS
+# OF 16, giving 0x80011111 for every multiple of 32 and 0x80011011 otherwise,
+# 10 out of 10. The rule written from that was `oc % 32 == 0`.
+#
+# ⚠ EVERY ONE OF THOSE TEN POINTS IS A MULTIPLE OF 16, and 56 is not. On that
+# sweep `oc % 32 == 0` and `DIV_ROUND_UP(oc,16) is even` are the SAME PREDICATE
+# and cannot be told apart. They part company exactly where oc is a multiple of
+# neither 32 nor 16, and 56 is such a count: DIV_ROUND_UP(56,16) = 4, even, so
+# the parity form says 0x80011111, which is what charsiu emits and what
+# computes.
+#
+# Checked offline before flashing: the two forms agree at 16, 32, 48, 64, 80,
+# 96, 112, 128, 144 and 160, so nothing the vendor sweep measured moves. On this
+# board only oc 56 changes value. 41 stays 0x80011011, 64 and 128 stay
+# 0x80011111.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   pw64x56w56 stops timing out
+#             the predicate was fitted on a subset that could not distinguish
+#             it, and the parity form is right. The last plainly broken shape
+#             on this driver closes.
+#   it still times out
+#             0x4050 is not it either, and with the streams now identical bar
+#             addresses, what is left is a buffer or an address rather than
+#             anything in the stream.
+#   pw64x41w56, pw33x64w56 or conv2d-cal moves
+#             the two forms are not equivalent after all, which the offline
+#             check says they are, so that would mean the check is wrong. All
+#             three run FIRST.
+#
+# ROCKET_DPU4050_MOD32 restores the modulo form, so both are in one log.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 217. The knob works, and I had its parameter backwards in
+# two round headers.
+#
+# ROUND 216 CONFIRMED THE MECHANISM. `rocket: PW_RESHAPE 56x56 -> 3136x1`
+# printed, and the dumps with the knob off and on differ in THIRTEEN registers,
+# with 0x37 (=55) becoming 0xc3f (=3135) and 0x38 becoming 0xc40. So the
+# hardware really is given the new geometry, and round 215's result stands: the
+# spatial shape is not the fault, since every reshape still timed out.
+#
+# ⚠ EXCEPT THAT NONE OF THOSE RESHAPES WAS charsiu's GEOMETRY. I wrote
+# "3136x1, which is charsiu's geometry exactly" in two headers. It is the
+# TRANSPOSE of it. ROCKET_PW_RESHAPE=W sets the WIDTH, so =3136 is 3136 columns
+# by 1 row, while charsiu runs M=3136 ROWS by 1 column. The sweep covered 16,
+# 28, 112 and 3136 columns and never once covered ONE column.
+#
+# The diff says so plainly. Against charsiu's own stream for the same shape and
+# the same channel counts, with addresses and the requant triple set aside,
+# only thirteen registers differ and twelve of them are that transposition:
+#
+#   0x102c  0x1078  0x118c  0x301c  0x4034      the two halves swapped
+#   0x1030  0x103c  0x1044  0x4020  0x4024
+#   0x500c  0x5010                              3136 in the other field
+#
+# and exactly ONE is something else:
+#
+#   0x4050   charsiu 80011111   mesa 80011011
+#
+# So the two stacks emit nearly the same stream for this work. What separates
+# them is which axis carries the 3136, and one nibble in 0x4050.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   ROCKET_PW_RESHAPE=1 completes without a timeout
+#             the axis is the fault. Mesa asks for 3136 columns of one row
+#             where the hardware wants one column of 3136 rows, and 56x56 is
+#             the same fault in a less obvious form.
+#   it still times out
+#             the axis is not it either, and 0x4050 is the only difference
+#             left standing, which makes it the next and nearly the last
+#             thing to try.
+#   it completes but the answer is wrong
+#             expected and fine. The reshaped output lands where perch.py does
+#             not look; only the timeout is being read.
+#
+# THE CONTROL: pw64x41w56 at the same reshape. It works unreshaped and it
+# worked at 3136 columns, so if one column breaks it, the mechanism and not the
+# finding is at fault.
+#
+# ⚠ Note for the record: the dump in round 216's entry 3 was pw64x41w56, and I
+# first diffed it against charsiu at N=56. Wrong channel count, wrong
+# comparison. Redone against N=41 offline before writing any of the above.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 216. Round 215 asked a question its own instrument could not
+# answer, and the fault is mine and was avoidable.
+#
+# WHAT ROUND 215 SHOWED. Every reshape of pw64x56w56, at 3136x1, 112x28, 28x112
+# and 16x196, still timed out at 32 of 56. The control, pw64x41w56 reshaped to
+# 3136x1, came back 41 of 41 correct.
+#
+# ⚠ AND THAT CONTROL PROVES NOTHING, WHICH I SHOULD HAVE SEEN WHEN WRITING IT.
+# A 1x1 convolution's output surface is laid out identically whether it is
+# called 56x56 or 3136x1, because the pixels are in the same order either way.
+# So a correct answer is what you get BOTH if the reshape worked AND if it
+# never ran. The two cases are indistinguishable in that log, and the whole of
+# entry 3 is therefore unreadable, exactly like round 208.
+#
+# The rule I keep having to relearn: verifying that a knob's STRING is in the
+# binary is not verifying that the knob DOES anything. Round 205 checked
+# strings and shipped a crash; this round checked strings and shipped a knob
+# whose effect could not be observed.
+#
+# SO THE KNOB SAYS SO ITSELF NOW. It prints
+#
+#   rocket: PW_RESHAPE 56x56 -> 3136x1
+#
+# to stderr when it fires, and the same run's register stream is dumped so the
+# geometry can be confirmed in the values the hardware is actually given rather
+# than inferred from an answer that cannot vary.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the PW_RESHAPE line appears and the dumped geometry registers change
+#             the knob works, and then round 215's result stands: the spatial
+#             shape is NOT the fault, since every reshape still timed out.
+#   the line does not appear
+#             the knob never ran, round 215 said nothing at all, and the
+#             condition guarding it is what to fix.
+#   the line appears but the geometry registers are unchanged
+#             it fires and is then overwritten downstream, which is worth more
+#             than either of the above.
+#
+# THE CONTROL: with the knob OFF, the same dump must show 56x56 geometry, so
+# the comparison has both sides in one log.
+#
+# ⚠ WHAT DOES NOT CHANGE either way: charsiu computes 64 in and 56 out over
+# 3136 rows to 175358 of 175616. Mesa cannot complete the same arithmetic. That
+# gap is real whatever this knob turns out to do.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 215. The output rounding was measured and is not the answer,
+# so it is withdrawn, and the only variable left is the spatial shape.
+#
+# ROUND 214: four controls every channel correct, including pw64x41w56 with its
+# oc_pad moved from 42 to 48 and pw33x64w56 whose oc is already 64. And
+# pw64x56w56 timed out at 32 of 56 with the atom rounding, which is BYTE FOR
+# BYTE what it does with the pair rounding in the same log. So rounding the
+# output count to the feature atom breaks nothing and fixes nothing.
+#
+# IT IS WITHDRAWN FROM THE DEFAULT. A change with no evidence behind it costs
+# weight buffer and clouds the next measurement, so ROCKET_OC_ATOM keeps it
+# reachable and the default goes back to the pair. The asymmetry with the input
+# side is real and is now known NOT to be the fault, which is worth as much as
+# a fix would have been.
+#
+# The recovery discipline also proved itself: attempt 1 came back 0 of 128 and
+# attempts 2 and 3 came back 128 of 128, which is exactly why round 186 and
+# round 213 both lost entries to using a single run.
+#
+# WHAT IS LEFT, and it is now the only thing. charsiu computes 64 in and 56 out
+# over 3136 ROWS to 175358 of 175616 with nothing off by more than one; Mesa
+# cannot complete the same arithmetic over a 56x56 SURFACE. A 1x1 convolution
+# does not read its neighbours, so those two are the same computation. Ruled
+# out so far: the register stream (211), the output buffer and the hardware
+# itself (212), the input CBUF budget at six settings (213), the output channel
+# rounding (214).
+#
+# ROCKET_PW_RESHAPE=W re-expresses a pointwise layer's surface as W columns
+# with W * H held constant. 56x56 becomes 3136x1, 112x28, 28x112 and so on.
+#
+# ⚠ THE ANSWER WILL BE WRONG UNDER A RESHAPE and that is expected: the output
+# lands in a differently laid out surface, so perch.py will compare the wrong
+# pixels. THE ONLY THING BEING READ IS WHETHER THE JOB COMPLETES. A reshape
+# that stops the timeout says the geometry is the fault even with a wrong
+# answer, and that is why the entries below are read for "timed out" and not
+# for channel counts.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   some reshape completes without a timeout
+#             the spatial shape is the fault, and which reshapes work bounds
+#             it. 3136x1 completing would mean charsiu's geometry is simply
+#             one Mesa never asks for.
+#   every reshape still times out
+#             it is not the surface either, and the difference between charsiu
+#             and Mesa on this shape is somewhere neither the stream nor the
+#             geometry reaches.
+#   the reshape breaks pw64x41w56 as well
+#             the reshape code is wrong rather than the finding, and entry 2 is
+#             there to catch exactly that.
+#
+# THE CONTROL: pw64x41w56 reshaped the same way. It works unreshaped, so if it
+# times out reshaped, the mechanism is at fault and nothing below can be read.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 214. The input count rounds to the feature atom; the output
+# count has only ever rounded to a pair. That asymmetry is the last thing left
+# that fits the evidence.
+#
+# ROUND 213: EVERY BUDGET TIMED OUT. Default, 2048, 1024, 512 entries and row
+# windows of 28 and 14, all of them, and the small budgets made it WORSE,
+# taking pw64x56w56 from 32 of 56 to 0 of 56, while pw64x41w56 stayed 41 of 41
+# at every one. So it is not the input CBUF capacity, which was the rule's
+# second branch.
+#
+# ⚠ AND A DESIGN FAULT OF MINE, THE SAME ONE AS ROUND 186. Every block's first
+# line, conv2d-cal, came back 0 of 128 except in the first block, because it
+# runs right after the previous block's timeout and the entry after a timeout
+# has been poisoned since round 138. I used ONE run as a recovery check when
+# round 190 had already established that recovery needs retrying. pw64x41w56,
+# the second line, passed in every block and is what makes the third line
+# readable at all.
+#
+# WHAT NOW FITS. Three pointwise shapes on the same 56x56 surface:
+#
+#   33 in, 64 out   correct     oc_pad 64
+#   64 in, 41 out   correct     oc_pad 42
+#   64 in, 56 out   TIMES OUT   oc_pad 56
+#
+# and everything else is ruled out: the hardware computes 56 output channels
+# over 3136 rows (round 212), the two streams differ only in values carrying
+# the output count (211), the output buffer is twice the size it needs (212),
+# and the input CBUF budget is not it (213).
+#
+# The input side needed ALIGN(ic, 16) in three places and the output side has
+# only ever had ALIGN(oc, 2). This round gives it ALIGN(oc, 16) in the two
+# places that describe the weight buffer: its size, its layout, and the count
+# the CNA is told. The REAL output count still goes to CORE 0x3020, DPU 0x402c
+# and RDMA 0x5014, so no extra channel is written.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   pw64x56w56 stops timing out
+#             the output count needed the atom too, and the symmetry with the
+#             input side is complete.
+#   it still times out
+#             the atom is not it either, and what is left is that a 2D surface
+#             does something a 3136 row one does not, since charsiu computes
+#             the same arithmetic.
+#   pw64x41w56 or pw33x64w56 changes
+#             the padding reached a shape it must not. Both run BEFORE the test
+#             and pw33x64w56 has oc 64, already a multiple of 16, so it cannot
+#             legitimately move at all.
+#
+# ROCKET_OC_PAIR restores the pair rounding, so before and after are in one
+# log, and the recovery step is three runs of conv2d-cal rather than one.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 213. The hardware can do the shape, so pw64x56w56's timeout
+# is Mesa's, and this round asks whether it is a capacity by turning the one
+# knob that changes capacity.
+#
+# ROUND 212, control passing: three runs of M=3136 K=64 N=64 all gave
+# 200394 of 200704, identical.
+#
+#   N=56 at M=3136   two of three runs 175358 of 175616, 0 off by more than 1
+#   N=41 at M=3136   three of three wrong, two with a timeout, and the two
+#                    non-timeout results are byte identical to each other
+#
+# **The hardware computes 56 output channels over 3136 rows.** So pw64x56w56's
+# timeout is Mesa asking wrongly, not a hardware limit.
+#
+# charsiu's own N=41 failure is the OPPOSITE pairing from Mesa, which gets 41
+# right and 56 wrong, so the two are not the same fault. 41 is odd, Mesa has an
+# oc_pad for that and charsiu only applies ALIGN_UP(n,2) to the weights while
+# its output surface uses ALIGN(N,16). That is charsiu's own bug and it is
+# recorded, not chased.
+#
+# WHAT THE STREAM AND THE BUFFERS RULE OUT. Round 211's diff was seven values,
+# all carrying the output count, plus 0x5024 which is the coefficient address,
+# so there is no semantic difference. The output buffer is not short either:
+# calc_raw_output_size gives 56*56*DIV_ROUND_UP(56,16)*2*16 = 401408 bytes where
+# ALIGN(56,16) needs 200704, twice over.
+#
+# WHAT IS LEFT. The input CBUF budget is computed from the INPUT
+# (entries_per_slice * input_height), and these two shapes have identical
+# inputs, 64 channels over 56x56, and identical 147 entry streams. So the
+# splitting is the same for both, and conv2d-cal at 40x40x128 stages a wider
+# row than either and is correct. None of that explains it, which is why the
+# knob gets turned instead of the reasoning continued.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   a smaller ROCKET_CBUF_ENTRIES makes the timeout go away
+#             it is a capacity, the budget is too large for this shape, and the
+#             value at which it starts working bounds where the real limit is.
+#   it times out at every budget
+#             not the input CBUF, and the next place is the output side, where
+#             nothing in this driver currently caps anything.
+#   it stops timing out but the answer is still wrong
+#             two faults, and the timeout was hiding the second.
+#
+# THE CONTROL: conv2d-cal and pw64x41w56 run under the SAME reduced budget and
+# must stay every channel correct. A budget small enough to break them would
+# make any improvement in pw64x56w56 unreadable. And each configuration is
+# preceded by a known good model, because the entry after a timeout has been
+# poisoned since round 138.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 212. The two streams differ only in geometry, so the stream
+# is not what is wrong, and the question moves to whether the hardware can do
+# this shape at all.
+#
+# ROUND 211'S DIFF. Both dumps are 143 entries with the same registers, and
+# exactly seven values differ:
+#
+#   0x101c   2688 = 64*42          3584 = 64*56       ic * oc_pad
+#   0x1024   41 (= 42 - 1)         55 (= 56 - 1)
+#   0x3020   40 (= 41 - 1)         55                 oc_real - 1
+#   0x402c   40                    55
+#   0x4030   high 40               high 55
+#   0x5014   40                    55
+#   0x5024   12768                 12848              differs by 80
+#
+# Every one of them carries the output channel count. There is NO non geometry
+# difference, which was the branch of the written rule that would have been the
+# stronger lead. And the timeout still let the dump be written, so the stream
+# reaches the buffer and the fault is in executing it.
+#
+# So the stream describes N = 56 correctly and the hardware times out anyway.
+# charsiu computes N = 56 exactly, at one row and at eight, which is why the
+# channel count was ruled out in round 209. What charsiu has NEVER run is
+# N = 56 at M = 3136, and 3136 is 56 * 56, which is exactly the work Mesa is
+# asking for.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   charsiu computes M=3136 N=56
+#             the hardware can do the shape, Mesa is asking wrongly, and since
+#             the streams differ only in geometry the fault is in a buffer or
+#             an address rather than a register value.
+#   charsiu times out too
+#             the shape itself is what the hardware or the driver cannot do at
+#             this size, which is a rocket level finding rather than a Mesa one
+#             and is worth reporting upstream on its own.
+#   charsiu is flaky on it
+#             then it belongs with round 210's unexplained flakiness rather
+#             than with pw64x56w56, and the two get chased together or not at
+#             all.
+#
+# EVERY POINT RUNS THREE TIMES. Round 210 established that charsiu's N path is
+# flaky when N moves between runs, so a single run of any N is not evidence
+# now. N = 41 is in as the count Mesa gets RIGHT at this surface, and N = 64 as
+# the baseline. If the three N = 64 runs are not all identical, nothing else in
+# the entry can be read.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 211. The prediction was refuted and the mistake was mine
+# before the board ever ran it. Back to the one shape that is still plainly
+# broken.
+#
+# ROUND 210, and the control is the good news: four identical runs were all
+# byte exact, so the device does survive repetition and no sweep in this tree
+# is suspect for that reason.
+#
+#   A, growing   N=16 ok   N=40 FAIL   N=56 ok   N=64 ok
+#   B, shrinking N=64 ok   N=56 ok     N=40 ok   N=16 FAIL
+#
+# The prediction was "growing all pass, shrinking all fail after the first".
+# Both halves are wrong, and the same N=40 failed in one order and passed in
+# the other, so the buffer shrinking is NOT it.
+#
+# ⚠ THE FAILURE WAS MINE AND IT WAS BEFORE THE RUN. Round 209's seven points
+# fit TWO rules equally well: "the buffer got smaller than the last one" and
+# "shapes with ALIGN(N,16) of 48 or less are unstable". I wrote down only the
+# first and tested only the first. The second is what round 210's data leans
+# towards, since N=16 and N=40 each failed once and passed once while N=56 and
+# N=64 never failed, but that is another induction and it now has to carry a
+# third fact: it is FLAKY. The same shape does both.
+#
+# WHAT THAT DOES AND DOES NOT COST. It appears only when N MOVES between runs.
+# Every fixed shape result in this tree has been stable: M=1 N=64, the whole K
+# sweep, M=3136 K=33 N=64 at 200344 of 200704, and every Mesa model, which all
+# have one shape each. Round 209 already showed the output channel count itself
+# is fine, N = 16, 40, 41, 56 and 63 all byte exact at one row. So this is
+# charsiu's N path being flaky, not a fault in the hardware or in Mesa, and it
+# is left recorded rather than chased while MobileNet is the priority.
+#
+# BACK TO THE ONE SHAPE STILL PLAINLY BROKEN. pw64x56w56 is 32 of 56 and times
+# out every round. Its output count is 56, and charsiu computes N = 56 exactly
+# at one row and at eight, so it is not the channel count. Round 201's method
+# is what worked last time: dump this driver's own register stream for the
+# broken shape and for a working one and diff them offline.
+#
+# pw64x41w56 is the right thing to diff against: same input channels, same
+# 56x56 surface, same 1x1 kernel, and every channel correct. The only geometry
+# that differs is the output count, 41 against 56.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the dumps differ in registers that carry the output count only
+#             the fault is in one of those values and the diff names it.
+#   they differ somewhere else as well
+#             read that first: a difference that is not geometry is a stronger
+#             lead than one that is.
+#   the timeout happens before the stream is written
+#             no dump appears, and that itself says the fault is earlier than
+#             the register stream.
+#
+# THE CONTROL: pw64x41w56 must still be every channel correct in the same log,
+# and the broken shape runs LAST as always, since the entry after a timeout has
+# been poisoned since round 138.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 210. Round 209's baselines found something bigger than the
+# question they were guarding, and this round tests it with the prediction
+# written down first.
+#
+# ROUND 209: EVERY POINT WAS BYTE EXACT AT ONE ROW.
+#
+#   M=1  N=16 16/16   N=40 40/40   N=41 41/41   N=56 56/56   N=63 63/63
+#   M=8  N=41 265/328 (the only wrong answer)   N=56 448/448
+#
+# So the output channel count is not the problem and round 208's zeros were all
+# device state. pw64x56w56's fault is not N: charsiu computes N = 56 exactly at
+# one row and at eight. And charsiu's M=8 N=41 is wrong while Mesa's N=41 shape
+# is correct and its N=56 one is not, which is the OPPOSITE pairing, so those
+# two faults are not the same thing.
+#
+# WHAT THE BASELINES SAID, and it is 7 for 7:
+#
+#   point      output BO         baseline AFTER it
+#   N=16       16 * 1            0 of 64      broken
+#   N=40       48 * 1            0 of 64      broken
+#   N=41       48 * 1            0 of 64      broken
+#   N=56       64 * 1           64 of 64      fine
+#   N=63       64 * 1           64 of 64      fine
+#   M=8 N=41   48 * 8            0 of 512     broken
+#   M=8 N=56   64 * 8          512 of 512     fine
+#
+# The baseline's own buffer is 64 * M. Every point whose output buffer is
+# SMALLER than the baseline's breaks the run after it; every point whose buffer
+# equals it does not. The baseline BEFORE each point was correct every single
+# time, so whatever it is recovers on its own within one run.
+#
+# That is induced from seven points, which this project has a standing rule
+# against trusting, so the prediction goes in before the board sees it.
+#
+# THE PREDICTION, WRITTEN BEFORE THE RUN.
+#
+#   A  buffers that only GROW:   N = 16, 40, 56, 64   all four byte exact
+#   B  buffers that only SHRINK: N = 64, 56, 40, 16   the first is byte exact
+#                                and every one after it fails
+#   C  the same buffer four times: N = 64 x 4         all four byte exact
+#
+# THE DECISION RULE.
+#
+#   A passes, B fails after its first, C passes
+#             it is the buffer SHRINKING between submits, not the shape, and
+#             that is a driver level finding rather than a charsiu one.
+#   A and B both pass
+#             the rule induced from round 209 is wrong and the seven points had
+#             another cause, most likely order or time rather than size.
+#   C fails
+#             the device does not survive four identical runs, which would make
+#             every sweep in this tree suspect and matters more than any of it.
+#   B passes but A fails
+#             the direction is backwards from the induction, which would be the
+#             most interesting outcome of the three.
+#
+# Each sequence runs in one shot with no baseline between its steps, because
+# the baseline is what would perturb the very thing being measured.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 209. Round 208's sweep is VOID by its own control, and the
+# way it failed is the finding: the device does not stay good across runs when
+# N moves.
+#
+# THE CONTROL THAT KILLED IT. The same command, M = 1 K = 64 N = 40, ran twice
+# in one log on one boot:
+#
+#   entry 1    40 of 40 bytes written, 40 BYTE EXACT
+#   entry 2     0 of 40 bytes written,  0 BYTE EXACT
+#
+# and N = 16, which is a multiple of the atom and had to be right, came back
+# 0 of 16. Five "NPU job timed out" lines are scattered through the log, one of
+# them between the start of a run and its own successful result. So every
+# "0 of X bytes written" in that sweep is device state and not a property of N,
+# and no rule about which N works can be read from it. It is not read.
+#
+# Round 195's sweep of K did not do this. The difference is that K moves the
+# weight buffer while N moves the OUTPUT buffer, whose size this project
+# changed in round 200 to ALIGN(N, atom) * M, and whose surface layout puts
+# channel n of row m at (n/atom)*M*atom + m*atom + n%atom.
+#
+# SO EVERY POINT CARRIES ITS OWN BASELINE THIS TIME. For each N: a known good
+# shape, then the shape under test, then the known good shape again. A point
+# counts only if the baseline was correct on BOTH sides of it. That is the
+# recover() discipline rounds 190 and 191 used on the wedge, applied to a sweep.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   a point whose baselines both pass and which is byte exact
+#             that N works, and it is the first N result this project can
+#             actually stand behind.
+#   a point whose baselines both pass and which is not byte exact
+#             that N is genuinely wrong.
+#   a point whose SECOND baseline fails
+#             that N breaks the device, which is a stronger statement than
+#             being wrong and is what pw64x56w56's timeout probably is.
+#   a point whose FIRST baseline fails
+#             the damage came from before it; the point says nothing and the
+#             blame belongs to the previous N.
+#
+# ⚠ Still refuted before the round starts: "N must be a multiple of 16".
+# pw64x41w56 has 41 output channels and is every channel correct on Mesa. What
+# separates 41 from 56 is the question; it is not the atom alone.
+#
+# The N set is smaller because each point now costs three runs. 16 is in as the
+# case that must work, 40 and 56 are both 8 mod 16, 41 is Mesa's working odd
+# count, and 63 is one short of the atom.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 208. The tool is finally out of the way, so ask the OUTPUT
+# channel count the question that the input one answered in round 195.
+#
+# ROUND 207: no traceback anywhere, four controls at every channel correct, and
+# the two MobileNet runs IDENTICAL now that the repeat is back in front of the
+# timing out shape. The bigger branch of that rule did not fire: the model is
+# deterministic on this driver.
+#
+# MOBILENET IN FULL, for the first time readable:
+#
+#   1000 of 1001 channels match, the one exception is ch 905 at maxdiff 4
+#   every pixel is within 4, 12 channels are off by exactly 1 and 75% of those
+#   have the npu LOW, which is the shape of rounding
+#
+# So 988 exact, 12 off by one, one off by four. That is where MobileNet stands.
+#
+# WHAT IS STILL PLAINLY WRONG is pw64x56w56: 32 of 56, and it times out. Its
+# OUTPUT channel count is 56, and 56 is not a multiple of 16. The whole chain
+# that fixed pw33x64w56 was about the INPUT count not being a multiple of the
+# feature atom, and the output side has never been swept at all.
+#
+# ⚠ IT IS NOT A SIMPLE MIRROR, and the counter-example is already in the log:
+# pw64x41w56 has 41 output channels, 41 is not a multiple of 16 either, and it
+# is every channel correct. So "output must be a multiple of 16" is refuted
+# before the round starts. Something else separates 41 from 56 and this round
+# is for finding what, not for confirming a guess.
+#
+# charsiu asks it the same way round 195 asked about K, and it can now do it at
+# M above 1 as well, which is where its own N = 40 came back writing NOTHING.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   byte exact exactly when N is a multiple of 16
+#             then pw64x41w56 at 41 has to be explained, because it contradicts
+#             that, and the explanation matters more than the rule.
+#   byte exact except at particular N
+#             read WHICH. 40 and 56 are both 8 mod 16; 33 and 41 are both 1 mod
+#             8; 63 is -1. Those three groups failing differently would name it.
+#   the failures depend on M as well as N
+#             the output surface is [n/atom][m][n%atom], so an N off the atom
+#             changes where every row after the first lands, and M = 1 could be
+#             right while M = 8 is not for that reason alone.
+#   everything is byte exact
+#             the N side is fine and pw64x56w56's fault is elsewhere, which is
+#             worth knowing for the price of one sweep.
+#
+# THE CONTROL: N = 64 and N = 16 at both M, which must be byte exact, and
+# M = 1 N = 40, which round 200 already took from writing nothing to 40 of 40.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 207. Third crash from the same assumption, so this time all
 # three places got found at once, and a second thing in round 206 was my own
 # script ordering.
@@ -3114,26 +3678,11 @@ p() { log ""; log "  -- $1   $2"; sleep 2; \
 # broken, so this retries and says out loud when it never comes back.
 recover() {
 	t=1
-	while [ "$t" -le 4 ]; do
-		if /opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1; then
-			log "  baseline OK on attempt $t"
-			return 0
-		fi
-		log "  baseline attempt $t FAILED"
+	while [ "$t" -le 3 ]; do
+		p conv2d-cal.tflite ""
+		log "  (recovery attempt $t)"
 		t=$((t + 1))
 	done
-	log "  BASELINE NEVER CAME BACK: the verdict below is VOID"
-	return 1
-}
-
-# one w4a16 job under $2, judged by charsiu_matmul in its own process
-probe_cfg() {
-	log ""
-	log "  ---------------- $1 ----------------"
-	recover
-	env $2 /opt/charsiu/charsiu_int4 1 64 64 --pre 1 > "$C" 2>&1
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log "  VERDICT $1: int8 exit $?   (void unless the line above says 1 wrote)"
 }
 
 start() {
@@ -3144,41 +3693,45 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL: nothing but perch.py changed, so all four ====="
-	log "=====    of these must read exactly as they did last round.     ====="
+	log "===== 1) THE CONTROL, first. The offline check says none of      ====="
+	log "=====    these can change: 41 keeps 0x80011011, 64 and 128 keep  ====="
+	log "=====    0x80011111. If one moves, the equivalence is wrong.     ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
+	p pw33x64w56.tflite ""
+	p pw64x41w56.tflite ""
+
+	log ""
+	log "===== 2) MobileNet, whose channel counts are all multiples of 16 ====="
+	log "=====    and so cannot be affected either                        ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
+
+	log ""
+	log "===== 3) THE TEST: 56 output channels. This has timed out in     ====="
+	log "=====    every round it has ever run.                            ====="
+	p pw64x56w56.tflite ""
+
+	log ""
+	log "===== 4) the same shape with the old modulo form, so before and  ====="
+	log "=====    after are in one log                                    ====="
+	recover
+	p pw64x56w56.tflite "ROCKET_DPU4050_MOD32=1"
+
+	log ""
+	log "===== 5) and once more with the new form, since a timeout is     ====="
+	log "=====    the thing being read and one run is thin evidence       ====="
+	recover
+	p pw64x56w56.tflite ""
+
+	log ""
+	log "===== 6) the controls once more at the end ====="
+	recover
 	p pw64x41w56.tflite ""
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 2) THE TEST: MobileNet on a tool that can see a one pixel ====="
-	log "=====    output. It has read COMPUTED 0 of 1001 for twenty      ====="
-	log "=====    rounds and crashed every time, both of which were the  ====="
-	log "=====    tool.                                                  ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 3) MobileNet a second time, BEFORE the timing out shape.   ====="
-	log "=====    Round 206 put this after it and got 983 of 1001 with    ====="
-	log "=====    one distinct value, which is the poisoning that has     ====="
-	log "=====    followed a timeout since round 138 and not a result.    ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 4) LAST, because it times out and poisons whatever follows ====="
-	p pw64x56w56.tflite ""
-
-	log ""
-	log "===== 5) charsiu, unchanged ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 3136 33 64 > "$C" 2>&1
-
-	log ""
-	log "===== Entry 1 must be identical to round 204. Then entry 2's     ====="
-	log "===== one pixel line, and whether it names the remaining channel.====="
+	log "===== Entry 1 first: if any control moved, the offline           ====="
+	log "===== equivalence check is wrong and nothing else counts.        ====="
 	sync
 }
 case "$1" in
