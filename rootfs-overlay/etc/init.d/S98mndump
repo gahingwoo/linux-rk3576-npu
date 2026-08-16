@@ -2,6 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 205. pw33x64w56 is CORRECT. What is left on MobileNet is one
+# channel and a measuring tool that cannot see a one pixel output.
+#
+# ROUND 204 CLOSED IT, and the before and after are in one log:
+#
+#   with the term      64 of 64 channels match, every channel correct
+#   ROCKET_NO_ICPAD_SUM 18 of 64, COMPUTED 0, b median -31.40
+#
+# All three controls stayed at every channel correct, as they must: their ic is
+# already a multiple of 16 and the padded term is identically zero there.
+#
+# THE WHOLE CHAIN, three separate places that all counted the real ic:
+#
+#   r197  the weight buffer, ALIGN(ic,16)          slope 0.44 -> 0.98
+#   r202  five CNA registers, from one `ic =`      offset std 69.11 -> 0.85
+#   r204  calculate_weight_sum's padded term       correct
+#
+# and the framing this project carried since round 176, "a pointwise fails on
+# input channels above 32", was wrong the whole time: pw64x41w56 has 64 and is
+# right. It is ic not being a multiple of SIXTEEN.
+#
+# MOBILENET IS UNCHANGED BY ALL OF IT, and that is expected rather than
+# disappointing: its channel counts are 32, 64, 128, 256, 512, 1024, every one a
+# multiple of 16, so the padded term is zero throughout. pw33x64w56 is a
+# synthetic shape built to isolate the fault. MobileNet sits where it has sat:
+#
+#   1000 of 1001 channels match, maxdiff 4, npu 9 distinct against cpu's 10
+#
+# AND ITS "COMPUTED 0 of 1001" WAS MY TOOL, NOT THE RESULT. The output is
+# 1x1x1001: ONE pixel. A channel with one pixel is "constant" by definition, so
+# COMPUTED counts zero however right the answer is, and I read that number as a
+# finding for twenty rounds. perch.py also CRASHED on the same shape,
+# `got[1:-1,1:-1]` being empty, after the useful lines had printed, so it looked
+# like a tail of noise.
+#
+# Both fixed here. On a one pixel output perch.py now says so and prints the
+# spread ACROSS channels, which is the only thing that can separate a real
+# answer from a constant there.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   MobileNet prints the one pixel line and no traceback
+#             the tool is fixed and the remaining fault is one channel out of
+#             1001 at maxdiff 4, which is then worth naming.
+#   it still crashes
+#             the guard is in the wrong place.
+#   pw33x64w56 is not 64 of 64
+#             round 204 did not survive a rebuild and nothing else here counts.
+#
+# Nothing but perch.py changed this round. Mesa, the kernel and charsiu are
+# byte identical to round 204, so any number that moves is the measurement.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 204. The dump ruled out two of the three records and the
 # third one has a derivable correction, so this round derives it rather than
 # fitting it.
@@ -3002,44 +3054,39 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL: the padding term is identically zero when ====="
-	log "=====    ic is already a multiple of the atom, so these three   ====="
-	log "=====    cannot move.                                           ====="
+	log "===== 1) THE CONTROL: nothing but perch.py changed, so all four ====="
+	log "=====    of these must read exactly as they did last round.     ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
-
-	log ""
-	log "===== 2) THE TEST: 33 input channels. Slope was 0.9997 with the ====="
-	log "=====    offset at -35.3 to -30.3, std 0.85.                    ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 3) the same shape with the term dropped, so before and    ====="
-	log "=====    after are in one log                                   ====="
-	p pw33x64w56.tflite "ROCKET_NO_ICPAD_SUM=1"
-
-	log ""
-	log "===== 4) MobileNet end to end. COMPUTED has been 0 of 1001 for  ====="
-	log "=====    twenty rounds and is the number to read.               ====="
+	log "===== 2) THE TEST: MobileNet on a tool that can see a one pixel ====="
+	log "=====    output. It has read COMPUTED 0 of 1001 for twenty      ====="
+	log "=====    rounds and crashed every time, both of which were the  ====="
+	log "=====    tool.                                                  ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 5) and MobileNet with the term dropped ====="
-	p mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_ICPAD_SUM=1"
-
-	log ""
-	log "===== 6) the other open shape, which has 64 input channels and  ====="
-	log "=====    so is untouched by this term                           ====="
+	log "===== 3) the other open shape, 56 output channels ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== 7) charsiu, unchanged ====="
+	log "===== 4) still open: 33 input channels was the last one, so run ====="
+	log "=====    the whole regression set once more as it now stands    ====="
+	p pw33x64w56.tflite "ROCKET_NO_ICPAD_SUM=1"
+
+	log ""
+	log "===== 5) charsiu, unchanged ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log ""
 	/opt/charsiu/charsiu_matmul 3136 33 64 > "$C" 2>&1
 
 	log ""
-	log "===== Entry 1 first. Then entry 2's b spread against entry 3's.  ====="
+	log "===== Entry 1 must be identical to round 204. Then entry 2's     ====="
+	log "===== one pixel line, and whether it names the remaining channel.====="
 	sync
 }
 case "$1" in

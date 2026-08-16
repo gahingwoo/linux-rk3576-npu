@@ -102,8 +102,19 @@ computed = int((good & ~ref_flat).sum())
 trivial = int((good & ref_flat).sum())
 print(f"  {os.path.basename(model)} out{got.shape}: {oc - len(bad)}/{oc} "
       f"channels match (maxdiff <= 1)", flush=True)
-print(f"    of those, COMPUTED (reference varies): {computed}    "
-      f"trivial (reference is constant): {trivial}", flush=True)
+if got.shape[0] * got.shape[1] == 1:
+    # ⚠ A ONE PIXEL SURFACE HAS NO SPATIAL VARIATION TO REPRODUCE, so every
+    # channel is "constant" by definition and COMPUTED is 0 whatever the answer
+    # is. MobileNet's classifier is 1x1x1001 and read 0 of 1001 COMPUTED for
+    # twenty rounds, which was this criterion failing and not the result. What
+    # separates a real answer from a constant here is the spread ACROSS
+    # channels, so that is what gets printed.
+    print(f"    ONE PIXEL OUTPUT: COMPUTED cannot apply. Across the {oc} "
+          f"channels, npu has {len(np.unique(got))} distinct values and the "
+          f"reference {len(np.unique(ref))}", flush=True)
+else:
+    print(f"    of those, COMPUTED (reference varies): {computed}    "
+          f"trivial (reference is constant): {trivial}", flush=True)
 print(f"    npu distinct={len(np.unique(got))} min={got.min()} max={got.max()} "
       f"| cpu distinct={len(np.unique(ref))} | out_zp={ozp}", flush=True)
 print(f"    channels that are CONSTANT: {flat_ch}/{oc}, "
@@ -139,7 +150,11 @@ print(f"    cols with any error: {len(nzc)}/{got.shape[1]}"
 if len(nzr):
     print(f"    row maxdiff profile, every 8th: "
           f"{rowerr[::8].tolist()}", flush=True)
-    inner = np.abs(got[1:-1, 1:-1] - ref[1:-1, 1:-1]).max()
+    # A 1x1 output has no interior. MobileNet's classifier is 1x1x1001 and
+    # this crashed on it for every round it was run, after the useful lines had
+    # already printed, so it looked like a tail of noise rather than a bug here.
+    inner = (np.abs(got[1:-1, 1:-1] - ref[1:-1, 1:-1]).max()
+             if got.shape[0] > 2 and got.shape[1] > 2 else -1)
     print(f"    maxdiff excluding the outer ring: {int(inner)}"
           f"    whole surface: {int(np.abs(got - ref).max())}", flush=True)
     # WHICH edge. "excluding the outer ring" strips all four at once, so a
