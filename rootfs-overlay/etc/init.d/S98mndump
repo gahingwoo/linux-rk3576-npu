@@ -2,6 +2,59 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 198. The padding DID work in Mesa and the channel counter
+# hid it. Reading that counter instead of the fit was my mistake, and this
+# round is about the constant that is left.
+#
+# ROUND 197, and the correction first. I read "14 of 64 with the padding and 18
+# without" and called it no effect. The affine fit in the same block says
+# otherwise:
+#
+#                     slope a   offset b   correlation
+#   padding ON         0.9807     -31.23     +0.9338
+#   padding OFF        0.4426      +9.38     +0.8656
+#
+# The slope went from 0.44 to 0.98 and the correlation from 0.87 to 0.93. The
+# magnitude is right now; what is left is a CONSTANT offset of about -31. The
+# channel counter only counts maxdiff <= 1, so a whole surface that is off by a
+# constant scores zero either way. This project's own rule is that a matching
+# channel is not a computed one; the converse is just as true, and an unmoved
+# count is not an unchanged result.
+#
+# The controls all held: mn_conv0 32 of 32, conv2d-cal 128 of 128, pw64x41w56
+# 41 of 41 every channel correct, and charsiu's K = 33 and 40 still 64 of 64.
+#
+# WHAT THE OFFSET IS NOT. The padded weights are written as biased zero, and the
+# packer biases everything by 0x80, so a padded channel's (w - wz) is zero and
+# multiplies to nothing whatever the padded input holds. The buffer size and the
+# byte count the CNA is given both come out 48 * 64 = 3072. Neither of those can
+# produce a constant, so the offset is somewhere else and guessing at it from
+# here is what this round refuses to do.
+#
+# THE QUESTION, asked with the instrument that already works. charsiu computes
+# K = 33 byte exact, but only at M = 1. Mesa's failing shape is the same 33
+# input channels with a 56 by 56 surface. So make charsiu carry the surface.
+#
+#   charsiu at M = 56 and M = 3136 with K = 33 is byte exact
+#             the geometry is not the problem and Mesa's remaining fault is in
+#             its configuration, which can then be diffed register by register
+#             against a stream that is known to compute at this shape.
+#   charsiu loses byte exactness as M grows
+#             it is the surface and not the channel count, and the same is
+#             probably true of every other unexplained Mesa shape.
+#   charsiu is exact at M = 56 but not at 3136
+#             there is a size limit in between, and where it is matters more
+#             than what it is.
+#
+# THE CONTROL: M = 1 at K = 33 and K = 64 must still be 64 of 64, and M = 56 at
+# K = 64 too, so a failure at M = 56 K = 33 cannot be blamed on M alone.
+#
+# MESA SIDE, one variable at a time. The padding rounds to FEATURE_ATOMIC_SIZE,
+# which is 16, because that is where charsiu's boundary was measured. The
+# pointwise weight TILE is 32. If rounding to 32 changes the offset, then the
+# padding unit is the tile and not the atom, and if it does not, that is one
+# more thing the offset is not.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 197. charsiu's fix works, so the same change goes into Mesa
 # and MobileNet is what it is being asked about.
 #
@@ -2630,49 +2683,65 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, first: three shapes that already work.    ====="
-	log "=====    pw64x41w56 has 64 input channels, which the padding    ====="
-	log "=====    must not touch.                                        ====="
+	log "===== 1) THE CONTROL: M = 1 must still be byte exact at both K, ====="
+	log "=====    and M = 56 must be at K = 64, so a failure at M = 56   ====="
+	log "=====    K = 33 cannot be blamed on M alone.                    ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 56 64 64 > "$C" 2>&1
+
+	log ""
+	log "===== 2) THE TEST: charsiu carries the surface at K = 33.       ====="
+	log "=====    Mesa's failing shape is 33 channels on 56 by 56.       ====="
+	for M in 8 56 224 784 3136; do
+		log ""
+		log "  -- M = $M, K = 33, N = 64"
+		/opt/charsiu/charsiu_matmul "$M" 33 64 > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 3) and the same M at K = 64, which is aligned, so any     ====="
+	log "=====    loss here is about M and not about the channel count   ====="
+	for M in 784 3136; do
+		log ""
+		log "  -- M = $M, K = 64, N = 64"
+		/opt/charsiu/charsiu_matmul "$M" 64 64 > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 4) Mesa: the offset was -31 with the padding on. Round to ====="
+	log "=====    the TILE instead of the atom and see if it moves.      ====="
+	log ""
+	log "  -- padding to 16, the feature atom (default)"
+	p pw33x64w56.tflite ""
+	log ""
+	log "  -- padding to 32, the weight tile"
+	p pw33x64w56.tflite "ROCKET_PW_ICPAD32=1"
+	log ""
+	log "  -- no padding, for the third point"
+	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
+
+	log ""
+	log "===== 5) THE REGRESSION, so the padding is known not to have    ====="
+	log "=====    broken what worked                                     ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 2) THE TEST: 33 input channels, 16 of 64 last round.      ====="
-	p pw33x64w56.tflite ""
-
-	log ""
-	log "===== 3) the same shape with the padding OFF, so before and     ====="
-	log "=====    after are in one log                                   ====="
-	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
-
-	log ""
-	log "===== 4) MobileNet end to end. Its COMPUTED count is the number ====="
-	log "=====    that matters: 0 of 1001 last round means every channel ====="
-	log "=====    that matched was constant on both sides.               ====="
+	log "===== 6) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 5) and MobileNet with the padding off, same reason as 3   ====="
-	p mobilenet_v1_1.0_224_quant.tflite "ROCKET_PW_NO_ICPAD=1"
-
-	log ""
-	log "===== 6) charsiu, unchanged this round, so its five K must      ====="
-	log "=====    still be 64 of 64                                      ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 40 64 > "$C" 2>&1
 
 	log ""
 	log "===== 7) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 1 first: if any of those three moved, the fix broke  ====="
-	log "===== something that worked. Then entry 2 against entry 3.       ====="
+	log "===== Entry 2 is the round: read where byte exactness stops as M ====="
+	log "===== grows, and entry 3 says whether that is about M at all.    ====="
 	sync
 }
 case "$1" in
