@@ -2,6 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 203. The five registers worked, and what is left is one
+# constant that has been there since before them.
+#
+# ROUND 202, and the second branch of its written rule is what fired.
+#
+#                          slope a               b range          b std
+#   five registers fixed    0.9997 (min 0.9721)  -35.32 .. -30.32   0.85
+#   ROCKET_NO_ICPAD_REGS    0.9985 (min -0.4912) -212.88 .. +160.48 69.11
+#
+# The per channel offset's standard deviation collapsed from 69.11 to 0.85 and
+# its worst slope went from -0.49 to 0.972. All three controls stayed at every
+# channel correct, as they had to: their ic is already a multiple of 16 and the
+# padding is the identity there.
+#
+# So pw33x64w56 is now one nearly global constant away: npu is about 32.8 above
+# the reference everywhere. That constant is NOT from the registers. Round 199
+# measured it at -31.41 with the weights already padded and the registers still
+# on the real count, so it has been sitting underneath both fixes the whole
+# time. charsiu computes the same arithmetic without it, which puts it in the
+# coefficient buffer, the one part of the two stacks that is built rather than
+# emitted.
+#
+# THIS ROUND DUMPS THAT BUFFER. ROCKET_DEBUG=dump_bos already writes
+# mesa-biases-000-NNN.bin beside the regcmd, and the same od goes into the log
+# for the failing shape and for pw64x41w56, which works. The A record is a per
+# channel int32 and 33 versus 64 input channels changes what belongs in it, so
+# two dumps of it are directly comparable in a way the geometry registers never
+# were.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the biases dump appears and the failing shape's A records differ from the
+#   working one's by a constant
+#             that constant is the answer and its size in accumulator counts
+#             says which term it is.
+#   the A records look right
+#             the fault is in how the hardware CONSUMES the record at this ic,
+#             not in what is written, and the next probe is charsiu building
+#             the same coefficient buffer two ways.
+#   the dump does not appear
+#             biases are dumped from a different call site than the one this
+#             shape takes, and entry 5's weights dump is the fallback.
+#
+# 32.8 output counts at shift 21 and scale 0x4301 is about 3913 accumulator
+# counts, which is not obviously any of 15 * 128, 33 * 128 or 48 * 128, so it is
+# NOT being guessed at here. The dump is what names it.
+#
+# THE CONTROL: the three shapes whose ic is a multiple of 16 run first and must
+# still be every channel correct, and the failing shape is run once WITHOUT
+# dump_bos so the dumps can be shown to be of the same run that produced the
+# numbers.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 202. The dumped stream named five registers, and this is the
 # change they asked for.
 #
@@ -2899,56 +2951,59 @@ start() {
 	mkdir -p /tmp/dump && cd /tmp/dump || return 0
 
 	log ""
-	log "===== 1) THE CONTROL, first. Every one of these has an ic that   ====="
-	log "=====    is already a multiple of 16, where the padding is the   ====="
-	log "=====    identity, so they cannot change for any reason but a    ====="
-	log "=====    coding mistake.                                         ====="
+	log "===== 1) THE CONTROL: ic a multiple of 16, padding is identity  ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 2) THE TEST: 33 input channels. 15 of 64 with COMPUTED 0, ====="
-	log "=====    slope 0.997, offset varying per channel.               ====="
+	log "===== 2) the failing shape with no dump, so the dumps below can ====="
+	log "=====    be shown to be of the run that gave these numbers      ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 3) the same shape with the five registers back on the     ====="
-	log "=====    real count, so before and after are in one log         ====="
-	p pw33x64w56.tflite "ROCKET_NO_ICPAD_REGS=1"
-
-	log ""
-	log "===== 4) MobileNet end to end. COMPUTED 0 of 1001 for the last  ====="
-	log "=====    twenty rounds; that is the number to read.             ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 5) and MobileNet with the registers back, same reason as 3 ====="
-	p mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_ICPAD_REGS=1"
-
-	log ""
-	log "===== 6) the new stream, dumped, so the five registers can be   ====="
-	log "=====    confirmed to have changed to 48 rather than assumed    ====="
+	log "===== 3) THE TEST: the coefficient buffer of the shape that     ====="
+	log "=====    WORKS, 64 input channels                               ====="
 	rm -f /tmp/dump/mesa-*.bin
-	p pw33x64w56.tflite "ROCKET_DEBUG=dump_bos"
-	for f in /tmp/dump/mesa-regcmd-*.bin; do
+	p pw64x41w56.tflite "ROCKET_DEBUG=dump_bos"
+	for f in /tmp/dump/mesa-biases-*.bin; do
 		[ -e "$f" ] || continue
 		log "  FILE $f  $(wc -c < "$f") bytes"
 		od -A d -t x4 -v "$f" > "$C" 2>&1
 	done
 
 	log ""
-	log "===== 7) charsiu, unchanged, as the other side of the comparison ====="
+	log "===== 4) and of the shape that does NOT, 33 input channels      ====="
+	rm -f /tmp/dump/mesa-*.bin
+	p pw33x64w56.tflite "ROCKET_DEBUG=dump_bos"
+	for f in /tmp/dump/mesa-biases-*.bin; do
+		[ -e "$f" ] || continue
+		log "  FILE $f  $(wc -c < "$f") bytes"
+		od -A d -t x4 -v "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 5) the weight buffer too, in case the biases do not dump  ====="
+	log "=====    from this call site. First 512 bytes only.             ====="
+	for f in /tmp/dump/mesa-weights-*.bin; do
+		[ -e "$f" ] || continue
+		log "  FILE $f  $(wc -c < "$f") bytes, first 512"
+		od -A d -t x1 -v -N 512 "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 6) MobileNet end to end ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
+
+	log ""
+	log "===== 7) charsiu at the same arithmetic, the side without the   ====="
+	log "=====    constant                                               ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 3136 33 64 > "$C" 2>&1
 
 	log ""
-	log "===== 8) the other open shape ====="
-	p pw64x56w56.tflite ""
-
-	log ""
-	log "===== Entry 1 first. Then entry 2 against entry 3, and entry 4's ====="
-	log "===== COMPUTED count, which has been 0 for twenty rounds.        ====="
+	log "===== Entry 1, then entry 2's b spread, then diff the two biases ====="
+	log "===== dumps in entries 3 and 4 offline.                          ====="
 	sync
 }
 case "$1" in
