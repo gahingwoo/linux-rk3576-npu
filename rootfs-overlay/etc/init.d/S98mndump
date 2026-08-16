@@ -2,6 +2,70 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 196. The line is at 16, not 32, and the fix follows from
+# that directly.
+#
+# ROUND 195'S SWEEP, int8, N = 64, control passing (K=64 was 64 of 64 and
+# K=512 N=1024 unchanged):
+#
+#   K    16   31   32   33   40   48   63   64   65   96
+#        64   28   63   38   25   64   21   64   39   64      of 64 byte exact
+#
+# BYTE EXACT EXACTLY WHEN K IS A MULTIPLE OF 16. 16, 32, 48, 64 and 96 are
+# right; 31, 33, 40, 63 and 65 are wrong. **40 is a multiple of 8 and is wrong**,
+# so the boundary is 16 and not 8, and 48 is right so it is not 32 either. The
+# impulse runs say the same thing from the other side: K=32 was 64 of 64, K=33
+# was 33 of 64, K=40 was 42 of 64.
+#
+# 16 IS THE int8 FEATURE ATOM, which every one of those lines printed beside
+# itself as "feature atom 16".
+#
+# THAT MOVES THE SUSPECT. This has been written down since round 176 as
+# "input channels above 32", and Mesa's pw64x41w56 has SIXTY FOUR input channels
+# and is right while pw33x64w56 has thirty three and is wrong. It was never
+# about 32. It is the feature atom, and the two sides of the packing disagreed
+# about it:
+#
+#   the INPUT packer pads. charsiu_pack_input memsets the whole surface to the
+#   zero point before writing, so the tail of the last atom contributes nothing.
+#
+#   the WEIGHT packer cut short. kgsz = MIN2(mm->k - kgi*kg, kg) ended the last
+#   k group at the real K, so every group after the first began somewhere the
+#   hardware was not reading from.
+#
+# Mesa does the same thing, [oc/32][ic/32][oc%32][ic%32] with MIN2 edges, and
+# that cut-short rule was read OFFLINE from vendor blobs at 48 by 40. It has
+# never been confirmed on hardware at a K that is not a multiple of the atom.
+#
+# THE FIX: lay the weight groups out against K rounded up to the feature atom,
+# and tell the CNA that K. The padded weights stay at the weight zero point and
+# meet the padded inputs' zero point, so they multiply to nothing. Verified
+# offline before flashing:
+#
+#   K=33 and K=40 now emit 0x107c = 0x2f, the same as K=48
+#   at K = 16, 32, 48, 64, 96 and 512 the whole stream is byte identical with
+#   the fix on and off, so nothing that already worked can move
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   31, 33, 40, 63, 65 come back 64 of 64
+#             the atom is the whole story, and the same change goes into Mesa,
+#             where it should fix pw33x64w56 and MobileNet with it.
+#   some of them fix and some do not
+#             read WHICH. 33 and 65 are one past an atom, 31 and 63 are one
+#             short of one, and 40 is halfway; those three cases failing
+#             differently would say the rule is not a plain round up.
+#   none of them move
+#             padding the weights is not what the hardware wanted and the input
+#             side is where to look next, since that is the half that was
+#             already padding.
+#   K = 64 or K = 512 stops being byte exact
+#             the fix broke what worked. That is the control, and it runs first.
+#
+# CHARSIU_NO_KALIGN restores the old behaviour and entry 3 runs the failing K
+# under it, so the before and after sit in the same log rather than in two
+# rounds.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 195. The w4a16 output is solved, so this round turns to
 # MobileNet, and it asks charsiu the question Mesa cannot ask itself.
 #
@@ -2510,65 +2574,73 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL: the two shapes that have been byte exact  ====="
-	log "=====    since round 164. If these move, read nothing below.    ====="
+	log "===== 1) THE CONTROL, and it runs first: the shapes that were   ====="
+	log "=====    already byte exact must still be.                      ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
 	log ""
 	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 96 64 > "$C" 2>&1
 
 	log ""
-	log "===== 2) THE TEST: K across the 32 boundary. A matmul is a 1x1  ====="
-	log "=====    convolution, so K is the input channel count, and      ====="
-	log "=====    Mesa's pw33x64w56 is exactly K = 33.                   ====="
-	for K in 16 31 32 33 40 48 63 64 65 96; do
+	log "===== 2) THE FIX: the five K that were wrong in round 195.      ====="
+	log "=====    28, 63, 38, 25, 21 and 39 of 64 before.                ====="
+	for K in 31 33 40 63 65 ; do
 		log ""
 		log "  -- K = $K"
 		/opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
 	done
 
 	log ""
-	log "===== 3) and with the impulse, where one live weight per        ====="
-	log "=====    channel makes a wrong placement show as a wrong        ====="
-	log "=====    channel rather than a wrong sum                        ====="
-	for K in 32 33 40 65; do
+	log "===== 3) the same five with the fix OFF, so before and after    ====="
+	log "=====    sit in one log instead of two rounds                   ====="
+	for K in 31 33 40 63 65 ; do
+		log ""
+		log "  -- K = $K, CHARSIU_NO_KALIGN"
+		CHARSIU_NO_KALIGN=1 /opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 4) the impulse at the same K, where a wrong placement     ====="
+	log "=====    shows as a wrong channel rather than a wrong sum       ====="
+	for K in 33 40 65 ; do
 		log ""
 		log "  -- impulse, K = $K"
 		CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
 	done
 
 	log ""
-	log "===== 4) THE MAP at K = 33, which reads the layout instead of   ====="
-	log "=====    inferring it. On int8 this instrument is known good:   ====="
-	log "=====    512 of 512 at K = 64, n = byte/32 and k = byte%32.     ====="
-	log ""
-	log "  -- K = 32 first, the aligned case whose answer is known"
-	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 32 64 --map 1 > "$C" 2>&1
-	log ""
-	log "  -- K = 33, the one MobileNet fails at"
-	CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 33 64 --map 1 > "$C" 2>&1
+	log "===== 5) and N off the boundary too, since the same question    ====="
+	log "=====    can be asked of the output channels                    ====="
+	for N in 33 40 65 ; do
+		log ""
+		log "  -- K = 64, N = $N"
+		/opt/charsiu/charsiu_matmul 1 64 "$N" > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 5) REGRESSION, so the image is known sane ====="
+	log "===== 6) REGRESSION, so the image is known sane ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 6) the one this round is about ====="
+	log "===== 7) the Mesa shape this is all about. Mesa is UNCHANGED    ====="
+	log "=====    this round, so it must still be 13 of 64.              ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 7) MobileNet end to end ====="
+	log "===== 8) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 8) LAST, because it times out and poisons whatever follows ====="
+	log "===== 9) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Read entry 1 first. Then entry 2: which K are byte exact   ====="
-	log "===== and which are not, and whether the line is at 32.          ====="
+	log "===== Entry 1 first. Then entries 2 and 3 side by side: the same ====="
+	log "===== five K with the fix on and off.                            ====="
 	sync
 }
 case "$1" in
