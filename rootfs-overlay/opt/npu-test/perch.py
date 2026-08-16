@@ -169,7 +169,7 @@ if len(nzr):
 # from the two surfaces says what to write. ref = a * npu + b, per channel,
 # reported as the median so one saturated channel cannot move it.
 if bad:
-    aa, bb, rr = [], [], []
+    aa, bb, rr, fit_ch = [], [], [], []
     for c in bad:
         u = got[:, :, c].ravel().astype(float)
         v = ref[:, :, c].ravel().astype(float)
@@ -192,6 +192,7 @@ if bad:
         aa.append(a)
         bb.append(float(v.mean() - a * u.mean()))
         rr.append(float(np.corrcoef(u, v)[0, 1]))
+        fit_ch.append(c)
     if aa:
         aa, bb, rr = np.array(aa), np.array(bb), np.array(rr)
         print(f"    affine fit over {len(aa)} wrong channels, unclipped "
@@ -200,6 +201,20 @@ if bad:
               f"{aa.max():.4f})", flush=True)
         print(f"      b median {np.median(bb):+.2f}    correlation median "
               f"{np.median(rr):+.4f}", flush=True)
+        # IS THE OFFSET THE SAME ON EVERY CHANNEL, which is the whole question
+        # once the slope is 1 and the correlation is 0.996: a single global
+        # constant is a bias term, and one that moves per channel is the
+        # per-channel A record. Round 198 left pw33x64w56 at a = 0.9985 and
+        # b = -31.46 with nothing but that constant wrong.
+        print(f"      b spread: min {bb.min():+.2f} max {bb.max():+.2f} "
+              f"std {bb.std():.2f}   {'SAME on every channel' if bb.std() < 0.5 else 'VARIES per channel'}",
+              flush=True)
+        srt = np.argsort(bb)
+        print("      b per channel, lowest 4: " +
+              ", ".join(f"ch{fit_ch[i]}={bb[i]:+.1f}" for i in srt[:4]) +
+              "   highest 4: " +
+              ", ".join(f"ch{fit_ch[i]}={bb[i]:+.1f}" for i in srt[-4:]),
+              flush=True)
         # WHICH channels are the outliers, so they can be looked at offline.
         #
         # conv0's fit has sat at a median 0.9991 with a minimum of 0.9486

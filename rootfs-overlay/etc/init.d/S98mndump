@@ -2,6 +2,60 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 199. The padding unit is settled, one constant is left, and
+# round 198's control failed in a way worth keeping.
+#
+# THE PADDING UNIT IS ALIGN(ic, FEATURE_ATOMIC_SIZE), three points:
+#
+#                        slope a   offset b   correlation
+#   pad to 48 (atom 16)   0.9985     -31.46     +0.9963
+#   pad to 64 (tile 32)   0.8110     -23.46     +0.8936
+#   no pad    (33)        0.8875      +7.45     +0.8821
+#
+# 0.9963 is a straight line with one constant subtracted from it. Note that
+# ALIGN(33, 32) is 64, not 48, and 64 is ALSO a multiple of 16 yet is worse. So
+# it is not "more padding is better": the weight buffer has to be exactly as
+# wide as task->input_channels, which rkt_task.c sets to ALIGN(MAX2(ic, 16),
+# 16) and which the CNA's byte count is already derived from. Both halves now
+# agree on one number.
+#
+# ROUND 198'S CONTROL FAILED, and it is a real finding rather than a wasted
+# entry. M = 56 at K = 64 was supposed to be byte exact so that a failure at
+# M = 56 K = 33 could not be blamed on M:
+#
+#   M=1    K=33      64 of 64          M=8    K=33   239 of 512
+#   M=1    K=64      64 of 64          M=56   K=33  1384 of 3584
+#   M=56   K=64    1146 of 3584        M=3136 K=33 77727 of 200704
+#
+# **charsiu is wrong at every M above 1.** The rate is FLAT: 38.7% exact at
+# K=33 and 32.0% at K=64, unchanged from M=8 to M=3136, so it is not something
+# that degrades with size. Every correctness run this project has done was at
+# M = 1; M above 1 has only ever been measured for speed. Prefill is entirely
+# M above 1, so this matters, but MobileNet is the priority and this is written
+# down rather than chased today.
+#
+# By the written rule, entry 2 of round 198 says nothing about K at large M,
+# because its control did not hold. It is not read that way here.
+#
+# ROUND 199'S QUESTION is the constant. With a slope of 0.9985 and a correlation
+# of 0.9963 there is exactly one thing wrong with pw33x64w56, and the shape of
+# the answer depends on whether it is the same constant on every channel:
+#
+#   b is the same on every channel (std below 0.5)
+#             a single global term. The bias path, and the first place to look
+#             is what the coefficient buffer's A record gets for a padded ic.
+#   b varies per channel
+#             the per-channel A record, and the lowest and highest channels
+#             printed beside it say which ones and by how much.
+#   b varies but in a few discrete groups
+#             it tracks something quantised, and the group boundaries name it.
+#
+# perch.py now prints the spread, the standard deviation, a verdict, and the
+# four lowest and four highest channels by name. Nothing else changed this
+# round: Mesa, the kernel and charsiu are all byte identical to round 198, so
+# every number that moves is the measurement getting sharper rather than the
+# thing being measured moving.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 198. The padding DID work in Mesa and the channel counter
 # hid it. Reading that counter instead of the fit was my mistake, and this
 # round is about the constant that is left.
@@ -2683,65 +2737,44 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL: M = 1 must still be byte exact at both K, ====="
-	log "=====    and M = 56 must be at K = 64, so a failure at M = 56   ====="
-	log "=====    K = 33 cannot be blamed on M alone.                    ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 56 64 64 > "$C" 2>&1
-
-	log ""
-	log "===== 2) THE TEST: charsiu carries the surface at K = 33.       ====="
-	log "=====    Mesa's failing shape is 33 channels on 56 by 56.       ====="
-	for M in 8 56 224 784 3136; do
-		log ""
-		log "  -- M = $M, K = 33, N = 64"
-		/opt/charsiu/charsiu_matmul "$M" 33 64 > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 3) and the same M at K = 64, which is aligned, so any     ====="
-	log "=====    loss here is about M and not about the channel count   ====="
-	for M in 784 3136; do
-		log ""
-		log "  -- M = $M, K = 64, N = 64"
-		/opt/charsiu/charsiu_matmul "$M" 64 64 > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 4) Mesa: the offset was -31 with the padding on. Round to ====="
-	log "=====    the TILE instead of the atom and see if it moves.      ====="
-	log ""
-	log "  -- padding to 16, the feature atom (default)"
-	p pw33x64w56.tflite ""
-	log ""
-	log "  -- padding to 32, the weight tile"
-	p pw33x64w56.tflite "ROCKET_PW_ICPAD32=1"
-	log ""
-	log "  -- no padding, for the third point"
-	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
-
-	log ""
-	log "===== 5) THE REGRESSION, so the padding is known not to have    ====="
-	log "=====    broken what worked                                     ====="
+	log "===== 1) THE CONTROL: nothing but perch.py changed this round,  ====="
+	log "=====    so these three must be exactly as they were.           ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 6) MobileNet end to end ====="
+	log "===== 2) THE TEST: is the -31.46 the same constant on every     ====="
+	log "=====    channel. Slope 0.9985 and correlation 0.9963 mean this ====="
+	log "=====    is the only thing wrong with the shape.                ====="
+	p pw33x64w56.tflite ""
+
+	log ""
+	log "===== 3) the two other padding widths again, since the spread   ====="
+	log "=====    is new information about them too                      ====="
+	p pw33x64w56.tflite "ROCKET_PW_ICPAD32=1"
+	log ""
+	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
+
+	log ""
+	log "===== 4) MobileNet, whose own fit now prints a spread as well   ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 7) LAST, because it times out and poisons whatever follows ====="
+	log "===== 5) the other open shape, for the same reason ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 2 is the round: read where byte exactness stops as M ====="
-	log "===== grows, and entry 3 says whether that is about M at all.    ====="
+	log "===== 6) charsiu: M = 1 must still be byte exact, and M > 1     ====="
+	log "=====    is expected to be wrong. It is recorded, not chased.   ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 8 33 64 > "$C" 2>&1
+
+	log ""
+	log "===== Read the b spread line in entry 2. Same on every channel   ====="
+	log "===== means a global bias term; varying means the per-channel A. ====="
 	sync
 }
 case "$1" in
