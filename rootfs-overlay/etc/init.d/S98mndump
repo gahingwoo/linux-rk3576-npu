@@ -2,6 +2,60 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 202. The dumped stream named five registers, and this is the
+# change they asked for.
+#
+# ROUND 201 got Mesa's register stream off the board, 147 entries for a shape
+# that works and 147 for the one that does not, same registers in both, 24
+# values different. Most of those are geometry and mean nothing.
+#
+# The comparison that means something came from charsiu, offline and with no
+# board: sweeping its K, which IS the input channel count, seven registers
+# track it, and K = 33 and K = 48 emit IDENTICAL values in every one of them.
+# That is what padding to the feature atom does. Laid against Mesa's failing
+# stream:
+#
+#   reg      charsiu, computes to 0.025%   Mesa, COMPUTED 0
+#   0x101c   0xc00 = 48 * 64                0x840 = 33 * 64
+#   0x1020   0x30  = 48                     0x21  = 33
+#   0x1028   low 0x2f = 47                  low 0x20 = 32
+#   0x1030   high 0x60 = 2 * 48             high 0x42 = 2 * 33
+#   0x107c   0x2f  = 47                     0x20  = 32
+#
+# All five come from one line, rkt_regcmd.c's `unsigned ic =
+# task->input_channels_real`. rkt_task.c has padded task->input_channels to
+# ALIGN(MAX2(ic, 16), 16) all along and rkt_fill_weights has laid the buffer out
+# to that width since round 197, so these five were the last place still
+# counting the real channels. Round 196 made exactly this change in charsiu and
+# took K = 31, 33, 40, 63 and 65 from 30, 37, 25, 21 and 43 of 64 to 64 of 64.
+#
+# I ALSO GOT THE REGISTER SEMANTICS WRONG ONCE THIS ROUND and want it recorded:
+# I read 0x1024 through rkt_registers.h as DATA_SIZE1 and started reasoning
+# about its fields, but the working shape has 41 in it, which is its OUTPUT
+# channel count. The pointwise path emits raw offsets rather than the RK3588
+# derived REG_CNA_* map. The fix for that was not to guess harder but to sweep
+# K in charsiu and let the registers that move name themselves.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   pw33x64w56 becomes correct
+#             MobileNet's last open operation is closed and the driver's
+#             pointwise path handles any input channel count.
+#   its slope stays near 1 and the per channel offset shrinks
+#             the registers were part of it and something in the coefficient
+#             buffer is the rest. Round 199 measured that offset as VARYING per
+#             channel, min -108 max +117, so its size is the thing to watch.
+#   nothing moves
+#             the five registers were not it, and the weight buffer contents
+#             are next, dumped the same way the stream was.
+#   conv2d-cal, mn_conv0 or pw64x41w56 breaks
+#             the padding reached a shape whose ic is already a multiple of 16,
+#             where ALIGN is the identity, so that could only be a coding
+#             mistake. They run FIRST.
+#
+# ROCKET_NO_ICPAD_REGS restores the real count in those five, so both are in
+# one log.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 201. charsiu computes MobileNet's failing shape correctly,
 # so the hardware can do it and Mesa's configuration is what is wrong. This
 # round takes Mesa's register stream off the board to say which register.
@@ -2845,59 +2899,56 @@ start() {
 	mkdir -p /tmp/dump && cd /tmp/dump || return 0
 
 	log ""
-	log "===== 1) dump the register stream of a shape that WORKS, so the ====="
-	log "=====    diff is against the same driver rather than against    ====="
-	log "=====    charsiu, which is a different program.                 ====="
-	rm -f /tmp/dump/mesa-*.bin
-	p pw64x41w56.tflite "ROCKET_DEBUG=dump_bos"
-	log ""
-	log "  -- pw64x41w56 regcmd, 64 input channels, correct on this driver"
-	for f in /tmp/dump/mesa-regcmd-*.bin; do
-		[ -e "$f" ] || continue
-		log "  FILE $f  $(wc -c < "$f") bytes"
-		od -A d -t x4 -v "$f" > "$C" 2>&1
-	done
+	log "===== 1) THE CONTROL, first. Every one of these has an ic that   ====="
+	log "=====    is already a multiple of 16, where the padding is the   ====="
+	log "=====    identity, so they cannot change for any reason but a    ====="
+	log "=====    coding mistake.                                         ====="
+	p mn_conv0.tflite ""
+	p conv2d-cal.tflite ""
+	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 2) THE TEST: the same dump for the shape that fails.      ====="
-	log "=====    charsiu computes this arithmetic to 0.025% at          ====="
-	log "=====    M=3136 K=33 N=64, so the hardware can do it.           ====="
-	rm -f /tmp/dump/mesa-*.bin
-	p pw33x64w56.tflite "ROCKET_DEBUG=dump_bos"
-	log ""
-	log "  -- pw33x64w56 regcmd, 33 input channels, wrong on this driver"
-	for f in /tmp/dump/mesa-regcmd-*.bin; do
-		[ -e "$f" ] || continue
-		log "  FILE $f  $(wc -c < "$f") bytes"
-		od -A d -t x4 -v "$f" > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 3) THE CONTROL: the same model with no dump_bos, which    ====="
-	log "=====    must give the numbers round 199 gave. If it does not,  ====="
-	log "=====    dumping changed the run and the dumps are not of it.   ====="
-	rm -f /tmp/dump/mesa-*.bin
+	log "===== 2) THE TEST: 33 input channels. 15 of 64 with COMPUTED 0, ====="
+	log "=====    slope 0.997, offset varying per channel.               ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 4) charsiu at the same arithmetic, unchanged from round   ====="
-	log "=====    200, so the comparison has both sides in one log       ====="
+	log "===== 3) the same shape with the five registers back on the     ====="
+	log "=====    real count, so before and after are in one log         ====="
+	p pw33x64w56.tflite "ROCKET_NO_ICPAD_REGS=1"
+
+	log ""
+	log "===== 4) MobileNet end to end. COMPUTED 0 of 1001 for the last  ====="
+	log "=====    twenty rounds; that is the number to read.             ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
+
+	log ""
+	log "===== 5) and MobileNet with the registers back, same reason as 3 ====="
+	p mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_ICPAD_REGS=1"
+
+	log ""
+	log "===== 6) the new stream, dumped, so the five registers can be   ====="
+	log "=====    confirmed to have changed to 48 rather than assumed    ====="
+	rm -f /tmp/dump/mesa-*.bin
+	p pw33x64w56.tflite "ROCKET_DEBUG=dump_bos"
+	for f in /tmp/dump/mesa-regcmd-*.bin; do
+		[ -e "$f" ] || continue
+		log "  FILE $f  $(wc -c < "$f") bytes"
+		od -A d -t x4 -v "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 7) charsiu, unchanged, as the other side of the comparison ====="
 	log ""
 	/opt/charsiu/charsiu_matmul 3136 33 64 > "$C" 2>&1
 
 	log ""
-	log "===== 5) REGRESSION ====="
-	p mn_conv0.tflite ""
-	p conv2d-cal.tflite ""
+	log "===== 8) the other open shape ====="
+	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== 6) MobileNet end to end ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== The two od dumps in entries 1 and 2 are the round. They    ====="
-	log "===== get diffed offline against each other and against          ====="
-	log "===== charsiu's stream for the same arithmetic.                  ====="
+	log "===== Entry 1 first. Then entry 2 against entry 3, and entry 4's ====="
+	log "===== COMPUTED count, which has been 0 for twenty rounds.        ====="
 	sync
 }
 case "$1" in
