@@ -2,6 +2,113 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 201. charsiu computes MobileNet's failing shape correctly,
+# so the hardware can do it and Mesa's configuration is what is wrong. This
+# round takes Mesa's register stream off the board to say which register.
+#
+# ROUND 200: charsiu's M > 1 was never broken. The reading was.
+#
+#   M      surface reading            row major reading
+#   1      64 of 64                   64 of 64          <- the control, agrees
+#   2      128 of 128                 52 of 128
+#   8      512 of 512                 209 of 512
+#   56     3579 of 3584, 0 off by >1  1146 of 3584
+#   224    14313 of 14336, 0 off by >1
+#
+# The output is [n/atom][m][n%atom], the mirror of the input surface, which at
+# M = 1 collapses to exactly n. That is why row major had been right for 36
+# rounds and only ever at one row. Nothing about the job changed: same stream,
+# same packing, same buffers, only which byte is read. So the hardware was
+# computing correctly the whole time and charsiu's own checker was wrong.
+#
+# AND THE LINE THAT MATTERS FOR MOBILENET:
+#
+#   M = 3136, K = 33, N = 64    200344 of 200704 byte exact, 51 off by >1
+#
+# That is pw33x64w56's exact arithmetic: 56 * 56 = 3136 rows, 33 input
+# channels, 64 output channels. charsiu gets it to 0.025%. Mesa gets COMPUTED 0
+# on the same shape. **The hardware can do it and Mesa is asking it wrongly.**
+#
+# So stop reasoning about Mesa's packing from the source and read its stream.
+# ROCKET_DEBUG=dump_bos writes mesa-regcmd-000-NNN.bin, and this round hexdumps
+# it into the log so it can be diffed offline against charsiu's stream for the
+# same arithmetic, which is generated on the host with emit_job and needs no
+# board at all.
+#
+# WHAT THE DIFF CAN AND CANNOT SAY. The two are not the same job: Mesa runs a
+# 1x1 convolution over a 56 by 56 surface and charsiu a matmul with 3136 rows,
+# so the geometry registers will differ and that means nothing. The registers
+# that carry the CHANNEL COUNTS and the WEIGHT BYTE COUNTS are the comparable
+# ones, and those are what round 196 changed in charsiu to fix exactly this.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the dump appears and parses
+#             the offline diff happens next round, against a stream already
+#             generated here.
+#   the dump is empty or missing
+#             ROCKET_DEBUG did not reach the process, and the entry that runs
+#             perch.py without it is the control that says whether the model
+#             ran at all.
+#   the dumped stream is byte identical to a working shape's
+#             the fault is not in the register stream and the weight buffer
+#             itself has to be dumped next.
+#
+# Entry 1 dumps a WORKING shape too, pw64x41w56, because a diff against a shape
+# that computes on the same driver is worth more than a diff against charsiu,
+# which is a different program entirely.
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 200. The leftover constant is per channel, and the thing
+# that made this round's priority change is that charsiu fails at every M above
+# one while Mesa's failing shape is a 56 by 56 surface.
+#
+# ROUND 199, on the Mesa side.
+#
+#   affine fit, padding to ALIGN(ic,16):  a 0.9970  b median -31.41  corr 0.9907
+#   b spread: min -108.28 max +117.16 std 46.47      VARIES per channel
+#   lowest ch43 -108.3, highest ch59 +117.2
+#
+# So it is not one global constant. By the written rule that is the per channel
+# A record. One more number from the same block, unexplained and worth keeping:
+#
+#   first 8 channel maxdiffs: [0, 0, 32, 32, 32, 0, 0, 9]
+#
+# Channels 2, 3 and 4 are off by EXACTLY 32.
+#
+# WHY THE PRIORITY MOVED. Round 198's control failure said charsiu is wrong at
+# every M above 1, at a FLAT rate, 32.0% byte exact at K = 64 from M = 8 to
+# M = 3136 and 38.7% at K = 33. Flat with size is what a wrong LAYOUT looks
+# like, not what a wrong computation looks like. And Mesa's failing shape is a
+# 56 by 56 surface while every shape that works reduces to one row. These are
+# probably the same fault, and charsiu is the one with sparse probes on it.
+#
+# THE HYPOTHESIS, and it is a reading rather than a change to the hardware.
+# charsiu's INPUT surface is [k/atom][m][k%atom]. If the output mirrors it, it
+# is [n/atom][m][n%atom]. At M = 1 that expression collapses to exactly n, which
+# is why a row major reading has been right all along AND ONLY AT M = 1.
+#
+# Nothing about the job moves this round: same register stream, same packing,
+# same buffers. Only how the result is read, plus an output buffer sized
+# ALIGN(N, atom) * M instead of M * N, because round 198's N = 40 came back
+# "0 of 40 bytes written" and a short buffer is what that looks like.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   M > 1 becomes byte exact under the surface reading
+#             the hardware was computing correctly the whole time and charsiu
+#             was reading the answer out of the wrong bytes. Then the same
+#             question goes to Mesa, whose output surface handling is where
+#             MobileNet's 56 by 56 shapes would fail the same way.
+#   M > 1 stays wrong
+#             the layout is not the mirror, and the next step is a sparse probe
+#             on M the way --map was a sparse probe on the weights.
+#   M = 1 changes at all
+#             the two readings are the same expression at M = 1, so anything
+#             moving there means the buffer resize broke something and the
+#             round is void. That is the control and it runs first.
+#
+# CHARSIU_OUT_ROWMAJOR forces the old reading, so both are in the same log.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 199. The padding unit is settled, one constant is left, and
 # round 198's control failed in a way worth keeping.
 #
@@ -2735,46 +2842,62 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
+	mkdir -p /tmp/dump && cd /tmp/dump || return 0
 
 	log ""
-	log "===== 1) THE CONTROL: nothing but perch.py changed this round,  ====="
-	log "=====    so these three must be exactly as they were.           ====="
-	p mn_conv0.tflite ""
-	p conv2d-cal.tflite ""
-	p pw64x41w56.tflite ""
+	log "===== 1) dump the register stream of a shape that WORKS, so the ====="
+	log "=====    diff is against the same driver rather than against    ====="
+	log "=====    charsiu, which is a different program.                 ====="
+	rm -f /tmp/dump/mesa-*.bin
+	p pw64x41w56.tflite "ROCKET_DEBUG=dump_bos"
+	log ""
+	log "  -- pw64x41w56 regcmd, 64 input channels, correct on this driver"
+	for f in /tmp/dump/mesa-regcmd-*.bin; do
+		[ -e "$f" ] || continue
+		log "  FILE $f  $(wc -c < "$f") bytes"
+		od -A d -t x4 -v "$f" > "$C" 2>&1
+	done
 
 	log ""
-	log "===== 2) THE TEST: is the -31.46 the same constant on every     ====="
-	log "=====    channel. Slope 0.9985 and correlation 0.9963 mean this ====="
-	log "=====    is the only thing wrong with the shape.                ====="
+	log "===== 2) THE TEST: the same dump for the shape that fails.      ====="
+	log "=====    charsiu computes this arithmetic to 0.025% at          ====="
+	log "=====    M=3136 K=33 N=64, so the hardware can do it.           ====="
+	rm -f /tmp/dump/mesa-*.bin
+	p pw33x64w56.tflite "ROCKET_DEBUG=dump_bos"
+	log ""
+	log "  -- pw33x64w56 regcmd, 33 input channels, wrong on this driver"
+	for f in /tmp/dump/mesa-regcmd-*.bin; do
+		[ -e "$f" ] || continue
+		log "  FILE $f  $(wc -c < "$f") bytes"
+		od -A d -t x4 -v "$f" > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 3) THE CONTROL: the same model with no dump_bos, which    ====="
+	log "=====    must give the numbers round 199 gave. If it does not,  ====="
+	log "=====    dumping changed the run and the dumps are not of it.   ====="
+	rm -f /tmp/dump/mesa-*.bin
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 3) the two other padding widths again, since the spread   ====="
-	log "=====    is new information about them too                      ====="
-	p pw33x64w56.tflite "ROCKET_PW_ICPAD32=1"
+	log "===== 4) charsiu at the same arithmetic, unchanged from round   ====="
+	log "=====    200, so the comparison has both sides in one log       ====="
 	log ""
-	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
+	/opt/charsiu/charsiu_matmul 3136 33 64 > "$C" 2>&1
 
 	log ""
-	log "===== 4) MobileNet, whose own fit now prints a spread as well   ====="
+	log "===== 5) REGRESSION ====="
+	p mn_conv0.tflite ""
+	p conv2d-cal.tflite ""
+
+	log ""
+	log "===== 6) MobileNet end to end ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 5) the other open shape, for the same reason ====="
-	p pw64x56w56.tflite ""
-
-	log ""
-	log "===== 6) charsiu: M = 1 must still be byte exact, and M > 1     ====="
-	log "=====    is expected to be wrong. It is recorded, not chased.   ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 8 33 64 > "$C" 2>&1
-
-	log ""
-	log "===== Read the b spread line in entry 2. Same on every channel   ====="
-	log "===== means a global bias term; varying means the per-channel A. ====="
+	log "===== The two od dumps in entries 1 and 2 are the round. They    ====="
+	log "===== get diffed offline against each other and against          ====="
+	log "===== charsiu's stream for the same arithmetic.                  ====="
 	sync
 }
 case "$1" in
