@@ -21,7 +21,9 @@ The shape of the answer names the element size directly, which no amount of
 guessing at values has managed.
 
 The hardware ReLUs at the output zero point, so the reference is max(cpu, zp),
-the same one test_model.py uses.
+the same one test_model.py uses. That clamp is scored BOTH ways now: on an
+operator whose out_zp is not zero it rewrites every pixel below it, and a
+channel can then match for the wrong reason.
 
 Usage: TEFLON_LIB=... perch.py <model.tflite>
 """
@@ -55,8 +57,8 @@ cpu.allocate_tensors()
 ci, co = cpu.get_input_details()[0], cpu.get_output_details()[0]
 cpu.set_tensor(ci["index"], data.astype(ci["dtype"]).reshape(ci["shape"]))
 cpu.invoke()
-ref = np.maximum(cpu.get_tensor(co["index"])[0].astype(int),
-                 int(co["quantization"][1]))
+raw = cpu.get_tensor(co["index"])[0].astype(int)
+ref = np.maximum(raw, int(co["quantization"][1]))
 
 # A classifier's output is (N,) not (H, W, C), and indexing it as a surface
 # threw an IndexError that ended the run before the regression got to print.
@@ -64,6 +66,7 @@ ref = np.maximum(cpu.get_tensor(co["index"])[0].astype(int),
 if got.ndim == 1:
     got = got.reshape(1, 1, -1)
     ref = ref.reshape(1, 1, -1)
+    raw = raw.reshape(1, 1, -1)
 
 oc = got.shape[2]
 bad = []
@@ -112,6 +115,26 @@ if got.shape[0] * got.shape[1] == 1:
     print(f"    ONE PIXEL OUTPUT: COMPUTED cannot apply. Across the {oc} "
           f"channels, npu has {len(np.unique(got))} distinct values and the "
           f"reference {len(np.unique(ref))}", flush=True)
+
+    # ⚠ CHANNEL AGREEMENT IS NOT THE ANSWER TO THE QUESTION THIS MODEL ASKS.
+    #
+    # 1000 of 1001 channels within one count says the surfaces agree. It does
+    # not say the two stacks name the same class, and on a classifier that is
+    # the only thing anyone wants to know. The output is a quantised softmax
+    # with about ten distinct values, so two classes can sit one count apart
+    # and a difference of one is enough to swap them. That has been inferred
+    # here for months and never once printed.
+    top_n = min(5, oc)
+    npu_top = np.argsort(-got.reshape(-1), kind="stable")[:top_n]
+    cpu_top = np.argsort(-ref.reshape(-1), kind="stable")[:top_n]
+    print(f"    TOP {top_n} npu {[(int(i), int(got.reshape(-1)[i])) for i in npu_top]}",
+          flush=True)
+    print(f"    TOP {top_n} cpu {[(int(i), int(ref.reshape(-1)[i])) for i in cpu_top]}",
+          flush=True)
+    print(f"    TOP 1 {'AGREES' if npu_top[0] == cpu_top[0] else 'DIFFERS'}"
+          f"    top {top_n} as a set "
+          f"{'AGREES' if set(npu_top.tolist()) == set(cpu_top.tolist()) else 'DIFFERS'}",
+          flush=True)
 else:
     print(f"    of those, COMPUTED (reference varies): {computed}    "
           f"trivial (reference is constant): {trivial}", flush=True)
@@ -123,6 +146,48 @@ print(f"    channels that are CONSTANT: {flat_ch}/{oc}, "
 print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
       f"    npu constant but reference varies: "
       f"{int((npu_flat & ~ref_flat).sum())}", flush=True)
+
+# ⚠ THE REFERENCE IS A CHOICE AND max(cpu, out_zp) IS NOT FREE.
+#
+# It was picked because the output min pins at out_zp in every run, as if the
+# accumulator were being ReLU'd. For an operator whose quantised output range
+# already starts at zero the clamp cannot move a uint8 pixel and the choice
+# costs nothing. For one with out_zp in the middle of the range it rewrites
+# every pixel below it, which is up to half the surface. Those channels then
+# read as constant, drop out of COMPUTED, and a channel can be scored correct
+# because two surfaces were flattened the same way rather than because the
+# hardware reproduced one.
+#
+# tfl_ops.py says every model here is fused_activation NONE, and of the six in
+# the regression set only conv2d-cal has out_zp 128. So the clamp is expected
+# to move NOTHING on five of them, and only conv2d-cal can say anything. If a
+# zero point model reports a nonzero footprint below, this reading is wrong.
+moved = int((raw != ref).sum())
+if moved == 0:
+    print(f"    UNCLAMPED reference: identical, the clamp moves no pixel here",
+          flush=True)
+else:
+    bad_raw = [c for c in range(oc)
+               if int(np.abs(got[:, :, c] - raw[:, :, c]).max()) > 1]
+    raw_flat = np.array([len(np.unique(raw[:, :, c])) == 1 for c in range(oc)])
+    good_raw = np.array([c not in bad_raw for c in range(oc)])
+    ch_moved = sum(1 for c in range(oc) if (raw[:, :, c] != ref[:, :, c]).any())
+    px = got.shape[0] * got.shape[1] * oc
+    print(f"    UNCLAMPED reference: the clamp rewrites {moved}/{px} pixels "
+          f"across {ch_moved}/{oc} channels", flush=True)
+    one_px = got.shape[0] * got.shape[1] == 1
+    for name, b, fl in (("vs UNCLAMPED cpu", bad_raw, raw_flat),
+                        ("vs max(cpu,zp) ", bad, ref_flat)):
+        ok = np.array([c not in b for c in range(oc)])
+        comp = "n/a" if one_px else str(int((ok & ~fl).sum()))
+        print(f"      {name}: {oc - len(b)}/{oc} channels match    "
+              f"COMPUTED {comp}    reference constant {int(fl.sum())}/{oc}",
+              flush=True)
+    if len(bad_raw) > len(bad):
+        print(f"      {len(bad_raw) - len(bad)} channels agree with the "
+              f"reference ONLY because both sides were clamped", flush=True)
+    print(f"      cpu unclamped min={raw.min()} max={raw.max()} "
+          f"distinct={len(np.unique(raw))}", flush=True)
 # WHERE in the surface the error is, which the channel view cannot show.
 #
 # The impulse run decoded 27 of 32 channels to exactly the right tap of exactly

@@ -16,7 +16,7 @@ import sys
 
 from flatbuffers import table, encode
 from flatbuffers.number_types import (UOffsetTFlags, Int32Flags, Int8Flags,
-                                      Float32Flags, Int64Flags)
+                                      Uint8Flags, Float32Flags, Int64Flags)
 
 TYPES = {0: "f32", 1: "f16", 2: "i32", 3: "u8", 4: "i64", 5: "str",
          6: "bool", 7: "i16", 9: "i8", 17: "i4"}
@@ -26,6 +26,24 @@ OPS = {0: "ADD", 1: "AVERAGE_POOL_2D", 2: "CONCATENATION", 3: "CONV_2D",
        4: "DEPTHWISE_CONV_2D", 9: "FULLY_CONNECTED", 17: "MAX_POOL_2D",
        22: "RESHAPE", 25: "SOFTMAX", 34: "PAD", 40: "MEAN", 114: "QUANTIZE",
        6: "DEQUANTIZE", 32: "CUSTOM"}
+
+# ActivationFunctionType, and where the field sits in each options table.
+# ⚠ THIS IS NOT COSMETIC. perch.py scores against max(cpu, out_zp) because the
+# hardware was believed to ReLU the accumulator unconditionally. That reference
+# is only harmless for an operator that already ends in a ReLU. For one that
+# does not it rewrites every pixel below the zero point, so a channel can read
+# as correct, or as an empty convolution, on the strength of the reference
+# alone. Which operators those are is a property of the model and readable
+# here, offline, instead of being assumed.
+ACTS = {0: "NONE", 1: "RELU", 2: "RELU_N1_TO_1", 3: "RELU6", 4: "TANH",
+        5: "SIGN_BIT"}
+# builtin_options union tag -> field index of fused_activation_function
+ACT_FIELD = {1: 3,    # Conv2DOptions
+             2: 4,    # DepthwiseConv2DOptions
+             5: 5,    # Pool2DOptions
+             8: 0,    # FullyConnectedOptions
+             10: 1,   # ConcatenationOptions
+             11: 0}   # AddOptions
 
 
 def root_table(buf):
@@ -98,7 +116,15 @@ def main():
         code = codes[ci] if ci < len(codes) else -1
         ins = vec_of(op, 1, Int32Flags, 4)
         outs = vec_of(op, 2, Int32Flags, 4)
-        print(f"    op{i}: {OPS.get(code, str(code)):20s} in={ins} out={outs}")
+        # builtin_options_type=3 is the union tag, builtin_options=4 the table
+        tag = scalar(op, 3, Uint8Flags, 0)
+        opts = sub_table(op, 4)
+        act = ""
+        if opts is not None and tag in ACT_FIELD:
+            a = scalar(opts, ACT_FIELD[tag], Int8Flags, 0)
+            act = f"  act={ACTS.get(a, str(a))}"
+        print(f"    op{i}: {OPS.get(code, str(code)):20s} in={ins} out={outs}"
+              f"{act}")
 
 
 main()

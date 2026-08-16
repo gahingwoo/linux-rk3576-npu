@@ -2,6 +2,821 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-17 round 232. Igor decoded the two constants and the difference is one
+# bit, so ask whether the predicate is needed at all.
+#
+# WHAT HE FOUND, on the v7 thread. 0x80011111 and 0x80011011 differ ONLY in
+# bit 8, which is the low bit of SIZE_E_2 at bits 8 to 10 in DPU_BS_OW_CFG. The
+# form that works at 56 output channels has SIZE_E_2 = 1 and the one that times
+# out has 0, and upstream Mesa emits a constant for every count whose SIZE_E_2
+# is 1. He also points out that these values carry RGP_CNTER = 8, OW_SRC = 1 and
+# two bits in the reserved range that upstream never sets.
+#
+# WHAT HE MEASURED, on RK3588 with upstream Mesa and its constant, against an
+# UNCLAMPED per channel CPU reference, three jobs landing one per core:
+#
+#   1x1 conv, 64 in, 56 out    56 of 56 within one
+#   1x1 conv, 64 in, 88 out    88 of 88 within one
+#   1x1 conv, 64 in, 120 out  120 of 120 within one
+#
+# So RK3588 needs no output channel dependent toggle there. That is the third
+# possibility my two fitted forms could not tell apart, and neither of them
+# proposed it.
+#
+# WHAT THIS BOARD HAS ACTUALLY SHOWN, which is a smaller claim than I have been
+# making. Every measurement is of the value my predicate happens to emit:
+#
+#   oc  16   emits SIZE_E_2 = 0   correct
+#   oc  41   emits SIZE_E_2 = 0   correct
+#   oc  56   emits SIZE_E_2 = 1   correct, and 0 reproduces the timeout
+#   oc  64   emits SIZE_E_2 = 1   correct
+#   oc 128   emits SIZE_E_2 = 1   correct
+#
+# The only cell never filled in is SIZE_E_2 = 1 at 16 and at 41. If those work
+# too, RK3576 needs no toggle either, the parity rule I fitted is complexity
+# with nothing behind it, and it comes out of the upstream patch before the
+# series is posted. ROCKET_DPU4050_CONST forces the constant, so this costs one
+# boot on the working driver.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   every shape correct with the constant
+#             the predicate is unnecessary on RK3576 as well, and the upstream
+#             encoder emits one value like upstream's own does. A fitted rule
+#             removed is worth more than a fitted rule defended.
+#   16 or 41 breaks under the constant
+#             the toggle is real on RK3576 and the parity form stays, now with
+#             a reason rather than a fit: SIZE_E_2 is what it selects.
+#   56 breaks under the constant
+#             that would contradict round 220's reach control, and the run is
+#             suspect before anything else is read.
+#
+# ⚠ THIS ROUND USES THE WORKING DRIVER, because ROCKET_DPU4050_CONST is one of
+# the 118 knobs and exists only there. The clean series is still in the image
+# and round 231's questions are still unanswered; the card had round 229 on it
+# when that log was taken.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 231. Two questions, two drivers, one image.
+#
+# QUESTION ONE, unchanged from round 230. Does the series rebased onto upstream
+# main behave the same as the one round 229 verified against 25.3.0. One patch
+# was dropped, because upstream deleted calc_explicit_padding, and the rest
+# needed API adaptation.
+#
+# QUESTION TWO, which has never actually been answered. Does this thing
+# classify.
+#
+# ⚠ WHAT HAS BEEN MEASURED IS NOT THAT. Every MobileNet number in this log book
+# is CHANNEL AGREEMENT: 1000 of 1001 output channels within one count. That says
+# the two surfaces agree. It does not say the two stacks name the same class,
+# and on a classifier that is the only thing anyone wants. The output is a
+# quantised softmax with about ten distinct values, so two classes can sit one
+# count apart and a single count is enough to swap them. perch.py now prints the
+# top five and whether the argmax agrees, which the whole project has inferred
+# for months and never once printed.
+#
+# ⚠ AND IT HAS TO RUN ON THE WORKING DRIVER TO MEAN ANYTHING. The clean series
+# declines depthwise, pointwise and the first convolution, so MobileNet falls
+# back to the CPU under it and the comparison would be the CPU against itself,
+# where the argmax agrees by construction and proves nothing. So this image
+# carries BOTH libraries and the MobileNet entry uses the 102 commit one.
+#
+#   /usr/lib/libteflon.so           five patches on upstream main
+#   /usr/lib/libteflon-working.so   the 102 commit driver
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   entries 1 to 4 match round 229 number for number
+#             the rebase onto main changed no behaviour and the series can go
+#             to the fork.
+#   entry 5 says TOP 1 AGREES on the working driver
+#             the NPU classifies the same image the same way the CPU does, and
+#             the answer to the question is yes with a measurement behind it.
+#   entry 5 says TOP 1 DIFFERS
+#             then 1000 of 1001 channels within one has been hiding a label
+#             flip all along, which would be the most important thing this log
+#             book has said in a while.
+#   entry 6, the same model on the clean series, must say the top five agree
+#             trivially. It is there to show what a vacuous comparison looks
+#             like next to a real one.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 230. The same series, rebased onto upstream main.
+#
+# ROUND 229 PASSED EVERYTHING, on a series built against Mesa 25.3.0.
+#
+#   conv2d-cal   128 of 128, clamp footprint 100820 of 204800
+#   cal_k3       128 of 128, footprint 98391
+#   cal_oc16      16 of 16,  footprint 12566
+#   mn_conv0      32 of 32   declined, ran on the CPU, correct
+#   mobilenet   1001 of 1001 declined, ran on the CPU, correct
+#   conv2d-cal   128 of 128 again, no timeouts, no page faults
+#
+# WHAT IS DIFFERENT HERE. gitlab.freedesktop.org came back, so the series is now
+# five patches on top of main rather than six on top of 25.3.0.
+#
+#   one patch was DROPPED. Upstream deleted calc_explicit_padding entirely and
+#   takes the padding from the operation now, so the axis swap it fixed has no
+#   code left to fix.
+#
+#   the API moved. pipe_ml_subgraph no longer carries a context, there is a
+#   pipe_ml_device and rkt_ml_operation_supported takes it, rkt_fill_biases no
+#   longer maps its own tensors, and ALIGN became align. The rocket directory
+#   has drifted about 380 lines from 25.3.0, and upstream has still not touched
+#   RK3576 at all.
+#
+# ⚠ NONE OF THAT HAS RUN ON THIS BOARD. The adaptation is mechanical, and
+# mechanical changes to code whose behaviour I had not measured are exactly what
+# went wrong five times between round 223 and round 228. So it gets measured
+# rather than assumed, with the same models and the same rule as round 229.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   every number matches round 229's, footprints included
+#             the series is verified on hardware against upstream main and can
+#             go to the fork as it is.
+#   any number moves
+#             the adaptation changed behaviour somewhere, and the model that
+#             moved says where. The 25.3.0 branch is still here to diff
+#             against, function by function.
+#   a decline turns into a wrong answer
+#             rkt_ml_operation_supported reaches the screen through the new ml
+#             device now, and that is the one adapted line whose failure would
+#             be silent rather than loud.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 229. The clean branch computes. Now run the regression on it.
+#
+# ROUND 228, THREE RUNS, ALL THE SAME.
+#
+#   MESA: info: rocket: RK3576
+#   rocket: coef oc=128 table=1024 scales=256 op2_off=1280 total=206080
+#   rocket: A[0..3] -54 3221 10107 -1021   B[0] -5   C[0] 16
+#   rocket: scale[0]=43d3   op2=00001004
+#   conv2d-cal 128 of 128, clamp footprint 100820 of 204800
+#
+# Every field checks against something known independently. The table is 16
+# records of 64 bytes, the scales are 128 entries of 2, the operand offset 1280
+# is the same number the encoder puts in 0x5024, the total is the working
+# driver's allocation to the byte, B is 0x80 minus the model's weight zero point
+# of 133, and C is 16 because the tensor is per tensor quantised. And the answer
+# is the working driver's own, footprint included.
+#
+# So 653 lines reproduce what 3979 did, for the shape the series claims.
+#
+# FIVE FAILURES GOT HERE AND ALL FIVE WERE MINE. The buffer size, the missing
+# operand word, the detection default, and then two wrong explanations of where
+# the OF node lives. Every one the same shape: a change made to a patch because
+# it read better, to code whose behaviour I had not measured. Three audits
+# caught two of them, and only because they compared against something known to
+# work. The last one ended when the board printed a map instead of me proposing
+# a fifth depth.
+#
+# THIS ROUND. The temporary coefficient print is gone from the series, so what
+# runs here is exactly what would be posted. The question is whether the other
+# two shapes in the same regime work, and whether the shapes the series declines
+# really do fall back to the CPU rather than being encoded wrongly.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   cal_k3 and cal_oc16 both come back all channels correct
+#             the series covers its regime rather than one model in it. It is
+#             ready to rebase onto upstream and go out.
+#   either is wrong
+#             the encoder is fitted to conv2d-cal, and the difference between
+#             them names what: cal_k3 varies the kernel, cal_oc16 the output
+#             channel count.
+#   mn_conv0 or MobileNet come back WRONG rather than correct and slow
+#             the guard does not work and the series would silently mis-encode
+#             a first convolution, which is worse than not supporting it.
+#
+# mn_conv0 is 224x224x3 and MobileNet is mostly depthwise and pointwise, so both
+# should now be declined and run on the CPU. Correct and slow is the pass here.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 228. The map says the OF node is not on that branch at all.
+#
+# WHAT ROUND 227 PRINTED, and it settles four rounds of wrong guesses.
+#
+#   /sys/dev/char/261:0 -> /sys/devices/platform/rknn/accel/accel0
+#   no of_node at accel0, at accel, at rknn, at platform
+#   /sys/bus/platform/devices/27700000.npu/of_node/compatible
+#       = rockchip,rk3576-rknn-core
+#
+# The accel node's parent is the synthetic platform device the driver creates
+# to aggregate the cores. The device that carries the OF node is 27700000.npu,
+# a SIBLING of it on the platform bus, not an ancestor. No amount of climbing
+# was ever going to reach it, which is why one depth, then three, then a full
+# walk all failed. Climbing was the wrong instrument and the rule written before
+# round 227 said that was the second thing it could turn out to be.
+#
+# WHAT CHANGED. The probe scans the platform bus for a device whose compatible
+# names an rknn core and reads the SoC out of it. There is one NPU per SoC so
+# the first core is the answer. It still refuses to open rather than guessing.
+#
+# This wants to be a parameter on the uAPI instead of sysfs archaeology, and
+# saying so belongs in the series when it goes out.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   rocket: RK3576 prints, then the three coef lines, then a result
+#             the clean branch runs as itself for the first time. Read the
+#             result: 128 of 128 with a 100820 pixel clamp footprint is the
+#             working driver's own answer.
+#   rocket: RK3576 prints and the result is empty or faults
+#             the SoC is finally right and something else is wrong. The coef
+#             lines say what was in the buffer, which is the question round 225
+#             was built to ask and has never yet been able to.
+#   it still cannot tell
+#             the scan found no rknn core on the platform bus, which contradicts
+#             what round 227 printed, and that would be worth understanding
+#             before anything else.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 227. The refusal worked. Now find where the OF node is.
+#
+# ROUND 226 CONFIRMED THE DIAGNOSIS AND KILLED MY EXPLANATION OF IT.
+#
+#   accel0 is 261,0
+#   device/of_node/compatible MISSING
+#   device/device/of_node/compatible MISSING
+#   device/device/device/of_node/compatible MISSING
+#   MESA: error: rocket: cannot tell which NPU this is
+#
+# So the RK3588 fallback really was what drove round 224's storm, and refusing
+# to open rather than guessing did its job: the board came back with a clean
+# error instead of 18785 page faults, and teflon ran the model on the CPU.
+#
+# ⚠ BUT MY REASON FOR THE PROBE FAILING WAS ALSO WRONG. I said the OF node was
+# one level further up than the code looked. It is not at one, two or three
+# levels up either. That was a fourth guess and the board refused it too.
+#
+# So this round stops proposing depths. The probe resolves the char device's
+# REAL path and climbs it until a compatible turns up, which does not assume
+# anything about the shape of the tree, and the script prints that real path
+# and every of_node under the device so a failure is a map rather than another
+# hypothesis.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   rocket: RK3576 prints
+#             the climb found it. Read the coefficient lines and the result,
+#             which is the first time this branch will have run as itself.
+#   it still cannot tell
+#             the printed tree says where the OF node actually is, or that
+#             there is not one reachable from the accel node at all. If it is
+#             the latter, sysfs is the wrong instrument and the SoC has to come
+#             from somewhere else, which is a design question rather than a
+#             bug.
+#
+# Nothing else changed. The encoder, the records and the guard are as they were
+# in round 226, and none of them has ever run on this board yet.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 226. The clean branch was not running as an RK3576 at all.
+#
+# ROUND 225 ANSWERED IT, by printing nothing. The three ROCKET_COEF_DUMP lines
+# never appeared, and they sit inside the branch guarded by
+# soc == RKT_SOC_RK3576. perch.py ran, a job was submitted, and the answer came
+# back empty, so the driver was alive and the RK3576 branch was simply never
+# taken. Everything fell to the RK3588 path: its bias array, its encoder, its
+# register map, driven at RK3576 hardware. That is the address storm, and it is
+# why round 224 looked worse than 223 rather than better.
+#
+# ⚠ THE CAUSE IS MINE AGAIN, AND IT IS THE THIRD TIME IN THIS SERIES. Reviewing
+# the clean patches I changed the SoC detection default from RK3576 to RK3588,
+# on the grounds that a failed probe must not turn an RK3588 into an RK3576.
+# The direction of that argument is right. What it missed is that the probe was
+# ALREADY FAILING on this board: the accel char device's parent is the accel
+# device, not the platform device that carries the OF node, so
+# /sys/dev/char/M:m/device/of_node/compatible does not exist. The working
+# driver's default of RK3576 had been covering that up since the day it was
+# written, and nothing ever printed which SoC it thought it had.
+#
+# THREE GUESSES, THREE WRONG, ALL THREE MINE, and all three the same shape: a
+# change made to a patch because it read better, to code whose behaviour I had
+# not measured. The buffer size, the operand word region, the detection
+# default. The audits caught the first two only because they compared against
+# something known to work.
+#
+# WHAT CHANGED. The probe walks up the device chain instead of assuming a
+# depth, and matches either SoC positively. If neither turns up it now REFUSES
+# to create the screen rather than picking one, and says so. A screen that will
+# not open is a message; a screen that opens on the wrong assumption is 18785
+# lines of page faults. And it logs which SoC it decided on, so this can never
+# again be invisible.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   "rocket: RK3576" prints, then the three coef lines, then a result
+#             the detection was the whole of it. Read the result normally.
+#   "rocket: RK3576" prints and the coef lines follow, but the result is
+#   still empty or faulting
+#             the SoC is right and something else is wrong, and for the first
+#             time the log will say which buffer with what in it.
+#   the screen refuses to open
+#             the walk still does not find the OF node, and the next step is to
+#             look at the sysfs tree on the board rather than to guess a depth.
+#             Teflon will fall back to the CPU, so perch.py still answers.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 225. Two wrong guesses is enough. Make the board say it.
+#
+# WHAT ROUND 224 DID. 18785 lines of IOMMU read faults and nothing else. Not one
+# line of perch.py output, not even a block header. The faults sweep
+#
+#   0x300000 0x400000 0x500000 0x600000 0x700000 0x800000 0x900000
+#
+# in one megabyte steps with offsets of 0x1, 0x11, 0x21 and 0x31, and every one
+# reports dte valid: 0, so nothing is mapped anywhere near them. That is a unit
+# walking a list of addresses that are not addresses.
+#
+# It is WORSE than round 223, which faulted once at 0x600001 and then timed out.
+# Adding the operand word made the descriptor valid, so the unit now starts a
+# fetch it previously never began, and the fetch is reading garbage.
+#
+# ⚠ I HAVE GUESSED THE CAUSE TWICE AND BEEN WRONG TWICE. First the buffer size,
+# then, after an audit found the missing operand word, that. Both were real
+# defects and both are fixed, and neither is this. What I have checked since,
+# and can rule out:
+#
+#   the bank constants I changed this round do NOT move conv2d-cal's split. It
+#   is one task before and after, and the numbers now match the working driver
+#   exactly (entries per slice 10, input banks 2, weight banks 1, 768 slices
+#   available against 80 needed).
+#
+#   the float surface region after the operand word is the same size as the
+#   working driver's, 204800 bytes, so the operand cannot be reading off the end
+#   of the allocation.
+#
+#   0x1004 satisfies the constraint the working driver records for that word,
+#   (w & 0x3f) == 0x04 and ((w >> 6) & 0xff) >= 0x21.
+#
+# So I do not know, and this round does not guess. It runs ONE model ONCE and
+# prints what the driver actually built, because nothing in round 224's log says
+# which buffer was being read or what was in it.
+#
+# ROCKET_COEF_DUMP is temporary and marked as such in the source. It prints the
+# coefficient layout, the first record and the operand word.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   the layout line prints and then conv2d-cal answers
+#             read the answer normally. The storm was something later in round
+#             224's script, not the first model, and the log simply lost its
+#             beginning.
+#   the layout line prints and then the faults start
+#             the coefficient buffer is built as intended and something reads
+#             it wrongly, so the fault is in the encoder's addresses rather
+#             than in the buffer. The printed offsets are then directly
+#             comparable with 0x5020 and 0x5024.
+#   nothing prints at all
+#             it faults before the first convolution is even built, which puts
+#             it outside everything looked at so far.
+#
+# ⚠ IF THE BOARD IS UNUSABLE, the working driver is one image away. It is the
+# rk3576 branch of the Mesa tree, and round 222's image was the last one built
+# from it.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 224. The clean branch faulted, and the cause was a change I
+# made while reviewing it.
+#
+# WHAT ROUND 223 DID. conv2d-cal came back 0 of 128 with every pixel pinned at
+# out_zp, an empty convolution, and beside it
+#
+#   rocket 27700000.npu: NPU job timed out
+#   rk_iommu: Page fault at 0x0000000000600001 of type read
+#
+# and by the third attempt the IOMMU could not be reset and the machine took an
+# SError. That is the third branch of round 223's rule, a read past the end of a
+# buffer, and the branch named the buffer.
+#
+# ⚠ MY FIRST ATTRIBUTION WAS WRONG, and an audit found the real one. I blamed
+# the coefficient buffer, which I had shrunk while reviewing the series on the
+# grounds that sizing it by the weight element count had nothing to do with what
+# the hardware reads. That was a bad change and it is reverted, but it is not
+# what emptied the convolution.
+#
+# WHAT ACTUALLY BROKE IT. Past the records and the per channel scales sits the
+# word the SDP's second operand points at, and 0x5024 points exactly there. The
+# working driver writes 0x1004 into it. The clean series wrote nothing, so the
+# unit read a zero, which is not a valid descriptor. The working driver's own
+# comment records the same configuration from round 46, when the pointer was
+# moved past the scale table and nothing was written at the new target, and the
+# shapes that had been passing went from 128 of 128 to 0 of 128. The IOMMU read
+# fault is downstream of that, not of the allocation.
+#
+# The clean series now writes both things it was missing: the fp16 per channel
+# scale table, and the operand word.
+#
+# The lesson is narrower than "do not clean up". An allocation whose size I
+# cannot explain is not evidence that the size is wrong, and a region I do not
+# understand is not evidence that nothing has to be in it. Both of my changes
+# there were style reasoning applied to behaviour.
+#
+# ⚠ ALSO FOUND, AND IT HAS BEEN WRONG FOR MANY ROUNDS. The boot line
+#
+#   echo 1 > /sys/module/rocket/parameters/task_con16
+#
+# has been failing every time, because that parameter does not exist. There is
+# no module_param anywhere in the rocket driver. The RK3576 task number layout
+# is written unconditionally in rocket_job.c, so the fix has always been in
+# effect and nothing measured is invalidated, but every round header that said
+# "the boot line applies the fix" was describing something that never ran. The
+# line is gone from this round.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   conv2d-cal is 128 of 128 with a 100820 pixel clamp footprint
+#             the clean branch computes what the working driver does, and the
+#             only thing that ever separated them was the allocation.
+#   still empty, but no fault
+#             the records are wrong rather than the buffer, which the identical
+#             register stream had already narrowed it to.
+#   still faulting
+#             something else in the rewrite reads past a buffer, and the next
+#             step is to print the allocation and the addresses rather than
+#             guess again.
+#
+# ⚠ mn_conv0 AND MobileNet SHOULD NOW RUN ON THE CPU, not on the NPU. The clean
+# series declines a depthwise convolution, a pointwise one, and one whose input
+# has up to four channels, because it implements none of them and was accepting
+# them silently. mn_conv0 is 224x224x3 and MobileNet is full of the other two.
+# So they are expected to be CORRECT and slow rather than wrong and fast, and a
+# wrong answer from either of them now means the guard does not work.
+#
+# The unsupported shapes are LAST this round rather than in the middle. Round
+# 223 put them after the measurement and the device was already gone by then.
+#
+# ⚠ mn_conv0 MOVED, and round 223 had it in the wrong place. It is 224x224x3,
+# so its three input channels put it on the working driver's FIRST CONVOLUTION
+# path, both for the weight layout and for the encoder, and this series
+# implements neither. Round 223 listed it under "the same regime at other
+# sizes", which was a label rather than a fact. It belongs with the shapes that
+# are expected to be wrong, and it is there now. What is left in entry 2 really
+# is the same regime: cal_k3 and cal_oc16 are both 16 input channels over
+# 80x80 per tensor uint8, varying only the kernel and the output channel count.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 223. Does the clean branch actually compute, or only emit
+# the same bytes.
+#
+# WHAT THIS IMAGE CARRIES. Not the working driver. libteflon.so here is built
+# from rk3576-clean, four patches on top of Mesa 25.3.0 with no development
+# history in them.
+#
+#   546 lines against 3979, and none of the 118 environment variables. The
+#   weight packing, the submit path and the output readback are untouched,
+#   because a regular convolution already takes the path that was there.
+#
+# It was verified offline first. The clean encoder's stream for conv2d-cal was
+# reconstructed and compared against the stream round 221 printed from the
+# working driver on this board, and it is 143 of 143 entries identical with the
+# order included.
+#
+# ⚠ THAT IS NOT THE SAME AS COMPUTING. An identical register stream still
+# leaves the weight buffer and the coefficient records to be right, and those
+# are rewritten code rather than copied. The coefficient buffer in particular is
+# now sized by what the hardware reads instead of by the weight element count,
+# which is a smaller allocation than the working driver made, and nothing has
+# ever tested that the smaller one is enough.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   conv2d-cal is 128 of 128 with the same 100820 pixel clamp footprint
+#             the clean branch computes what the working one does, and the
+#             first upstream series stands on a measurement rather than on a
+#             byte comparison.
+#   it is 0 of 128 or pinned flat
+#             the coefficient records or the buffer size are wrong. The stream
+#             is known identical, so the fault is in one of those two and
+#             nowhere else, which is a much shorter list than usual.
+#   it times out
+#             the buffer is too small and the hardware read past it.
+#
+# The other three shapes are expected to FAIL and are here to say how. They are
+# a pointwise convolution, a channel count that is not a multiple of the atom,
+# and MobileNet, and this series deliberately does not implement any of them.
+# What matters is that they fail cleanly rather than wedging the device, since
+# an upstream series that hangs a board on an unsupported shape is worse than
+# one that computes nothing.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 222. The register stream is exhausted, and last round's
+# whole graph result could not tell running from not running.
+#
+# WHAT ROUND 221 SETTLED. The control held, conv2d-cal being 128 of 128 with
+# the dump on and off and the clamp footprint identical, so the instrument did
+# not change the experiment.
+#
+# THE SAME MODEL DIFF CAME BACK CLEAN. Mesa's assembled stream for conv2d-cal
+# against the vendor's compile of the same geometry, geom/g_cal, differs in ten
+# registers and every one of them is accounted for.
+#
+#   five are addresses     CNA 0x1088 and 0x1110, DPU 0x4018, RDMA 0x5020 and
+#                          0x5024. The vendor's file carries zero and the
+#                          runtime patches them.
+#   three are the requant  DPU 0x40ac, 0x40b0, 0x40b4. Different weights, and
+#                          Mesa's 0x40ac of 0 is out_zp 128, which is right.
+#   one is the pad value   CNA 0x1084, in_zp - 0x80 since June. conv2d-cal is
+#                          in_zp 128 so 0, the vendor's model is in_zp 0 so
+#                          -128.
+#   one is the padding     CNA 0x1080. Mesa 0x02020101 is before 1 after 2,
+#                          which is TFLite SAME for 5x5 stride 2. The vendor's
+#                          0x01010202 is before 2 after 1, which is what
+#                          gen_geom.py asks PyTorch for. Both are right for
+#                          their own model.
+#
+# Plus four OP_EN writes Mesa makes and the vendor does not, which is the known
+# per unit engage. Nothing else. So the clamp that loses the negative half of
+# every symmetric output is NOT in the register stream, and the coefficient
+# records were excluded offline last round. What is left is outside both, and
+# the next step for it is the vendor capture image running geom/a_lin, whose
+# out_zp is 145 and whose output is linear, which answers whether this hardware
+# can put a value below its output zero point at all. That is a different card
+# and not this round.
+#
+# ⚠ WHAT ROUND 221 DID NOT SETTLE, and I nearly wrote that it did. MobileNet
+# with ROCKET_WHOLE_GRAPH=1 came back 1000 of 1001, item for item identical to
+# the run with the gate off, and no stall. That is equally consistent with the
+# whole graph path running correctly and with it never engaging, because
+# rkt_pack_graph_regcmd returns early on several conditions and leaves
+# graph_regcmd NULL, and the normal path then runs exactly as before. Nothing
+# in the log separates those. Round 215 shipped an unobservable knob once
+# already.
+#
+# So the knob says out loud what it did. ROCKET_JOB_STATS prints the job count,
+# the task count and whether the packed stream is in use, which is also the
+# number Tomeu's question is about.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   gate off prints many jobs, gate on prints 1 job with the same task total
+#             the whole graph path is real, it engages, and it computes. The
+#             gate is stale and one job per graph can be the default.
+#   both print the same job count
+#             the path never engaged and last round's identical answer meant
+#             nothing. The gate stays and the reason it stalls is still open.
+#   gate on prints 1 job and the numbers move
+#             it engages and it is wrong, which is the finding.
+#
+# The control is conv2d-cal, one operation, where both settings must print the
+# same thing because there is nothing to pack.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 221. The stream is exhausted except for one comparison I
+# have never actually made, so make it.
+#
+# WHAT ROUND 220 SETTLED. Both controls held. The identity override through
+# ROCKET_REG_SET left conv2d-cal byte for byte unchanged, and forcing 0x4050
+# back to the round 217 value printed "NPU job timed out" and 32 of 56, so the
+# override is inert when it should be and reaches the hardware when it should.
+#
+#   entry 2   ROCKET_OUT_OFFSET=-64 gives maxdiff exactly 64 on every channel,
+#             correlation 1.0000, and npu min exactly 64 with NOTHING below it.
+#             The pixels pinned at out_zp follow the offset. So the clamp is
+#             upstream of the offset and the store is not it.
+#
+#             ⚠ MY PREDICTION WAS HALF WRONG. I wrote "min 64, max 191, 128
+#             distinct" and got max 246 and 159 distinct. The extra values are
+#             all above 191, because at offset 0 the top of this model's range
+#             was saturating at 255 and shifting down by 64 uncovers it. That
+#             is the model's own range and not the clamp. The half that discriminates
+#             was "nothing below 64", and it held.
+#
+#   entry 3   all four BS_CFG values including the explicit zero produced byte
+#             identical output. The BS block is excluded. The control cannot
+#             separate "zero is already the value" from "writes there do
+#             nothing", but entry 5 proves DPU writes land and ROCKET_BS_CFG
+#             goes through the same emitter.
+#
+#   entry 4   not discriminating, as expected. Turning a ReLU on where the
+#             output is already ReLU'd is a no-op.
+#
+# WHAT THE OFFLINE WORK SETTLED SINCE, on the desktop and with no board.
+#
+#   The coefficient records do not carry the activation. geom/a_relu and
+#   geom/a_lin are the same convolution with the same seed and their A, B and C
+#   are identical on all 64 channels. The control a_lin2, linear with different
+#   weights, moves A on 64 of 64, B on 63 and C on 64, so the comparison has
+#   sensitivity. Output zero point and scale live in registers, not records.
+#
+#   The activation registers are 0x4060, 0x406c and 0x4074, confirmed with the
+#   three way control the pair was built for, a register counting only if it
+#   differs between relu and linear AND agrees between the two linears. Mesa
+#   writes the linear value at all three.
+#
+#   Mesa writes the SAME REGISTER SET as the vendor in all four units, 139
+#   against 138, the one extra being the broadcast OP_EN that engages the
+#   units. So the clamp is not a register Mesa fails to write.
+#
+# THE GAP. I have never compared VALUES for the same model. The Mesa stream on
+# disk is from an unknown model, its 0x40ac is ffffff80 which means out_zp 0
+# while conv2d-cal is 128, so its twelve differences say nothing. The vendor
+# compiled conv2d-cal's exact geometry as geom/g_cal, and ROCKET_DUMP_REGCMD
+# already prints the assembled stream to the console, so the comparison costs
+# one boot.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   conv2d-cal's stream prints and correctness is unchanged at 128 of 128
+#             the dump does not perturb the run and the diff can be trusted.
+#             If correctness moves, the instrument changed the experiment and
+#             nothing else counts.
+#   the diff against g_cal comes back clean apart from addresses and the
+#   model's own requant
+#             the register stream is fully exhausted, and what is left is
+#             outside it. The next step is the vendor capture image running
+#             geom/a_lin, whose out_zp is 145 and whose output is linear, which
+#             answers whether this hardware can put a value below its output
+#             zero point at all.
+#   some register differs
+#             that is the answer, and it was one boot away for four months.
+#
+# The zero point 0 model is dumped beside it so the two can be diffed against
+# each other as well, which is what the comment on ROCKET_DUMP_REGCMD says the
+# instrument is for.
+#
+# ONE MORE THING, unrelated to the clamp and marked as such. The whole graph
+# path, rkt_pack_graph_regcmd, packs every task of every operation into ONE PC
+# job the way the vendor dispatches. It is gated on ROCKET_WHOLE_GRAPH and off
+# by default, and the comment above it blames the unit arming for the stall
+# that closed it. That reading predates the PC task number finding, where a
+# field layout meant for RK3588 asked this PC for 28673 tasks; the boot line
+# below sets task_con16, which is the fix. So the gate may be stale and nobody
+# has looked since. It runs LAST because a stall costs the entries after it,
+# and it needs a multi operation graph to reach the path at all.
+#
+#   MobileNet computes with the gate on
+#             the gate is stale and one job per graph can be the default,
+#             which is the question waiting on Tomeu.
+#   it stalls or the numbers move
+#             the arming reading was right after all, or there is a second
+#             cause, and the gate stays.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 220. Half of every symmetric surface is gone, and it is a
+# clamp, so find the clamp.
+#
+# WHAT ROUND 219 MEASURED. The control held: all five out_zp 0 models printed
+# "the clamp moves no pixel here", which is what a uint8 surface must do. The
+# fourth branch of the rule fired on everything else, four times over with
+# identical pixel counts:
+#
+#   conv2d-cal   clamp rewrites 100820 of 204800 pixels, 128 of 128 channels
+#                vs UNCLAMPED cpu    0 of 128 channels match
+#                vs max(cpu,zp)    128 of 128 channels match
+#   cal_k1       94231 of 204800    1 of 128  vs  128 of 128
+#   cal_k3       98391 of 204800    0 of 128  vs  128 of 128
+#   cal_oc16     12566 of 25600     0 of 16   vs   16 of 16
+#
+# The npu surface equals max(cpu, out_zp) to within one EVERYWHERE, the raw row
+# dump included. So the arithmetic above the zero point is exact and the whole
+# half below it lands on exactly out_zp. That is a clamp, not an error.
+#
+# WHAT IT IS, in the hardware's own terms. out_offset is out_zp - 0x80, so the
+# output conversion adds 0x80 of its own and the byte is 0x80 plus a signed
+# result r. conv2d-cal has out_zp 128, offset 0, and shows min 128 max 255,
+# exactly 128 distinct values: r is 0 to 127 and never negative. mn_conv0 has
+# out_zp 0, offset -128, and reaches 255, so r is not limited to 127 either.
+# Both readings agree on one statement and only one: r is clamped at zero.
+#
+# On an out_zp 0 model that clamp is exactly what the model wants, because its
+# ReLU6 was folded into the quantisation range. That is why it has been
+# invisible for four months, and why every green number in the regression set
+# is green.
+#
+# WHERE IT IS NOT. Mesa's DPU stream was diffed register by register against
+# the vendor's own linear model this round. Every register the vendor writes,
+# Mesa writes; Mesa writes none the vendor does not; and the only differences
+# are the geometry and the model's own requant. All five clamp bound pairs
+# (0x4058/0x405c, 0x406c/0x4070, 0x4074/0x4078, 0x4088/0x408c, 0x40a4/0x40a8)
+# are 80000000 and 7fffffff on both sides, wide open. The activation lives at
+# 0x4060 bit 0 with 0x406c and 0x4074, from the a_lin and a_relu pair, and Mesa
+# already emits the linear value at all three. And 0x4040 is written by NOBODY:
+# scanned across all 60 vendor .rknn files in the tree, it never appears.
+#
+# So the clamp is not in any register that has been read, and asking about one
+# more register has been costing a rebuild. ROCKET_REG_SET fixes that: a late
+# comma separated list of reg=val emitted after everything else, target taken
+# from the address. Inert when unset.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   1 the knob is inert. An override writing the value Mesa already writes must
+#     leave conv2d-cal at 128 of 128 with the same 100820 pixel footprint. If it
+#     does not, the override corrupts the stream and nothing else counts.
+#
+#   2 WHERE the clamp sits relative to the output offset. ROCKET_OUT_OFFSET
+#     moves the addend without touching anything else.
+#       min lands exactly at 64 with 128 distinct
+#                 r is clamped at zero upstream of the offset, the store is not
+#                 the clamp, and the search is inside the datapath.
+#       values appear below 64, distinct above 128
+#                 the negative half survives to the store and only the byte
+#                 conversion loses it, which is a different and much smaller
+#                 fix: the offset and the sign convention.
+#
+#   3 the BS stage, the one block nobody writes. ROCKET_BS_CFG=0 is the control:
+#     if writing zero changes nothing, zero is what the register already holds
+#     and the sweep above it means something. If writing zero DOES change
+#     something, the reset value is not zero and that is the finding.
+#       any value makes conv2d-cal's npu min drop below 128
+#                 the clamp is found. The line to read is "vs UNCLAMPED cpu"
+#                 rising off 0 of 128, not the old column.
+#       nothing moves under any of them
+#                 the BS block is not it, and what is left is the coefficient
+#                 records rather than the register stream.
+#
+#   4 the reach control, LAST because it is destructive. Forcing 0x4050 back to
+#     the round 217 value through ROCKET_REG_SET must reproduce the pw64x56w56
+#     timeout. If that shape comes back 56 of 56, the override never reached the
+#     hardware and entries 2 and 3 say nothing about anything.
+#
+# ⚠ READ ENTRY 1 AND ENTRY 4 BEFORE ANY OTHER LINE. They are the two ends of
+# the same question, whether ROCKET_REG_SET does exactly what it claims and
+# nothing else.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-16 round 219. The reference itself has never been measured.
+#
+# ROUND 218 CLOSED THE LAST BROKEN SHAPE. pw64x56w56 went from timing out in
+# every round it ever ran to 56 of 56 every channel correct, and the controls
+# held. Every shape in the regression set now computes. So the question is no
+# longer which shape fails. It is whether the number that says they pass means
+# what it has been read to mean.
+#
+# WHAT perch.py COMPARES AGAINST. Since June the reference has been
+# max(cpu, out_zp), on the grounds that the output min pins at out_zp in every
+# run as if the accumulator were being ReLU'd. That clamp has never itself been
+# measured. It is free on an operator whose quantised output range starts at
+# zero, because a uint8 pixel cannot go below zero. On an operator with out_zp
+# in the middle of the range it rewrites every pixel below it, and two surfaces
+# flattened the same way agree without either having computed anything.
+#
+# READ OFFLINE THIS ROUND, out of the model files rather than off the board:
+#
+#   every model in the tree is fused_activation NONE, MobileNet included. Its
+#   ReLU6 is folded into the output quantisation range instead, which is why
+#   those layers carry out_zp 0 and the clamp costs nothing there.
+#
+#   of the six models in the regression set only conv2d-cal has out_zp 128.
+#   The other five are 0.
+#
+#   the whole cal_* family, the one the int8 convolution was declared byte
+#   exact on in June, is out_zp 128 with fused_activation NONE.
+#
+# So the model the central correctness claim rests on is exactly the one where
+# the reference is doing work, and how much has never been asked.
+#
+# WHAT THE VENDOR DOES, from a pair of its own compiled models. geom/a_lin and
+# geom/a_relu are the same convolution with and without the activation, and
+# their register streams differ in three places. BS_CFG at 0x4040 is not one of
+# them. Neither stream writes it at all.
+#
+#     0x4060   linear 00000903   relu 00000902
+#     0x406c   linear 80000000   relu 00000000
+#     0x4074   linear 80000000   relu 00000000
+#
+# 0x406c and 0x4074 are paired with 0x4070 and 0x4078 at 7fffffff, so they are
+# clamp bounds and the activation is the lower one moving from INT32_MIN to
+# zero. Mesa emits the LINEAR value at all three, and so does the vendor in its
+# own capture for a middle zero point model. So nothing in the register stream
+# is asking for a ReLU, and the output min still sits at out_zp. One of those
+# two statements is wrong and the measurement says which.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN. perch.py now scores both ways and
+# prints the clamp's footprint in pixels and in channels.
+#
+#   a zero point model reports a nonzero footprint
+#             the reading above is wrong, a uint8 surface went below zero, and
+#             nothing else in this log counts.
+#   conv2d-cal reports no footprint
+#             the reference was never doing work here either. Every earlier
+#             number stands unchanged and this thread closes.
+#   a footprint, and the unclamped score near the clamped one
+#             the hardware reproduces the real convolution and the clamp is
+#             harmless. The numbers stand and the thread closes.
+#   a footprint, and the unclamped score far below
+#             the hardware is clamping something no model asked for, and the
+#             June byte exact result is scored against a reference that hides
+#             it. What comes next is already named: the vendor moves the lower
+#             clamp bound for an activation and Mesa already writes the linear
+#             value there, so whatever clamps is not in the part of the stream
+#             that has been read.
+#
+# ⚠ NOTHING BUT perch.py CHANGED. Mesa, the kernel and charsiu are byte for
+# byte round 218. Any movement in a channel count is this file or the scoring,
+# not the hardware, and the clamped column prints beside the new one so the two
+# are comparable in the same log.
+#
+# Checked on the host before flashing, against the shipped text rather than a
+# copy of it, at 1x1x1001 with zero point 0 and with 128, at 5x5x8 with the
+# hardware clamped and at 56x56x64 with the hardware unclamped. All four print.
+#
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 218. One register is left, and it was fitted on a sweep that
 # never contained the failing case.
 #
@@ -3668,70 +4483,52 @@
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
+LIB=/usr/lib/libteflon.so
+WORK=/usr/lib/libteflon-working.so
 log() { echo "$@" > "$C"; }
-p() { log ""; log "  -- $1   $2"; sleep 2; \
-	env TEFLON_LIB=/usr/lib/libteflon.so $2 \
+w() { log ""; log "  -- $1   $2"; sleep 2; \
+	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
-
-# charsiu_matmul is both the baseline and the recovery. Round 186 bet a
-# bisection on ONE Mesa model putting the device back and that model was itself
-# broken, so this retries and says out loud when it never comes back.
-recover() {
-	t=1
-	while [ "$t" -le 3 ]; do
-		p conv2d-cal.tflite ""
-		log "  (recovery attempt $t)"
-		t=$((t + 1))
-	done
-}
+p() { log ""; log "  -- $1   [CLEAN SERIES]"; sleep 2; \
+	env TEFLON_LIB=$LIB MESA_LOG_LEVEL=info \
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, first. The offline check says none of      ====="
-	log "=====    these can change: 41 keeps 0x80011011, 64 and 128 keep  ====="
-	log "=====    0x80011111. If one moves, the equivalence is wrong.     ====="
-	p mn_conv0.tflite ""
-	p conv2d-cal.tflite ""
-	p pw33x64w56.tflite ""
-	p pw64x41w56.tflite ""
+	log "===== 1) THE CONTROL. The predicate as it stands, on the working ====="
+	log "=====    driver. 16 and 41 emit SIZE_E_2 0, the rest emit 1.     ====="
+	w cal_oc16.tflite ""
+	w pw64x41w56.tflite ""
+	w pw64x56w56.tflite ""
+	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) MobileNet, whose channel counts are all multiples of 16 ====="
-	log "=====    and so cannot be affected either                        ====="
-	p mobilenet_v1_1.0_224_quant.tflite ""
+	log "===== 2) THE TEST. The same four with the constant forced, so 16 ====="
+	log "=====    and 41 now get SIZE_E_2 1, which nothing has ever run.  ====="
+	w cal_oc16.tflite "ROCKET_DPU4050_CONST=1"
+	w pw64x41w56.tflite "ROCKET_DPU4050_CONST=1"
+	w pw64x56w56.tflite "ROCKET_DPU4050_CONST=1"
+	w conv2d-cal.tflite "ROCKET_DPU4050_CONST=1"
 
 	log ""
-	log "===== 3) THE TEST: 56 output channels. This has timed out in     ====="
-	log "=====    every round it has ever run.                            ====="
-	p pw64x56w56.tflite ""
+	log "===== 3) round 231's questions, which the card never ran. The    ====="
+	log "=====    clean series on upstream main, and does it classify.    ====="
+	p conv2d-cal.tflite
+	p cal_k3.tflite
+	w mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 4) the same shape with the old modulo form, so before and  ====="
-	log "=====    after are in one log                                    ====="
-	recover
-	p pw64x56w56.tflite "ROCKET_DPU4050_MOD32=1"
+	log "===== 4) the control once more                                   ====="
+	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 5) and once more with the new form, since a timeout is     ====="
-	log "=====    the thing being read and one run is thin evidence       ====="
-	recover
-	p pw64x56w56.tflite ""
-
-	log ""
-	log "===== 6) the controls once more at the end ====="
-	recover
-	p pw64x41w56.tflite ""
-	p pw33x64w56.tflite ""
-
-	log ""
-	log "===== Entry 1 first: if any control moved, the offline           ====="
-	log "===== equivalence check is wrong and nothing else counts.        ====="
+	log "===== Entry 1 against entry 2, shape by shape. Then the TOP 1    ====="
+	log "===== line in entry 3, which has never been printed before.      ====="
 	sync
 }
 case "$1" in
