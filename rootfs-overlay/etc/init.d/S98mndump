@@ -2,6 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 206. The MobileNet regression set is clean and the last
+# thing in the way of reading it is still my own tool.
+#
+# ROUND 205, all four controls at every channel correct:
+#
+#   mn_conv0      32 of 32     conv2d-cal    128 of 128
+#   pw64x41w56    41 of 41     pw33x64w56     64 of 64
+#
+# So round 204's fix survived a rebuild. pw33x64w56 with ROCKET_NO_ICPAD_SUM
+# came back 0 of 64 this time against 18 last round; both are simply wrong and
+# the difference between two wrong runs is not information, but it is noted
+# rather than passed over.
+#
+# THE ONE PIXEL LINE WORKED:
+#
+#   ONE PIXEL OUTPUT: COMPUTED cannot apply. Across the 1001 channels, npu has
+#   9 distinct values and the reference 10
+#
+# THE CRASH DID NOT GO AWAY, and the written rule for that was "the guard is in
+# the wrong place". It was: I guarded the `inner` computation, which then
+# printed -1 correctly, and missed `_reg("interior", ...)` twenty lines below,
+# which raises on the same empty slice for the same reason. Both are the same
+# mistake made twice, and the traceback still lands after every useful line has
+# printed, which is what made it look like noise for twenty rounds.
+#
+# Guarded now, and CHECKED ON THE HOST before flashing rather than on the board:
+# the function is extracted and called on a 1x1 and a 5x5 surface, giving
+# "interior EMPTY" and "interior max 0 off>1 0". That is a thing this project
+# can test without a flash and had not been.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   MobileNet prints every line and no traceback
+#             the regression set is fully readable and the remaining question
+#             is one channel of 1001 at maxdiff 4.
+#   it crashes a third time
+#             stop patching call sites and find every reduction over a sliced
+#             surface at once.
+#   any of the four controls moves
+#             nothing but perch.py changed, so that could only be this file.
+#
+# Mesa, the kernel and charsiu are byte identical to round 205.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 205. pw33x64w56 is CORRECT. What is left on MobileNet is one
 # channel and a measuring tool that cannot see a one pixel output.
 #
@@ -3073,9 +3116,10 @@ start() {
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== 4) still open: 33 input channels was the last one, so run ====="
-	log "=====    the whole regression set once more as it now stands    ====="
-	p pw33x64w56.tflite "ROCKET_NO_ICPAD_SUM=1"
+	log "===== 4) MobileNet a second time, since a one pixel output is    ====="
+	log "=====    where the tool has been wrong twice and a repeat is    ====="
+	log "=====    cheap                                                  ====="
+	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
 	log "===== 5) charsiu, unchanged ====="

@@ -167,6 +167,11 @@ if len(nzr):
     # if it is on the first, padding cannot explain it.
     def _reg(name, sl):
         d = np.abs(got[sl] - ref[sl])
+        # A 1x1 surface has no interior, so this slice is empty and max() on it
+        # raises. Round 205 guarded the other one of these and missed this one,
+        # and the traceback still landed after every useful line had printed.
+        if d.size == 0:
+            return f"{name} EMPTY"
         return f"{name} max {int(d.max())} off>1 {int((d > 1).sum())}"
     print("    by edge: "
           + " | ".join([_reg("row0", (slice(0, 1), slice(None))),
