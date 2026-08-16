@@ -118,6 +118,34 @@ convolution those were read from was square, so the two readings were the same
 number. Nothing here is wrong because of it, since every shape this driver runs
 is square, but a non square input would be.
 
+## Any input channel count computes (2026-08-16)
+
+A 1x1 convolution with **33 input channels** went from 18 of 64 channels correct
+to **64 of 64, every channel correct**. The old reading of this fault, carried
+since round 176, was "input channels above 32"; that was wrong, because a 64
+channel pointwise was always right. It is ic not being a multiple of **16, the
+feature atom**. charsiu settled that without a Mesa build at all: a matmul is a
+1x1 convolution, so its K is this ic, and sweeping K gives byte exact at 16, 32,
+48, 64 and 96 and wrong at 31, 33, 40, 63 and 65. **40 is a multiple of 8 and
+fails; 48 passes**, so the boundary is neither 8 nor 32.
+
+Three separate places counted the real channel count and all three had to move:
+
+| | what |
+|---|---|
+| the weight buffer | laid out to `ALIGN(ic, 16)`. The INPUT side already padded, `task->input_channels`, so the buffer was **shorter than the byte count the CNA had been given** |
+| five CNA registers | `0x101c`, `0x1020`, `0x1028` low, `0x1030` high, `0x107c`, all from one `ic = task->input_channels_real`. Found by dumping this driver's own stream with `ROCKET_DEBUG=dump_bos` and diffing it against charsiu's for the same arithmetic |
+| `calculate_weight_sum()` | the padded channels are in the **hardware's** sum, so they belong in `sw`. Each padded weight is `w_q = 0x80` and contributes `(0x80 - wt_zp)`; since `A = bias - (in_zp - 0x80) * sw`, a short sum lands as one constant on every pixel of the channel |
+
+Measured after each: slope 0.44 to 0.98, then the per channel offset's standard
+deviation 69.11 to 0.85, then correct. The last term is derived rather than
+fitted, and it is identically zero when ic is already a multiple of 16, which is
+why `pw64x41w56` and `conv2d-cal` are the control and never moved.
+
+**This does not change MobileNet V1**, whose channel counts are 32, 64, 128 and
+so on, all multiples of 16, so the term is zero throughout it. The shape above
+is a synthetic one built to isolate the fault.
+
 ## MobileNet V1 runs end to end (2026-08-13)
 
 The whole network now produces a real classification on the NPU with the open
