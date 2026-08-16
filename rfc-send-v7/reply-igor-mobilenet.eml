@@ -1,0 +1,55 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260813095718.9747-1-royalnet026@gmail.com>
+References: <20260812094106.1391698-1-gahing@gahingwoo.com>
+ <20260812094106.1391698-9-gahing@gahingwoo.com>
+ <20260813095718.9747-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+> I had the window right and the location wrong.
+
+That is the useful half. v8 carries synchronize_irq(core->irq) before the
+guard in rocket_reset(), with the comment above it saying what is
+actually guaranteed rather than "Remaining interrupts have been handled".
+Driving the reset path deliberately rather than waiting for a timeout is
+worth more than the rest of the run put together, since that is the only
+path either change is for.
+
+> Say the word and I will point it at the CPU reference the way you did.
+
+Please do, and thank you. It is the one comparison I cannot produce, and
+it separates two things that look identical from here: a defect specific
+to this SoC, and the reference's own rounding compounding through a
+chain.
+
+Two things before you spend time on it.
+
+The number moved. When I wrote 995 of 1001 there was still one fault
+left in Mesa, an output channel count that is not a multiple of two,
+which the CNA reads in pairs. With that fixed it is 1000 of 1001, so it
+is one output rather than six, and whether one output is even worth
+chasing is a fair question. The comparison is still worth having for the
+LAYERS rather than the final vector.
+
+And the oracle matters more than the run. A per output comparison
+against the CPU is not enough on its own past the first layer or two,
+because tflite's requant and the hardware's disagree by design and that
+disagreement compounds: at operator 6 a flawless accelerator scores 4 of
+128 channels against the CPU. vendor-capture/chainmodel.py in
+
+  https://github.com/gahingwoo/linux-rk3576-npu
+
+runs the graph twice from the model file, once with tflite's
+SaturatingRoundingDoublingHighMul and RoundingDivideByPOT and once with
+the hardware's single half up shift, and prints what a perfect
+accelerator would score at every operator. Read your numbers against
+that column rather than against 128 of 128, or every deep layer will
+look broken on both SoCs.
+
+If it is easier, mn_L00 through mn_L26 in that repository are MobileNet
+with its graph output moved to each operator's output, which is a four
+byte patch of the flatbuffer and needs no converter. Those are what the
+per layer table came from.
+
+Jiaxing

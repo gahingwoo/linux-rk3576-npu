@@ -1,0 +1,35 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 03/10] dt-bindings: power: rockchip: allow resets in a power domain node
+In-Reply-To: <20260813-squid-of-splendid-hail-d968bf@quoll>
+References: <20260812094106.1391698-1-gahing@gahingwoo.com>
+ <20260812094106.1391698-4-gahing@gahingwoo.com>
+ <20260813-squid-of-splendid-hail-d968bf@quoll>
+
+Hi Krzysztof,
+
+> This paragraph is redundant. Why are you explaining correct syntax?
+
+No good reason. v8 drops it.
+
+> 30 resets per one power domain? and none got to the example in this
+> file?
+
+One. Both RK3576 NPU domains carry exactly one, SRST_A_RKNN0_BIU and
+SRST_A_RKNN1_BIU, and 30 came from the clocks property above it, copied
+without asking what it would mean here. v8 has maxItems: 1, which is
+what this series actually needs, and it can be widened by whoever turns
+up with a domain that needs more.
+
+And no, nothing got to the example, which it should have. v8 adds one.
+
+> Do not need '|' unless you need to preserve formatting.
+
+v8 drops it.
+
+Nothing above is fixed yet, only decided. I told another reviewer on v6
+that something was fixed for v7 and then sent v7 without it, so I would
+rather say what v8 will contain than describe it as done.
+
+Thanks for the review.
+
+Jiaxing

@@ -2,6 +2,62 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-16 round 197. charsiu's fix works, so the same change goes into Mesa
+# and MobileNet is what it is being asked about.
+#
+# ROUND 196 ON charsiu, control passing first (64, 512x1024 and 96 all still
+# byte exact):
+#
+#   K            31    33    40    63    65
+#   fixed      64/64 64/64 64/64 64/64 64/64
+#   NO_KALIGN  30/64 37/64 25/64 21/64 43/64
+#
+# Five for five, and the impulse at 33, 40 and 65 is 64 of 64 as well. Laying
+# the weight groups out against K rounded up to the feature atom, and telling
+# the CNA that K, is the whole of it.
+#
+# MESA HAS THE SAME BUG, and had it in a more obvious form once the atom was
+# the thing to look at:
+#
+#   the INPUT side pads. rkt_task.c sets task->input_channels to
+#   ALIGN(MAX2(ic, FEATURE_ATOMIC_SIZE), FEATURE_ATOMIC_SIZE), and the CNA's
+#   weight byte count in rkt_regcmd.c is computed FROM THAT.
+#
+#   the WEIGHT side did not. rkt_coefs.c sized the pointwise buffer as
+#   input_channels_real * ALIGN(oc, 2) and cut its ic tiles short with MIN2.
+#
+# So the buffer was SHORTER than the byte count the CNA had been given, and
+# every ic group after the first started somewhere the hardware was not reading.
+# That is a stronger statement than charsiu's: here the two numbers can be
+# compared directly in the source.
+#
+# The fix is rkt_pw_ic_padded(), one line either side, with the padded weights
+# left at the zero point where they meet the padded inputs' zero point.
+# ROCKET_PW_NO_ICPAD restores the old form.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   pw33x64w56 goes from 16 of 64 to 64 of 64
+#             the atom was the whole story on both stacks, and MobileNet's last
+#             open operation is closed.
+#   it improves but is not exact
+#             the padding is necessary and not sufficient, and the remainder is
+#             a second fault at the same shape.
+#   it does not move
+#             Mesa's fault is not charsiu's, despite the same source level
+#             mistake, and entry 3's before-and-after says so in one log.
+#   mn_conv0, conv2d-cal or pw64x41w56 stops being correct
+#             the padding broke a shape that already worked. Those three are
+#             the control and they run FIRST.
+#
+# pw64x41w56 has 64 input channels and is already right, so it is the case the
+# fix must not touch. conv2d-cal has 128. mn_conv0 is a firstconv and takes a
+# different path entirely.
+#
+# ENTRY 3 runs the failing shape with ROCKET_PW_NO_ICPAD, so before and after
+# are in the same log rather than across two rounds. Round 192 was compared
+# across rounds and that is not a control.
+# ---------------------------------------------------------------------------
 # 2026-08-16 round 196. The line is at 16, not 32, and the fix follows from
 # that directly.
 #
@@ -2574,73 +2630,49 @@ start() {
 	echo 1 > /sys/module/rocket/parameters/task_con16 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, and it runs first: the shapes that were   ====="
-	log "=====    already byte exact must still be.                      ====="
-	log ""
-	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 512 1024 > "$C" 2>&1
-	log ""
-	/opt/charsiu/charsiu_matmul 1 96 64 > "$C" 2>&1
-
-	log ""
-	log "===== 2) THE FIX: the five K that were wrong in round 195.      ====="
-	log "=====    28, 63, 38, 25, 21 and 39 of 64 before.                ====="
-	for K in 31 33 40 63 65 ; do
-		log ""
-		log "  -- K = $K"
-		/opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 3) the same five with the fix OFF, so before and after    ====="
-	log "=====    sit in one log instead of two rounds                   ====="
-	for K in 31 33 40 63 65 ; do
-		log ""
-		log "  -- K = $K, CHARSIU_NO_KALIGN"
-		CHARSIU_NO_KALIGN=1 /opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 4) the impulse at the same K, where a wrong placement     ====="
-	log "=====    shows as a wrong channel rather than a wrong sum       ====="
-	for K in 33 40 65 ; do
-		log ""
-		log "  -- impulse, K = $K"
-		CHARSIU_IMPULSE=1 /opt/charsiu/charsiu_matmul 1 "$K" 64 > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 5) and N off the boundary too, since the same question    ====="
-	log "=====    can be asked of the output channels                    ====="
-	for N in 33 40 65 ; do
-		log ""
-		log "  -- K = 64, N = $N"
-		/opt/charsiu/charsiu_matmul 1 64 "$N" > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 6) REGRESSION, so the image is known sane ====="
+	log "===== 1) THE CONTROL, first: three shapes that already work.    ====="
+	log "=====    pw64x41w56 has 64 input channels, which the padding    ====="
+	log "=====    must not touch.                                        ====="
 	p mn_conv0.tflite ""
 	p conv2d-cal.tflite ""
 	p pw64x41w56.tflite ""
 
 	log ""
-	log "===== 7) the Mesa shape this is all about. Mesa is UNCHANGED    ====="
-	log "=====    this round, so it must still be 13 of 64.              ====="
+	log "===== 2) THE TEST: 33 input channels, 16 of 64 last round.      ====="
 	p pw33x64w56.tflite ""
 
 	log ""
-	log "===== 8) MobileNet end to end ====="
+	log "===== 3) the same shape with the padding OFF, so before and     ====="
+	log "=====    after are in one log                                   ====="
+	p pw33x64w56.tflite "ROCKET_PW_NO_ICPAD=1"
+
+	log ""
+	log "===== 4) MobileNet end to end. Its COMPUTED count is the number ====="
+	log "=====    that matters: 0 of 1001 last round means every channel ====="
+	log "=====    that matched was constant on both sides.               ====="
 	p mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== 9) LAST, because it times out and poisons whatever follows ====="
+	log "===== 5) and MobileNet with the padding off, same reason as 3   ====="
+	p mobilenet_v1_1.0_224_quant.tflite "ROCKET_PW_NO_ICPAD=1"
+
+	log ""
+	log "===== 6) charsiu, unchanged this round, so its five K must      ====="
+	log "=====    still be 64 of 64                                      ====="
+	log ""
+	/opt/charsiu/charsiu_matmul 1 64 64 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 33 64 > "$C" 2>&1
+	log ""
+	/opt/charsiu/charsiu_matmul 1 40 64 > "$C" 2>&1
+
+	log ""
+	log "===== 7) LAST, because it times out and poisons whatever follows ====="
 	p pw64x56w56.tflite ""
 
 	log ""
-	log "===== Entry 1 first. Then entries 2 and 3 side by side: the same ====="
-	log "===== five K with the fix on and off.                            ====="
+	log "===== Entry 1 first: if any of those three moved, the fix broke  ====="
+	log "===== something that worked. Then entry 2 against entry 3.       ====="
 	sync
 }
 case "$1" in
