@@ -1,0 +1,37 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 10/10] arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+In-Reply-To: <058c3169-a45b-4f24-a3fa-a29fab630e1f@rock-chips.com>
+References: <058c3169-a45b-4f24-a3fa-a29fab630e1f@rock-chips.com>
+
+Hi Chaoyi,
+
+You are right, and it is wider than this patch. Nothing consumes npu-supply.
+There is no regulator call anywhere in drivers/accel/rocket, and grepping the
+whole tree for npu-supply and sram-supply finds no reader at all, so the
+RK3588 boards that set them are in the same position. The property is required
+by rockchip,rk3588-rknn-core.yaml, so a dts cannot simply drop it.
+
+Your suspicion about them being disabled is what the always-on line in this
+patch is for. Without it the regulator core turns an unclaimed rail off when
+it disables unused regulators, so on this board that line is the only thing
+holding vdd_npu_s0 up.
+
+The mechanism that does exist is domain-supply on the power domain node, which
+rockchip_pd_power gets with devm_of_regulator_get and enables before the domain
+goes on and disables after it goes off. rk3588-rock-5b-5bp-5t.dtsi already
+wires the same vdd_npu that way. So the rail should follow the domain rather
+than be pinned on, and v8 moves it there.
+
+I am testing that on the board before I send it, because it changes when the
+rail drops rather than only who asks for it.
+
+One more thing to withdraw while I am here. This commit message says that
+dropping the rail under the domains takes an async SError on the next power-on.
+I went looking for the run that showed it and cannot find one. Every SError I
+have recorded on this hardware is the power domain itself, which is what
+patches 6 and 7 address, and I think I attributed it to the rail from memory.
+That sentence is out in v8 whatever the domain-supply test says.
+
+Thanks for looking at it.
+
+Jiaxing
