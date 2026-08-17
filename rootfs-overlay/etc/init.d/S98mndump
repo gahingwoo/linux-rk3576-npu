@@ -2,6 +2,54 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-18 round 240. It is C, and now separate its size from its shape.
+#
+# ROUND 239, control first. My rebuild of our own records reproduced the default
+# exactly, 128 of 128 and npu 128..255 across 128 distinct values, so the
+# reconstruction is right and the rest of that log counts.
+#
+#   swapped column          npu min..max   distinct
+#   C, vendor's 126 values      97..255        82
+#   B, vendor's 41 values      128..255       128
+#   A, vendor's                128..255       128
+#   all three                   48..255       110
+#
+# Only C moves the floor. A and B leave it exactly where it was.
+#
+# ⚠ BUT I CANNOT YET TELL A LIFTED FLOOR FROM AN OVERFLOW, and the two look the
+# same from here. The vendor's OUT_CVT for g_cal is scale 25849 shift 26, and
+# ours for conv2d-cal is 32052 shift 25, essentially the same. Its C is about
+# 750 times larger than ours. So feeding its C through our pipeline over-scales
+# by that much, conv2d-cal's accumulator reaches 6.45e6, and 6.45e6 times 12000
+# is 7.7e10, which does not fit int32. Round 234 saw the same shape when a flat
+# C of 16384 without a shift change gave npu min 91, and that one was overflow.
+#
+# So the size and the shape of C have to be separated, and two files do it.
+#
+#   hyb_q4perch   the vendor's per channel RATIO at OUR magnitude, C = round(16
+#                 * vendorC / 16384), which comes out 10 to 16 across 7 distinct
+#                 values. Same size as ours, shape from the vendor. Cannot
+#                 overflow.
+#   vendorC with the output shift raised by ten, which cancels Q14 against Q4 so
+#                 the arithmetic is right again and nothing overflows.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   hyb_q4perch brings values below 128
+#             the SHAPE is what matters, a per channel C rather than a flat one,
+#             and the magnitude was never the point. That is a small fix and it
+#             is derivable from the weight scales we already have.
+#   vendorC with shift+10 brings them and hyb_q4perch does not
+#             the SIZE is what matters and round 234's ladder missed it because
+#             a flat 16384 is not the same thing as 126 different values.
+#   neither does
+#             then round 239's 97 was overflow, C is not the clamp either, and
+#             the five rounds since the vendor image have excluded rather than
+#             found. The scale table those files zero is what is left.
+#   both do
+#             read the one whose output is also closer to correct.
+#
+# ---------------------------------------------------------------------------
 # 2026-08-18 round 239. The clamp is in the coefficient records. Which column.
 #
 # ROUND 238 IS THE FIRST POSITIVE RESULT IN FIVE ROUNDS. Both falsifiers broke
@@ -4833,30 +4881,33 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL. My reconstruction of our own records must  ====="
-	log "=====    reproduce the default, 128 of 128 and npu min 128. If   ====="
-	log "=====    it does not, nothing below counts.                      ====="
-	w conv2d-cal.tflite ""
+	log "===== 1) THE CONTROL, our own records rebuilt. Must be 128 of    ====="
+	log "=====    128 with npu min 128.                                   ====="
 	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_ours.coef"
 
 	log ""
-	log "===== 2) ONE COLUMN AT A TIME. Read npu min. The vendor's whole  ====="
-	log "=====    buffer gave 48..255 with 110 distinct.                  ====="
+	log "===== 2) THE SHAPE. The vendor's per channel ratio at our own    ====="
+	log "=====    magnitude, C from 10 to 16. Cannot overflow, so if this ====="
+	log "=====    moves npu min the move is real.                         ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_q4perch.coef"
+
+	log ""
+	log "===== 3) THE SIZE. The vendor's C with the output shift raised   ====="
+	log "=====    by ten, which cancels Q14 against Q4 so the arithmetic  ====="
+	log "=====    is right and nothing overflows.                         ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorC.coef ROCKET_OUT_SHIFT_ADD=10"
+
+	log ""
+	log "===== 4) and the same without the shift, which is round 239's    ====="
+	log "=====    97 and is the one that may be overflow                  ====="
 	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorC.coef"
-	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorB.coef"
-	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorA.coef"
 
 	log ""
-	log "===== 3) and the whole vendor buffer again, so this log carries  ====="
-	log "=====    its own reference point rather than citing another one. ====="
-	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/vendor_g_cal.coef"
-
-	log ""
-	log "===== 4) the control again                                       ====="
+	log "===== 5) the control again                                       ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Entry 1's second line first. Then npu min down entry 2.    ====="
+	log "===== Entry 2 first. It is the one that cannot overflow.         ====="
 	sync
 }
 case "$1" in
