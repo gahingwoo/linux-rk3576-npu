@@ -1,0 +1,33 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260815130556.68876-1-royalnet026@gmail.com>
+References: <20260815130556.68876-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+Thank you for running it, and for the unclamped reference.
+
+Your 1001 does not discriminate between the two forms, which I should have said
+when I described them. DIV_ROUND_UP(1001,16) is 63, odd, so the parity form
+gives 0x80011011 there and so does oc % 32. They differ only where a count is a
+multiple of neither 32 nor 16. On RK3576 the failing one was 56, and 88 or 120
+would do as well. So your clean result rules nothing out, and I am not reading
+it as support either way.
+
+On my side that register turned out to be the whole of it. A 1x1 layer with 56
+output channels had timed out in every round it ever ran, 32 of 56, and with
+the parity form it is 56 of 56 every channel correct, with the old form
+reproducing the timeout in the same log.
+
+You are right about perch.py and there were three of them rather than one. The
+inner maxdiff, the interior statistics and the raw row dump all assume a
+surface with an interior, and all three raise on a 1x1x1001 classifier after
+the useful lines have printed. Fixed here, and checked on the host at 1x1x1001,
+5x5x8 and 56x56x64 before flashing, which is a check I should have been running
+all along.
+
+And I will re-score operator 28 against the unclamped output. The max(cpu, zp)
+reference does move channels that are not wrong, and reading an empty
+convolution off it is the kind of mistake I would rather not make twice.
+
+Jiaxing

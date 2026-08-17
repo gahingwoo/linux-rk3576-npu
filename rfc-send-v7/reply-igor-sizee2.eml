@@ -1,0 +1,51 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <CAEWPSH54fhzKEYR1cgTskNgKryDEMaZOY1y5aFdKQQyzfKbYfg@mail.gmail.com>
+References: <CAEWPSH54fhzKEYR1cgTskNgKryDEMaZOY1y5aFdKQQyzfKbYfg@mail.gmail.com>
+
+Hi Igor,
+
+You are right that it is fitted, and decoding it against registers.xml was
+worth more than the fit was. I had been treating those two words as opaque
+constants and comparing predicates, when the thing that varies is one bit.
+
+Your reading also named an experiment I had never run. Every measurement this
+board has produced was of the value my predicate happens to emit, so 16 and 41
+output channels had only ever run with SIZE_E_2 0, and 56, 64 and 128 only with
+1. The cell nobody had filled in was SIZE_E_2 1 at the small counts. Forcing
+the constant fills it.
+
+  output channels    predicate     forced SIZE_E_2 1
+   16                16 of 16      NPU job timed out, 0 of 16
+   41                41 of 41      0 of 41
+   56                56 of 56      56 of 56
+  128              128 of 128    128 of 128
+
+So each form fails on the shapes the other handles, which makes it a two sided
+measurement rather than the one sided fit it started as. Taken with your RK3588
+result, RK3588 does not need the toggle and RK3576 does, and what the toggle
+selects is SIZE_E_2 rather than anything about the channel count as such. I
+will write it that way, as the field with a reason, rather than as a modulo or
+a parity of something.
+
+The other bits you flagged I cannot defend yet. RGP_CNTER 8, OW_SRC 1 and the
+two in the reserved range came from vendor captures and have never been varied
+one at a time. That is a sweep this board can run and I will do it before the
+Mesa series goes out, since a value nobody can explain is a value nobody should
+be asked to review.
+
+On the unclamped reference, thank you for using it. It changed what I thought I
+had here as well. The clamp is only free where the quantised output range
+starts at zero, and on a middle zero point layer it rewrites about half the
+surface. conv2d-cal is out_zp 128 with no fused activation, and against the
+unclamped output it is 0 of 128 channels rather than 128 of 128, with the
+hardware equal to max(cpu, out_zp) to within one everywhere. Where that clamp
+comes from is still open. It is not the output offset, not the BS block, not
+any register in the stream, and not the coefficient records, all four measured
+rather than argued.
+
+If you want another shape, an output channel count of 88 or 120 on RK3576 would
+tell us whether the toggle follows the same rule up there, and those are exactly
+the counts you already have on the other SoC.
+
+Jiaxing

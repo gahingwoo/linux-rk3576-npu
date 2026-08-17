@@ -1,0 +1,46 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: RK3576 in rocket, and how you would want 102 commits submitted
+
+Hi Tomeu,
+
+RK3576 runs MobileNet V1 end to end on rocket now and every shape in my
+regression set comes back correct or within one count. I have 102 commits on
+top of 25.3.0 to get there and none of them are upstream, so I would rather ask
+how you want them submitted than reshape them the wrong way.
+
+  mn_conv0, the first convolution      32 of 32 channels
+  conv2d-cal                           128 of 128
+  pointwise, 33 in 64 out              64 of 64
+  pointwise, 64 in 41 out              41 of 41
+  pointwise, 64 in 56 out              56 of 56
+  mobilenet_v1_1.0_224_quant           1000 of 1001, worst channel off by 4
+
+The 102 are RK3576 specific throughout. The register layout differs from the
+RK3588 map at shared offsets, the first convolution takes its own datapath, and
+the PC dispatch needed a different task field layout, so they are not a thin
+layer over what is there.
+
+One of them might matter to RK3588 and I cannot tell from here. rkt_regcmd.c
+picks DPU 0x4050 with
+
+    (oc % 32) == 0 ? 0x80011111 : 0x80011011
+
+I fitted that on ten vendor models compiled at 16 to 160 output channels in
+steps of 16, ten out of ten. Every one of those counts is a multiple of 16, and
+on that set oc % 32 == 0 and DIV_ROUND_UP(oc, 16) being even are the same
+predicate, so the sweep could not tell them apart. They part company only where
+a count is a multiple of neither, and 56 is one. With the modulo form that
+layer times out on RK3576 and with the parity form it is 56 of 56 correct.
+
+Igor Paunovic has since run MobileNet on RK3588 with upstream Mesa and got
+1001 of 1001 within one count without this change, but 1001 is not a
+discriminating count either, DIV_ROUND_UP(1001,16) being odd. If anyone has an
+RK3588 to hand, an output channel count of 56, 88 or 120 is where the two forms
+disagree.
+
+Two things I would like to know. Would you rather have one series covering
+RK3576, or a minimal enablement first with depthwise and the rest following.
+And is anyone else already working on RK3576 in rocket, so that I do not
+duplicate them.
+
+Jiaxing

@@ -1,0 +1,22 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: RK3576 in rocket, and how you would want 102 commits submitted
+To: Tomeu Vizoso <tomeu@tomeuvizoso.net>
+
+Hi Tomeu,
+
+That sounds right, and the branch is worse than it looks from outside. Of 3979
+added lines 2272 are comments recording what a register turned out to mean, and
+there are 118 environment variables in it. The code under all that is about
+1500 lines.
+
+I will go in that order. Fork first, then rk3576-clean off main with the
+minimum for one uint8 per tensor conv2d, then the maintainer review before I
+send anything.
+
+The clamp I mentioned is still open and I would rather know which it is before
+the series goes out, since it decides whether the first patch has a limitation
+to document. Everything reachable from the driver is excluded now, so the next
+run puts the same question to the vendor stack, whose own compiler quantised a
+linear convolution to out_zp 145 with 58 percent of its float output negative.
+
+Jiaxing
