@@ -2,50 +2,38 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-18 round 241. Two independent questions, one card. They do not share
-# a knob or a model, so neither can explain the other's result.
+# 2026-08-18 round 242. The rail again, now with the flag the driver gates it
+# behind, and the one count round 241 did not reach.
 #
-# QUESTION A, the NPU rail. Chaoyi asked on the list what consumes npu-supply.
-# Nothing does. There is no regulator call in drivers/accel/rocket and no
-# reader of npu-supply or sram-supply anywhere in the tree, so on the posted
-# v7 the only thing holding vdd_npu_s0 up was the regulator-always-on line
-# that same patch adds. The mechanism that does exist is domain-supply on the
-# power domain node, which rockchip_pd_power enables before the domain goes on
-# and disables after it goes off, and rk3588-rock-5b already wires the same
-# rail that way. This image drops always-on and wires the rail to pd_npu.
+# WHAT 241 SETTLED. Wiring domain-supply to the NPU domain and dropping
+# regulator-always-on does nothing on its own:
 #
-#   READING RULE. Entry 1 must reproduce round 240 exactly, 128 of 128 with
-#   npu min 128 max 255 across 128 distinct values. If it does not, the rail
-#   change did it and nothing else in this log counts.
+#   vdd_npu_s0  state=enabled  num_users=0   at boot
+#   vdd_npu_s0  state=enabled  num_users=0   after an inference
 #
-#   The rail dumps say which of three worlds we are in. num_users of 1 or more
-#   with the rail enabled means genpd took it, which is the intended one. Zero
-#   users and still enabled means the wiring did not take and something else
-#   is holding it. Disabled while the NPU computes means the rail is not what
-#   powers this block, which would make the whole property decorative.
+# rockchip_pd_regulator_enable returns before it looks at the property unless
+# the domain carries need_regulator, and no RK3576 domain does, because the
+# macro they are built from does not have the field. The rail was up because
+# boot-on left it up and nothing claimed it. This image threads the field
+# through DOMAIN_M_O_R_G_W and gives PD_NPU a spelling that sets it.
 #
-# QUESTION B, the two output channel counts Igor asked for. 0x4050 is emitted
-# by a parity rule here and by a modulo rule upstream, and the two disagree
-# only where a count is a multiple of neither 32 nor 16.
+#   READING RULE for the rail. num_users of 1 or more after entry 1 means the
+#   domain took it, which is the whole point. Still 0 means the flag is not
+#   the only thing in the way and I stop guessing and go read genpd. Entry 4
+#   is the one that matters after that: if the rail really follows the domain
+#   it must go down when the NPU idles, and entry 5 must still compute after
+#   it has been down. That is the power cycle the withdrawn SError sentence
+#   was about, so it gets measured rather than asserted either way.
 #
-#   count   DIV_ROUND_UP(oc,16)   parity says   oc % 32   modulo says
-#     64            4 even         0x80011111      0        0x80011111
-#     88            6 even         0x80011111     24        0x80011011
-#    120            8 even         0x80011111     24        0x80011011
+#   THE CONTROL is entry 1. Round 240 and 241 both got 128 of 128 with npu
+#   min 128 max 255 across 128 distinct values. Anything else and the domain
+#   flag did it, and the rest of the log does not count.
 #
-#   READING RULE. If the parity form is the right rule, 88 and 120 come back
-#   whole by default and degrade under ROCKET_DPU4050_MOD32. If the two forms
-#   give the same answer at both counts then these counts do not discriminate
-#   either, which is what I told Igor about his 1001, and I say so rather than
-#   read it as support.
-#
-#   THE KNOB CONTROL is 64, where the two forms agree by construction. It runs
-#   with and without the knob and the two must match. If 64 moves, the knob
-#   reaches further than the one register and question B is void.
-#
-# The knob runs last within each pair, since the entry after a timeout comes
-# back flat 128 with an rk_iommu reset beside it and that collateral has been
-# read as a result twice before.
+# WHAT 241 LEFT. 88 answered both ways, 88 of 88 under the parity form and
+# 64 of 88 with a job timeout under the modulo form, losing exactly channels
+# 64 to 87. 120 only answered the parity side, 120 of 120, because the 88
+# timeout wedged the block and took the next entry with it. So 120 under the
+# modulo form runs here, alone, at the end, after everything that matters.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -65,9 +53,11 @@ rail() {
 			log "    $n  state=$(cat $r/state 2>/dev/null)  num_users=$(cat $r/num_users 2>/dev/null)" ;;
 		esac
 	done
+	mount -t debugfs none /sys/kernel/debug 2>/dev/null
 	for g in /sys/kernel/debug/pm_genpd/*npu*; do
-		[ -r "$g/current_state" ] && log "    genpd $(basename $g) $(cat $g/current_state 2>/dev/null)"
+		[ -r "$g/current_state" ] && log "    genpd $(basename $g)  $(cat $g/current_state 2>/dev/null)"
 	done
+	log "    runtime_status $(cat /sys/devices/platform/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
 }
 
 start() {
@@ -79,44 +69,39 @@ start() {
 	rail "at boot, before the NPU has been touched"
 
 	log ""
-	log "===== 1) THE CONTROL for the rail change. Round 240 got 128 of   ====="
-	log "=====    128, npu min 128 max 255, 128 distinct. Anything else   ====="
-	log "=====    and the rail change caused it.                          ====="
+	log "===== 1) THE CONTROL. 240 and 241 both got 128 of 128, npu min   ====="
+	log "=====    128 max 255, 128 distinct.                              ====="
 	w conv2d-cal.tflite ""
 
-	rail "after one inference"
+	rail "right after an inference, the NPU still powered"
 
 	log ""
-	log "===== 2) THE KNOB CONTROL, 64 out. Both forms emit 0x80011111    ====="
-	log "=====    here, so entries 2 and 6 must be identical.             ====="
-	w pw33x64w56.tflite ""
+	log "===== 2) idle for 30s, long enough for the NPU to suspend        ====="
+	sleep 30
+	rail "after 30s idle"
 
 	log ""
-	log "===== 3) 88 out, parity form. Igor will mirror this on RK3588.   ====="
-	w pw64x88w56.tflite ""
+	log "===== 3) idle for another 60s                                    ====="
+	sleep 60
+	rail "after 90s idle"
 
 	log ""
-	log "===== 4) 120 out, parity form                                    ====="
-	w pw64x120w56.tflite ""
+	log "===== 4) THE POWER CYCLE. If the rail went down above, this run  ====="
+	log "=====    brings it back. It must compute, and it is the claim I  ====="
+	log "=====    withdrew from the commit message either way.            ====="
+	w conv2d-cal.tflite ""
+
+	rail "after the second inference"
 
 	log ""
-	log "===== 5) 88 out, modulo form. The parity rule predicts this one  ====="
-	log "=====    degrades. If it matches entry 3, 88 does not decide.    ====="
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
-
-	log ""
-	log "===== 6) the knob control again, under the knob                  ====="
-	w pw33x64w56.tflite "ROCKET_DPU4050_MOD32=1"
-
-	log ""
-	log "===== 7) 120 out, modulo form. Runs last because it is the one   ====="
-	log "=====    most likely to time out and take the next entry with it ====="
+	log "===== 5) 120 out, modulo form. The half 241 could not reach.     ====="
+	log "=====    The parity form gave 120 of 120. If this degrades the   ====="
+	log "=====    way 88 did, both counts agree on the rule. Runs last    ====="
+	log "=====    because it may time out and wedge whatever follows.     ====="
 	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
 
-	rail "after the sweep"
-
 	log ""
-	log "===== Read entry 1 first. If the rail moved it, stop there.      ====="
+	log "===== Read entry 1 and the num_users line above it first.        ====="
 	sync
 }
 case "$1" in

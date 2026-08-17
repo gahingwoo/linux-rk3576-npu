@@ -6,32 +6,42 @@ References: <058c3169-a45b-4f24-a3fa-a29fab630e1f@rock-chips.com>
 Hi Chaoyi,
 
 You are right, and it is wider than this patch. Nothing consumes npu-supply.
-There is no regulator call anywhere in drivers/accel/rocket, and grepping the
-whole tree for npu-supply and sram-supply finds no reader at all, so the
-RK3588 boards that set them are in the same position. The property is required
-by rockchip,rk3588-rknn-core.yaml, so a dts cannot simply drop it.
+There is no regulator call in drivers/accel/rocket, and grepping the tree for
+npu-supply and sram-supply finds no reader at all, so the RK3588 boards that
+set them are in the same position. The property is required by
+rockchip,rk3588-rknn-core.yaml, so a dts cannot simply drop it either.
 
-Your suspicion about them being disabled is what the always-on line in this
-patch is for. Without it the regulator core turns an unclaimed rail off when
-it disables unused regulators, so on this board that line is the only thing
-holding vdd_npu_s0 up.
+Your suspicion is what the always-on line in this patch is for. Without it the
+regulator core turns an unclaimed rail off when it disables unused regulators,
+so that line is the only thing holding vdd_npu_s0 up here.
 
-The mechanism that does exist is domain-supply on the power domain node, which
-rockchip_pd_power gets with devm_of_regulator_get and enables before the domain
-goes on and disables after it goes off. rk3588-rock-5b-5bp-5t.dtsi already
-wires the same vdd_npu that way. So the rail should follow the domain rather
-than be pinned on, and v8 moves it there.
+I went to move the rail onto the power domain instead, since domain-supply is
+the one mechanism that has a consumer, and rk3588-rock-5b-5bp-5t.dtsi already
+wires the same rail that way. On the board that turned out not to be enough,
+which I would rather report than repeat as a plan.
 
-I am testing that on the board before I send it, because it changes when the
-rail drops rather than only who asks for it.
+  vdd_npu_s0  state=enabled  num_users=0     at boot
+  vdd_npu_s0  state=enabled  num_users=0     after an inference
+
+With always-on dropped and domain-supply on the NPU domain, nothing takes the
+rail. rockchip_pd_regulator_enable returns before it looks at the property
+unless the domain has need_regulator, that flag is only set by DOMAIN_M_R and
+DOMAIN_RK3399, and RK3576 domains are built by a macro that does not carry the
+field, so it is zero for all of them. The rail stays up because boot-on left it
+up and nothing claimed it, not because anything is managing it.
+
+So this needs the domain flag as well as the wiring, and that is a change to a
+shared table rather than to a board file. I am testing that combination before
+I put it in a patch.
 
 One more thing to withdraw while I am here. This commit message says that
 dropping the rail under the domains takes an async SError on the next power-on.
 I went looking for the run that showed it and cannot find one. Every SError I
-have recorded on this hardware is the power domain itself, which is what
-patches 6 and 7 address, and I think I attributed it to the rail from memory.
-That sentence is out in v8 whatever the domain-supply test says.
+have recorded here is the power domain itself, which is what patches 6 and 7
+address, and I think I attributed it to the rail from memory. That sentence is
+out of v8 whatever the test says.
 
-Thanks for looking at it.
+Thanks for looking at it, the question turned out to be worth more than the
+answer I had ready.
 
 Jiaxing
