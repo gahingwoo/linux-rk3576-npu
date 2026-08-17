@@ -1,0 +1,54 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+References: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+
+Hi Igor,
+
+Here are 88 and 120 on RK3576, with the 56 from earlier in this thread as
+a third point. A channel counts as matching when its maxdiff against the
+reference is at most 1, which is how perch.py scores.
+
+  oc    parity form    modulo form, ROCKET_DPU4050_MOD32=1
+   56   56 of 56       32 of 56, timed out, lost 32 to 55
+   88   88 of 88       64 of 88, timed out, lost 64 to 87
+  120  120 of 120      96 of 120, timed out, lost 96 to 119
+
+Under the modulo form each count keeps whole groups of 32 output channels
+and drops the remainder, and all three of those runs also raise the
+driver's job timeout. Under the parity form all three compute the whole
+output at a maxdiff of 1.
+
+What the three points cannot tell you. 56, 88 and 120 are all 24 modulo
+32, so the twenty four lost channels are forced by the arithmetic and are
+not corroboration, and the rule is untested at every other remainder. A
+count of 40 or 72 would say more than a fourth one at 24.
+
+The modulo numbers are read back from a job the driver declared timed out,
+so the obvious alternative is that the job died before writing the tail of
+the output. The log argues against it. At 120, nine of the twenty four
+wrong channels carry enough varying output to fit a line against the
+reference, and the surface reports 45 constant channels of 120 with 37 of
+those pinned at the output zero point, so the lost region was written
+rather than left untouched.
+
+ROCKET_DPU4050_MOD32 occurs once in the whole Mesa tree, inside the value
+expression for 0x4050, so at a given count the two register streams differ
+in that word and nothing else. That is an argument from the source, not a
+measurement. I meant to measure it at 64 output channels, where the two
+forms emit the same value by construction, and only got one side of it.
+Without the knob it was 64 of 64. The run with the knob did not complete,
+the entry hung after the 88 run had timed out.
+
+One confound to disclose. 88 both ways and 120 under the parity form are
+one boot. 120 under the modulo form is the next boot, on a kernel that
+also carries an unrelated power domain change, and the NPU rail reads
+enabled in the first and disabled in the second. The Mesa build is byte
+identical across the two and the modulo form times out under either
+kernel, but the 120 row is not a single variable comparison and should be
+read as two.
+
+If you still want the RK3588 side, ROCKET_DPU4050_MOD32=1 against your own
+build is the comparison.
+
+Jiaxing
