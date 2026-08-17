@@ -2,6 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-17 round 233. The two counts I promised Igor, and the other half of
+# the table.
+#
+# WHAT ROUND 232 SETTLED. Forcing SIZE_E_2 to 1 everywhere times out at 16
+# output channels and gives 0 of 41 at 41, while the predicate gives 16 of 16
+# and 41 of 41. Each form fails where the other works, so the toggle is real on
+# RK3576 and it selects SIZE_E_2, which is Igor's reading rather than my fit.
+#
+# WHAT IGOR THEN MEASURED, and it is the opposite of what this board does. He
+# built conv2d-cal's regime on RK3588, out_zp 128 and no fused activation, and
+# compared against both references:
+#
+#   oc  56    56 of 56 against the RAW cpu, 0 of 56 against max(cpu, zp)
+#   oc 128   128 of 128 against the RAW cpu, 6 of 128 against max(cpu, zp)
+#
+# Where the raw reference falls below the zero point his hardware output spans
+# 0 to 127 rather than sitting at 128, and only 0.6 to 0.8 percent of values
+# land exactly on the zero point, which is chance. He ruled out a silent CPU
+# fallback three ways: the per core interrupt counters advance, 15 of 128
+# channels differ from the CPU by one where a fallback would be bit identical,
+# and half the raw reference lies below the zero point so there was something
+# for a clamp to remove.
+#
+# SO RK3588 DOES NOT CLAMP AT THE OUTPUT ZERO POINT. That is one more thing the
+# clamp here is not, and the expensive one to have ruled out by reading.
+#
+# HIS QUESTION, WHICH THIS ROUND DOES NOT ANSWER. He cannot tell whether the
+# difference is the silicon or the userspace, since his runs are upstream Mesa
+# and mine are this tree. His suggestion, stock upstream Mesa on RK3576, is not
+# runnable: upstream has no RK3576 support, so it would drive this hardware
+# through the RK3588 encoder, which round 224 already showed is a page fault
+# storm. The clean version of his experiment is the VENDOR userspace on this
+# silicon, and that image is built and waiting: geom/a_lin is a linear
+# convolution the vendor quantised to out_zp 145 with 58.6 percent of its float
+# output negative. It needs the other card and the vendor SPI U-Boot.
+#
+# THIS ROUND IS THE SWEEP I OWED HIM. 88 and 120 output channels, which are
+# exactly the counts he already has on RK3588, so both forms end up measured on
+# both SoCs at four counts.
+#
+#   the predicate gives SIZE_E_2 1 at both, since DIV_ROUND_UP(88,16) and
+#   DIV_ROUND_UP(120,16) are 6 and 8, both even
+#   the modulo form gives 0 at both, since 88 and 120 are 24 mod 32
+#
+# so ROCKET_DPU4050_MOD32 is the discriminating knob here, not the constant.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   88 and 120 correct under the predicate and broken under the modulo form
+#             the rule holds at four counts on this SoC and the table is
+#             symmetric with his. SIZE_E_2 is the field and parity is how it is
+#             chosen here.
+#   both correct under both
+#             those counts do not discriminate either, and the rule rests on 56
+#             alone plus the two small counts, which is thinner than it looks.
+#   the predicate is wrong at 88 or 120
+#             parity is not the rule and the three points it was fitted on were
+#             a coincidence.
+#
+# ---------------------------------------------------------------------------
 # 2026-08-17 round 232. Igor decoded the two constants and the difference is one
 # bit, so ask whether the predicate is needed at all.
 #
@@ -4483,14 +4543,10 @@
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
-LIB=/usr/lib/libteflon.so
 WORK=/usr/lib/libteflon-working.so
 log() { echo "$@" > "$C"; }
 w() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
-p() { log ""; log "  -- $1   [CLEAN SERIES]"; sleep 2; \
-	env TEFLON_LIB=$LIB MESA_LOG_LEVEL=info \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
 start() {
@@ -4500,35 +4556,37 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL. The predicate as it stands, on the working ====="
-	log "=====    driver. 16 and 41 emit SIZE_E_2 0, the rest emit 1.     ====="
-	w cal_oc16.tflite ""
+	log "===== 1) THE CONTROL, two counts already measured both ways.     ====="
 	w pw64x41w56.tflite ""
 	w pw64x56w56.tflite ""
+
+	log ""
+	log "===== 2) THE NEW COUNTS under the predicate, which gives         ====="
+	log "=====    SIZE_E_2 1 at both. Igor has 88 of 88 and 120 of 120 on ====="
+	log "=====    RK3588 with upstream's constant, which is also 1.       ====="
+	w pw64x88w56.tflite ""
+	w pw64x120w56.tflite ""
+
+	log ""
+	log "===== 3) THE OTHER HALF. The modulo form gives SIZE_E_2 0 at 88  ====="
+	log "=====    and 120, since both are 24 mod 32. If the toggle is     ====="
+	log "=====    real these must break the way 56 does.                  ====="
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+
+	log ""
+	log "===== 4) and the modulo form on 56, the known failure, so this   ====="
+	log "=====    log carries its own reference point.                    ====="
+	w pw64x56w56.tflite "ROCKET_DPU4050_MOD32=1"
+
+	log ""
+	log "===== 5) the control again                                       ====="
+	w pw64x41w56.tflite ""
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE TEST. The same four with the constant forced, so 16 ====="
-	log "=====    and 41 now get SIZE_E_2 1, which nothing has ever run.  ====="
-	w cal_oc16.tflite "ROCKET_DPU4050_CONST=1"
-	w pw64x41w56.tflite "ROCKET_DPU4050_CONST=1"
-	w pw64x56w56.tflite "ROCKET_DPU4050_CONST=1"
-	w conv2d-cal.tflite "ROCKET_DPU4050_CONST=1"
-
-	log ""
-	log "===== 3) round 231's questions, which the card never ran. The    ====="
-	log "=====    clean series on upstream main, and does it classify.    ====="
-	p conv2d-cal.tflite
-	p cal_k3.tflite
-	w mobilenet_v1_1.0_224_quant.tflite ""
-
-	log ""
-	log "===== 4) the control once more                                   ====="
-	w conv2d-cal.tflite ""
-
-	log ""
-	log "===== Entry 1 against entry 2, shape by shape. Then the TOP 1    ====="
-	log "===== line in entry 3, which has never been printed before.      ====="
+	log "===== Entry 2 against entry 3, count by count. Entry 4 is the    ====="
+	log "===== known failure that says the knob reached the hardware.     ====="
 	sync
 }
 case "$1" in
