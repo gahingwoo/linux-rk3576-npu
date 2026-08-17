@@ -1,0 +1,66 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260817100046.24872-1-royalnet026@gmail.com>
+References: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+ <20260817094544.1159366-1-gahing@gahingwoo.com>
+ <20260817100046.24872-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+First, I sent you to the wrong counts. The two predicates disagree only
+where oc mod 32 falls between 17 and 31, since modulo true implies parity
+true and never the reverse. At 40 and 72 both forms emit the same word, so
+I withdraw them. By the same arithmetic only 56, 88 and 120 of your eight
+carry any parity versus modulo content. The rest still establish something
+better, that the upstream constant computes whole at five remainders on
+RK3588. Discriminating counts nobody has run are 20, 50, 60, 90 and 114.
+
+Take the code from the merge request rather than my working branch, it has
+no knobs in it.
+
+  https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804
+
+  R_DPU(0x4050, (DIV_ROUND_UP(output_channels, FEATURE_ATOMIC_SIZE) & 1)
+                   ? 0x80011011 : 0x80011111);
+
+output_channels is task->output_channels_real, the unpadded count, and
+FEATURE_ATOMIC_SIZE is 16.
+
+Do not put my two words in an RK3588 build. Against registers.xml
+
+  field         upstream 0x124   mine 0x80011111   mine 0x80011011
+  RGP_CNTER            0                8                 8
+  RESERVED_0           0               34                34
+  SIZE_E_2             1                1                 0
+  SIZE_E_1             1                0                 0
+  SIZE_E_0             1                4                 4
+  OW_SRC               0                1                 1
+
+Mine differ from each other in SIZE_E_2 alone and from yours in five
+further fields. Those five are common to both of my words so they do not
+confound an A against B, but none of them has ever run on an RK3588, and
+if both arms fail for that reason the oc 64 control goes down with them.
+
+Use your own constant with bit 8 cleared instead, 0x124 where the
+predicate is true and 0x024 where it is false. That takes SIZE_E_2 from 1
+to 0, the same move my words make. It assumes the three SIZE_E fields move
+independently, which neither of us has shown.
+
+Bit 8 does something on RK3576. The table I sent on the 16th forced
+SIZE_E_2 to 1 with every other field identical, and 16 output channels
+went from 16 of 16 to a job timeout, 41 from 41 of 41 to 0 of 41. Whether
+it is the only field that matters is open, and the sweep I promised before
+the series went out covers RGP_CNTER, OW_SRC and two reserved bits but not
+SIZE_E_1 or SIZE_E_0, which are just as fitted.
+
+Of your three offers the oc 64 control is the one I want, both ways, since
+that is the side I lost. A count at 20 or 60 would be the first
+discriminating point outside 24 modulo 32. And yes to the generator and
+the scorer, the refusal to emit a constant reference channel is a better
+guard than mine.
+
+You are right that none of this touches the timeout. Every modulo run that
+lost channels also raised one, at three counts, and I cannot yet tell
+whether the register causes it or both follow from something else.
+
+Jiaxing
