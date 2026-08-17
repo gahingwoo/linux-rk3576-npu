@@ -2,6 +2,231 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-18 round 238. Give the driver the vendor's own coefficient bytes.
+#
+# THE CAPTURE FOUND THEM. Two searches agree: bo01 at 0xc800, the exact sixteen
+# byte key from the model file AND the structural test, sixteen records of 64
+# bytes which is 128 channels. The runtime copies the table out of the .rknn
+# verbatim rather than rebuilding it.
+#
+# AND THE LAYOUT IS OURS. What follows the 1024 byte table is 256 bytes of fp16
+# around 6e-4, one per channel, which is exactly where and what rkt_coefs.c
+# writes its scale table. So the shape of the buffer was never the difference.
+# The contents are:
+#
+#                    vendor g_cal              this driver, conv2d-cal
+#     C        10251 to 16384, 126 distinct    16, flat
+#     B        -34 to 26, 41 distinct          -5, flat
+#
+# THE EXPERIMENT. ROCKET_BIAS_FILE loads a coefficient buffer verbatim, so hand
+# the driver the vendor's 1280 bytes with the 0x1004 descriptor appended at 1280
+# where mesa's 0x5024 points, and run conv2d-cal against them.
+#
+# ⚠ THE ANSWER WILL BE NUMERICALLY WRONG AND THAT IS FINE. These records belong
+# to g_cal, whose weights are not conv2d-cal's, so no channel can match. The
+# only question is whether the half below the output zero point APPEARS. Four
+# rounds of sweeping this driver's own knobs never once moved npu min off 128
+# except by shifting the whole surface, and the vendor produces that half on
+# this silicon at this exact geometry.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   npu min falls well below 128 and the values spread rather than shift
+#             the coefficient CONTENTS are the clamp. Which column then comes
+#             down to two more runs, since B and C are the two that differ.
+#   npu min stays at 128
+#             the records are not it either, and what is left is the weight
+#             buffer and the surface past the scales, neither of which this
+#             file touches.
+#   it comes back empty
+#             the buffer is being read but is wrong in a way that kills the MAC,
+#             which says nothing about the clamp and needs the length or the
+#             descriptor looked at first.
+#
+# ⚠ ENTRY 3 IS THE FALSIFIER. zero.coef is the same 1536 bytes with the records
+# and the scales zeroed and only the descriptor kept. It MUST break the output.
+# If it does not, ROCKET_BIAS_FILE is not reaching the buffer and entry 2 says
+# nothing.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-18 round 236. The second operand region is in the MULTIPLY, and its
+# factor is the same 16 that C carries.
+#
+# ⚠ I READ ROUND 235 WRONG TWICE BEFORE THE DETAIL CORRECTED ME, and both
+# misreadings came from looking at distinct and min without looking at maxdiff.
+#
+#   first reading   "the floor lifted" because npu min fell from 128 to 119.
+#                   It did not. The whole output moved down and min moved with
+#                   it. maxdiff over the surface is 9.
+#   second reading  "the output is a 7 bit window and this region picks which
+#                   half of the byte it lands on", from distinct 128, 137 and
+#                   129. Those counts are a shifted distribution clipped at one
+#                   end, not a window width. Withdrawn.
+#
+# WHAT THE AFFINE FITS ACTUALLY SAY, which is sharper than either guess:
+#
+#   ROCKET_OP2=0x0884   a 1.0013   b -0.21    correlation 1.0000
+#   ROCKET_FS_FLOATS    a 0.0627   b +119.98  correlation 0.9914
+#
+# The first is a pure offset, slope one, the output low by up to 9 counts. The
+# second is a SCALE, and 1/0.0627 is 15.95. The old float surface makes the
+# output sixteen times smaller.
+#
+# SIXTEEN IS C. Our C is a flat 16, Q4, and the comment that put it there says
+# Q14 "over-scaled by 2^10 and railed the output". If the region the vendor
+# fills contributes a factor of about 1/16 and ours is empty, then C = 16 has
+# been standing in for it, and the two belong together rather than separately.
+#
+# One more thing round 235 showed that I nearly missed. Under 0x0884 the pixels
+# that are normally pinned at exactly the zero point are NOT pinned any more,
+# they spread over 119 to 128. So this region does reach the behaviour below the
+# zero point. Nine counts of it, not the whole half, but it reaches it.
+#
+# THE EXPERIMENT. Put the float surface back AND multiply C by sixteen, which
+# cancels the factor the fit measured. If the region and C are doing one job
+# between them, that combination is the first one where both halves are present.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN. Read the affine fit and npu min,
+# and do not read distinct on its own again.
+#
+#   surface plus C at 256 scores against the UNCLAMPED reference
+#             the two were one mechanism and the driver has been running with
+#             half of it. That is the clamp, four rounds after the vendor image
+#             proved it was ours.
+#   slope comes back to 1 but the floor stays at the zero point
+#             the factor is explained and the floor is not, so they are two
+#             mechanisms and the floor is still unfound.
+#   it rails or goes empty
+#             the surface is value dependent, which the FINDINGS already say, so
+#             a wrong surface with a right C is not a clean test and the next
+#             one has to build the surface rather than restore mesa's old guess.
+#
+# The field walk from 0x22 to 0x40 rides along, finer this time, to see whether
+# the offset it produces is proportional to the field or a step.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-18 round 235. C is excluded, so ask the region we write one word into.
+#
+# WHAT ROUND 234 SETTLED. The falsifier passed first: C at 16384 with the shift
+# left alone changed the output completely, so both knobs reach the hardware.
+# ⚠ And I nearly misread it. Its min of 91 sits below the zero point and looked
+# like the negative half returning; it is not. conv2d-cal's accumulator reaches
+# 6.45e6 and times 16384 that is 1e11, so the multiply overflowed int32 and 91
+# is wrap-around. At the default C of 16 it is 1.03e8 and does not overflow.
+#
+# The ladder itself: C at 16, 64, 256, 4096 and 16384 with the shift raised to
+# match, all five identical, npu min pinned at 128 and 0 of 128 against the
+# unclamped reference every time. Five arithmetically equivalent spellings give
+# the same answer, so where the bits sit does not matter and C IS NOT THE CLAMP.
+#
+# WHAT IS LEFT IN THE COEFFICIENT BUFFER. Two things still differ from the
+# vendor at the same geometry. Its B carries 41 distinct values against our flat
+# one, and past the records and the scales it writes a structured float surface
+# where we write A SINGLE WORD, 0x1004, and zeros.
+#
+# THAT WORD IS NOT ARBITRARY AND ITS SHAPE IS SUGGESTIVE. Round 36 measured the
+# requirement as
+#
+#   (w & 0x3f) == 0x04   and   ((w >> 6) & 0xff) >= T,  T in (0x21, 0x3f]
+#
+# with bits 14 and up free. So bits 6 to 13 are a field that has to be BIG
+# ENOUGH, which is the shape of a length or a count rather than a value. And it
+# scales with something the layer has more of: one word is enough at 16 and at
+# 128 output channels and NOT at 1024, where mn_pw24 gets 297 of its channels
+# with any single word and 408 with the old per weight float surface.
+#
+# A field that has to be large enough, in a region the hardware demonstrably
+# reads, next to an output that is floored, is worth walking.
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN. Read npu min and the vs UNCLAMPED
+# line, not the old score.
+#
+#   any word makes npu min drop below 128 while the output stays sane
+#             that region controls the floor, and the field that moved says
+#             which part of it. This is the first thing in four rounds that
+#             would name the clamp rather than exclude something.
+#   every word in the rule gives the same answer
+#             the field is a gate rather than a control, and what is left in the
+#             buffer is B and the per channel structure the vendor has and we do
+#             not.
+#   filling the region or restoring the float surface changes it
+#             then it is the LENGTH of what is written rather than the word,
+#             which is what the 1024 channel result already hinted at.
+#
+# ⚠ ENTRY 5 IS THE FALSIFIER. 0x1000 violates the rule, its low bits being 0
+# rather than 4, so it MUST destroy the output. If it does not, ROCKET_OP2 is
+# not reaching the buffer and nothing above it counts.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-18 round 234. The clamp is ours, and the coefficient records are the
+# only thing left that differs.
+#
+# WHAT THE VENDOR IMAGE SETTLED, five models, every interrupt count advancing by
+# exactly one so every one of them reached the NPU:
+#
+#   a_lin    out_zp  17   60.50 percent below it
+#   a_lin2   out_zp -14   59.08 percent
+#   g_cal    out_zp  -8   53.01 percent   conv2d-cal's EXACT geometry
+#   pq_oc    out_zp   0   48.78 percent   conv2d-cal's EXACT zero point
+#   w_160    out_zp   0   57.69 percent
+#
+# Same silicon, same geometry, same zero point, vendor userspace, and not one of
+# them clamps. So the clamp this driver shows is THE DRIVER'S. There is no
+# hardware limit to appeal to any more.
+#
+# WHAT IS LEFT. The register stream was excluded, byte identical to the vendor's
+# for the same geometry apart from addresses, requant, pad value and padding.
+# The coefficient records were excluded as a place the ACTIVATION lives, because
+# a_relu and a_lin share a seed and their A, B and C are identical. That is not
+# the same as our records matching the vendor's, and they do not:
+#
+#                    vendor g_cal              this driver, conv2d-cal
+#     C        10251 to 16384, 126 distinct    16, flat
+#     B        41 distinct                     -5, flat
+#
+# The vendor's C is Q14, 16384 being 1.0, and it varies per channel even though
+# the model is per tensor. Ours is Q4, 16 being 1.0, ten fractional bits lower.
+#
+# ⚠ AND THE REASON OURS IS Q4 WAS FITTED AGAINST THE CLAMPED REFERENCE. The
+# comment in rkt_coefs.c says Q14 "over-scaled by 2^10 and railed the output"
+# and Q4 "gives 93.8% byte-exact vs the relu reference". Both readings were
+# taken against max(cpu, out_zp), which is now known to hide half a surface. So
+# C = 16 may be the clamp rather than the fix for it, and it looked right
+# because the reference was clamped too.
+#
+# THE EXPERIMENT. C and the output shift can be moved together so the arithmetic
+# does not change at all: C times 1024 with the shift ten higher is the same
+# number in a different place. Walk it as a ladder rather than one point, so a
+# trend is visible instead of a single yes or no.
+#
+#     C     shift add      arithmetically
+#     16       0           the default
+#     64       2           the same
+#    256       4           the same
+#   4096       8           the same
+#  16384      10           the same, and the vendor's magnitude
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN. Read the "vs UNCLAMPED cpu" line,
+# not the old one.
+#
+#   every rung scores the same
+#             where the bits sit does not matter, the arithmetic is what it
+#             looks like, and C is not the clamp. The records still differ from
+#             the vendor's in B and in per channel C, and those are next.
+#   the unclamped score rises as C grows
+#             the clamp is a precision floor in the BS stage: at Q4 everything
+#             below the zero point falls inside one step and lands on it. That
+#             would explain why it looked exact above the zero point and empty
+#             below, and it names the fix.
+#   the output rails at the top of the ladder
+#             the shift compensation is not equivalent after all, which says the
+#             BS stage does not shift by 4, and the June reading of that comment
+#             was wrong in the other direction.
+#
+# ⚠ THE WORKING DRIVER, not the clean series. ROCKET_C_VALUE and
+# ROCKET_OUT_SHIFT_ADD are two of the 118 knobs and exist only there.
+#
+# ---------------------------------------------------------------------------
 # 2026-08-17 round 233. The two counts I promised Igor, and the other half of
 # the table.
 #
@@ -4556,37 +4781,33 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, two counts already measured both ways.     ====="
-	w pw64x41w56.tflite ""
-	w pw64x56w56.tflite ""
-
-	log ""
-	log "===== 2) THE NEW COUNTS under the predicate, which gives         ====="
-	log "=====    SIZE_E_2 1 at both. Igor has 88 of 88 and 120 of 120 on ====="
-	log "=====    RK3588 with upstream's constant, which is also 1.       ====="
-	w pw64x88w56.tflite ""
-	w pw64x120w56.tflite ""
-
-	log ""
-	log "===== 3) THE OTHER HALF. The modulo form gives SIZE_E_2 0 at 88  ====="
-	log "=====    and 120, since both are 24 mod 32. If the toggle is     ====="
-	log "=====    real these must break the way 56 does.                  ====="
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
-	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
-
-	log ""
-	log "===== 4) and the modulo form on 56, the known failure, so this   ====="
-	log "=====    log carries its own reference point.                    ====="
-	w pw64x56w56.tflite "ROCKET_DPU4050_MOD32=1"
-
-	log ""
-	log "===== 5) the control again                                       ====="
-	w pw64x41w56.tflite ""
+	log "===== 1) THE CONTROL. Our own records. 128 of 128 clamped,       ====="
+	log "=====    0 of 128 unclamped, npu min 128.                        ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Entry 2 against entry 3, count by count. Entry 4 is the    ====="
-	log "===== known failure that says the knob reached the hardware.     ====="
+	log "===== 2) THE VENDOR'S RECORDS, captured from bo01 at 0xc800.     ====="
+	log "=====    The score will be wrong because the weights are g_cal's ====="
+	log "=====    and not conv2d-cal's. Read npu min, not the score.      ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/vendor_g_cal.coef"
+
+	log ""
+	log "===== 3) THE FALSIFIER. The same length with the records and the ====="
+	log "=====    scales zeroed, only the descriptor kept. This MUST      ====="
+	log "=====    break. If it does not, the file is not being read.      ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/zero.coef"
+
+	log ""
+	log "===== 4) and a file that does not exist, which leaves the buffer ====="
+	log "=====    zeroed including the descriptor                         ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=/nope"
+
+	log ""
+	log "===== 5) the control again                                       ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== Entry 3 and 4 first. Then npu min on entry 2.              ====="
 	sync
 }
 case "$1" in

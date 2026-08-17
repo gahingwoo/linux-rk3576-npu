@@ -29,6 +29,17 @@
 # point its own calibration chose and would not have chosen for a non negative
 # range.
 #
+# ⚠ THE MODELS ADDED IN ENTRIES 4 AND 5 HAVE NO HOST PREDICTION. Their weights
+# are inside the .rknn rather than in a torch model here, so there is no float
+# reference for them and the only thing their lines can say is WHETHER anything
+# sits below the zero point, not how much. That is enough for the question they
+# are being asked, and it is not enough for anything else.
+#
+# g_cal matters because it is the vendor's compile of conv2d-cal's exact
+# geometry, 80x80x16 to 40x40x128 at 5x5 stride 2, which is the shape where the
+# open driver shows the clamp. pq_oc and w_160 matter because their out_zp is
+# 128, conv2d-cal's own.
+#
 # THE NUMBER TO COMPARE AGAINST, computed on the host from the same weights and
 # the same ramp this script feeds, in float, before any of this ran.
 #
@@ -63,6 +74,12 @@
 #             are both linear with 58.6 and 58.0 percent of their float output
 #             negative, and float < 0 is exactly q < zp, so they have to land
 #             within a point or two of each other.
+#   g_cal or the out_zp 128 models report nothing below their zero point
+#             then the clamp IS reachable on the vendor stack after all, and
+#             it depends on the geometry or the zero point rather than on which
+#             userspace drives it. That would be the opposite of what a_lin
+#             says and the two would have to be reconciled before anything
+#             else.
 #   a_lin reports about 58 percent below out_zp
 #             ⚠ RUN 2 ALREADY SAID THIS, 60.50 percent with a_lin2 at 59.08,
 #             both within two points of the host prediction. What that run
@@ -130,6 +147,21 @@ echo "===== 3) THE REPRODUCIBILITY CONTROL. a_lin2, linear again with    ====="
 echo "=====    different weights, 58.0 percent negative in float. It has ====="
 echo "=====    to land within a point or two of a_lin.                   ====="
 B=$(npu_irq); $CAP/runner_out $CAP/a_lin2_rk3576.rknn 2>&1
+echo "  npu irq $B -> $(npu_irq)"
+
+echo ""
+echo "===== 4) THE SAME GEOMETRY AS conv2d-cal, which is where the open  ====="
+echo "=====    driver shows the clamp. g_cal is the vendor's own compile ====="
+echo "=====    of 80x80x16 to 40x40x128 at 5x5 stride 2, out_zp 120.     ====="
+B=$(npu_irq); $CAP/runner_out $CAP/g_cal_rk3576.rknn 2>&1
+echo "  npu irq $B -> $(npu_irq)"
+
+echo ""
+echo "===== 5) AND AT conv2d-cal's EXACT ZERO POINT of 128, so the       ====="
+echo "=====    comparison does not rest on 120 being close enough.       ====="
+B=$(npu_irq); $CAP/runner_out $CAP/pq_oc_rk3576.rknn 2>&1
+echo "  npu irq $B -> $(npu_irq)"
+B=$(npu_irq); $CAP/runner_out $CAP/w_160_rk3576.rknn 2>&1
 echo "  npu irq $B -> $(npu_irq)"
 
 echo ""
