@@ -1,6 +1,6 @@
 From 7444fde17d9320023280cb15b0f563fcae63d1a1 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Mon, 17 Aug 2026 23:09:07 +1200
+Date: Mon, 17 Aug 2026 23:29:15 +1200
 Subject: [PATCH v8 00/12] accel/rocket: RK3576 NPU (RKNN) enablement
 
 Based on Igor Paunovic's "[PATCH v2] accel/rocket: request the core
@@ -149,22 +149,47 @@ Where it stands
 
 With every debug knob off, on a ROCK 4D.
 
-  * the NPU probes with the two domain list and no attach failure;
-  * a convolution submitted three times with three different inputs is
-    byte exact against the CPU reference each time, with no reset in
-    between and with nothing retiring the job but the interrupt;
+  * the NPU probes and reads its core version, so the two domain attach
+    list succeeded, since that call fails the probe when it fails;
+  * a convolution submitted three times with three different inputs
+    matches the CPU reference within one count on every one of its 128
+    channels each time, with no reset in between and with nothing
+    retiring the job but the interrupt. It is not byte exact, and an
+    earlier version of this letter said it was. 204788, 204760 and
+    204767 pixels of 204800 are identical across the three, and the
+    remainder are off by one. Feeding the first input again after the
+    rebind below reproduces its count exactly;
   * the NPU's line in /proc/interrupts goes from zero to three across
     those three submits, one each and no more;
   * the rail is disabled at rest and enabled during a job, and the
     inferences either side of that are 128 of 128 channels correct;
-  * unbind and rebind is clean with no warning;
-  * every patch builds on its own;
+  * unbind and rebind logs no warning, no call trace and no refcount
+    message, and the rebound block computes, taking that interrupt
+    count from three to four;
+  * every patch builds on its own at W=1 with no warnings;
   * dt_binding_check is clean on all three bindings the series touches.
 
 That was run on this branch with nothing else applied. The out of tree
 work this hardware has needed for the userspace investigation,
 including an rk_iommu flush_iotlb_all that is neither upstream nor in
 this series, is not present.
+
+What does not work, and it is worth knowing before anyone drives it.
+The reset path does not bring the block back. Timing a job out twice on
+purpose, the driver logs its timeout, and a few seconds later rk_iommu
+logs
+
+  Error during raw reset. MMU_DTE_ADDR is not functioning
+
+and the next inference returns a whole surface of the output zero point.
+Both pairs behaved the same way. The ordinary path is unaffected, the
+two inferences before the first timeout in that same run are 128 of 128.
+This is existing behaviour rather than something the series introduces,
+and 2/12 does not address it. That patch only stops the reset racing a
+handler that is still running, which is a different thing from the block
+coming back afterwards. Whatever is wrong sits between rocket_core_reset()
+and rk_iommu re-enabling the MMU on the next attach, and I have not
+worked it out yet.
 
 The userspace, and what is wrong with it
 ========================================
