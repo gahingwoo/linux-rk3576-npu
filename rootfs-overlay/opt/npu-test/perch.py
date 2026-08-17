@@ -105,6 +105,17 @@ computed = int((good & ~ref_flat).sum())
 trivial = int((good & ref_flat).sum())
 print(f"  {os.path.basename(model)} out{got.shape}: {oc - len(bad)}/{oc} "
       f"channels match (maxdiff <= 1)", flush=True)
+
+# WHETHER IT IS BYTE EXACT, which "maxdiff <= 1" does not say. The cover letter
+# for the kernel series has claimed byte exact more than once and the headline
+# metric above tolerates an off by one, so print the strict count too and let
+# the number decide the wording.
+_ex_px = int((got == ref).sum())
+_tot_px = int(got.size)
+_ex_ch = sum(1 for _c in range(oc) if (got[:, :, _c] == ref[:, :, _c]).all())
+print(f"    EXACT vs the same reference: {_ex_px}/{_tot_px} pixels, "
+      f"{_ex_ch}/{oc} channels identical, "
+      f"{'BYTE EXACT' if _ex_px == _tot_px else 'NOT byte exact'}", flush=True)
 if got.shape[0] * got.shape[1] == 1:
     # ⚠ A ONE PIXEL SURFACE HAS NO SPATIAL VARIATION TO REPRODUCE, so every
     # channel is "constant" by definition and COMPUTED is 0 whatever the answer
