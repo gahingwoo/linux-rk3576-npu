@@ -2,6 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-18 round 239. The clamp is in the coefficient records. Which column.
+#
+# ROUND 238 IS THE FIRST POSITIVE RESULT IN FIVE ROUNDS. Both falsifiers broke
+# first, zero.coef and a path that does not exist both collapsing the surface to
+# a single value at 128, so the file is read and it matters. Then:
+#
+#   our own records            npu 128..255   128 distinct
+#   the vendor's records       npu  48..255   110 distinct
+#
+# ⚠ AND IT IS A SPREAD, NOT A SHIFT, which is the distinction I got wrong twice
+# in rounds 235 and 236. A shift keeps the width and moves the window; this went
+# from 128 wide to 208 wide while the distinct count FELL to 110, which is gaps,
+# which is a coarser quantisation. Values below the zero point exist for the
+# first time. In five rounds and about twenty configurations of this driver's
+# own knobs, nothing below 128 had ever appeared.
+#
+# So the clamp lives in the CONTENTS of the records, and round 238 changed all
+# three columns at once because those records belong to g_cal.
+#
+# THIS ROUND SWAPS ONE COLUMN AT A TIME. Our own values are derivable rather
+# than dumped: conv2d-cal has in_zp 128, so A[oc] is exactly the model's bias,
+# which the round 228 print confirms as -54, 3221, 10107, -1021; B is 0x80 minus
+# the weight zero point of 133, which is -5; C is 16. The vendor's come from the
+# capture at bo01 offset 0xc800.
+#
+#     file               A            B            C
+#   hyb_ours        our bias        -5           16      must reproduce default
+#   hyb_vendorC     our bias        -5      vendor, 126 distinct
+#   hyb_vendorB     our bias   vendor, 41 distinct   16
+#   hyb_vendorA   vendor A          -5           16
+#
+# THE DECISION RULE, WRITTEN BEFORE THE RUN.
+#
+#   hyb_ours does NOT reproduce the default
+#             the file path or my reconstruction is wrong and nothing else in
+#             this log counts. This is the control and it is first.
+#   exactly one column brings values below 128
+#             that column is the clamp and the next step is to work out what the
+#             vendor computes for it.
+#   more than one does
+#             they interact, and the pair that does it is still a much shorter
+#             list than where this started.
+#   none does
+#             the effect needs the columns together, or the scales region that
+#             round 238 also carried and these four zero.
+#
+# ⚠ NOTE WHAT THESE FOUR DO NOT CARRY. Round 238's file included the vendor's
+# 256 byte fp16 scale table; these four zero it, the way rkt_coefs.c leaves it.
+# If none of them moves npu min, that region is the remaining difference and it
+# is one more run to say so.
+#
+# ---------------------------------------------------------------------------
 # 2026-08-18 round 238. Give the driver the vendor's own coefficient bytes.
 #
 # THE CAPTURE FOUND THEM. Two searches agree: bo01 at 0xc800, the exact sixteen
@@ -4781,33 +4833,30 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL. Our own records. 128 of 128 clamped,       ====="
-	log "=====    0 of 128 unclamped, npu min 128.                        ====="
+	log "===== 1) THE CONTROL. My reconstruction of our own records must  ====="
+	log "=====    reproduce the default, 128 of 128 and npu min 128. If   ====="
+	log "=====    it does not, nothing below counts.                      ====="
 	w conv2d-cal.tflite ""
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_ours.coef"
 
 	log ""
-	log "===== 2) THE VENDOR'S RECORDS, captured from bo01 at 0xc800.     ====="
-	log "=====    The score will be wrong because the weights are g_cal's ====="
-	log "=====    and not conv2d-cal's. Read npu min, not the score.      ====="
+	log "===== 2) ONE COLUMN AT A TIME. Read npu min. The vendor's whole  ====="
+	log "=====    buffer gave 48..255 with 110 distinct.                  ====="
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorC.coef"
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorB.coef"
+	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/hyb_vendorA.coef"
+
+	log ""
+	log "===== 3) and the whole vendor buffer again, so this log carries  ====="
+	log "=====    its own reference point rather than citing another one. ====="
 	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/vendor_g_cal.coef"
 
 	log ""
-	log "===== 3) THE FALSIFIER. The same length with the records and the ====="
-	log "=====    scales zeroed, only the descriptor kept. This MUST      ====="
-	log "=====    break. If it does not, the file is not being read.      ====="
-	w conv2d-cal.tflite "ROCKET_BIAS_FILE=$NPU_DIR/zero.coef"
-
-	log ""
-	log "===== 4) and a file that does not exist, which leaves the buffer ====="
-	log "=====    zeroed including the descriptor                         ====="
-	w conv2d-cal.tflite "ROCKET_BIAS_FILE=/nope"
-
-	log ""
-	log "===== 5) the control again                                       ====="
+	log "===== 4) the control again                                       ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Entry 3 and 4 first. Then npu min on entry 2.              ====="
+	log "===== Entry 1's second line first. Then npu min down entry 2.    ====="
 	sync
 }
 case "$1" in
