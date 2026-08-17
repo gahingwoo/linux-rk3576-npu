@@ -1,0 +1,54 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+References: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+
+Hi Igor,
+
+That is the measurement I could not make from here, and between your row and one
+of mine the question is answered.
+
+The control you propose is not one I can run in that form. Upstream Mesa has no
+RK3576 path, so its encoder emits the RK3588 register layout, and this SoC does
+not share that layout at the same offsets. I would not expect the result to be a
+convolution at all, and I have not run it to find out.
+
+What I can run is the vendor userspace, which is the same trade the other way
+around, same silicon and an entirely different stack. Five models, output tensor
+read as int8, the NPU interrupt count advancing by exactly one per run so
+each of them reached the hardware.
+
+  model    zero point   values below it            sitting exactly on it
+  a_lin       17          2478 of 4096    60.50%      32
+  a_lin2     -14          2420 of 4096    59.08%      41
+  g_cal       -8        108564 of 204800  53.01%    2551
+  pq_oc        0         62720 of 128576  48.78%    3136
+  w_160        0        236287 of 409600  57.69%    2877
+
+g_cal is conv2d-cal's geometry exactly, 16 input channels to 128 output over an
+80x80 surface, 5x5 at stride 2. pq_oc and w_160 carry conv2d-cal's zero point
+exactly, 0 in int8 being the 128 my tables report in uint8. So the geometry and
+the zero point are each covered by a model that does not clamp. The counts
+sitting on the zero point are 0.7 to 2.4 percent of the surface, which is close
+to what you measured on the other side and close to what the distribution gives.
+
+The grid now reads
+
+  RK3576, vendor userspace     does not clamp
+  RK3588, upstream Mesa        does not clamp, your run
+  RK3576, my Mesa              clamps
+
+The first and third rows are the same silicon. So the clamp is mine, and there
+is no hardware behaviour left for me to appeal to. Your third control is the one
+that makes your row carry weight, since fifteen channels off by one is something
+a delegate falling back to the CPU could not produce.
+
+I have not found it yet. The register stream is byte identical to the vendor's
+at this geometry apart from addresses, the requantisation, the pad value and the
+padding. A, B and C swapped one at a time from the vendor's records each leave
+the floor where it is. The weight buffer is the last thing I have not compared.
+
+The 88 and 120 sweep is queued for the next time the board is flashed, and I
+will send what it says either way.
+
+Jiaxing
