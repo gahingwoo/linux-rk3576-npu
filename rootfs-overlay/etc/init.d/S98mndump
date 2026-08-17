@@ -2,62 +2,68 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-18 round 242. The rail again, now with the flag the driver gates it
-# behind, and the one count round 241 did not reach.
+# 2026-08-18 round 243. Ask the rail question with counters that accumulate,
+# because round 242 asked it with instantaneous ones and could not answer.
 #
-# WHAT 241 SETTLED. Wiring domain-supply to the NPU domain and dropping
-# regulator-always-on does nothing on its own:
+# WHAT WENT WRONG IN 242. Every rail dump read the same thing, disabled with
+# num_users 0, including the one labelled "right after an inference". That
+# label was false. rocket sets pm_runtime_set_autosuspend_delay(dev, 50), so
+# by the time the shell reads sysfs the block has been suspended for longer
+# than it was ever awake, and all five dumps describe the idle state. A
+# genpd that reads off-0 after an inference is the sampling being late, not
+# the domain being off during the run, since the NPU cannot compute with its
+# domain down.
 #
-#   vdd_npu_s0  state=enabled  num_users=0   at boot
-#   vdd_npu_s0  state=enabled  num_users=0   after an inference
+# WHAT REPLACES IT. Three counters that survive the suspend.
 #
-# rockchip_pd_regulator_enable returns before it looks at the property unless
-# the domain carries need_regulator, and no RK3576 domain does, because the
-# macro they are built from does not have the field. The rail was up because
-# boot-on left it up and nothing claimed it. This image threads the field
-# through DOMAIN_M_O_R_G_W and gives PD_NPU a spelling that sets it.
+#   /sys/kernel/debug/regulator/vdd_npu_s0/open_count counts every
+#   regulator_get ever made on this rail. If rockchip_pd_regulator_enable
+#   reached devm_of_regulator_get even once, this is not zero, whatever the
+#   rail is doing when I look.
 #
-#   READING RULE for the rail. num_users of 1 or more after entry 1 means the
-#   domain took it, which is the whole point. Still 0 means the flag is not
-#   the only thing in the way and I stop guessing and go read genpd. Entry 4
-#   is the one that matters after that: if the rail really follows the domain
-#   it must go down when the NPU idles, and entry 5 must still compute after
-#   it has been down. That is the power cycle the withdrawn SError sentence
-#   was about, so it gets measured rather than asserted either way.
+#   the same directory's use_count is the live enable count, and
+#   /sys/kernel/debug/regulator/regulator_summary names the consumers.
 #
-#   THE CONTROL is entry 1. Round 240 and 241 both got 128 of 128 with npu
-#   min 128 max 255 across 128 distinct values. Anything else and the domain
-#   flag did it, and the rest of the log does not count.
+#   genpd active_time and total_idle_time accumulate in microseconds, so a
+#   rise in active_time across an inference proves the domain was powered
+#   for it without having to catch it in the act.
 #
-# WHAT 241 LEFT. 88 answered both ways, 88 of 88 under the parity form and
-# 64 of 88 with a job timeout under the modulo form, losing exactly channels
-# 64 to 87. 120 only answered the parity side, 120 of 120, because the 88
-# timeout wedged the block and took the next entry with it. So 120 under the
-# modulo form runs here, alone, at the end, after everything that matters.
+#   READING RULE. open_count above 0 after entry 1 means the domain took the
+#   rail and 242's num_users was simply the wrong question. open_count still
+#   0 with npu active_time risen means the domain powers up without ever
+#   asking for the rail, which would put need_regulator somewhere other than
+#   where I put it. open_count 0 AND active_time flat means my genpd reading
+#   is wrong at a more basic level and I go and read the attach path.
+#
+#   THE CONTROL is entry 1 itself. 240, 241 and 242 all got 128 of 128 with
+#   npu min 128 max 255 across 128 distinct values.
+#
+# A sampler runs beside the inference as a second opinion, 4ms apart, purely
+# to see whether the rail is ever observed enabled. It cannot prove absence.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
+RD=
+GD=/sys/kernel/debug/pm_genpd
 log() { echo "$@" > "$C"; }
 w() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
-rail() {
+counters() {
 	log ""
-	log "  RAIL $1"
+	log "  COUNTERS $1"
+	st=
 	for r in /sys/class/regulator/regulator.*; do
-		[ -r "$r/name" ] || continue
-		n=$(cat "$r/name" 2>/dev/null)
-		case "$n" in vdd_npu*)
-			log "    $n  state=$(cat $r/state 2>/dev/null)  num_users=$(cat $r/num_users 2>/dev/null)" ;;
-		esac
+		[ "$(cat $r/name 2>/dev/null)" = vdd_npu_s0 ] && st=$(cat $r/state 2>/dev/null)
 	done
-	mount -t debugfs none /sys/kernel/debug 2>/dev/null
-	for g in /sys/kernel/debug/pm_genpd/*npu*; do
-		[ -r "$g/current_state" ] && log "    genpd $(basename $g)  $(cat $g/current_state 2>/dev/null)"
+	log "    rail  open_count=$(cat $RD/open_count 2>/dev/null)  use_count=$(cat $RD/use_count 2>/dev/null)  state=$st"
+	for g in npu nputop npu0 npu1; do
+		[ -d "$GD/$g" ] || continue
+		log "    genpd $g  state=$(cat $GD/$g/current_state 2>/dev/null)  active_us=$(cat $GD/$g/active_time 2>/dev/null)  idle_us=$(cat $GD/$g/total_idle_time 2>/dev/null)"
 	done
-	log "    runtime_status $(cat /sys/devices/platform/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
+	log "    rocket runtime_status=$(cat /sys/bus/platform/devices/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
 }
 
 start() {
@@ -65,43 +71,55 @@ start() {
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
+	mount -t debugfs none /sys/kernel/debug 2>/dev/null
 
-	rail "at boot, before the NPU has been touched"
+	for d in /sys/kernel/debug/regulator/*vdd_npu*; do
+		[ -r "$d/open_count" ] && RD="$d"
+	done
+	if [ -z "$RD" ]; then
+		log "  the rail has no debugfs directory. What is there:"
+		ls /sys/kernel/debug/regulator 2>/dev/null | tr '\n' ' ' > "$C"
+		log ""
+	else
+		log "  rail debugfs is $RD"
+	fi
 
 	log ""
-	log "===== 1) THE CONTROL. 240 and 241 both got 128 of 128, npu min   ====="
-	log "=====    128 max 255, 128 distinct.                              ====="
+	log "===== 0) what the rail says before the NPU has ever been used    ====="
+	counters "at boot"
+	log ""
+	log "  regulator_summary, vdd_npu line and its consumers"
+	grep -A4 vdd_npu /sys/kernel/debug/regulator/regulator_summary > "$C" 2>&1
+
+	log ""
+	log "===== 1) THE CONTROL. 240, 241 and 242 all got 128 of 128, npu   ====="
+	log "=====    min 128 max 255, 128 distinct. A sampler runs beside it ====="
+	log "=====    at 4ms, printing only if it ever sees the rail enabled. ====="
+	( n=0; seen=0
+	  while [ $n -lt 4000 ]; do
+		s=$(cat $RD/use_count 2>/dev/null)
+		[ "${s:-0}" != "0" ] && { seen=1; echo "    SAMPLER saw use_count=$s" > "$C"; break; }
+		n=$((n+1))
+	  done
+	  [ $seen -eq 0 ] && echo "    SAMPLER never saw use_count above 0 in $n reads" > "$C" ) &
+	SAMP=$!
 	w conv2d-cal.tflite ""
+	wait $SAMP 2>/dev/null
 
-	rail "right after an inference, the NPU still powered"
-
-	log ""
-	log "===== 2) idle for 30s, long enough for the NPU to suspend        ====="
-	sleep 30
-	rail "after 30s idle"
+	counters "after one inference"
 
 	log ""
-	log "===== 3) idle for another 60s                                    ====="
-	sleep 60
-	rail "after 90s idle"
-
-	log ""
-	log "===== 4) THE POWER CYCLE. If the rail went down above, this run  ====="
-	log "=====    brings it back. It must compute, and it is the claim I  ====="
-	log "=====    withdrew from the commit message either way.            ====="
+	log "===== 2) a second inference, so a rise in active_time can be     ====="
+	log "=====    told from a one off                                     ====="
 	w conv2d-cal.tflite ""
-
-	rail "after the second inference"
-
-	log ""
-	log "===== 5) 120 out, modulo form. The half 241 could not reach.     ====="
-	log "=====    The parity form gave 120 of 120. If this degrades the   ====="
-	log "=====    way 88 did, both counts agree on the rule. Runs last    ====="
-	log "=====    because it may time out and wedge whatever follows.     ====="
-	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+	counters "after two inferences"
 
 	log ""
-	log "===== Read entry 1 and the num_users line above it first.        ====="
+	log "  regulator_summary again"
+	grep -A4 vdd_npu /sys/kernel/debug/regulator/regulator_summary > "$C" 2>&1
+
+	log ""
+	log "===== Read open_count first. Everything else is commentary on it ====="
 	sync
 }
 case "$1" in
