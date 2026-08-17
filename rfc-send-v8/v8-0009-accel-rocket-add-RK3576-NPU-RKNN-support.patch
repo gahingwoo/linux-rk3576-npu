@@ -1,0 +1,233 @@
+From f9a57eb4cbf63af5e69e1e9c5bc3bfd6835f1ba1 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 6 Aug 2026 18:30:48 +1200
+Subject: [PATCH v8 v8 09/11] accel/rocket: add RK3576 NPU (RKNN) support
+
+The RK3576 has two cores of the same RKNN block and a few platform
+differences:
+
+ - the CBUF (convolution buffer) has its own clock domain, so the core
+   needs six clocks rather than four;
+ - the BIU reset moved into the power domain, leaving one reset here;
+ - the NPU spans two power domains, and a device with more than one is
+   skipped by the driver-core single-domain auto-attach, so the list has
+   to be attached explicitly;
+ - PC_TASK_CON packs the task number with sixteen bits rather than
+   twelve, moving the three controls above it up by four.
+
+That last one is the reason this series has been reporting, since v3,
+that the block accepts exactly one task per reset. rocket_registers.h is
+generated from the RK3588 description, so writing it unchanged to an
+RK3576 asks for task_number 0x7001, which is 28673 tasks, and puts
+TASK_COUNT_CLEAR on a bit that does nothing. The counter is then only
+ever cleared by a reset.
+
+The layout was confirmed by Chaoyi Chen of Rockchip, including a fourth
+control at BIT(18), task_last_layer_clear, which belongs on every submit
+alongside the count clear:
+
+  https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
+
+With that written correctly a job of several tasks runs to completion,
+the completion interrupt arrives, and /proc/interrupts counts up. A
+convolution submitted three times with three different inputs is byte
+exact against the CPU reference each time, with no reset in between and
+with nothing retiring the job but the interrupt.
+
+All of it hangs off the soc_data added earlier, so the RK3588 path keeps
+its existing counts and behaviour.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_core.c   | 20 ++++++++++++++
+ drivers/accel/rocket/rocket_core.h   |  8 +++---
+ drivers/accel/rocket/rocket_device.c |  4 +++
+ drivers/accel/rocket/rocket_drv.c    | 10 +++++++
+ drivers/accel/rocket/rocket_job.c    | 39 ++++++++++++++++++++++++----
+ 5 files changed, 73 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b202d1581..5f3155135 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -8,6 +8,7 @@
+ #include <linux/err.h>
+ #include <linux/iommu.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ 
+@@ -21,6 +22,7 @@ int rocket_core_init(struct rocket_core *core)
+ 	u32 version;
+ 	int err = 0;
+ 
++	/* RK3576 moves the BIU reset into its power domain and takes only srst_a. */
+ 	core->resets[0].id = "srst_a";
+ 	core->resets[1].id = "srst_h";
+ 	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, core->soc->num_resets,
+@@ -32,6 +34,9 @@ int rocket_core_init(struct rocket_core *core)
+ 	core->clks[1].id = "hclk";
+ 	core->clks[2].id = "npu";
+ 	core->clks[3].id = "pclk";
++	/* RK3576 clocks the CBUF separately; the compute path stalls without these. */
++	core->clks[4].id = "aclk_cbuf";
++	core->clks[5].id = "hclk_cbuf";
+ 	err = devm_clk_bulk_get(dev, core->soc->num_clks, core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+@@ -60,6 +65,21 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return err;
+ 
++	/*
++	 * RK3576 spans two power domains, and a multi-domain device is skipped
++	 * by the driver-core single-domain auto-attach, so attach the list here.
++	 * This goes before the first thing that would have to be unwound, so a
++	 * failure can simply return.
++	 */
++	if (core->soc->multi_power_domain) {
++		struct dev_pm_domain_list *pd_list;
++
++		err = devm_pm_domain_attach_list(dev, NULL, &pd_list);
++		if (err < 0)
++			return dev_err_probe(dev, err,
++					     "failed to attach NPU power domains\n");
++	}
++
+ 	core->iommu_group = iommu_group_get(dev);
+ 
+ 	err = rocket_job_init(core);
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index ba74c5339..8c8d1f453 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -29,8 +29,10 @@
+ 
+ /* Per-SoC differences, selected by the of_device_id match data. */
+ struct rocket_soc_data {
+-	unsigned int num_clks;		/* clk_bulk count */
+-	unsigned int num_resets;	/* reset_bulk count */
++	unsigned int num_clks;		/* clk_bulk count: 4 base, 6 with CBUF */
++	unsigned int num_resets;	/* reset_bulk count: 2 base, 1 on RK3576 */
++	bool multi_power_domain;	/* device spans more than one PM domain */
++	bool task_con_16bit;		/* PC_TASK_CON uses the 16-bit task number */
+ };
+ 
+ struct rocket_core {
+@@ -43,7 +45,7 @@ struct rocket_core {
+ 	void __iomem *pc_iomem;
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+-	struct clk_bulk_data clks[4];
++	struct clk_bulk_data clks[6];
+ 	struct reset_control_bulk_data resets[2];
+ 
+ 	struct iommu_group *iommu_group;
+diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
+index 46e6ee1e7..bfb00f967 100644
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -31,6 +31,10 @@ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 		if (of_device_is_available(core_node))
+ 			num_cores++;
+ 
++	for_each_compatible_node(core_node, NULL, "rockchip,rk3576-rknn-core")
++		if (of_device_is_available(core_node))
++			num_cores++;
++
+ 	rdev->cores = devm_kcalloc(dev, num_cores, sizeof(*rdev->cores), GFP_KERNEL);
+ 	if (!rdev->cores)
+ 		return ERR_PTR(-ENOMEM);
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 6e7dc91c5..f333fe466 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -217,10 +217,20 @@ static void rocket_remove(struct platform_device *pdev)
+ static const struct rocket_soc_data rk3588_soc_data = {
+ 	.num_clks = 4,
+ 	.num_resets = 2,
++	.multi_power_domain = false,
++	.task_con_16bit = false,
++};
++
++static const struct rocket_soc_data rk3576_soc_data = {
++	.num_clks = 6,
++	.num_resets = 1,
++	.multi_power_domain = true,
++	.task_con_16bit = true,
+ };
+ 
+ static const struct of_device_id dt_match[] = {
+ 	{ .compatible = "rockchip,rk3588-rknn-core", .data = &rk3588_soc_data },
++	{ .compatible = "rockchip,rk3576-rknn-core", .data = &rk3576_soc_data },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index b17ff44b7..524e81080 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -21,6 +21,29 @@
+ 
+ #define JOB_TIMEOUT_MS 500
+ 
++/*
++ * PC_TASK_CON packs the task number with three controls, and the field widths
++ * are not the same on every SoC. rocket_registers.h is generated from the
++ * RK3588 description, where the task number is twelve bits:
++ *
++ *   RK3588   BIT[11:0] task_number, BIT[12] pp_en, BIT[13] count_clear
++ *   RK3576   BIT[15:0] task_number, BIT[16] pp_en, BIT[17] count_clear,
++ *            BIT[18] last_layer_clear
++ *
++ * The RK3576 layout was confirmed by Chaoyi Chen of Rockchip:
++ * https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
++ *
++ * Writing the RK3588 layout to an RK3576 therefore asks for task_number
++ * 0x7001, that is 28673 tasks, and lands the count clear on a bit that does
++ * nothing. The task counter is then only ever cleared by a reset, which is
++ * exactly the "one task per reset" behaviour this series has been reporting
++ * since v3.
++ */
++#define RK3576_PC_TASK_CON_TASK_NUMBER(n)	((n) & 0xffff)
++#define RK3576_PC_TASK_CON_PP_EN		BIT(16)
++#define RK3576_PC_TASK_CON_COUNT_CLEAR		BIT(17)
++#define RK3576_PC_TASK_CON_LAST_LAYER_CLEAR	BIT(18)
++
+ static struct rocket_job *
+ to_rocket_job(struct drm_sched_job *sched_job)
+ {
+@@ -142,10 +165,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
+ 
+-	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+-					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+-					 PC_TASK_CON_TASK_NUMBER(1) |
+-					 PC_TASK_CON_TASK_PP_EN(1));
++	if (core->soc->task_con_16bit)
++		rocket_pc_writel(core, TASK_CON,
++				 RK3576_PC_TASK_CON_LAST_LAYER_CLEAR |
++				 RK3576_PC_TASK_CON_COUNT_CLEAR |
++				 RK3576_PC_TASK_CON_PP_EN |
++				 RK3576_PC_TASK_CON_TASK_NUMBER(1));
++	else
++		rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
++						 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
++						 PC_TASK_CON_TASK_NUMBER(1) |
++						 PC_TASK_CON_TASK_PP_EN(1));
+ 
+ 	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
+ 
+@@ -654,7 +684,6 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
+ 		}
+ 	}
+ 
+-
+ 	for (i = 0; i < args->job_count; i++)
+ 		rocket_ioctl_submit_job(dev, file, &jobs[i]);
+ 
+-- 
+2.43.0
+
