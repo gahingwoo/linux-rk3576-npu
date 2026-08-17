@@ -80,33 +80,53 @@ int main(int argc, char **argv)
     printf("  outputs_get = %d  bytes=%u\n", ret, out.size);
     if (ret != 0) return 1;
 
-    const unsigned char *o = out.buf;
+    /*
+     * ⚠ THE OUTPUT IS SIGNED AND THE FIRST VERSION OF THIS READ IT UNSIGNED.
+     *
+     * rknn_tensor_type 2 is INT8, and the zero point is in the same domain, so
+     * these models report -128, 17 and -14 rather than 0, 145 and 114. Reading
+     * the buffer as unsigned bytes and comparing them against a signed zero
+     * point counted the wrong thing: a_relu could not report anything below
+     * -128 so it passed vacuously, and the two linear models disagreed with
+     * each other, 19.75 percent against 0, when both have about 58 percent of
+     * their float output negative. That disagreement is what showed the
+     * instrument was wrong rather than the hardware.
+     *
+     * float = (q - zp) * scale, so q < zp is exactly float < 0, and the
+     * fraction below the zero point is the fraction the host computed from the
+     * weights before any of this ran.
+     */
+    const int8_t *o8 = out.buf;
+    const unsigned char *ou = out.buf;
     unsigned n = out.size;
+    int is_signed = oa.type == RKNN_TENSOR_INT8;
     unsigned hist[256]; memset(hist, 0, sizeof(hist));
     for (unsigned i = 0; i < n; i++)
-        hist[o[i]]++;
+        hist[ou[i]]++;
 
-    int lo = -1, hi = -1, distinct = 0;
-    for (int v = 0; v < 256; v++) {
-        if (!hist[v]) continue;
-        distinct++;
-        if (lo < 0) lo = v;
-        hi = v;
-    }
+    int lo = 1 << 30, hi = -(1 << 30), distinct = 0;
     unsigned below = 0, at = 0;
-    for (int v = 0; v < oa.zp && v < 256; v++)
-        below += hist[v];
-    if (oa.zp >= 0 && oa.zp < 256)
-        at = hist[oa.zp];
+    for (unsigned i = 0; i < n; i++) {
+        int v = is_signed ? (int)o8[i] : (int)ou[i];
 
-    printf("  OUT min=%d max=%d distinct=%d of %u values\n", lo, hi, distinct, n);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        if (v < oa.zp) below++;
+        if (v == oa.zp) at++;
+    }
+    for (int v = 0; v < 256; v++)
+        if (hist[v]) distinct++;
+
+    printf("  OUT %s min=%d max=%d distinct=%d of %u values\n",
+           is_signed ? "int8" : "uint8", lo, hi, distinct, n);
     printf("  BELOW out_zp(%d): %u values (%.2f%%)   AT out_zp exactly: %u\n",
            oa.zp, below, n ? 100.0 * below / n : 0.0, at);
     printf("  VERDICT %s\n", below > 0
            ? "the hardware CAN produce a value below its output zero point"
            : "NOTHING below the output zero point, the minimum is the clamp");
     printf("  first 24: ");
-    for (unsigned i = 0; i < 24 && i < n; i++) printf("%d ", o[i]);
+    for (unsigned i = 0; i < 24 && i < n; i++)
+        printf("%d ", is_signed ? (int)o8[i] : (int)ou[i]);
     printf("\n");
 
     rknn_outputs_release(ctx, 1, &out);

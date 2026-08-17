@@ -36,8 +36,28 @@
 #   a_lin2   4096 outputs, float range -211.75 to 260.84, 2375 negative = 58.0%
 #   a_relu   4096 outputs, float range 0 to 181.45, 0 negative = 0%
 #
+# ⚠ THE FIRST RUN OF THIS MEASURED NOTHING, and the control is what said so.
+#
+# The output tensor is INT8, rknn_tensor_type 2, and its zero point is in the
+# same domain: these models report -128, 17 and -14, not 0, 145 and 114. The
+# runner read the buffer as unsigned bytes and compared them against a signed
+# zero point, so a_relu could not report anything below -128 and passed
+# vacuously, while the two linear models disagreed with each other, 19.75
+# percent against 0, when both have about 58 percent of their float output
+# negative. Two models that must agree did not, so the instrument was wrong
+# rather than the hardware, and no verdict from that run counts.
+#
+# a_relu was never a control either. Its zero point IS the bottom of the int8
+# range, so nothing can sit below it whatever the hardware does. It cannot
+# fail. The real control is a_lin2 agreeing with a_lin.
+#
 # THE DECISION RULE, WRITTEN BEFORE THE RUN.
 #
+#   a_lin and a_lin2 DISAGREE with each other
+#             the instrument is wrong again and nothing else here counts. They
+#             are both linear with 58.6 and 58.0 percent of their float output
+#             negative, and float < 0 is exactly q < zp, so they have to land
+#             within a point or two of each other.
 #   a_lin reports about 58 percent below out_zp
 #             the hardware CAN produce a value below its output zero point, the
 #             vendor gets it and the open driver does not, and the difference is
