@@ -1,7 +1,7 @@
-From 26e1e8d29eec01d73067d9a48aa71af6a629771d Mon Sep 17 00:00:00 2001
+From 570a620665766a7867edf153fbe4237bbf4808ec Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:29 +1200
-Subject: [PATCH v8 v8 07/11] pmdomain/rockchip: cycle optional power-domain
+Subject: [PATCH v8 08/12] pmdomain/rockchip: cycle optional power-domain
  resets on power-on
 
 Some Rockchip domains come out of power-on with their bus interface in
@@ -19,7 +19,7 @@ Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
  1 file changed, 19 insertions(+)
 
 diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
-index e1857f878..4eebb5d99 100644
+index 39988efd8..8f2fd8a83 100644
 --- a/drivers/pmdomain/rockchip/pm-domains.c
 +++ b/drivers/pmdomain/rockchip/pm-domains.c
 @@ -19,6 +19,7 @@
@@ -38,21 +38,21 @@ index e1857f878..4eebb5d99 100644
  };
  
  struct rockchip_pmu {
-@@ -688,6 +690,13 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+@@ -692,6 +694,13 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
  		if (pd->info->delay_us)
  			udelay(pd->info->delay_us);
  
 +		/* Optional: some domains need their resets cycled after power-on. */
 +		if (pd->resets) {
 +			reset_control_assert(pd->resets);
-+			udelay(10);
++			usleep_range(10, 20);
 +			reset_control_deassert(pd->resets);
 +		}
 +
  		rockchip_pmu_restore_qos(pd);
  	}
  
-@@ -857,6 +866,14 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+@@ -861,6 +870,14 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
  	if (error)
  		goto err_put_clocks;
  
@@ -67,7 +67,7 @@ index e1857f878..4eebb5d99 100644
  	pd->num_qos = of_count_phandle_with_args(node, "pm_qos",
  						 NULL);
  
-@@ -927,6 +944,7 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+@@ -931,6 +948,7 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
  	clk_bulk_unprepare(pd->num_clks, pd->clks);
  err_put_clocks:
  	clk_bulk_put(pd->num_clks, pd->clks);
@@ -75,7 +75,7 @@ index e1857f878..4eebb5d99 100644
  	return error;
  }
  
-@@ -945,6 +963,7 @@ static void rockchip_pm_remove_one_domain(struct rockchip_pm_domain *pd)
+@@ -949,6 +967,7 @@ static void rockchip_pm_remove_one_domain(struct rockchip_pm_domain *pd)
  
  	clk_bulk_unprepare(pd->num_clks, pd->clks);
  	clk_bulk_put(pd->num_clks, pd->clks);

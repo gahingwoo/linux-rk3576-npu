@@ -1,18 +1,21 @@
-From 239c732670ca3a646fb110ba8fc4081dce507c7e Mon Sep 17 00:00:00 2001
+From a5f2eb05efdc530cf5aef98624d16af2bf600e75 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:47:52 +1200
-Subject: [PATCH v8 v8 02/11] accel/rocket: factor the completion tail out of
- the IRQ handler
+Subject: [PATCH v8 03/12] accel/rocket: factor the completion tail out of the
+ IRQ handler
 
 rocket_job_handle_irq() stops the block and then either starts the job's
-next task or retires the job. The second half reads as its own step and
-is easier to follow, and to reuse, with a name.
+next task or retires the job. The second half is a step of its own and
+reads better with a name, now that taking the register writes under
+job_lock has moved it a level deeper inside the scoped guard.
 
 Move it to rocket_job_next_locked(). The early return that used to leave
 the handler now leaves the helper, which is the same thing here: the
 scoped guard drops job_lock either way and nothing follows it.
 
-No functional change.
+Doing it as its own patch keeps the locking fix at the head of the
+series minimal, so a bisect that stops before this one gets that fix and
+nothing else. There is one caller, and no functional change.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
@@ -20,7 +23,7 @@ Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
  1 file changed, 20 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 5f0f9682e..b17ff44b7 100644
+index d484a3a6f..0bb11c718 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -341,6 +341,25 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)

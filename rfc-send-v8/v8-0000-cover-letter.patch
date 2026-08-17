@@ -1,0 +1,234 @@
+From 7444fde17d9320023280cb15b0f563fcae63d1a1 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 17 Aug 2026 23:09:07 +1200
+Subject: [PATCH v8 00/12] accel/rocket: RK3576 NPU (RKNN) enablement
+
+Based on Igor Paunovic's "[PATCH v2] accel/rocket: request the core
+clocks by name", as v6 and v7 were.
+
+  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
+
+Tested on a Radxa ROCK 4D, on next-20260814.
+
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently. Two extra convolution buffer clocks, two power domains per
+core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
+that packs the task number into sixteen bits rather than twelve.
+
+Nothing about the completion path has changed since v7. The interrupt
+retires the job, there is no poll, and the register field layout that
+v7 corrected is unchanged here.
+
+Three sentences I am taking back
+================================
+
+v7 shipped three commit messages that each stated a cause with nothing
+behind it. None of the three is load bearing for the code, but all
+three read as evidence, so v8 corrects them rather than leaving them
+in.
+
+  * The rock-4d patch said that dropping the NPU rail underneath the
+    power domains takes an async SError on the next power-on. I went
+    looking for the run behind that and there is none, and the runs
+    below go the other way, since the rail is genuinely down between
+    jobs now and the block comes back and computes.
+
+  * The settle delay patch said that without the delay
+    rockchip_pmu_restore_qos() reads back zeroes. That function only
+    writes, so it cannot read back anything. The delay itself stays,
+    because it was arrived at on this board, but v8 does not attach a
+    mechanism to it that I cannot show.
+
+  * The enablement patch said the BIU reset moved into the power domain
+    on RK3576. What I can show is narrower. RK3576 has no per core hclk
+    reset, which is why one reset is left on the core, and the domain
+    nodes carry a BIU reset that the pmdomain patch cycles. That the
+    second is the first relocated is not something I have evidence for.
+
+The NPU rail now follows the power domain
+=========================================
+
+Chaoyi Chen asked what consumes npu-supply. Nothing does, anywhere in
+the tree. There is no regulator call in drivers/accel/rocket, and
+grepping for npu-supply and sram-supply finds no reader at all, so the
+RK3588 boards that set them are in the same position. In v7 the
+regulator-always-on line was the only thing holding vdd_npu_s0 up.
+
+The property that does have a consumer is domain-supply on the power
+domain node, which rockchip_pd_power() takes, and
+rk3588-rock-5b-5bp-5t.dtsi already wires the same rail that way. Moving
+it needs two changes rather than one. rockchip_pd_regulator_enable()
+returns before it looks at the property unless the domain carries
+need_regulator, and the macro the RK3576 table is built from does not
+set that field, so the wiring on its own does nothing.
+
+v8 threads need_regulator through to the RK3576 NPU domains, moves the
+rail to domain-supply, and drops regulator-always-on. Measured on a
+ROCK 4D with always-on gone.
+
+  regulator debugfs open_count   1, so the domain did take the rail
+  sampled beside an inference    use_count 1, the rail is up for the job
+  at rest, three separate reads  use_count 0 and state disabled
+  genpd npu active_time          rises about 60ms per inference
+  inferences either side         128 of 128 channels correct both times
+
+npu-supply stays on the core node because the binding requires it, and
+nothing reads it there. Whether that property should exist at all is
+wider than this series and v8 does not try to settle it.
+
+Changes in v8
+=============
+
+Igor Paunovic
+
+  * The stale comment describing the completion poll is gone. v7
+    deleted the machinery it describes and left the comment above no
+    code at all.
+
+  * Factoring the completion tail out of rocket_job_handle_irq() is its
+    own patch now, 3/12, and no longer sits inside the patch that adds
+    RK3576. It is placed after the job_lock fix rather than before it,
+    since 1/12 carries a Fixes tag and should stay the smallest thing
+    that fixes the bug rather than land on top of a restructure it does
+    not need. 10/12 has no shared path changes left in it.
+
+  * The synchronize_irq() you asked about is 2/12. drm_sched_stop()
+    returns without waiting for a threaded handler that is already
+    running, so the comment saying remaining interrupts have been
+    handled was an assumption. It goes before the guard rather than
+    inside it, since the handler takes job_lock. It does not fix a
+    handler that has already read in_flight_job finishing work on a job
+    the reset is about to drop, and the message says so.
+
+  * Your Tested-by from the three core RK3588 run is carried on 1/12,
+    which is unchanged from v7.
+
+Krzysztof Kozlowski
+
+  * The paragraph explaining devicetree syntax is out of the power
+    domain binding commit message.
+
+  * resets is maxItems 1 rather than 30. Both RK3576 NPU domains carry
+    exactly one, and the 30 was copied from the clocks property above
+    it without asking what it would mean here. Whoever turns up with a
+    domain that needs more can widen it.
+
+  * The block scalar is gone.
+
+  * The new property reaches an example in that file. v8 adds one
+    resets line to the RK3399 example already there.
+
+Diederik de Haas
+
+  * The RK3576 NPU MMUs get a compatible of their own,
+    rockchip,rk3576-npu-iommu, with an allOf pinning both clock sets.
+    v7 had a minItems of 2 and three descriptions ending in "RK3576 NPU
+    MMUs only", which is a comment rather than a schema, and it left
+    both of the spellings you named valid. An rk3568-iommu with five
+    clocks and an RK3576 NPU MMU with two are now each rejected. The
+    DTS patch moves with it, since v7's MMU nodes used the plain
+    rockchip,rk3576-iommu string. This is the second version you have
+    asked for it.
+
+Chaoyi Chen
+
+  * The rail moves to domain-supply with need_regulator threaded
+    through, as above, and regulator-always-on is gone.
+
+Commit messages
+
+  * The three sentences in the section above are corrected.
+
+The series is 12 patches rather than 10. One is the extraction split
+out at 3/12, the other is the synchronize_irq() fix at 2/12. Nothing
+else moved.
+
+Where it stands
+===============
+
+With every debug knob off, on a ROCK 4D.
+
+  * the NPU probes with the two domain list and no attach failure;
+  * a convolution submitted three times with three different inputs is
+    byte exact against the CPU reference each time, with no reset in
+    between and with nothing retiring the job but the interrupt;
+  * the NPU's line in /proc/interrupts goes from zero to three across
+    those three submits, one each and no more;
+  * the rail is disabled at rest and enabled during a job, and the
+    inferences either side of that are 128 of 128 channels correct;
+  * unbind and rebind is clean with no warning;
+  * every patch builds on its own;
+  * dt_binding_check is clean on all three bindings the series touches.
+
+That was run on this branch with nothing else applied. The out of tree
+work this hardware has needed for the userspace investigation,
+including an rk_iommu flush_iotlb_all that is neither upstream nor in
+this series, is not present.
+
+The userspace, and what is wrong with it
+========================================
+
+The userspace side is a Mesa merge request and it is not merged.
+
+  https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804
+
+It is not part of this series. A whole MobileNet V1 now runs on RK3576
+through it, with 1000 of the 1001 outputs within one count of the CPU
+reference.
+
+There is one limitation in that Mesa driver that a reader should know
+about before taking the numbers above at face value. A convolution
+output never falls below the output zero point. For a network whose
+convolutions carry a fused ReLU that is invisible, because the clamp
+the graph asks for and the clamp the driver imposes land in the same
+place, and MobileNet V1 is such a network. Anywhere else it is visible
+and it is wrong.
+
+It is mine rather than the hardware's. The vendor userspace on this
+same silicon does not clamp, across five models including one with
+conv2d-cal's geometry and two carrying its zero point, and Igor's run
+of upstream Mesa on RK3588 does not clamp either. I have not found it
+yet. The register stream is byte identical to the vendor's at that
+geometry apart from addresses, the requantisation, the pad value and
+the padding. Nothing that is still wrong there is in the kernel.
+
+Thank you to Igor, Krzysztof, Diederik and Chaoyi for the v7 reviews.
+Igor, 2/12 and 3/12 did not exist when you read v7, so they want a
+look before any tag lands on them.
+
+Jiaxing Hu (12):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../bindings/iommu/rockchip,iommu.yaml        | 28 ++++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 47 ++++++++-
+ .../power/rockchip,power-controller.yaml      |  8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 13 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 82 +++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 28 +++++-
+ drivers/accel/rocket/rocket_core.h            | 11 ++-
+ drivers/accel/rocket/rocket_device.c          |  7 +-
+ drivers/accel/rocket/rocket_drv.c             | 28 ++++--
+ drivers/accel/rocket/rocket_drv.h             |  2 +
+ drivers/accel/rocket/rocket_job.c             | 97 ++++++++++++++-----
+ drivers/pmdomain/rockchip/pm-domains.c        | 75 +++++++++-----
+ 12 files changed, 364 insertions(+), 62 deletions(-)
+
+
+base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
+prerequisite-patch-id: 46ebb679e93d3d25393e8cbf8fc3c955bcc01bd4
+-- 
+2.43.0
+

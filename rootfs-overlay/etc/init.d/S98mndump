@@ -2,44 +2,45 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-18 round 243. Ask the rail question with counters that accumulate,
-# because round 242 asked it with instantaneous ones and could not answer.
+# 2026-08-18 round 244. A regression run for the v8 series, and one real
+# prediction inside it.
 #
-# WHAT WENT WRONG IN 242. Every rail dump read the same thing, disabled with
-# num_users 0, including the one labelled "right after an inference". That
-# label was false. rocket sets pm_runtime_set_autosuspend_delay(dev, 50), so
-# by the time the shell reads sysfs the block has been suspended for longer
-# than it was ever awake, and all five dumps describe the idle state. A
-# genpd that reads off-0 after an inference is the sampling being late, not
-# the domain being off during the run, since the NPU cannot compute with its
-# domain down.
+# WHAT IS NEW IN THE IMAGE. Only the two v8 changes that have a runtime
+# effect and were not already here.
 #
-# WHAT REPLACES IT. Three counters that survive the suspend.
+#   synchronize_irq(core->irq) in rocket_reset(), after drm_sched_stop()
+#   and outside job_lock. drm_sched_stop() returns without waiting for a
+#   threaded handler that is already running, so the comment saying the
+#   remaining interrupts have been handled was an assumption.
 #
-#   /sys/kernel/debug/regulator/vdd_npu_s0/open_count counts every
-#   regulator_get ever made on this rail. If rockchip_pd_regulator_enable
-#   reached devm_of_regulator_get even once, this is not zero, whatever the
-#   rail is doing when I look.
+#   usleep_range(10, 20) where the reset pulse used udelay(10).
 #
-#   the same directory's use_count is the live enable count, and
-#   /sys/kernel/debug/regulator/regulator_summary names the consumers.
+# The rail already follows the domain in this tree from round 242, and the
+# match table rework in v8 is enumeration equivalent so it is not here.
 #
-#   genpd active_time and total_idle_time accumulate in microseconds, so a
-#   rise in active_time across an inference proves the domain was powered
-#   for it without having to catch it in the act.
+# THE PREDICTION, and it can fail. In round 241 the entry after a timed out
+# job came back wedged: 88 output channels under the modulo form timed out,
+# and the next entry hung with RCU stalls on one CPU and the log stopped.
+# synchronize_irq is exactly the fence that was missing there. So entries 3
+# and 5 deliberately time the block out, and entries 4 and 6 must compute.
 #
-#   READING RULE. open_count above 0 after entry 1 means the domain took the
-#   rail and 242's num_users was simply the wrong question. open_count still
-#   0 with npu active_time risen means the domain powers up without ever
-#   asking for the rail, which would put need_regulator somewhere other than
-#   where I put it. open_count 0 AND active_time flat means my genpd reading
-#   is wrong at a more basic level and I go and read the attach path.
+#   READING RULE. Entry 4 and entry 6 are the test. If both come back
+#   128 of 128 the reset path now survives a timeout. If either hangs, this
+#   change did not fix that and I say so.
 #
-#   THE CONTROL is entry 1 itself. 240, 241 and 242 all got 128 of 128 with
-#   npu min 128 max 255 across 128 distinct values.
+#   ⚠ WHAT THIS CANNOT PROVE. In round 242 a timeout at 120 did NOT wedge
+#   the entry after it, the log ran to the end. So the wedge was never
+#   universal, and two clean recoveries here are consistent with the fence
+#   working AND with the wedge simply being intermittent. Two pairs is
+#   better than one and still not a proof. Do not write it up as one.
 #
-# A sampler runs beside the inference as a second opinion, 4ms apart, purely
-# to see whether the rail is ever observed enabled. It cannot prove absence.
+#   THE CONTROL is entry 1. Rounds 240 through 243 all got 128 of 128 with
+#   npu min 128 max 255 across 128 distinct values. If that moved, one of
+#   the two new changes did it and nothing else here counts.
+#
+#   THE RAIL must read exactly as round 243 did, open_count 1 and use_count
+#   0 at rest. If synchronize_irq or the sleep changed that, they reach
+#   further than they should.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -60,10 +61,8 @@ counters() {
 	done
 	log "    rail  open_count=$(cat $RD/open_count 2>/dev/null)  use_count=$(cat $RD/use_count 2>/dev/null)  state=$st"
 	for g in npu nputop npu0 npu1; do
-		[ -d "$GD/$g" ] || continue
-		log "    genpd $g  state=$(cat $GD/$g/current_state 2>/dev/null)  active_us=$(cat $GD/$g/active_time 2>/dev/null)  idle_us=$(cat $GD/$g/total_idle_time 2>/dev/null)"
+		[ -d "$GD/$g" ] && log "    genpd $g  state=$(cat $GD/$g/current_state 2>/dev/null)  active_us=$(cat $GD/$g/active_time 2>/dev/null)"
 	done
-	log "    rocket runtime_status=$(cat /sys/bus/platform/devices/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
 }
 
 start() {
@@ -72,54 +71,44 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
 	mount -t debugfs none /sys/kernel/debug 2>/dev/null
-
 	for d in /sys/kernel/debug/regulator/*vdd_npu*; do
 		[ -r "$d/open_count" ] && RD="$d"
 	done
-	if [ -z "$RD" ]; then
-		log "  the rail has no debugfs directory. What is there:"
-		ls /sys/kernel/debug/regulator 2>/dev/null | tr '\n' ' ' > "$C"
-		log ""
-	else
-		log "  rail debugfs is $RD"
-	fi
+	[ -n "$RD" ] || log "  the rail has no debugfs directory, the counter lines will be empty"
 
 	log ""
-	log "===== 0) what the rail says before the NPU has ever been used    ====="
-	counters "at boot"
-	log ""
-	log "  regulator_summary, vdd_npu line and its consumers"
-	grep -A4 vdd_npu /sys/kernel/debug/regulator/regulator_summary > "$C" 2>&1
-
-	log ""
-	log "===== 1) THE CONTROL. 240, 241 and 242 all got 128 of 128, npu   ====="
-	log "=====    min 128 max 255, 128 distinct. A sampler runs beside it ====="
-	log "=====    at 4ms, printing only if it ever sees the rail enabled. ====="
-	( n=0; seen=0
-	  while [ $n -lt 4000 ]; do
-		s=$(cat $RD/use_count 2>/dev/null)
-		[ "${s:-0}" != "0" ] && { seen=1; echo "    SAMPLER saw use_count=$s" > "$C"; break; }
-		n=$((n+1))
-	  done
-	  [ $seen -eq 0 ] && echo "    SAMPLER never saw use_count above 0 in $n reads" > "$C" ) &
-	SAMP=$!
+	log "===== 1) THE CONTROL. 240 through 243 all got 128 of 128, npu    ====="
+	log "=====    min 128 max 255, 128 distinct.                          ====="
 	w conv2d-cal.tflite ""
-	wait $SAMP 2>/dev/null
-
-	counters "after one inference"
+	counters "after the control, must match round 243"
 
 	log ""
-	log "===== 2) a second inference, so a rise in active_time can be     ====="
-	log "=====    told from a one off                                     ====="
+	log "===== 2) a second clean run, so a recovery can be told from a    ====="
+	log "=====    first run that happened to work                         ====="
 	w conv2d-cal.tflite ""
-	counters "after two inferences"
 
 	log ""
-	log "  regulator_summary again"
-	grep -A4 vdd_npu /sys/kernel/debug/regulator/regulator_summary > "$C" 2>&1
+	log "===== 3) FORCE A TIMEOUT. 88 out under the modulo form did this  ====="
+	log "=====    in round 241 and wedged the entry after it.             ====="
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
 
 	log ""
-	log "===== Read open_count first. Everything else is commentary on it ====="
+	log "===== 4) THE TEST. This entry hung in round 241. It must compute ====="
+	log "=====    128 of 128 now.                                         ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== 5) force a second timeout, at the other count              ====="
+	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+
+	log ""
+	log "===== 6) THE TEST again                                          ====="
+	w conv2d-cal.tflite ""
+	counters "after two timeouts and two recoveries"
+
+	log ""
+	log "===== Read entry 1, then 4 and 6. Entry 3 and 5 are meant to     ====="
+	log "=====    fail, they are the fixture and not the result.          ====="
 	sync
 }
 case "$1" in

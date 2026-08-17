@@ -1,7 +1,7 @@
-From 3bc433e908042d2c8eb7881ad7a2f8e211a031f0 Mon Sep 17 00:00:00 2001
+From 8d8f1426646ecca72cf64dba0cd4350d204dfc1d Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:48:34 +1200
-Subject: [PATCH v8 v8 05/11] dt-bindings: iommu: rockchip: describe the RK3576
+Subject: [PATCH v8 06/12] dt-bindings: iommu: rockchip: describe the RK3576
  NPU MMU
 
 The RK3576 NPU MMUs are rk3568-iommu compatible but take five clocks
@@ -20,7 +20,7 @@ Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
  1 file changed, 28 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
-index 6ce41d11f..e4187a800 100644
+index 6ce41d11f..83d7e7c8e 100644
 --- a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
 +++ b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
 @@ -26,6 +26,7 @@ properties:
@@ -54,9 +54,9 @@ index 6ce41d11f..e4187a800 100644
  
    "#iommu-cells":
      const: 0
-@@ -64,6 +73,25 @@ properties:
-       Some mmu instances may produce unexpected results
-       when the reset operation is used.
+@@ -72,6 +81,25 @@ required:
+   - clock-names
+   - "#iommu-cells"
  
 +allOf:
 +  - if:
@@ -77,9 +77,9 @@ index 6ce41d11f..e4187a800 100644
 +        clock-names:
 +          maxItems: 2
 +
- required:
-   - compatible
-   - reg
+ additionalProperties: false
+ 
+ examples:
 -- 
 2.43.0
 

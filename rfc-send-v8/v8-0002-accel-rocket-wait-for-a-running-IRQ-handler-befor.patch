@@ -1,0 +1,60 @@
+From e4396345a9e477325fb40ec2b04d3d32c5c47d3d Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 17 Aug 2026 22:53:32 +1200
+Subject: [PATCH v8 02/12] accel/rocket: wait for a running IRQ handler before
+ resetting a core
+
+rocket_reset() calls drm_sched_stop(), which stops the scheduler and
+returns. It does not wait for a threaded handler that is already
+running, so the comment that follows, "Remaining interrupts have been
+handled", states an assumption rather than something the code arranges.
+
+Call synchronize_irq(core->irq) after drm_sched_stop() and reword the
+comment to say what holds afterwards.
+
+It has to go before the scoped_guard(mutex, &core->job_lock) rather than
+inside it. rocket_job_handle_irq() takes job_lock, so waiting for the
+handler while holding that lock would be waiting for a handler that is
+waiting for us. Nothing is held at that point, and both callers,
+rocket_job_timedout() and rocket_reset_work(), run in process context,
+so sleeping there is allowed.
+
+This does not stop a handler that has already read in_flight_job from
+finishing its work on the job the reset is about to drop. That window
+needs the check and the register writes to be one step under the lock,
+which is what the previous patch does; the two are complementary.
+
+Suggested-by: Igor Paunovic <royalnet026@gmail.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_job.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 5f0f9682e..d484a3a6f 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -377,9 +377,17 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	drm_sched_stop(&core->sched, bad);
+ 
+ 	/*
+-	 * Remaining interrupts have been handled, but we might still have
+-	 * stuck jobs. Let's make sure the PM counters stay balanced by
+-	 * manually calling pm_runtime_put_noidle().
++	 * drm_sched_stop() returns without waiting for a threaded handler that
++	 * is already running, so wait for one here. This has to stay outside
++	 * job_lock: the handler takes that lock, so waiting for it while
++	 * holding it would deadlock instead of fencing anything.
++	 */
++	synchronize_irq(core->irq);
++
++	/*
++	 * No handler is running now, but we might still have stuck jobs. Let's
++	 * make sure the PM counters stay balanced by manually calling
++	 * pm_runtime_put_noidle().
+ 	 */
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		if (core->in_flight_job)
+-- 
+2.43.0
+
