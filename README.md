@@ -80,6 +80,50 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
+## The output stage floors at zero, and the fix is one constant (2026-08-19)
+
+Every convolution here whose output zero point is not zero came back with its
+whole lower half pinned at that zero point, as if a ReLU sat on the
+accumulator. It scored 128 of 128 anyway, because the reference it was scored
+against was `max(cpu, out_zp)` and both surfaces were flattened the same way.
+Against the raw CPU output it was 0 of 128.
+
+The output stage is
+
+    byte = clamp(max(requant + L, 0) + offset, -128, 127) + 128
+
+with the floor applied BEFORE the offset, so a negative requant is gone before
+the offset can do anything about it. A byte of `clamp(requant + out_zp, 0, 255)`,
+which is what the operation means, needs `L + offset == out_zp - 128` and needs
+`L >= 128` so the floor never bites. This driver shipped `L = 0` with
+`offset = out_zp - 0x80`: the sum is satisfied and the floor bites. `L = 128`
+with the offset 128 lower is the pair that does not.
+
+| model | out_zp | vs raw CPU before | after |
+|---|---|---|---|
+| `conv2d-cal` | 128 | 0 / 128 | **128 / 128** |
+| `cal_k3` | 128 | 0 / 128 | **128 / 128** |
+| `cal_oc16` | 128 | 0 / 16 | **16 / 16** |
+| `pw33x64w56` | 0 | 64 / 64 | 64 / 64, byte for byte |
+
+`L = 129` and `L = 160` give the same result as `L = 128`, because the offset
+cancels whichever lift is used and only the inequality does any work. The
+constant is not fitted, which is more than can be said for several earlier ones
+in this file.
+
+It is the hardware and not this driver, and an earlier version of the Mesa merge
+request said the opposite. The vendor userspace on the same board does not clamp
+because it lifts too. charsiu found the same floor independently on the same
+silicon, with a control that separates a floor at zero from a rail at -128, and
+has carried the lift since its own round 163; porting the constant without
+porting the reason cost one board round, because charsiu's output zero point is
+zero and its offset was already -128, so the compensation came free there.
+
+⚠ Every accuracy figure in this file dated before this one, on a model whose
+output zero point is not zero, was scored against `max(cpu, out_zp)`. The
+MobileNet numbers are not affected: every layer in it has an output zero point
+of zero, where the floor cannot move a uint8 pixel.
+
 ## An LLM runtime computes on this driver, and it has been timed (2026-08-15)
 
 [charsiu](https://github.com/gahingwoo/charsiu) submits its own register streams
@@ -555,7 +599,7 @@ verification run above measured directly by leaving all of it out.
 
 The Mesa side has its first upstream-shaped slice open as
 [mesa!43804](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804),
-five patches and 648 lines for one regular convolution, posted and not yet
+five patches and 703 lines for one regular convolution, posted and not yet
 reviewed. It is narrow on purpose and declines the depthwise, pointwise and
 image-input types MobileNet is built from, so the end to end result above comes
 from the development tree rather than from it. The rest still lives in
