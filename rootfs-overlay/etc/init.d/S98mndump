@@ -2,42 +2,44 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 251. Round 250 again, with the three design faults fixed.
+# 2026-08-19 round 252. The lift on the depthwise record, which 249 missed.
 #
-# WHAT WENT WRONG IN 250, and it was mine, not the board's. Entry 4 forced the
-# 0x4050 value the parity rule replaced and the block timed out. rocket's
-# reset_autosuspend module parameter defaults to FALSE, so the reset took the
-# pm_runtime_put_noidle() path that round 246 proved does not recover, the
-# domain never dropped, and the MMU stopped answering. Entries 5 through 34 all
-# ran on a dead block. Reading them gave four confident conclusions that were
-# all artefacts: an empty output at 120, a MobileNet regression to all zeros,
-# and chained models breaking under the lift. None of that was measured.
+# WHAT 251 FOUND. The gate worked, the block survived to the last entry, and
+# the log is clean. Two results out of it.
 #
-# THREE FIXES.
-#   1. reset_autosuspend is turned ON below, before anything runs.
-#   2. Every entry is checked for the poison signature and says so in the log,
-#      and a poisoned entry triggers a health check that aborts the round if
-#      the block is really gone. No more silently reading 30 dead entries.
-#   3. The arm that is EXPECTED to hang runs LAST, so it cannot poison anything.
-#      In 250 it ran fourth.
+#   The 0x4050 sweep Igor is owed is COMPLETE and the parity rule wins at both
+#   counts. 88 of 88 and 120 of 120 with it, 64 of 88 and 96 of 120 with the
+#   modulo rule it replaced, and the modulo arm hangs the block at both.
 #
-# WHAT SURVIVED 250, all before the first timeout, and it is not nothing:
-#   conv2d-cal with the lift    128 of 128 against the raw CPU output
-#   conv2d-cal without it         0 of 128, the control
-#   pw64x88w56, parity rule      88 of 88, every channel correct
-# The 88 half of the sweep Igor is owed is therefore already answered. What is
-# still unmeasured is 120, which is why it is entry 3 here.
+#   And the lift broke every model carrying a depthwise. MobileNet went 1000 of
+#   1001 without it to 977 with it, which is below the 983 an empty buffer
+#   scores. mn_L02 went 22 of 64 to 6 of 64 and its maxdiff 6 to 255. mn_L00,
+#   which is a plain first convolution with no depthwise in it, stayed at 32 of
+#   32.
+#
+# WHY, and it is the same mistake as round 248 in a second place. A is written
+# in TWO records. The regular convolution's 64 byte record got the lift in 249;
+# the depthwise 48 byte record at rkt_coefs.c did not. rkt_fill_regcmd takes
+# the lift back out of the output offset for EVERY task either way, so a
+# depthwise got the compensation without the thing being compensated. Fixed by
+# adding the same term to the depthwise A.
 #
 # THE READING RULE, fixed before the run.
-#   perch.py's primary reference is the raw CPU output, so readlog.py's match
-#   column is the honest score and needs no second lookup.
-#   Entries 1 and 2 are the anchor and must reproduce 249 and 250.
+#
+#   Entries 1 and 2 are the anchor and must reproduce 249, 250 and 251.
+#
+#   ⚠ THE BAR IS THE NO-LIFT NUMBER, NOT PERFECTION. These models have out_zp
+#   0, where the floor was invisible, so the no-lift arm was already the honest
+#   score and the lift should return them to it, not beat it. mn_L02 must come
+#   back to 22 of 64 at maxdiff 6, mn_L26 to 574 of 1024, MobileNet to 1000 of
+#   1001. Landing there means the depthwise lift was the whole story. Landing
+#   short means it was not, and the remaining gap is the result.
+#
+#   ⚠ mn_L02 at 22 of 64 was ALREADY WRONG before any of this. Do not read a
+#   return to 22 as success at anything except undoing my own regression.
+#
 #   ⚠ Any entry printing POISON is void, and so is everything after it until an
-#   OK health check. Do not read a poisoned entry as a result. That is the
-#   mistake this round exists to not repeat.
-#   ⚠ Expect regressions among the re-scored models and do not explain them
-#   away. A model that scored well before and badly now was probably never
-#   right; the old reference could not see it.
+#   OK health check.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -57,14 +59,12 @@ w() {
 	after=$(nbad)
 	if [ "$after" != "$before" ]; then
 		log "  !! POISON in this entry. The block faulted. This result is VOID."
-		log "  !! health check follows"
 		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" \
 			> /tmp/hc.txt 2>&1
 		if grep -q "128/128 channels match" /tmp/hc.txt; then
 			log "  !! health OK, the block recovered, continuing"
 		else
 			log "  !! health FAILED, the block is gone. ABORTING the round."
-			log "  !! everything from here on would be an artefact."
 			ABORT=1
 		fi
 	fi
@@ -75,7 +75,6 @@ start() {
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-
 	if [ -w /sys/module/rocket/parameters/reset_autosuspend ]; then
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
 		log "reset_autosuspend = $(cat /sys/module/rocket/parameters/reset_autosuspend)"
@@ -84,64 +83,57 @@ start() {
 	fi
 
 	log ""
-	log "===== 1-2) THE ANCHOR. Must reproduce 249 and 250.                 ====="
+	log "===== 1-2) THE ANCHOR, a regular conv. The depthwise change must   ====="
+	log "=====      not touch it.                                           ====="
 	w conv2d-cal.tflite ""
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 3) 0x4050 AT oc 120, the half of Igor's sweep 250 never      ====="
-	log "=====    actually measured. Parity rule, which is the default.     ====="
-	w pw64x120w56.tflite ""
-
-	log ""
-	log "===== 4-5) MOBILENET, with and without the lift. Its op28 has      ====="
-	log "=====      out_zp 66 and was floored. 250's all zeros was the      ====="
-	log "=====      dead block, not a result.                               ====="
+	log "===== 3-8) THE QUESTION. Each pair is its own control. The bar is  ====="
+	log "=====      the no-lift arm beside it, not 100 percent.             ====="
+	w mn_L02.tflite ""
+	w mn_L02.tflite "ROCKET_NO_LIFT=1"
+	w mn_L26.tflite ""
+	w mn_L26.tflite "ROCKET_NO_LIFT=1"
 	w mobilenet_v1_1.0_224_quant.tflite ""
 	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 6+) THE RE-SCORE against the raw CPU output.                 ====="
-	for m in cal_izp0 cal_k1 cal_k3_imp cal_k5_imp cal_s1 pw2_zp128 \
-	         md003 md003_80 md003_oc128 md003_s2; do
-		w "$m.tflite" ""
-	done
-
-	log ""
-	log "===== add SEGFAULTED in 250 before printing anything, so it died   ====="
-	log "=====   inside the delegate rather than in the reference. Kept to  ====="
-	log "=====   see whether that reproduces. md011 is DROPPED: it has two  ====="
-	log "=====   graph inputs and perch.py only fills the first, which is a ====="
-	log "=====   gap in my tool and not a question for the board.           ====="
-	w add.tflite ""
-
-	log ""
-	log "===== NEGATIVE OUTPUT ZERO POINTS, offset as low as -384           ====="
-	w conv2x.tflite ""
+	log "===== 9-14) bare depthwise, where the record being fixed is the    ====="
+	log "=====       only one in play                                       ====="
+	w mn_dw1.tflite ""
+	w mn_dw1.tflite "ROCKET_NO_LIFT=1"
+	w mn_dw25.tflite ""
+	w mn_dw25.tflite "ROCKET_NO_LIFT=1"
 	w dwconv.tflite ""
+	w dwconv.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== the MobileNet layer slices, with a no-lift arm on two of     ====="
-	log "=====   them so a failure can be attributed rather than guessed    ====="
-	for m in mn_L00 mn_L01 mn_L02 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L08 \
-	         mn_L12 mn_L18 mn_L24 mn_L26; do
+	log "===== 15-16) a single pointwise at out_zp 0, which 249 showed is   ====="
+	log "=====        byte for byte identical either way. Must stay so.     ====="
+	w pw33x64w56.tflite ""
+	w pw33x64w56.tflite "ROCKET_NO_LIFT=1"
+
+	log ""
+	log "===== 17+) the rest of the MobileNet slices, lift on, against 251  ====="
+	for m in mn_L00 mn_L01 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L08 \
+	         mn_L12 mn_L18 mn_L24; do
 		w "$m.tflite" ""
 	done
-	w mn_L02.tflite "ROCKET_NO_LIFT=1"
-	w mn_L26.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== LAST, and only now, the arm that is expected to hang.        ====="
-	log "=====   250 ran this fourth and it cost thirty entries.            ====="
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
-	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+	log "===== and the two that were never attributable, each with a arm    ====="
+	w conv2x.tflite ""
+	w conv2x.tflite "ROCKET_NO_LIFT=1"
+	w md003_s2.tflite ""
+	w md003_s2.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
 	log "===== a final anchor, so the log says whether the block survived   ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read entries 1 and 2 first, then any POISON line.            ====="
+	log "===== Read 1 and 2, then 3 against 4. The bar is the arm beside it ====="
 	sync
 }
 case "$1" in

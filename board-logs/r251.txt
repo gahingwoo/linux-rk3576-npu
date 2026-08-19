@@ -1,0 +1,2138 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:27.0%, RX DQS Vref:27.8%, TX Vref:18.0%,21.0%
+DQ roc:
+p3 n0, p7 n0, p5 n3, p7 n0, p0 n0, p4 n0, p0 n1, p2 n1, p2 n1, 
+p6 n0, p1 n1, p4 n0, p6 n0, p6 n2, p5 n0, p0 n6, p4 n0, p0 n0, 
+
+DQ rds:l0 h1 l0 h1 l0 h1 l0 l0, l0 h1 l0 l0 l0 l0 l0 l0 
+DQS roc: p1, n0, p3, n0
+
+CH1 RX Vref:28.2%, RX DQS Vref:29.6%, TX Vref:20.0%,22.0%
+DQ roc:
+p3 n0, p4 n0, p5 n0, p2 n0, p3 n0, p7 n0, p1 n5, p3 n0, p5 n0, 
+p1 n0, p6 n0, p2 n0, p4 n1, p5 n0, p4 n0, p0 n0, p0 n4, p7 n0, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, l0 l0 h1 h1 l0 l0 h2 l0 
+DQS roc: p0, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004822] Console: colour dummy device 80x25
+[    0.005357] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006312] pid_max: default: 32768 minimum: 301
+[    0.007204] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007956] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009152] VFS: Finished mounting rootfs on nullfs
+[    0.012594] rcu: Hierarchical SRCU implementation.
+[    0.013095] rcu:     Max phase no-delay instances is 1000.
+[    0.013880] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021498] EFI services will not be available.
+[    0.022590] smp: Bringing up secondary CPUs ...
+[    0.023753] Detected VIPT I-cache on CPU1
+[    0.023873] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024744] Detected VIPT I-cache on CPU2
+[    0.024828] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025661] Detected VIPT I-cache on CPU3
+[    0.025741] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026647] CPU features: detected: Spectre-v3a
+[    0.026667] CPU features: detected: Spectre-BHB
+[    0.026673] CPU features: detected: ARM erratum 1742098
+[    0.026682] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026687] Detected PIPT I-cache on CPU4
+[    0.026771] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027578] Detected PIPT I-cache on CPU5
+[    0.027642] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028418] Detected PIPT I-cache on CPU6
+[    0.028483] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029266] Detected PIPT I-cache on CPU7
+[    0.029333] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029465] smp: Brought up 1 node, 8 CPUs
+[    0.038607] SMP: Total of 8 processors activated.
+[    0.039062] CPU: All CPU(s) started at EL2
+[    0.039475] CPU features: detected: 32-bit EL0 Support
+[    0.039949] CPU features: detected: 32-bit EL1 Support
+[    0.040429] CPU features: detected: CRC32 instructions
+[    0.040917] CPU features: detected: PMUv3
+[    0.041371] alternatives: applying system-wide alternatives
+[    0.045070] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050512] devtmpfs: initialized
+[    0.067290] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.068058] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069200] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069789] 0 pages in range for non-PLT usage
+[    0.069794] 511152 pages in range for PLT usage
+[    0.076960] DMI: not present or invalid.
+[    0.081399] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.083042] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.084159] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.084950] audit: initializing netlink subsys (disabled)
+[    0.085618] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.090864] thermal_sys: Registered thermal governor 'step_wise'
+[    0.090874] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.091528] cpuidle: using governor menu
+[    0.092787] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.093620] ASID allocator initialised with 32768 entries
+[    0.098824] Serial: AMBA PL011 UART driver
+[    0.107743] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.109101] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.110384] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.111608] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.112845] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.123172] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.123884] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.124932] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.126913] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.182720] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.183355] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.194300] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.194934] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.195512] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.196137] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.196729] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.197354] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.197931] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.198555] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.201842] ACPI: Interpreter disabled.
+[    0.213130] iommu: Default domain type: Translated
+[    0.213582] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.214757] SCSI subsystem initialized
+[    0.215500] usbcore: registered new interface driver usbfs
+[    0.216054] usbcore: registered new interface driver hub
+[    0.216582] usbcore: registered new device driver usb
+[    0.219849] pps_core: LinuxPPS API ver. 1 registered
+[    0.220310] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.221170] PTP clock support registered
+[    0.221821] EDAC MC: Ver: 3.0.0
+[    0.222797] scmi_core: SCMI protocol bus registered
+[    0.225842] FPGA manager framework
+[    0.227348] vgaarb: loaded
+[    0.228215] clocksource: Switched to clocksource arch_sys_counter
+[    0.229093] VFS: Disk quotas dquot_6.6.0
+[    0.229480] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.230382] pnp: PnP ACPI: disabled
+[    0.238044] NET: Registered PF_INET protocol family
+[    0.238969] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.251861] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.252816] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.253542] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.255272] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.257836] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.258561] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.259850] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.260876] RPC: Registered named UNIX socket transport module.
+[    0.261427] RPC: Registered udp transport module.
+[    0.261860] RPC: Registered tcp transport module.
+[    0.262295] RPC: Registered tcp-with-tls transport module.
+[    0.262800] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.263402] PCI: CLS 0 bytes, default 64
+[    0.267661] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.268385] kvm [1]: nv: 710 fine grained trap handlers
+[    0.269293] kvm [1]: IPA Size Limit: 40 bits
+[    0.272449] kvm [1]: vgic interrupt IRQ9
+[    0.272856] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.275410] Initialise system trusted keyrings
+[    0.276032] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.277198] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.278053] NFS: Registering the id_resolver key type
+[    0.278542] Key type id_resolver registered
+[    0.278931] Key type id_legacy registered
+[    0.279319] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.279938] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.281119] Key type asymmetric registered
+[    0.281505] Asymmetric key parser 'x509' registered
+[    0.282001] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.282683] io scheduler mq-deadline registered
+[    0.283102] io scheduler kyber registered
+[    0.283517] io scheduler bfq registered
+[    0.292701] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.294453] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.296338] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.298208] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.299823] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.301463] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.303206] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.304834] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.306458] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.308081] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.309722] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.311348] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.313112] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.314737] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.316510] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.318268] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.355456] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.423698] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.424430] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.426937] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.427638] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.430303] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.431005] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.465525] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.469880] printk: legacy console [ttyS0] disabled
+[    0.470693] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.471644] printk: legacy console [ttyS0] enabled
+[    0.471644] printk: legacy console [ttyS0] enabled
+[    0.472527] printk: legacy bootconsole [uart8250] disabled
+[    0.472527] printk: legacy bootconsole [uart8250] disabled
+[    0.481534] msm_serial: driver initialized
+[    0.483316] SuperH (H)SCI(F) driver initialized
+[    0.484468] STM32 USART driver initialized
+[    0.491500] random: crng init done
+[    0.494956] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.497101] platform 27d00000.vop: Adding to iommu group 1
+[    0.505238] loop: module loaded
+[    0.508136] megasas: 07.734.00.00-rc1
+[    0.524326] tun: Universal TUN/TAP device driver, 1.6
+[    0.525907] VFIO - User Level meta-driver version: 0.3
+[    0.537822] usbcore: registered new interface driver usb-storage
+[    0.548362] i2c_dev: i2c /dev entries driver
+[    0.553461] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.554368] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.555267] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.593965] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.594628] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.595603] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.596592] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.597545] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.604046] scsi host0: ufshcd
+[    1.036232] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.037275] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.038016] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.038676] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.043635] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.044163] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.045302] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.046263] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.046908] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.047671] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.054643] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.058186] usbcore: registered new interface driver usbhid
+[    1.058683] usbhid: USB HID core driver
+[    1.070633] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.072776] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.093577] NET: Registered PF_INET6 protocol family
+[    1.095116] Segment Routing with IPv6
+[    1.095473] In-situ OAM (IOAM) with IPv6
+[    1.095881] NET: Registered PF_PACKET protocol family
+[    1.096411] Key type dns_resolver registered
+[    1.125707] registered taskstats version 1
+[    1.126316] Loading compiled-in X.509 certificates
+[    1.136399] Demotion targets for Node 0: null
+[    1.298057] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.304429] cpu cpu0: EM: created perf domain
+[    1.306805] cpu cpu4: EM: created perf domain
+[    1.313827] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.314508] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.315094] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.315633] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.322727] platform 27700000.npu: Adding to iommu group 2
+[    1.329946] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.331367] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.336122] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.338006] clk: Not disabling unused clocks
+[    1.338389] PM: genpd: Disabling unused power domains
+[    1.338986] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.349788] Waiting for root device /dev/mmcblk0p2...
+[    1.406690] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.521407] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 82
+[    1.522867] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.524354] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.527745]  mmcblk0: p1 p2
+[    1.693365] EXT4-fs (mmcblk0p2): mounted filesystem 9f72956e-ba19-4849-94e0-91ea340ab0e8 r/w with ordered data mode. Quota mode: none.
+[    1.694495] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.695473] devtmpfs: mounted
+[    1.695868] VFS: Pivoted into new rootfs
+[    1.701236] Freeing unused kernel memory: 13248K
+[    1.701829] Run /sbin/init as init process
+[    1.780528] EXT4-fs (mmcblk0p2): re-mounted 9f72956e-ba19-4849-94e0-91ea340ab0e8.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.507271] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.508131] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.508881] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.509609] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.510517] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.511424] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.512352] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.513260] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.514229] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.515137] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.516048] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.516973] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.517922] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.518847] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+reset_autosuspend = Y
+
+===== 1-2) THE ANCHOR. Must reproduce 249 and 250.                 =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+  -- conv2d-cal.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 103968/204800 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=128 min=128 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 0/128 channels match    COMPUTED 0    reference constant 0/128
+      vs max(cpu,zp) : 128/128 channels match    COMPUTED 128    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [125, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 125 off>1 2414 | rowN max 103 off>1 2454 | col0 max 124 off>1 2446 | colN max 120 off>1 2448 | interior max 128 off>1 89499
+    affine fit over 128 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0013 (min 1.0009 max 1.0022)
+      b median -0.21    correlation median +1.0000
+      b spread: min -0.41 max -0.14 std 0.04   SAME on every channel
+      b per channel, lowest 4: ch30=-0.4, ch100=-0.3, ch0=-0.3, ch47=-0.3   highest 4: ch7=-0.2, ch126=-0.1, ch61=-0.1, ch84=-0.1
+      lowest a: [(84, 1.0009, -0.1), (9, 1.001, -0.2), (61, 1.001, -0.1)]
+      highest a: [(0, 1.0018, -0.3), (100, 1.0018, -0.3), (30, 1.0022, -0.4)]
+    residual: within 1  51.7%   within 2  52.6%   within 4  54.7%   within 8  58.3%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 50.71%   off by exactly 1: 1598, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.01, 0.007, 0.009, 0.009, 0.008]
+    off-by-1 by channel: median 0.007   lowest [(68, 0.0), (106, 0.0), (90, 0.0)]   highest [(21, 0.029), (36, 0.031), (73, 0.035)]
+    RAW ch 73 rows [1, 2] cols 1..16
+      y1 npu [128, 128, 128, 128, 128, 128, 128, 170, 213, 128, 128, 128, 128, 128, 131, 128]
+      y1 ref [126, 69, 95, 124, 126, 125, 127, 170, 213, 122, 105, 83, 116, 116, 131, 110]
+      y2 npu [128, 166, 175, 130, 128, 128, 128, 128, 129, 128, 165, 191, 229, 128, 128, 128]
+      y2 ref [93, 166, 175, 130, 93, 86, 119, 99, 129, 111, 165, 191, 229, 125, 69, 94]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [(84, 1.0009, -0.1), (9, 1.001, -0.2), (61, 1.001, -0.1)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== 3) 0x4050 AT oc 120, the half of Igor's sweep 250 never      =====
+=====    actually measured. Parity rule, which is the default.     =====
+
+  -- pw64x120w56.tflite   
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+  pw64x120w56.tflite out(56, 56, 120): 120/120 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 374611/376320 pixels, 66/120 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 73    trivial (reference is constant): 47
+    npu distinct=240 min=0 max=255 | cpu distinct=240 | out_zp=0
+    channels that are CONSTANT: 47/120, of which pinned at out_zp: 47  (not empty)
+    reference channels that are constant: 47/120    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.55%   off by exactly 1: 1577, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.005, 0.005, 0.004, 0.004, 0.006, 0.005, 0.005]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (63, 0.0), (62, 0.0)]   highest [(59, 0.025), (67, 0.032), (77, 0.032)]
+    RAW ch 77 rows [1, 2] cols 1..16
+      y1 npu [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y1 ref [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y2 npu [28, 163, 65, 105, 3, 115, 78, 87, 90, 29, 129, 76, 102, 57, 63, 129]
+      y2 ref [28, 163, 65, 105, 3, 116, 78, 87, 91, 29, 129, 76, 102, 57, 63, 129]
+    every channel correct
+
+===== 4-5) MOBILENET, with and without the lift. Its op28 has      =====
+=====      out_zp 66 and was floored. 250's all zeros was the      =====
+=====      dead block, not a result.                               =====
+
+  -- mobilenet_v1_1.0_224_quant.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mobilenet_v1_1.0_224_quant.tflite out(1, 1, 1001): 977/1001 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 949/1001 pixels, 949/1001 channels identical, NOT byte exact
+    ONE PIXEL OUTPUT: COMPUTED cannot apply. Across the 1001 channels, npu has 6 distinct values and the reference 10
+    TOP 5 npu [(762, 120), (805, 120), (711, 5), (663, 3), (586, 2)]
+    TOP 5 cpu [(754, 43), (482, 31), (557, 31), (905, 26), (633, 16)]
+    TOP 1 DIFFERS    top 5 as a set DIFFERS
+    npu distinct=6 min=0 max=120 | cpu distinct=10 | out_zp=0
+    channels that are CONSTANT: 1001/1001, of which pinned at out_zp: 992  (not empty)
+    reference channels that are constant: 1001/1001    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 1/1, first [0] last [0]
+    cols with any error: 1/1, first [0] last [0]
+    row maxdiff profile, every 8th: [120]
+    maxdiff excluding the outer ring: -1    whole surface: 120
+    by edge: row0 max 120 off>1 24 | rowN max 120 off>1 24 | col0 max 120 off>1 24 | colN max 120 off>1 24 | interior EMPTY
+    residual: within 1  97.6%   within 2  98.3%   within 4  99.0%   within 8  99.3%
+      of the pixels off by more than 1,  75.0% are at a rail of the hardware output
+    interior: exact 94.81%   off by exactly 1: 28, of which npu LOW  89.3%
+    off-by-1 by row, every 8th: [0.028]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (654, 0.0), (655, 0.0)]   highest [(893, 1.0), (112, 1.0), (623, 1.0)]
+    RAW ch 623: surface is 1x1, no rows 1,2 cols 1..16 to show; whole channel is npu [0] ref [1]
+    WRONG channels (24): 41, 47, 78, 314, 319, 482..483, 557, 586, 606, 621, 633, 663 ...
+    first 8 channel maxdiffs: [0, 0, 0, 0, 0, 0, 0, 0]
+    channels 64..71 maxdiffs: [0, 0, 0, 0, 0, 0, 0, 0]
+    COMPUTED-correct channels: []
+
+  -- mobilenet_v1_1.0_224_quant.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mobilenet_v1_1.0_224_quant.tflite out(1, 1, 1001): 1000/1001 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 988/1001 pixels, 988/1001 channels identical, NOT byte exact
+    ONE PIXEL OUTPUT: COMPUTED cannot apply. Across the 1001 channels, npu has 9 distinct values and the reference 10
+    TOP 5 npu [(754, 42), (482, 30), (557, 30), (905, 30), (633, 15)]
+    TOP 5 cpu [(754, 43), (482, 31), (557, 31), (905, 26), (633, 16)]
+    TOP 1 AGREES    top 5 as a set AGREES
+    npu distinct=9 min=0 max=42 | cpu distinct=10 | out_zp=0
+    channels that are CONSTANT: 1001/1001, of which pinned at out_zp: 956  (not empty)
+    reference channels that are constant: 1001/1001    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 1/1, first [0] last [0]
+    cols with any error: 1/1, first [0] last [0]
+    row maxdiff profile, every 8th: [4]
+    maxdiff excluding the outer ring: -1    whole surface: 4
+    by edge: row0 max 4 off>1 1 | rowN max 4 off>1 1 | col0 max 4 off>1 1 | colN max 4 off>1 1 | interior EMPTY
+    residual: within 1  99.9%   within 2  99.9%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 98.70%   off by exactly 1: 12, of which npu LOW  75.0%
+    off-by-1 by row, every 8th: [0.012]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (659, 0.0), (660, 0.0)]   highest [(47, 1.0), (754, 1.0), (652, 1.0)]
+    RAW ch 652: surface is 1x1, no rows 1,2 cols 1..16 to show; whole channel is npu [1] ref [0]
+    WRONG channels (1): 905
+    first 8 channel maxdiffs: [0, 0, 0, 0, 0, 0, 0, 0]
+    channels 64..71 maxdiffs: [0, 0, 0, 0, 0, 0, 0, 0]
+    COMPUTED-correct channels: []
+
+===== 6+) THE RE-SCORE against the raw CPU output.                 =====
+
+  -- cal_izp0.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_izp0.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204352/204800 pixels, 55/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 96972/204800 pixels across 123/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 5/128 channels match    COMPUTED 5    reference constant 1/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.78%   off by exactly 1: 410, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.002, 0.003, 0.002, 0.002, 0.001]
+    off-by-1 by channel: median 0.000   lowest [(63, 0.0), (82, 0.0), (81, 0.0)]   highest [(56, 0.009), (4, 0.013), (0, 0.015)]
+    RAW ch 0 rows [1, 2] cols 1..16
+      y1 npu [120, 129, 99, 154, 118, 154, 222, 222, 158, 108, 116, 150, 118, 127, 151, 217]
+      y1 ref [120, 129, 99, 153, 118, 154, 222, 222, 158, 108, 116, 150, 118, 127, 151, 217]
+      y2 npu [226, 239, 175, 111, 105, 148, 65, 144, 137, 175, 255, 191, 145, 120, 131, 87]
+      y2 ref [226, 239, 175, 111, 105, 148, 65, 144, 137, 175, 255, 191, 145, 120, 131, 87]
+    every channel correct
+
+  -- cal_k1.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_k1.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204429/204800 pixels, 78/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=83 min=80 max=170 | cpu distinct=83 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 94231/204800 pixels across 127/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 1/128 channels match    COMPUTED 1    reference constant 1/128
+      cpu unclamped min=80 max=170 distinct=83
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.82%   off by exactly 1: 338, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.002, 0.001, 0.002, 0.001, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (60, 0.0), (59, 0.0)]   highest [(21, 0.008), (101, 0.01), (27, 0.013)]
+    RAW ch 27 rows [1, 2] cols 1..16
+      y1 npu [123, 122, 122, 109, 138, 121, 130, 123, 123, 123, 122, 122, 117, 122, 138, 128]
+      y1 ref [123, 122, 122, 109, 137, 121, 130, 123, 123, 123, 122, 122, 117, 122, 138, 128]
+      y2 npu [128, 123, 123, 123, 122, 122, 122, 109, 145, 118, 124, 123, 123, 123, 122, 122]
+      y2 ref [128, 123, 123, 123, 122, 122, 122, 109, 145, 118, 124, 123, 123, 123, 122, 122]
+    every channel correct
+
+  -- cal_k3_imp.tflite   
+rocket: OUT_CVT computed_shift=22 scale=0x737d -> emitting shift=22
+  cal_k3_imp.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204227/204800 pixels, 117/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 95180/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.72%   off by exactly 1: 522, of which npu LOW  42.7%
+    off-by-1 by row, every 8th: [0.003, 0.002, 0.003, 0.002, 0.004]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (91, 0.0), (90, 0.0)]   highest [(34, 0.034), (19, 0.036), (77, 0.06)]
+    RAW ch 77 rows [1, 2] cols 1..16
+      y1 npu [45, 70, 95, 121, 146, 171, 196, 222, 247, 37, 62, 88, 113, 138, 164, 189]
+      y1 ref [45, 70, 95, 120, 146, 171, 196, 222, 247, 37, 62, 88, 113, 138, 164, 189]
+      y2 npu [187, 212, 238, 28, 53, 78, 104, 129, 154, 180, 205, 230, 20, 46, 71, 96]
+      y2 ref [187, 212, 238, 28, 53, 78, 104, 129, 154, 180, 205, 230, 20, 45, 71, 96]
+    every channel correct
+
+  -- cal_k5_imp.tflite   
+rocket: OUT_CVT computed_shift=22 scale=0x737d -> emitting shift=22
+  cal_k5_imp.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204239/204800 pixels, 117/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 94788/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.72%   off by exactly 1: 522, of which npu LOW  42.7%
+    off-by-1 by row, every 8th: [0.002, 0.003, 0.002, 0.003, 0.003]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (91, 0.0), (90, 0.0)]   highest [(22, 0.034), (19, 0.037), (77, 0.059)]
+    RAW ch 77 rows [1, 2] cols 1..16
+      y1 npu [242, 32, 58, 83, 108, 134, 159, 184, 210, 235, 25, 50, 76, 101, 126, 151]
+      y1 ref [242, 32, 58, 83, 108, 134, 159, 184, 210, 235, 25, 50, 75, 101, 126, 151]
+      y2 npu [150, 175, 200, 225, 251, 41, 66, 91, 117, 142, 167, 193, 218, 243, 33, 59]
+      y2 ref [150, 175, 200, 226, 251, 41, 66, 91, 117, 142, 167, 193, 218, 243, 33, 59]
+    every channel correct
+
+  -- cal_s1.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_s1.tflite out(80, 80, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 817631/819200 pixels, 25/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 403110/819200 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    cols with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 1490, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.002, 0.002, 0.003, 0.002, 0.002, 0.001, 0.002, 0.002, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(126, 0.0), (62, 0.0), (116, 0.0)]   highest [(22, 0.008), (20, 0.012), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [127, 145, 133, 24, 127, 59, 244, 61, 189, 106, 143, 169, 77, 112, 51, 207]
+      y1 ref [127, 145, 133, 24, 127, 59, 244, 61, 189, 106, 143, 169, 77, 112, 51, 207]
+      y2 npu [175, 78, 211, 106, 160, 134, 85, 114, 74, 192, 94, 211, 29, 209, 113, 133]
+      y2 ref [175, 78, 211, 106, 160, 134, 85, 114, 74, 192, 94, 211, 29, 209, 113, 133]
+    every channel correct
+
+  -- pw2_zp128.tflite   
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+  pw2_zp128.tflite out(112, 112, 64): 64/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 783277/802816 pixels, 30/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 53    trivial (reference is constant): 11
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 11/64, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 11/64    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 369025/802816 pixels across 49/64 channels
+      vs UNCLAMPED cpu: 64/64 channels match    COMPUTED 53    reference constant 11/64
+      vs max(cpu,zp) : 15/64 channels match    COMPUTED 11    reference constant 17/64
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    cols with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 97.57%   off by exactly 1: 18845, of which npu LOW   1.5%
+    off-by-1 by row, every 8th: [0.024, 0.024, 0.025, 0.024, 0.025, 0.024, 0.025, 0.024, 0.024, 0.025, 0.024, 0.025, 0.024, 0.024]
+    off-by-1 by channel: median 0.004   lowest [(0, 0.0), (26, 0.0), (27, 0.0)]   highest [(1, 0.032), (11, 0.191), (44, 1.0)]
+    RAW ch 44 rows [1, 2] cols 1..16
+      y1 npu [68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68]
+      y1 ref [67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67]
+      y2 npu [68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68, 68]
+      y2 ref [67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67]
+    every channel correct
+
+  -- md003.tflite   
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+  md003.tflite out(160, 160, 16): 16/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 409090/409600 pixels, 12/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 16    trivial (reference is constant): 0
+    npu distinct=144 min=11 max=198 | cpu distinct=145 | out_zp=127
+    channels that are CONSTANT: 0/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 192765/409600 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 16/16 channels match    COMPUTED 16    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=11 max=198 distinct=145
+    rows with any error: 160/160, first [0, 1, 2, 3, 4, 5] last [154, 155, 156, 157, 158, 159]
+    cols with any error: 160/160, first [0, 1, 2, 3, 4, 5] last [154, 155, 156, 157, 158, 159]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.88%   off by exactly 1: 497, of which npu LOW  19.9%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.001, 0.001, 0.001, 0.002, 0.001, 0.001, 0.001, 0.001, 0.002, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (1, 0.0), (2, 0.0)]   highest [(7, 0.004), (11, 0.004), (4, 0.008)]
+    RAW ch 4 rows [1, 2] cols 1..16
+      y1 npu [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+      y1 ref [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+      y2 npu [149, 131, 149, 148, 149, 149, 91, 149, 136, 149, 125, 149, 155, 149, 149, 121]
+      y2 ref [149, 131, 149, 148, 149, 149, 91, 149, 136, 149, 125, 149, 155, 149, 149, 121]
+    every channel correct
+
+  -- md003_80.tflite   
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+  md003_80.tflite out(80, 80, 16): 16/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 102273/102400 pixels, 12/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 16    trivial (reference is constant): 0
+    npu distinct=144 min=11 max=198 | cpu distinct=145 | out_zp=127
+    channels that are CONSTANT: 0/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 48191/102400 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 16/16 channels match    COMPUTED 16    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=11 max=198 distinct=145
+    rows with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    cols with any error: 60/80, first [0, 1, 2, 4, 5, 7] last [73, 74, 76, 77, 78, 79]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.88%   off by exactly 1: 120, of which npu LOW  20.8%
+    off-by-1 by row, every 8th: [0.001, 0.001, 0.001, 0.002, 0.002, 0.002, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (1, 0.0), (2, 0.0)]   highest [(3, 0.004), (11, 0.004), (4, 0.008)]
+    RAW ch 4 rows [1, 2] cols 1..16
+      y1 npu [149, 155, 149, 149, 121, 149, 136, 149, 125, 149, 155, 149, 149, 129, 149, 152]
+      y1 ref [149, 155, 149, 149, 121, 149, 136, 149, 125, 149, 155, 149, 149, 129, 149, 152]
+      y2 npu [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+      y2 ref [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+    every channel correct
+
+  -- md003_oc128.tflite   
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+  md003_oc128.tflite out(80, 80, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 818184/819200 pixels, 96/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=144 min=11 max=198 | cpu distinct=145 | out_zp=127
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 385528/819200 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=11 max=198 distinct=145
+    rows with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    cols with any error: 60/80, first [0, 1, 2, 4, 5, 7] last [73, 74, 76, 77, 78, 79]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.88%   off by exactly 1: 960, of which npu LOW  20.8%
+    off-by-1 by row, every 8th: [0.001, 0.001, 0.001, 0.002, 0.002, 0.002, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (88, 0.0), (86, 0.0)]   highest [(20, 0.008), (52, 0.008), (100, 0.008)]
+    RAW ch 100 rows [1, 2] cols 1..16
+      y1 npu [149, 155, 149, 149, 121, 149, 136, 149, 125, 149, 155, 149, 149, 129, 149, 152]
+      y1 ref [149, 155, 149, 149, 121, 149, 136, 149, 125, 149, 155, 149, 149, 129, 149, 152]
+      y2 npu [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+      y2 ref [152, 149, 158, 149, 148, 149, 149, 129, 149, 152, 149, 164, 149, 138, 149, 148]
+    every channel correct
+
+  -- md003_s2.tflite   
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+rocket: OUT_CVT computed_shift=23 scale=0x4569 -> emitting shift=23
+  md003_s2.tflite out(80, 80, 16): 0/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 82113/102400 pixels, 0/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=144 min=11 max=198 | cpu distinct=145 | out_zp=127
+    channels that are CONSTANT: 0/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 48184/102400 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 0/16 channels match    COMPUTED 0    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=11 max=198 distinct=145
+    rows with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    cols with any error: 80/80, first [0, 1, 2, 3, 4, 5] last [74, 75, 76, 77, 78, 79]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 122, 122]
+    maxdiff excluding the outer ring: 122    whole surface: 122
+    by edge: row0 max 1 off>1 0 | rowN max 120 off>1 1214 | col0 max 121 off>1 247 | colN max 116 off>1 243 | interior max 122 off>1 17931
+    affine fit over 15 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.8288 (min 0.6886 max 1.0068)
+      b median +24.19    correlation median +0.8718
+      b spread: min -1.02 max +50.05 std 16.92   VARIES per channel
+      b per channel, lowest 4: ch14=-1.0, ch5=-0.1, ch13=-0.1, ch9=-0.1   highest 4: ch4=+30.3, ch11=+37.2, ch12=+41.3, ch6=+50.0
+    residual: within 1  80.9%   within 2  81.2%   within 4  82.0%   within 8  83.5%
+      of the pixels off by more than 1,  49.8% are at a rail of the hardware output
+    interior: exact 80.95%   off by exactly 1: 613, of which npu LOW  69.3%
+    off-by-1 by row, every 8th: [0.001, 0.001, 0.002, 0.001, 0.002, 0.002, 0.002, 0.002, 0.027, 0.027]
+      rows above twice the median rate: 15, first [63, 64, 65, 66] last [74, 75, 76, 77]
+    off-by-1 by channel: median 0.001   lowest [(0, 0.0), (2, 0.0), (5, 0.0)]   highest [(3, 0.01), (4, 0.027), (7, 0.036)]
+    RAW ch 7 rows [1, 2] cols 1..16
+      y1 npu [141, 146, 146, 147, 147, 147, 147, 133, 116, 136, 155, 146, 147, 147, 147, 147]
+      y1 ref [141, 146, 146, 147, 147, 147, 147, 133, 116, 136, 155, 146, 147, 147, 147, 147]
+      y2 npu [146, 147, 147, 147, 147, 133, 116, 136, 157, 146, 147, 147, 147, 147, 134, 109]
+      y2 ref [146, 147, 147, 147, 147, 133, 116, 136, 157, 146, 147, 147, 147, 147, 134, 109]
+    WRONG channels (16): 0..15
+    first 8 channel maxdiffs: [98, 40, 62, 28, 58, 93, 102, 38]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== add SEGFAULTED in 250 before printing anything, so it died   =====
+=====   inside the delegate rather than in the reference. Kept to  =====
+=====   see whether that reproduces. md011 is DROPPED: it has two  =====
+=====   graph inputs and perch.py only fills the first, which is a =====
+=====   gap in my tool and not a question for the board.           =====
+
+  -- add.tflite   
+Segmentation fault
+
+===== NEGATIVE OUTPUT ZERO POINTS, offset as low as -384           =====
+
+  -- conv2x.tflite   
+rocket: OUT_CVT computed_shift=24 scale=0x714b -> emitting shift=24
+rocket: OUT_CVT computed_shift=24 scale=0x511a -> emitting shift=24
+  conv2x.tflite out(40, 40, 16): 0/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 350/25600 pixels, 0/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=1 min=127 max=127 | cpu distinct=162 | out_zp=132
+    channels that are CONSTANT: 16/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 16
+    UNCLAMPED reference: the clamp rewrites 13297/25600 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 0/16 channels match    COMPUTED 0    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=47 max=214 distinct=162
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [68, 84, 83, 73, 80]
+    maxdiff excluding the outer ring: 87    whole surface: 87
+    by edge: row0 max 68 off>1 608 | rowN max 70 off>1 600 | col0 max 58 off>1 599 | colN max 56 off>1 604 | interior max 87 off>1 22235
+    residual: within 1   4.0%   within 2   7.0%   within 4  12.4%   within 8  24.0%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact  1.33%   off by exactly 1: 562, of which npu LOW  44.5%
+    off-by-1 by row, every 8th: [0.025, 0.025, 0.035, 0.021, 0.02]
+    off-by-1 by channel: median 0.024   lowest [(4, 0.001), (0, 0.01), (1, 0.01)]   highest [(15, 0.035), (13, 0.037), (9, 0.066)]
+    RAW ch 9 rows [1, 2] cols 1..16
+      y1 npu [127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127]
+      y1 ref [115, 128, 156, 117, 158, 137, 137, 127, 129, 122, 135, 155, 120, 175, 134, 154]
+      y2 npu [127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127]
+      y2 ref [158, 142, 172, 131, 123, 130, 134, 131, 135, 168, 135, 164, 130, 138, 126, 143]
+    WRONG channels (16): 0..15
+    first 8 channel maxdiffs: [79, 87, 63, 57, 80, 55, 59, 50]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+  -- dwconv.tflite   
+rocket: OUT_CVT computed_shift=23 scale=0x52c5 -> emitting shift=23
+  dwconv.tflite out(40, 40, 16): 0/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 401/25600 pixels, 0/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=95 min=27 max=127 | cpu distinct=200 | out_zp=99
+    channels that are CONSTANT: 6/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 6
+    UNCLAMPED reference: the clamp rewrites 12582/25600 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 0/16 channels match    COMPUTED 0    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=0 max=202 distinct=200
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [124, 127, 127, 127, 127]
+    maxdiff excluding the outer ring: 127    whole surface: 127
+    by edge: row0 max 124 off>1 624 | rowN max 127 off>1 626 | col0 max 127 off>1 621 | colN max 127 off>1 628 | interior max 127 off>1 22239
+    affine fit over 4 wrong channels, unclipped pixels only, ref = a*npu + b:  a median -0.1660 (min -7.9203 max 1.2958)
+      b median +144.38    correlation median +0.0098
+      b spread: min -43.18 max +1121.47 std 458.07   VARIES per channel
+      b per channel, lowest 4: ch6=-43.2, ch7=+93.0, ch15=+195.7, ch2=+1121.5   highest 4: ch6=-43.2, ch7=+93.0, ch15=+195.7, ch2=+1121.5
+    residual: within 1   3.6%   within 2   5.6%   within 4   9.8%   within 8  15.2%
+      of the pixels off by more than 1,   5.5% are at a rail of the hardware output
+    interior: exact  1.65%   off by exactly 1: 484, of which npu LOW  68.2%
+    off-by-1 by row, every 8th: [0.023, 0.025, 0.018, 0.023, 0.025]
+    off-by-1 by channel: median 0.016   lowest [(0, 0.0), (1, 0.0), (6, 0.0)]   highest [(10, 0.051), (7, 0.071), (5, 0.077)]
+    RAW ch 5 rows [1, 2] cols 1..16
+      y1 npu [127, 127, 127, 127, 127, 127, 92, 127, 127, 127, 127, 127, 127, 127, 127, 100]
+      y1 ref [75, 76, 127, 104, 84, 105, 76, 45, 75, 127, 76, 127, 104, 84, 105, 76]
+      y2 npu [127, 127, 125, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127]
+      y2 ref [84, 104, 83, 104, 76, 128, 77, 75, 76, 127, 104, 83, 104, 76, 128, 77]
+    WRONG channels (16): 0..15
+    first 8 channel maxdiffs: [99, 72, 77, 93, 127, 85, 91, 56]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+    channels whose output VARIES (10), as runs: 0, 2..3, 5..7, 10, 13..15
+      5 runs; first live 0, last 15
+
+===== the MobileNet layer slices, with a no-lift arm on two of     =====
+=====   them so a failure can be attributed rather than guessed    =====
+
+  -- mn_L00.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L00.tflite out(112, 112, 32): 32/32 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 400012/401408 pixels, 14/32 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 22    trivial (reference is constant): 10
+    npu distinct=253 min=0 max=255 | cpu distinct=253 | out_zp=0
+    channels that are CONSTANT: 10/32, of which pinned at out_zp: 10  (not empty)
+    reference channels that are constant: 10/32    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    cols with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.65%   off by exactly 1: 1349, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.005, 0.003, 0.003, 0.003, 0.003, 0.003, 0.004, 0.004, 0.004, 0.003, 0.003, 0.003, 0.003, 0.004]
+    off-by-1 by channel: median 0.004   lowest [(0, 0.0), (20, 0.0), (24, 0.0)]   highest [(31, 0.008), (26, 0.008), (19, 0.008)]
+    RAW ch 19 rows [1, 2] cols 1..16
+      y1 npu [74, 96, 54, 244, 75, 141, 74, 96, 54, 244, 20, 102, 74, 96, 54, 244]
+      y1 ref [74, 96, 54, 244, 75, 141, 74, 96, 54, 244, 20, 102, 74, 96, 54, 244]
+      y2 npu [100, 75, 141, 74, 81, 16, 100, 75, 141, 74, 96, 54, 100, 75, 141, 74]
+      y2 ref [100, 75, 141, 74, 81, 16, 100, 75, 141, 74, 96, 54, 100, 75, 141, 74]
+    every channel correct
+
+  -- mn_L01.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L01.tflite out(112, 112, 32): 10/32 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 217777/401408 pixels, 10/32 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 10
+    npu distinct=242 min=0 max=255 | cpu distinct=255 | out_zp=0
+    channels that are CONSTANT: 18/32, of which pinned at out_zp: 18  (not empty)
+    reference channels that are constant: 11/32    npu constant but reference varies: 7
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    cols with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    row maxdiff profile, every 8th: [130, 129, 131, 131, 131, 130, 130, 130, 129, 131, 131, 131, 130, 130]
+    maxdiff excluding the outer ring: 131    whole surface: 131
+    by edge: row0 max 130 off>1 1616 | rowN max 129 off>1 1576 | col0 max 131 off>1 1638 | colN max 129 off>1 1518 | interior max 131 off>1 173401
+    affine fit over 12 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0009 (min 0.9969 max 1.0092)
+      b median +128.22    correlation median +0.9999
+      b spread: min +127.98 max +128.48 std 0.18   SAME on every channel
+      b per channel, lowest 4: ch13=+128.0, ch21=+128.0, ch23=+128.1, ch28=+128.1   highest 4: ch15=+128.4, ch4=+128.4, ch19=+128.4, ch11=+128.5
+    residual: within 1  55.2%   within 2  55.4%   within 4  55.8%   within 8  61.5%
+      of the pixels off by more than 1,  72.5% are at a rail of the hardware output
+    interior: exact 54.25%   off by exactly 1: 3727, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.008, 0.007, 0.009, 0.011, 0.012, 0.011, 0.009, 0.008, 0.007, 0.009, 0.011, 0.012, 0.011, 0.009]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (29, 0.0), (28, 0.0)]   highest [(18, 0.028), (6, 0.035), (16, 0.236)]
+    RAW ch 16 rows [1, 2] cols 1..16
+      y1 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y1 ref [3, 42, 21, 17, 16, 1, 3, 42, 21, 20, 20, 1, 3, 43, 22, 21]
+      y2 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 ref [15, 15, 1, 1, 32, 16, 15, 15, 1, 1, 39, 20, 16, 16, 1, 2]
+    WRONG channels (22): 1..2, 4..7, 11..13, 15..19, 21, 23..26, 28..29, 31
+    first 8 channel maxdiffs: [0, 122, 49, 0, 130, 129, 15, 130]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+    channels whose output VARIES (14), as runs: 1, 4..5, 7, 11, 13, 15, 17, 19, 21, 23 ...
+      13 runs; first live 1, last 31
+
+  -- mn_L02.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L02.tflite out(112, 112, 64): 6/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 322199/802816 pixels, 6/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 6
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 8/64, of which pinned at out_zp: 8  (not empty)
+    reference channels that are constant: 6/64    npu constant but reference varies: 2
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    cols with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    row maxdiff profile, every 8th: [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 4228 | rowN max 255 off>1 3958 | col0 max 255 off>1 4382 | colN max 255 off>1 4004 | interior max 255 off>1 460554
+    affine fit over 50 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.7154 (min -1.3517 max 5.1625)
+      b median +43.53    correlation median +0.5370
+      b spread: min -387.63 max +402.08 std 119.56   VARIES per channel
+      b per channel, lowest 4: ch23=-387.6, ch27=-205.2, ch24=-188.8, ch58=-134.3   highest 4: ch17=+171.1, ch52=+178.6, ch61=+216.4, ch9=+402.1
+    residual: within 1  40.6%   within 2  41.3%   within 4  42.5%   within 8  45.2%
+      of the pixels off by more than 1,  21.0% are at a rail of the hardware output
+    interior: exact 40.08%   off by exactly 1: 3446, of which npu LOW  60.7%
+    off-by-1 by row, every 8th: [0.002, 0.003, 0.005, 0.006, 0.007, 0.006, 0.003, 0.002, 0.003, 0.004, 0.007, 0.007, 0.006, 0.003]
+    off-by-1 by channel: median 0.000   lowest [(25, 0.0), (28, 0.0), (29, 0.0)]   highest [(0, 0.029), (22, 0.035), (6, 0.048)]
+    RAW ch 6 rows [1, 2] cols 1..16
+      y1 npu [6, 39, 121, 115, 73, 26, 6, 39, 120, 116, 80, 22, 6, 58, 121, 116]
+      y1 ref [0, 37, 182, 118, 43, 76, 0, 37, 182, 121, 59, 67, 25, 36, 182, 120]
+      y2 npu [102, 74, 11, 8, 42, 105, 101, 74, 13, 7, 38, 139, 97, 74, 14, 7]
+      y2 ref [110, 105, 56, 0, 50, 156, 110, 105, 60, 0, 37, 198, 112, 104, 60, 0]
+    WRONG channels (58): 0..33, 35..36, 38..40, 42..43, 45..52, 54..59, 61..63
+    first 8 channel maxdiffs: [56, 114, 248, 50, 137, 255, 69, 200]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+    channels whose output VARIES (56), as runs: 0..18, 20..24, 26..33, 35..36, 38..40, 42..43, 45..52, 54..59, 61..63
+      9 runs; first live 0, last 63
+
+  -- mn_L03.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L03.tflite out(56, 56, 64): 11/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 73905/200704 pixels, 10/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 1    trivial (reference is constant): 10
+    npu distinct=249 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 33/64, of which pinned at out_zp: 33  (not empty)
+    reference channels that are constant: 11/64    npu constant but reference varies: 22
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [255, 255, 255, 255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 2218 | rowN max 255 off>1 2172 | col0 max 255 off>1 2263 | colN max 255 off>1 2194 | interior max 255 off>1 117424
+    affine fit over 24 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.5482 (min -0.6642 max 3.0814)
+      b median +126.83    correlation median +0.5518
+      b spread: min +43.68 max +202.56 std 42.55   VARIES per channel
+      b per channel, lowest 4: ch2=+43.7, ch38=+50.8, ch27=+53.5, ch45=+66.1   highest 4: ch61=+179.6, ch54=+183.1, ch6=+188.9, ch24=+202.6
+    residual: within 1  37.2%   within 2  37.4%   within 4  37.7%   within 8  38.9%
+      of the pixels off by more than 1,  73.2% are at a rail of the hardware output
+    interior: exact 36.78%   off by exactly 1: 569, of which npu LOW  97.9%
+    off-by-1 by row, every 8th: [0.005, 0.008, 0.003, 0.002, 0.001, 0.003, 0.003]
+      rows above twice the median rate: 7, first [8, 17, 18, 27] last [27, 36, 45, 46]
+    off-by-1 by channel: median 0.000   lowest [(63, 0.0), (27, 0.0), (28, 0.0)]   highest [(42, 0.02), (16, 0.023), (30, 0.056)]
+    RAW ch 30 rows [1, 2] cols 1..16
+      y1 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y1 ref [47, 19, 0, 57, 0, 5, 57, 0, 5, 48, 39, 0, 78, 37, 0, 78]
+      y2 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 ref [60, 0, 0, 57, 0, 0, 57, 0, 0, 51, 0, 0, 52, 0, 0, 52]
+    WRONG channels (53): 0..10, 12..18, 21..27, 29..33, 35..36, 38..40, 42..43, 45..47, 49..52, 54..59, 61..63
+    first 8 channel maxdiffs: [220, 175, 208, 221, 219, 85, 243, 198]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: [19]
+    channels whose output VARIES (31), as runs: 0, 2..3, 6..7, 9, 15..17, 21, 24, 27, 29..30, 32..33 ...
+      20 runs; first live 0, last 63
+
+  -- mn_L04.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L04.tflite out(56, 56, 128): 3/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 84795/401408 pixels, 3/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 3
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 16/128, of which pinned at out_zp: 16  (not empty)
+    reference channels that are constant: 3/128    npu constant but reference varies: 13
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [255, 255, 255, 255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 5480 | rowN max 255 off>1 5799 | col0 max 255 off>1 5581 | colN max 255 off>1 5753 | interior max 255 off>1 291172
+    affine fit over 96 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.5064 (min -3.7297 max 6.9432)
+      b median +38.77    correlation median +0.2956
+      b spread: min -193.48 max +199.66 std 65.97   VARIES per channel
+      b per channel, lowest 4: ch32=-193.5, ch125=-125.2, ch102=-113.7, ch69=-109.7   highest 4: ch121=+176.0, ch61=+181.0, ch99=+186.4, ch108=+199.7
+    residual: within 1  21.9%   within 2  22.8%   within 4  24.5%   within 8  28.1%
+      of the pixels off by more than 1,  25.7% are at a rail of the hardware output
+    interior: exact 21.20%   off by exactly 1: 2931, of which npu LOW  49.1%
+    off-by-1 by row, every 8th: [0.007, 0.009, 0.007, 0.006, 0.006, 0.008, 0.009]
+    off-by-1 by channel: median 0.004   lowest [(0, 0.0), (82, 0.0), (81, 0.0)]   highest [(111, 0.043), (36, 0.056), (52, 0.058)]
+    RAW ch 52 rows [1, 2] cols 1..16
+      y1 npu [80, 71, 92, 88, 70, 88, 88, 70, 88, 88, 72, 84, 87, 72, 84, 87]
+      y1 ref [88, 71, 118, 85, 74, 113, 85, 74, 113, 85, 73, 110, 83, 73, 109, 84]
+      y2 npu [76, 68, 85, 80, 69, 85, 80, 69, 85, 80, 67, 85, 80, 67, 85, 80]
+      y2 ref [90, 62, 101, 87, 64, 101, 87, 64, 102, 87, 65, 111, 87, 65, 111, 87]
+    WRONG channels (125): 0..26, 28..65, 67..92, 94..127
+    first 8 channel maxdiffs: [130, 193, 104, 103, 211, 255, 101, 159]
+    channels 64..71 maxdiffs: [255, 99, 0, 236, 255, 127, 137, 184]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (112), as runs: 0..1, 3..10, 12..18, 21..26, 28..37, 39..52, 54..55, 57..63, 65, 67..73 ...
+      15 runs; first live 0, last 127
+
+  -- mn_L05.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L05.tflite out(56, 56, 128): 2/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 137952/401408 pixels, 2/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 2
+    npu distinct=158 min=0 max=165 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 77/128, of which pinned at out_zp: 77  (not empty)
+    reference channels that are constant: 3/128    npu constant but reference varies: 74
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [255, 255, 255, 255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 4687 | rowN max 255 off>1 4831 | col0 max 255 off>1 4785 | colN max 255 off>1 4777 | interior max 255 off>1 241826
+    affine fit over 24 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.4450 (min -1.0792 max 2.7308)
+      b median +132.84    correlation median +0.2461
+      b spread: min +6.15 max +216.08 std 54.49   VARIES per channel
+      b per channel, lowest 4: ch124=+6.1, ch45=+18.5, ch125=+18.9, ch37=+40.0   highest 4: ch0=+163.7, ch12=+182.7, ch24=+186.7, ch52=+216.1
+    residual: within 1  35.1%   within 2  35.7%   within 4  37.2%   within 8  40.3%
+      of the pixels off by more than 1,  89.7% are at a rail of the hardware output
+    interior: exact 34.48%   off by exactly 1: 2729, of which npu LOW  96.0%
+    off-by-1 by row, every 8th: [0.007, 0.009, 0.009, 0.008, 0.008, 0.007, 0.005]
+    off-by-1 by channel: median 0.004   lowest [(0, 0.0), (38, 0.0), (41, 0.0)]   highest [(45, 0.034), (15, 0.043), (46, 0.138)]
+    RAW ch 46 rows [1, 2] cols 1..16
+      y1 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y1 ref [20, 0, 41, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 ref [20, 0, 47, 43, 0, 50, 48, 1, 46, 61, 1, 41, 60, 1, 43, 55]
+    WRONG channels (126): 0..26, 28..65, 67..127
+    first 8 channel maxdiffs: [255, 98, 169, 144, 173, 46, 140, 82]
+    channels 64..71 maxdiffs: [177, 167, 0, 255, 80, 237, 121, 246]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (51), as runs: 0, 9, 12, 14..16, 24..26, 29..32, 37, 39..40, 42..46, 52 ...
+      30 runs; first live 0, last 127
+
+  -- mn_L06.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L06.tflite out(56, 56, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 91385/401408 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=224 min=0 max=223 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 25/128, of which pinned at out_zp: 25  (not empty)
+    reference channels that are constant: 1/128    npu constant but reference varies: 25
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [255, 255, 255, 255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 5955 | rowN max 255 off>1 5770 | col0 max 255 off>1 5790 | colN max 255 off>1 5604 | interior max 255 off>1 283436
+    affine fit over 91 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.4756 (min -1.5250 max 2.1905)
+      b median +33.25    correlation median +0.1630
+      b spread: min -135.45 max +249.57 std 52.95   VARIES per channel
+      b per channel, lowest 4: ch59=-135.5, ch33=-97.1, ch54=-80.8, ch25=-70.6   highest 4: ch58=+124.7, ch110=+125.3, ch52=+125.8, ch46=+249.6
+    residual: within 1  23.7%   within 2  24.7%   within 4  26.4%   within 8  29.8%
+      of the pixels off by more than 1,  18.5% are at a rail of the hardware output
+    interior: exact 23.08%   off by exactly 1: 3659, of which npu LOW  45.2%
+    off-by-1 by row, every 8th: [0.008, 0.009, 0.01, 0.013, 0.008, 0.008, 0.01]
+    off-by-1 by channel: median 0.004   lowest [(63, 0.0), (22, 0.0), (70, 0.0)]   highest [(84, 0.048), (89, 0.051), (126, 0.065)]
+    RAW ch 126 rows [1, 2] cols 1..16
+      y1 npu [8, 12, 0, 0, 16, 0, 0, 17, 0, 0, 14, 5, 0, 14, 5, 0]
+      y1 ref [0, 12, 0, 0, 50, 0, 0, 55, 0, 0, 81, 0, 0, 93, 0, 0]
+      y2 npu [15, 7, 0, 4, 5, 0, 5, 6, 0, 3, 3, 0, 8, 3, 0, 8]
+      y2 ref [0, 12, 10, 0, 53, 20, 0, 50, 44, 0, 51, 85, 0, 47, 83, 0]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [178, 244, 255, 255, 75, 124, 113, 126]
+    channels 64..71 maxdiffs: [133, 34, 255, 142, 113, 159, 108, 122]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (103), as runs: 1, 3..11, 13..14, 17..18, 20..22, 24..25, 27..34, 36..38, 41..47, 49..50 ...
+      22 runs; first live 1, last 127
+
+  -- mn_L07.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L07.tflite out(28, 28, 128): 2/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 20754/100352 pixels, 1/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 1    trivial (reference is constant): 1
+    npu distinct=240 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 97/128, of which pinned at out_zp: 95  (not empty)
+    reference channels that are constant: 2/128    npu constant but reference varies: 96
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 28/28, first [0, 1, 2, 3, 4, 5] last [22, 23, 24, 25, 26, 27]
+    cols with any error: 28/28, first [0, 1, 2, 3, 4, 5] last [22, 23, 24, 25, 26, 27]
+    row maxdiff profile, every 8th: [255, 255, 255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 2868 | rowN max 238 off>1 2985 | col0 max 255 off>1 2872 | colN max 255 off>1 2899 | interior max 255 off>1 67470
+    affine fit over 21 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.3712 (min -0.4881 max 2.2565)
+      b median +44.75    correlation median +0.1967
+      b spread: min -72.50 max +145.46 std 56.62   VARIES per channel
+      b per channel, lowest 4: ch121=-72.5, ch33=-33.3, ch127=-7.2, ch104=+3.5   highest 4: ch86=+115.8, ch24=+119.5, ch44=+136.2, ch125=+145.5
+    residual: within 1  21.6%   within 2  22.2%   within 4  24.7%   within 8  28.1%
+      of the pixels off by more than 1,  78.7% are at a rail of the hardware output
+    interior: exact 21.10%   off by exactly 1: 797, of which npu LOW  91.8%
+    off-by-1 by row, every 8th: [0.008, 0.009, 0.008, 0.011]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (79, 0.0), (78, 0.0)]   highest [(40, 0.07), (51, 0.13), (61, 0.413)]
+    RAW ch 61 rows [1, 2] cols 1..16
+      y1 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y1 ref [1, 2, 3, 3, 7, 8, 2, 3, 1, 1, 1, 1, 1, 2, 9, 8]
+      y2 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 ref [1, 1, 6, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1]
+    WRONG channels (126): 0..7, 9..115, 117..127
+    first 8 channel maxdiffs: [179, 204, 62, 30, 97, 148, 169, 65]
+    channels 64..71 maxdiffs: [82, 20, 84, 142, 110, 128, 63, 86]
+    COMPUTED-correct channels: [116]
+    channels whose output VARIES (31), as runs: 6, 10, 14, 18, 24..25, 27, 33..34, 44..45, 53, 56 ...
+      22 runs; first live 6, last 127
+
+  -- mn_L08.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L08.tflite out(28, 28, 256): 3/256 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 22136/200704 pixels, 3/256 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 3
+    npu distinct=207 min=0 max=208 | cpu distinct=254 | out_zp=0
+    channels that are CONSTANT: 36/256, of which pinned at out_zp: 36  (not empty)
+    reference channels that are constant: 7/256    npu constant but reference varies: 33
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 28/28, first [0, 1, 2, 3, 4, 5] last [22, 23, 24, 25, 26, 27]
+    cols with any error: 28/28, first [0, 1, 2, 3, 4, 5] last [22, 23, 24, 25, 26, 27]
+    row maxdiff profile, every 8th: [244, 242, 241, 255]
+    maxdiff excluding the outer ring: 245    whole surface: 255
+    by edge: row0 max 244 off>1 6324 | rowN max 244 off>1 6480 | col0 max 245 off>1 6358 | colN max 255 off>1 6464 | interior max 245 off>1 151648
+    affine fit over 187 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.1900 (min -4.4938 max 3.5471)
+      b median +41.25    correlation median +0.0575
+      b spread: min -283.83 max +275.46 std 75.99   VARIES per channel
+      b per channel, lowest 4: ch206=-283.8, ch161=-255.7, ch57=-170.9, ch192=-122.8   highest 4: ch194=+233.1, ch67=+239.3, ch130=+262.9, ch85=+275.5
+    residual: within 1  12.1%   within 2  13.3%   within 4  15.5%   within 8  19.6%
+      of the pixels off by more than 1,  13.0% are at a rail of the hardware output
+    interior: exact 11.31%   off by exactly 1: 1834, of which npu LOW  43.8%
+    off-by-1 by row, every 8th: [0.009, 0.012, 0.011, 0.011]
+    off-by-1 by channel: median 0.000   lowest [(127, 0.0), (143, 0.0), (144, 0.0)]   highest [(155, 0.108), (179, 0.112), (186, 0.229)]
+    RAW ch 186 rows [1, 2] cols 1..16
+      y1 npu [0, 2, 2, 2, 1, 2, 2, 0, 2, 2, 0, 3, 2, 0, 3, 4]
+      y1 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 npu [1, 0, 2, 1, 0, 2, 0, 0, 2, 0, 0, 1, 0, 0, 1, 1]
+      y2 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    WRONG channels (253): 0..55, 57..96, 99..255
+    first 8 channel maxdiffs: [20, 20, 120, 182, 56, 95, 97, 166]
+    channels 64..71 maxdiffs: [127, 115, 126, 98, 118, 48, 63, 20]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (220), as runs: 1..2, 4, 6..25, 27, 29..51, 53..55, 57..68, 71, 73..91, 93..96 ...
+      32 runs; first live 1, last 255
+
+  -- mn_L12.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L12.tflite out(14, 14, 512): 15/512 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 10279/100352 pixels, 15/512 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 15
+    npu distinct=219 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 92/512, of which pinned at out_zp: 92  (not empty)
+    reference channels that are constant: 73/512    npu constant but reference varies: 76
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 14/14, first [0, 1, 2, 3, 4, 5] last [8, 9, 10, 11, 12, 13]
+    cols with any error: 14/14, first [0, 1, 2, 3, 4, 5] last [8, 9, 10, 11, 12, 13]
+    row maxdiff profile, every 8th: [255, 255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 6302 | rowN max 255 off>1 6366 | col0 max 255 off>1 6421 | colN max 255 off>1 6351 | interior max 255 off>1 65245
+    affine fit over 295 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.4574 (min -8.6139 max 13.9378)
+      b median +27.07    correlation median +0.1052
+      b spread: min -606.15 max +678.42 std 136.01   VARIES per channel
+      b per channel, lowest 4: ch365=-606.1, ch161=-403.0, ch298=-397.0, ch171=-378.9   highest 4: ch31=+372.3, ch305=+413.8, ch501=+415.1, ch34=+678.4
+    residual: within 1  11.5%   within 2  12.7%   within 4  15.3%   within 8  21.3%
+      of the pixels off by more than 1,  12.6% are at a rail of the hardware output
+    interior: exact 10.33%   off by exactly 1: 870, of which npu LOW  49.1%
+    off-by-1 by row, every 8th: [0.012, 0.012]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (330, 0.0), (329, 0.0)]   highest [(8, 0.167), (368, 0.174), (103, 0.201)]
+    RAW ch 103 rows [1, 2] cols 1..13
+      y1 npu [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 3]
+      y1 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4]
+      y2 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13]
+    WRONG channels (497): 0..52, 54..67, 69..111, 113..151, 153..271, 273..276, 278, 280..305, 307..375, 377..388, 390..400, 402..430 ...
+    first 8 channel maxdiffs: [206, 31, 52, 63, 45, 93, 38, 33]
+    channels 64..71 maxdiffs: [47, 37, 64, 51, 0, 77, 37, 63]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (420), as runs: 0..8, 11..15, 17..20, 22..23, 25..28, 30..31, 33..37, 39..43, 45..52, 54..58 ...
+      80 runs; first live 0, last 511
+
+  -- mn_L18.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L18.tflite out(14, 14, 512): 38/512 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 28826/100352 pixels, 37/512 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 1    trivial (reference is constant): 37
+    npu distinct=123 min=0 max=125 | cpu distinct=154 | out_zp=0
+    channels that are CONSTANT: 213/512, of which pinned at out_zp: 213  (not empty)
+    reference channels that are constant: 63/512    npu constant but reference varies: 176
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 14/14, first [0, 1, 2, 3, 4, 5] last [8, 9, 10, 11, 12, 13]
+    cols with any error: 14/14, first [0, 1, 2, 3, 4, 5] last [8, 9, 10, 11, 12, 13]
+    row maxdiff profile, every 8th: [168, 122]
+    maxdiff excluding the outer ring: 139    whole surface: 168
+    by edge: row0 max 168 off>1 5245 | rowN max 163 off>1 5321 | col0 max 168 off>1 5348 | colN max 163 off>1 5320 | interior max 139 off>1 50229
+    affine fit over 184 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.3090 (min -8.3920 max 13.1916)
+      b median +26.38    correlation median +0.0636
+      b spread: min -726.23 max +614.77 std 145.93   VARIES per channel
+      b per channel, lowest 4: ch76=-726.2, ch82=-601.7, ch146=-476.9, ch211=-322.9   highest 4: ch342=+374.2, ch426=+431.4, ch397=+448.3, ch388=+614.8
+    residual: within 1  30.4%   within 2  32.1%   within 4  35.7%   within 8  42.4%
+      of the pixels off by more than 1,  26.0% are at a rail of the hardware output
+    interior: exact 30.14%   off by exactly 1: 1277, of which npu LOW  51.8%
+    off-by-1 by row, every 8th: [0.018, 0.018]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (298, 0.0), (297, 0.0)]   highest [(168, 0.222), (175, 0.465), (370, 0.681)]
+    RAW ch 370 rows [1, 2] cols 1..13
+      y1 npu [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y1 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      y2 npu [3, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 2, 4]
+      y2 ref [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    WRONG channels (474): 0..13, 15..33, 35..43, 46..50, 52..72, 74, 76, 78..97, 99..111, 113..117, 119..124, 126..164 ...
+    first 8 channel maxdiffs: [63, 25, 99, 27, 44, 66, 31, 66]
+    channels 64..71 maxdiffs: [71, 62, 88, 6, 71, 34, 63, 47]
+    COMPUTED-correct channels: [221]
+    channels whose output VARIES (299), as runs: 0..1, 4..7, 13, 15..16, 18, 23..25, 27, 32..33, 35..40, 46..48 ...
+      112 runs; first live 0, last 510
+
+  -- mn_L24.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L24.tflite out(7, 7, 1024): 403/1024 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 25243/50176 pixels, 395/1024 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 5    trivial (reference is constant): 398
+    npu distinct=132 min=0 max=238 | cpu distinct=156 | out_zp=0
+    channels that are CONSTANT: 727/1024, of which pinned at out_zp: 607  (not empty)
+    reference channels that are constant: 552/1024    npu constant but reference varies: 282
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    cols with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    row maxdiff profile, every 8th: [211]
+    maxdiff excluding the outer ring: 228    whole surface: 228
+    by edge: row0 max 211 off>1 3621 | rowN max 209 off>1 3570 | col0 max 215 off>1 3658 | colN max 213 off>1 3608 | interior max 228 off>1 12080
+    residual: within 1  51.3%   within 2  52.5%   within 4  54.9%   within 8  58.7%
+      of the pixels off by more than 1,  18.7% are at a rail of the hardware output
+    interior: exact 51.89%   off by exactly 1: 235, of which npu LOW  47.7%
+    off-by-1 by row, every 8th: [0.008]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (660, 0.0), (661, 0.0)]   highest [(293, 1.0), (181, 1.0), (687, 1.0)]
+    RAW ch 687 rows [1, 2] cols 1..6
+      y1 npu [1, 1, 1, 1, 1, 2]
+      y1 ref [0, 0, 0, 0, 0, 0]
+      y2 npu [1, 1, 1, 1, 1, 2]
+      y2 ref [0, 0, 0, 0, 0, 0]
+    WRONG channels (621): 0, 2..4, 8..12, 14..15, 18, 21, 23, 25, 29, 31..32, 34, 37 ...
+    first 8 channel maxdiffs: [10, 0, 10, 9, 28, 0, 0, 0]
+    channels 64..71 maxdiffs: [50, 23, 27, 11, 0, 0, 0, 38]
+    COMPUTED-correct channels: [454, 561, 625, 640, 979]
+    channels whose output VARIES (297), as runs: 2..4, 10, 12, 15, 18, 29, 31, 42..43, 48, 51..53 ...
+      204 runs; first live 2, last 1023
+
+  -- mn_L26.tflite   
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L26.tflite out(7, 7, 1024): 159/1024 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 21979/50176 pixels, 158/1024 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 159
+    npu distinct=256 min=0 max=255 | cpu distinct=252 | out_zp=0
+    channels that are CONSTANT: 323/1024, of which pinned at out_zp: 267  (not empty)
+    reference channels that are constant: 571/1024    npu constant but reference varies: 130
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    cols with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    row maxdiff profile, every 8th: [255]
+    maxdiff excluding the outer ring: 255    whole surface: 255
+    by edge: row0 max 255 off>1 4694 | rowN max 255 off>1 4696 | col0 max 255 off>1 4812 | colN max 255 off>1 4616 | interior max 255 off>1 12234
+    residual: within 1  44.1%   within 2  44.3%   within 4  45.0%   within 8  46.1%
+      of the pixels off by more than 1,  36.8% are at a rail of the hardware output
+    interior: exact 52.01%   off by exactly 1: 52, of which npu LOW  53.8%
+    off-by-1 by row, every 8th: [0.002]
+    off-by-1 by channel: median 0.000   lowest [(511, 0.0), (669, 0.0), (670, 0.0)]   highest [(221, 0.12), (520, 0.12), (869, 0.36)]
+    RAW ch 869 rows [1, 2] cols 1..6
+      y1 npu [6, 2, 2, 2, 10, 72]
+      y1 ref [0, 0, 0, 0, 0, 0]
+      y2 npu [4, 1, 1, 1, 9, 71]
+      y2 ref [0, 0, 0, 0, 0, 0]
+    WRONG channels (865): 0..3, 5..20, 22..25, 27..29, 32..35, 37..43, 45..49, 51..55, 57..58, 60..66, 68..73, 75..76 ...
+    first 8 channel maxdiffs: [62, 210, 204, 220, 0, 255, 190, 120]
+    channels 64..71 maxdiffs: [222, 255, 158, 0, 129, 86, 158, 17]
+    COMPUTED-correct channels: []
+    channels whose output VARIES (701), as runs: 0..3, 6..14, 16..17, 19..20, 22..23, 28..29, 32..35, 37..40, 42..43, 45..49 ...
+      216 runs; first live 0, last 1023
+
+  -- mn_L02.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L02.tflite out(112, 112, 64): 22/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 675798/802816 pixels, 6/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 16    trivial (reference is constant): 6
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=0
+    channels that are CONSTANT: 6/64, of which pinned at out_zp: 6  (not empty)
+    reference channels that are constant: 6/64    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    cols with any error: 112/112, first [0, 1, 2, 3, 4, 5] last [106, 107, 108, 109, 110, 111]
+    row maxdiff profile, every 8th: [4, 4, 4, 6, 6, 6, 5, 6, 4, 4, 6, 6, 6, 5]
+    maxdiff excluding the outer ring: 6    whole surface: 6
+    by edge: row0 max 4 off>1 110 | rowN max 4 off>1 129 | col0 max 4 off>1 162 | colN max 6 off>1 137 | interior max 6 off>1 14806
+    affine fit over 41 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0001 (min 0.9839 max 1.0062)
+      b median +0.08    correlation median +0.9999
+      b spread: min -0.67 max +2.94 std 0.64   VARIES per channel
+      b per channel, lowest 4: ch17=-0.7, ch29=-0.6, ch40=-0.5, ch2=-0.5   highest 4: ch33=+0.7, ch38=+0.8, ch13=+2.1, ch62=+2.9
+    residual: within 1  98.1%   within 2  99.4%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 84.16%   off by exactly 1: 107857, of which npu LOW  58.6%
+    off-by-1 by row, every 8th: [0.132, 0.14, 0.137, 0.144, 0.149, 0.138, 0.134, 0.132, 0.139, 0.136, 0.144, 0.15, 0.139, 0.133]
+    off-by-1 by channel: median 0.114   lowest [(19, 0.0), (60, 0.0), (53, 0.0)]   highest [(5, 0.35), (51, 0.384), (38, 0.521)]
+    RAW ch 38 rows [1, 2] cols 1..16
+      y1 npu [88, 116, 104, 97, 85, 60, 89, 116, 104, 100, 94, 62, 88, 125, 105, 101]
+      y1 ref [87, 116, 104, 98, 85, 61, 88, 116, 104, 100, 94, 63, 89, 125, 106, 102]
+      y2 npu [94, 72, 61, 77, 106, 91, 94, 73, 58, 83, 113, 94, 95, 74, 60, 83]
+      y2 ref [93, 73, 60, 77, 106, 90, 93, 74, 59, 83, 113, 95, 96, 75, 59, 84]
+    WRONG channels (42): 1..2, 4..5, 7, 9..10, 13..20, 22..23, 25..29, 31..33, 36, 38..40, 42, 45..46 ...
+    first 8 channel maxdiffs: [1, 2, 2, 1, 2, 4, 1, 2]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: [0, 3, 6, 8, 11, 12, 21, 24, 30, 35, 43, 47, 54, 55, 56, 58]
+    channels whose output VARIES (58), as runs: 0..33, 35..36, 38..40, 42..43, 45..52, 54..59, 61..63
+      7 runs; first live 0, last 63
+
+  -- mn_L26.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x4ace -> emitting shift=16
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x7c9b -> emitting shift=20
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=16 scale=0x671c -> emitting shift=16
+rocket: OUT_CVT computed_shift=21 scale=0x7c18 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=19 scale=0x7bfb -> emitting shift=19
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x70af -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=20 scale=0x44a4 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7c8c -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5415 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x6960 -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x6e45 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4b21 -> emitting shift=21
+rocket: OUT_CVT computed_shift=19 scale=0x4ba4 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x56d6 -> emitting shift=22
+rocket: OUT_CVT computed_shift=19 scale=0x5744 -> emitting shift=19
+rocket: OUT_CVT computed_shift=22 scale=0x5152 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x7428 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x7f52 -> emitting shift=22
+rocket: OUT_CVT computed_shift=20 scale=0x63a7 -> emitting shift=20
+rocket: OUT_CVT computed_shift=21 scale=0x4f20 -> emitting shift=21
+rocket: OUT_CVT computed_shift=20 scale=0x4f54 -> emitting shift=20
+rocket: OUT_CVT computed_shift=22 scale=0x593e -> emitting shift=22
+rocket: OUT_CVT computed_shift=21 scale=0x4030 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=17 scale=0x4099 -> emitting shift=17
+rocket: OUT_CVT computed_shift=20 scale=0x49ed -> emitting shift=20
+rocket: OUT_CVT computed_shift=25 scale=0x5c96 -> emitting shift=25
+  mn_L26.tflite out(7, 7, 1024): 574/1024 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 42685/50176 pixels, 559/1024 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 13    trivial (reference is constant): 561
+    npu distinct=254 min=0 max=255 | cpu distinct=252 | out_zp=0
+    channels that are CONSTANT: 555/1024, of which pinned at out_zp: 555  (not empty)
+    reference channels that are constant: 571/1024    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    cols with any error: 7/7, first [0, 1, 2, 3, 4, 5] last [1, 2, 3, 4, 5, 6]
+    row maxdiff profile, every 8th: [17]
+    maxdiff excluding the outer ring: 28    whole surface: 28
+    by edge: row0 max 17 off>1 929 | rowN max 25 off>1 1027 | col0 max 24 off>1 1293 | colN max 17 off>1 834 | interior max 28 off>1 2739
+    residual: within 1  87.5%   within 2  89.7%   within 4  93.5%   within 8  98.1%
+      of the pixels off by more than 1,   1.9% are at a rail of the hardware output
+    interior: exact 87.31%   off by exactly 1: 510, of which npu LOW  50.0%
+    off-by-1 by row, every 8th: [0.021]
+    off-by-1 by channel: median 0.000   lowest [(511, 0.0), (631, 0.0), (632, 0.0)]   highest [(971, 0.28), (880, 0.28), (541, 0.32)]
+    RAW ch 541 rows [1, 2] cols 1..6
+      y1 npu [97, 152, 160, 162, 113, 113]
+      y1 ref [83, 147, 159, 161, 119, 114]
+      y2 npu [146, 101, 100, 136, 197, 100]
+      y2 ref [141, 104, 98, 138, 198, 103]
+    WRONG channels (450): 0, 3, 6..7, 10..11, 14..15, 18..20, 22..23, 25, 27, 32..34, 41, 45 ...
+    first 8 channel maxdiffs: [6, 0, 0, 13, 0, 0, 10, 8]
+    channels 64..71 maxdiffs: [0, 7, 0, 0, 22, 0, 9, 4]
+    COMPUTED-correct channels: [102, 117, 120, 370, 438, 537, 624, 716, 723, 755, 773, 837, 909]
+    channels whose output VARIES (469), as runs: 0, 3, 6..7, 10..11, 14..15, 18..20, 22..23, 25, 27, 32..34 ...
+      253 runs; first live 0, last 1021
+
+===== LAST, and only now, the arm that is expected to hang.        =====
+=====   250 ran this fourth and it cost thirty entries.            =====
+
+  -- pw64x88w56.tflite   ROCKET_DPU4050_MOD32=1
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+[   79.680399] rocket 27700000.npu: NPU job timed out
+  pw64x88w56.tflite out(56, 56, 88): 64/88 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 201960/275968 pixels, 39/88 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 34    trivial (reference is constant): 30
+    npu distinct=238 min=0 max=255 | cpu distinct=240 | out_zp=0
+    channels that are CONSTANT: 38/88, of which pinned at out_zp: 30  (not empty)
+    reference channels that are constant: 33/88    npu constant but reference varies: 8
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [128, 128, 128, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 128 off>1 447 | rowN max 128 off>1 1341 | col0 max 128 off>1 1295 | colN max 128 off>1 1309 | interior max 128 off>1 68668
+    affine fit over 13 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.0812 (min 0.0001 max 0.5150)
+      b median +24.88    correlation median +0.0594
+      b spread: min +12.70 max +158.96 std 37.10   VARIES per channel
+      b per channel, lowest 4: ch79=+12.7, ch69=+13.0, ch76=+13.1, ch75=+16.6   highest 4: ch64=+31.4, ch71=+34.0, ch68=+36.7, ch73=+159.0
+      lowest a: [(69, 0.0001, 13.0), (75, 0.0002, 16.6), (79, 0.0248, 12.7)]
+      highest a: [(77, 0.4509, 28.0), (67, 0.4575, 17.5), (76, 0.515, 13.1)]
+    residual: within 1  73.5%   within 2  73.6%   within 4  73.6%   within 8  74.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 72.87%   off by exactly 1: 937, of which npu LOW  96.3%
+    off-by-1 by row, every 8th: [0.005, 0.005, 0.003, 0.004, 0.003, 0.004, 0.004]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (37, 0.0), (38, 0.0)]   highest [(87, 0.02), (59, 0.025), (77, 0.025)]
+    RAW ch 77 rows [1, 2] cols 1..16
+      y1 npu [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y1 ref [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y2 npu [28, 163, 65, 105, 3, 115, 78, 87, 90, 29, 129, 76, 102, 57, 63, 128]
+      y2 ref [28, 163, 65, 105, 3, 116, 78, 87, 91, 29, 129, 76, 102, 57, 63, 129]
+    WRONG channels (24): 64..87
+    first 8 channel maxdiffs: [(69, 0.0001, 13.0), (75, 0.0002, 16.6), (79, 0.0248, 12.7)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: [2, 3, 4, 9, 10, 11, 13, 14, 15, 18, 19, 20, 23, 27, 28, 29, 31, 35, 37, 40, 42, 45, 46, 47, 48, 49, 51, 53, 54, 56, 57, 58, 59, 61] ...
+    channels whose output VARIES (50), as runs: 2..4, 9..11, 13..15, 18..20, 23, 27..29, 31, 35, 37, 40 ...
+      17 runs; first live 2, last 79
+  !! POISON in this entry. The block faulted. This result is VOID.
+  !! health check follows
+  !! health OK, the block recovered, continuing
+
+  -- pw64x120w56.tflite   ROCKET_DPU4050_MOD32=1
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+[   82.528383] rocket 27700000.npu: NPU job timed out
+  pw64x120w56.tflite out(56, 56, 120): 96/120 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 301685/376320 pixels, 53/120 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 59    trivial (reference is constant): 37
+    npu distinct=240 min=0 max=255 | cpu distinct=240 | out_zp=0
+    channels that are CONSTANT: 45/120, of which pinned at out_zp: 37  (not empty)
+    reference channels that are constant: 47/120    npu constant but reference varies: 5
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [128, 128, 128, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 128 off>1 446 | rowN max 128 off>1 1343 | col0 max 128 off>1 1294 | colN max 128 off>1 1311 | interior max 128 off>1 68799
+    affine fit over 9 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 0.0159 (min -0.0004 max 0.1815)
+      b median +21.58    correlation median +0.0253
+      b spread: min +5.19 max +40.52 std 10.30   VARIES per channel
+      b per channel, lowest 4: ch108=+5.2, ch98=+7.5, ch109=+14.7, ch105=+19.6   highest 4: ch110=+25.2, ch103=+26.8, ch106=+28.0, ch104=+40.5
+      lowest a: [(98, -0.0004, 7.5), (100, 0.0061, 21.6), (109, 0.0101, 14.7)]
+      highest a: [(110, 0.0245, 25.2), (106, 0.1472, 28.0), (103, 0.1815, 26.8)]
+    residual: within 1  80.6%   within 2  80.6%   within 4  80.6%   within 8  80.7%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 79.94%   off by exactly 1: 1389, of which npu LOW  98.3%
+    off-by-1 by row, every 8th: [0.005, 0.005, 0.003, 0.003, 0.005, 0.004, 0.004]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (57, 0.0), (55, 0.0)]   highest [(59, 0.025), (67, 0.032), (77, 0.032)]
+    RAW ch 77 rows [1, 2] cols 1..16
+      y1 npu [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y1 ref [0, 164, 73, 92, 34, 55, 126, 56, 124, 0, 120, 93, 91, 84, 0, 152]
+      y2 npu [28, 163, 65, 105, 3, 115, 78, 87, 90, 29, 129, 76, 102, 57, 63, 129]
+      y2 ref [28, 163, 65, 105, 3, 116, 78, 87, 91, 29, 129, 76, 102, 57, 63, 129]
+    WRONG channels (24): 96..119
+    first 8 channel maxdiffs: [(98, -0.0004, 7.5), (100, 0.0061, 21.6), (109, 0.0101, 14.7)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: [2, 3, 4, 9, 10, 11, 13, 14, 15, 18, 19, 20, 23, 27, 28, 29, 31, 35, 37, 40, 42, 45, 46, 47, 48, 49, 51, 53, 54, 56, 57, 58, 59, 61, 64, 65, 67, 68, 69, 71, 72, 73, 74, 75, 76, 77, 79, 80] ...
+    channels whose output VARIES (75), as runs: 2..4, 9..11, 13..15, 18..20, 23, 27..29, 31, 35, 37, 40 ...
+      22 runs; first live 2, last 111
+  !! POISON in this entry. The block faulted. This result is VOID.
+  !! health check follows
+  !! health OK, the block recovered, continuing
+
+===== a final anchor, so the log says whether the block survived   =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== Read entries 1 and 2 first, then any POISON line.            =====
+
+RK3576 NPU bringup
+rock4d login: 
