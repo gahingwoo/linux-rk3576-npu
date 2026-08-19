@@ -2,55 +2,73 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 250. Re-score the ledger, and pay a debt.
+# 2026-08-19 round 251. Round 250 again, with the three design faults fixed.
 #
-# WHY. Round 249 fixed the output stage's floor and retired the reference that
-# hid it. 31 of the 133 models here have at least one operator with a nonzero
-# output zero point, so every score they ever got was against max(cpu, out_zp),
-# with both surfaces flattened the same way below it. We do not currently know
-# which of them are correct. Deciding what to build next on top of that ledger
-# is deciding on a number nobody has measured, so this round measures it.
+# WHAT WENT WRONG IN 250, and it was mine, not the board's. Entry 4 forced the
+# 0x4050 value the parity rule replaced and the block timed out. rocket's
+# reset_autosuspend module parameter defaults to FALSE, so the reset took the
+# pm_runtime_put_noidle() path that round 246 proved does not recover, the
+# domain never dropped, and the MMU stopped answering. Entries 5 through 34 all
+# ran on a dead block. Reading them gave four confident conclusions that were
+# all artefacts: an empty output at 120, a MobileNet regression to all zeros,
+# and chained models breaking under the lift. None of that was measured.
 #
-# ⚠ I already got this wrong once today by assuming instead of measuring. I
-# wrote in public that MobileNet was unaffected because every layer in it has
-# an output zero point of zero. Its classifier convolution, op28, a 1x1 over
-# 1024 channels to 1001, has an output zero point of 66. The graph output is a
-# softmax whose zero point IS zero, so the 1000 of 1001 figure was not itself
-# inflated, but everything upstream of it was floored and has not been
-# re-measured. Entry 5 is that measurement.
+# THREE FIXES.
+#   1. reset_autosuspend is turned ON below, before anything runs.
+#   2. Every entry is checked for the poison signature and says so in the log,
+#      and a poisoned entry triggers a health check that aborts the round if
+#      the block is really gone. No more silently reading 30 dead entries.
+#   3. The arm that is EXPECTED to hang runs LAST, so it cannot poison anything.
+#      In 250 it ran fourth.
+#
+# WHAT SURVIVED 250, all before the first timeout, and it is not nothing:
+#   conv2d-cal with the lift    128 of 128 against the raw CPU output
+#   conv2d-cal without it         0 of 128, the control
+#   pw64x88w56, parity rule      88 of 88, every channel correct
+# The 88 half of the sweep Igor is owed is therefore already answered. What is
+# still unmeasured is 120, which is why it is entry 3 here.
 #
 # THE READING RULE, fixed before the run.
-#
-#   perch.py's primary reference is now the raw CPU output, so the headline
-#   "N of M channels match" is already the honest score and readlog.py's match
-#   column can be read directly. No second lookup.
-#
-#   Entries 1 and 2 are the anchor. conv2d-cal must reproduce round 249: 128 of
-#   128 with the lift, and 0 of 128 with ROCKET_NO_LIFT=1. If it does not, the
-#   image is not what I think it is and nothing below counts.
-#
-#   ⚠ EXPECT REGRESSIONS AND DO NOT EXPLAIN THEM AWAY. A model that scored well
-#   before and scores badly now was probably never right; the old reference
-#   just could not see it. That is the result, not a setback.
-#
-#   ⚠ conv2x and dwconv carry NEGATIVE output zero points, down to -128, so
-#   their offset becomes out_zp - 0x80 - 128, as low as -384. This driver has
-#   never written a value like that. Read those two as a question about the
-#   fix's range, separately from the rest.
-#
-# PART B pays a promise. rfc-send-v7/reply-igor-clamp.eml said the 88 and 120
-# sweep was queued for the next flash and I would send what it says either way.
-# The board has been flashed three times since and it was in none of them.
-# Both counts are discriminating: DIV_ROUND_UP(oc,16) is even for each while
-# oc % 32 is nonzero, so the parity rule and the modulo rule disagree there.
+#   perch.py's primary reference is the raw CPU output, so readlog.py's match
+#   column is the honest score and needs no second lookup.
+#   Entries 1 and 2 are the anchor and must reproduce 249 and 250.
+#   ⚠ Any entry printing POISON is void, and so is everything after it until an
+#   OK health check. Do not read a poisoned entry as a result. That is the
+#   mistake this round exists to not repeat.
+#   ⚠ Expect regressions among the re-scored models and do not explain them
+#   away. A model that scored well before and badly now was probably never
+#   right; the old reference could not see it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
+ABORT=0
 log() { echo "$@" > "$C"; }
-w() { log ""; log "  -- $1   $2"; sleep 1; \
+nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
+
+w() {
+	[ "$ABORT" = "1" ] && return 0
+	before=$(nbad)
+	log ""
+	log "  -- $1   $2"
+	sleep 1
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
-	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1
+	after=$(nbad)
+	if [ "$after" != "$before" ]; then
+		log "  !! POISON in this entry. The block faulted. This result is VOID."
+		log "  !! health check follows"
+		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" \
+			> /tmp/hc.txt 2>&1
+		if grep -q "128/128 channels match" /tmp/hc.txt; then
+			log "  !! health OK, the block recovered, continuing"
+		else
+			log "  !! health FAILED, the block is gone. ABORTING the round."
+			log "  !! everything from here on would be an artefact."
+			ABORT=1
+		fi
+	fi
+}
 
 start() {
 	i=0
@@ -58,50 +76,72 @@ start() {
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
 
+	if [ -w /sys/module/rocket/parameters/reset_autosuspend ]; then
+		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
+		log "reset_autosuspend = $(cat /sys/module/rocket/parameters/reset_autosuspend)"
+	else
+		log "!! reset_autosuspend NOT WRITABLE. A timeout will kill the round."
+	fi
+
 	log ""
-	log "===== 1-2) THE ANCHOR. Must reproduce round 249 or the round is void ====="
+	log "===== 1-2) THE ANCHOR. Must reproduce 249 and 250.                 ====="
 	w conv2d-cal.tflite ""
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 3-6) PART B, THE DEBT. 0x4050 at oc 88 and 120, each with the ====="
-	log "=====      parity rule and with the modulo rule it replaced.        ====="
-	log "=====      Both counts are discriminating. Owed to Igor since v7.   ====="
-	w pw64x88w56.tflite ""
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	log "===== 3) 0x4050 AT oc 120, the half of Igor's sweep 250 never      ====="
+	log "=====    actually measured. Parity rule, which is the default.     ====="
 	w pw64x120w56.tflite ""
-	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
 
 	log ""
-	log "===== 7) MOBILENET END TO END. Its op28 has out_zp 66 and was       ====="
-	log "=====    floored. The public 1000 of 1001 is measured downstream of ====="
-	log "=====    that, on a softmax whose zero point is 0.                  ====="
+	log "===== 4-5) MOBILENET, with and without the lift. Its op28 has      ====="
+	log "=====      out_zp 66 and was floored. 250's all zeros was the      ====="
+	log "=====      dead block, not a result.                               ====="
 	w mobilenet_v1_1.0_224_quant.tflite ""
+	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 8+) THE RE-SCORE. Every model with a nonzero output zero      ====="
-	log "=====     point, against the raw CPU output for the first time.     ====="
+	log "===== 6+) THE RE-SCORE against the raw CPU output.                 ====="
 	for m in cal_izp0 cal_k1 cal_k3_imp cal_k5_imp cal_s1 pw2_zp128 \
-	         md003 md003_80 md003_oc128 md003_s2 md011; do
+	         md003 md003_80 md003_oc128 md003_s2; do
 		w "$m.tflite" ""
 	done
 
 	log ""
-	log "===== NEGATIVE OUTPUT ZERO POINTS. offset goes as low as -384,      ====="
-	log "=====   a value this driver has never written. Read separately.     ====="
+	log "===== add SEGFAULTED in 250 before printing anything, so it died   ====="
+	log "=====   inside the delegate rather than in the reference. Kept to  ====="
+	log "=====   see whether that reproduces. md011 is DROPPED: it has two  ====="
+	log "=====   graph inputs and perch.py only fills the first, which is a ====="
+	log "=====   gap in my tool and not a question for the board.           ====="
 	w add.tflite ""
+
+	log ""
+	log "===== NEGATIVE OUTPUT ZERO POINTS, offset as low as -384           ====="
 	w conv2x.tflite ""
 	w dwconv.tflite ""
 
 	log ""
-	log "===== the MobileNet layer slices, all out_zp 0 and 66               ====="
+	log "===== the MobileNet layer slices, with a no-lift arm on two of     ====="
+	log "=====   them so a failure can be attributed rather than guessed    ====="
 	for m in mn_L00 mn_L01 mn_L02 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L08 \
 	         mn_L12 mn_L18 mn_L24 mn_L26; do
 		w "$m.tflite" ""
 	done
+	w mn_L02.tflite "ROCKET_NO_LIFT=1"
+	w mn_L26.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== Read entries 1 and 2 first. Regressions here are results.     ====="
+	log "===== LAST, and only now, the arm that is expected to hang.        ====="
+	log "=====   250 ran this fourth and it cost thirty entries.            ====="
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+
+	log ""
+	log "===== a final anchor, so the log says whether the block survived   ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== Read entries 1 and 2 first, then any POISON line.            ====="
 	sync
 }
 case "$1" in
