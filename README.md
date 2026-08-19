@@ -2,8 +2,11 @@
 
 Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
-MobileNet V1 runs end to end on the NPU: **1000 of its 1001 outputs are within
-one count of the CPU reference**, and an open LLM runtime computes a signed int8
+MobileNet V1 runs end to end on the NPU and **returns the right label**: on the
+test image it picks class 754, the class the CPU reference picks, with the CPU's
+top five in the same order. 1000 of its 1001 outputs are within one count of the
+reference, though that reference is degenerate and an empty buffer scores 983 on
+it, so the label is what settles it. An open LLM runtime computes a signed int8
 matmul through this driver **byte exact**, at 11.9 GB/s of weight bandwidth.
 Details below.
 
@@ -23,8 +26,14 @@ oven it is roasted in.
 
 The driver support is on the list. Current series:
 
-**[PATCH v7 0/10: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260812094106.1391698-1-gahing@gahingwoo.com/)**
-(2026-08-12, on top of Igor Paunovic's clocks-by-name fix)
+**[PATCH v8 0/12: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260817113603.1436067-1-gahing@gahingwoo.com/)**
+(2026-08-17, on top of Igor Paunovic's clocks-by-name fix)
+
+No patch of the twelve has been applied anywhere. It carries a Reviewed-by from
+Krzysztof Kozlowski on the binding, a Reviewed-by from Igor Paunovic on the
+refactor that arrived an hour after posting, and a Tested-by carried unchanged
+from v7 on RK3588 hardware I do not own. That last one is not a v8 test and the
+tester has said on the thread that he has not run v8 and is not extending it.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -32,7 +41,8 @@ Earlier revisions:
 [v3](https://lore.kernel.org/all/20260731043507.1832277-1-gahing@gahingwoo.com/) |
 [v4](https://lore.kernel.org/all/20260803094125.3285895-1-gahing@gahingwoo.com/) |
 [v5](https://lore.kernel.org/all/20260805063826.95682-1-gahing@gahingwoo.com/) |
-[v6](https://lore.kernel.org/all/20260806063413.350184-1-gahing@gahingwoo.com/)
+[v6](https://lore.kernel.org/all/20260806063413.350184-1-gahing@gahingwoo.com/) |
+[v7](https://lore.kernel.org/all/20260812094106.1391698-1-gahing@gahingwoo.com/)
 
 v7 is the first revision sent as PATCH rather than RFC, because the thing every
 earlier cover letter described as unsolved is solved and Rockchip has confirmed
@@ -48,11 +58,18 @@ and grows `struct rocket_core`'s `clks[]` in the patch that adds the names
 rather than the one that claims to change nothing for RK3588. The last two are
 Igor Paunovic's review of v6.
 
-The v7 branch was run on the board before it was sent, with none of this
+The v8 branch was run on the board before it was sent, with none of this
 repository's out of tree patches applied, including no `rk_iommu`
-`flush_iotlb_all`: three submits with three different inputs are byte exact
-each time, the NPU's interrupt count goes from zero to three across them, and
-probe, unbind and rebind are clean with no warning.
+`flush_iotlb_all`: three submits with three different inputs match the CPU
+reference within one count on every channel each time, the NPU's interrupt count
+goes from zero to three across them, and probe, unbind and rebind are clean with
+no warning.
+
+That is not byte exact and an earlier version of this file said it was. Counted
+strictly the three runs are 204788, 204760 and 204767 identical pixels of
+204800, so 12 to 40 pixels differ by one. Nothing here printed the strict count
+until 2026-08-17. The same input either side of the rebind reproduces its count
+exactly.
 
 Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Alexey Charkov, Heiko
 Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Diederik de Haas and Igor
@@ -383,7 +400,7 @@ rows it stages.
 of C puts a channel's nine taps `2C` bytes apart, 2048 at 1024 channels, and
 the hardware could reach only one or two of the nine; a group of 64 puts them
 128 apart whatever C is. The two are identical up to 64 channels, which is why
-every depthwise here had been byte exact and the 1024 channel one had not. And
+every depthwise here had matched within one count and the 1024 channel one had not. And
 `DPU 0x4050` is not a constant for depthwise: its `SIZE_E_2` field counts
 16-channel atomics,
 
@@ -502,12 +519,12 @@ retractions, of which there have been several.
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Board | Radxa ROCK 4D |
-| Kernel | linux-next ≥ 7.2-rc5 (20260730) |
+| Kernel | linux-next, v8 is based on next-20260814 |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
 ## Status
 
-The v7 series was run on a ROCK 4D with nothing else applied (2026-08-12):
+The v8 series was run on a ROCK 4D with nothing else applied (2026-08-17):
 
 ```
 [    1.284413] [drm] Initialized rocket 0.0.0 for rknn on minor 0
@@ -533,11 +550,16 @@ the `PC_TASK_CON` fix that used to live only here went out with v7.
 `kernel/` carries the working tree this project tests with, which is a
 superset: it keeps instrumentation and probes that are not upstream material,
 such as register tracing and an `rk_iommu` `flush_iotlb_all` that has not been
-submitted. None of it is needed for the driver to work, which the v7
+submitted. None of it is needed for the driver to work, which the v8
 verification run above measured directly by leaving all of it out.
 
-The Mesa side is not upstream at all yet and lives in `mesa-patches/` as a
-patch series against `gitlab.freedesktop.org/mesa/mesa`.
+The Mesa side has its first upstream-shaped slice open as
+[mesa!43804](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804),
+five patches and 648 lines for one regular convolution, posted and not yet
+reviewed. It is narrow on purpose and declines the depthwise, pointwise and
+image-input types MobileNet is built from, so the end to end result above comes
+from the development tree rather than from it. The rest still lives in
+`mesa-patches/` as a series against `gitlab.freedesktop.org/mesa/mesa`.
 
 ## Build
 
