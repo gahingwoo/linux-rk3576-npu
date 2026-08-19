@@ -178,6 +178,40 @@ print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
 # the regression set only conv2d-cal has out_zp 128. So the clamp is expected
 # to move NOTHING on five of them, and only conv2d-cal can say anything. If a
 # zero point model reports a nonzero footprint below, this reading is wrong.
+# ⚠ THE INTERPRETER IS NOT GROUND TRUTH, and round 257 measured that directly.
+#
+# Computed offline against exact arithmetic, tflite's own requant reads HIGH on
+# 14.41 percent of mn_dw1's pixels, 0.86 of mn_pw2's and 0.18 of mn_pw24's,
+# while the board measured this driver differing from the interpreter on 14.38,
+# 0.78 and 0.19 percent of the same pixels, every one of them the other way. On
+# those three the hardware is the accurate one and the reference is not, so a
+# knob that improves agreement with the interpreter makes the driver worse.
+#
+# For a single operator model this scores against what the operation means
+# instead. Anything else, and any failure, leaves the rest of the report alone.
+try:
+    from exactref import exact_reference
+
+    _ex = exact_reference(model, data.astype(np.uint8))
+    if _ex is not None:
+        _ex = _ex.reshape(got.shape)
+        _bad_ex = [c for c in range(oc)
+                   if int(np.abs(got[:, :, c] - _ex[:, :, c]).max()) > 1]
+        _px = int((got == _ex).sum())
+        _tf = int((raw.reshape(got.shape) != _ex).sum())
+        print(f"    EXACT ARITHMETIC reference: {oc - len(_bad_ex)}/{oc} channels "
+              f"match, {_px}/{got.size} pixels identical"
+              f"{'  BYTE EXACT' if _px == got.size else ''}", flush=True)
+        print(f"      the tflite interpreter itself differs from exact on "
+              f"{_tf}/{got.size} pixels", flush=True)
+        if _tf:
+            _rf = raw.reshape(got.shape)
+            _d = _rf != _ex
+            print(f"      of those the interpreter reads HIGH "
+                  f"{100.0 * (_rf[_d] > _ex[_d]).mean():.1f}%", flush=True)
+except Exception as _e:
+    print(f"    exact reference unavailable: {type(_e).__name__} {_e}", flush=True)
+
 moved = int((raw != clamped).sum())
 if moved == 0:
     print(f"    UNCLAMPED reference: identical, the clamp moves no pixel here",
