@@ -29,10 +29,21 @@ The driver support is on the list. Current series:
 (2026-08-17, on top of Igor Paunovic's clocks-by-name fix)
 
 No patch of the twelve has been applied anywhere. It carries a Reviewed-by from
-Krzysztof Kozlowski on the binding, a Reviewed-by from Igor Paunovic on the
-refactor that arrived an hour after posting, and a Tested-by carried unchanged
-from v7 on RK3588 hardware I do not own. That last one is not a v8 test and the
-tester has said on the thread that he has not run v8 and is not extending it.
+Krzysztof Kozlowski on the binding and one from Igor Paunovic on the refactor
+that arrived an hour after posting.
+
+The testing is his and it is worth reading rather than counting. On 19 August he
+re-ran v8 on three RK3588 cores against a **differential base**, the same tree
+and config with 1/12 and 2/12 not applied, two passes each at two log levels,
+and reported 12 and 8 induced resets against 12 and 13, all clean, with his
+oracle at 48 of 48 on both kernels. His v7 tag carries to the v8 shape of 1/12
+as re-run; 2/12 has a fresh one naming exactly what was tested. He also said
+what the protocol cannot say, that the race itself never manifested in 45
+resets and the justification for the pair remains the source analysis.
+
+v9 exists and is held, to let v8 collect more review rather than reset the
+thread. Its 2/13 folds in an interrupt mask he raised, so it is not the patch he
+tested and his tag is deliberately not carried across.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -252,8 +263,28 @@ with the old behaviour reproducible in the same log through
 modulo rule was fitted honestly, on ten vendor models compiled at 16 to 160
 output channels in steps of 16, 10 for 10. But every one of those counts is a
 multiple of 16, and on that set the two predicates are the same predicate. They
-differ only where a count is a multiple of neither 32 nor 16, and 56 is such a
-count: `DIV_ROUND_UP(56,16)` is 4, so the parity form asks for `0x80011111`.
+differ only where `oc mod 32` falls between 17 and 31, and 56 is such a count:
+`DIV_ROUND_UP(56,16)` is 4, so the parity form asks for `0x80011111`.
+
+Three counts have been run, and they are one data point rather than three:
+
+| oc | parity form | modulo form |
+|---|---|---|
+| 56 | 56 of 56 | 32 of 56, times out |
+| 88 | 88 of 88 | 64 of 88, times out |
+| 120 | 120 of 120 | 96 of 120, times out |
+
+56, 88 and 120 are all 24 modulo 32, so the twenty four channels each loses are
+forced by the arithmetic and are not corroboration. **20, 50, 60, 90 and 114
+discriminate and nobody has run them on either SoC.** 40 and 72 do not, and an
+earlier version of this file and a mail to the list both said they did.
+
+⚠ Five fields of the value itself are still unexplained. Against `registers.xml`
+this driver's `0x80011111` differs from upstream's `0x124` in `RGP_CNTER` 8,
+`RESERVED_0` 34, `SIZE_E_1` 0, `SIZE_E_0` 4 and `OW_SRC` 1, all of which came
+from vendor captures and none of which has been varied one at a time. Only
+`SIZE_E_2` has a reason behind it. That sweep was promised before the Mesa
+series went out and the series went out first.
 
 **How it was found is worth more than the fix.** charsiu drives this same
 hardware through the same driver with its own register streams, and it computes
@@ -647,6 +678,28 @@ recomputation from an untouched buffer.
 
 `/dev/accel/accel0` present, unbind and rebind clean, no warning in dmesg.
 Earlier boot log: <https://gist.github.com/gahingwoo/7543c1be83c8b8ec15727a8f11a4873c>
+
+**What v8 does not survive is a job timeout**, which is why there is a v9.
+`rocket_reset()` called `pm_runtime_put_noidle()`, which drops the usage count
+without starting the idle path, so the core stayed runtime active, the power
+domain never dropped, the bus reset the domain cycles on power on never fired,
+and the MMU stopped answering. Measured three runs in one boot with one variable
+between them, each forcing a timeout and then running the same convolution:
+
+| put | after the timeout | the next inference |
+|---|---|---|
+| `put_noidle` | runtime active, rail up | 0 of 128, `MMU_DTE_ADDR` |
+| `put_autosuspend` | suspended, rail down | 128 of 128, no message |
+| `put_noidle` again | runtime active, rail up | 0 of 128, `MMU_DTE_ADDR` |
+
+The third run is there so the failure reads as deterministic rather than
+intermittent. Igor Paunovic reported the observation this came from, and on
+RK3588 his resets drop the domain either way, so it may be RK3576 only.
+
+⚠ On a board built from this tree the fix is behind `rocket.reset_autosuspend=1`
+and **defaults off**. A long test round that hits one timeout will otherwise run
+every entry after it on a dead block, which is exactly what happened to round
+250 and cost thirty entries.
 
 ## Patches
 
