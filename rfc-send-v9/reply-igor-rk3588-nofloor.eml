@@ -5,48 +5,46 @@ References: <20260819184838.6723-1-royalnet026@gmail.com>
 
 Hi Igor,
 
-Nothing gates v9 on your side, so please do not reorder anything. It is held to
-let v8 collect more review rather than to wait on a measurement, and travelling
-is a better use of the next ten days than my patch queue.
+Nothing gates v9 on your side, so please do not reorder anything. It is held so
+v8 can collect more review, not to wait on a measurement, and ten days of travel
+beats my patch queue.
 
-The more useful thing I can do with your result is take work off you. Do not
-set up the vendor runtime after the 30th for this. Reading what the vendor
-programs into A on RK3588 cannot separate my two explanations, because your own
-run has just shown there is no floor on RK3588 with L of 0. There is nothing for
-that A to be compensating, so whatever it holds says nothing about which of the
-two is true on my SoC.
+Do not set up the vendor runtime after the 30th for this. Reading what the
+vendor programs into A on RK3588 cannot separate my two explanations, because
+your run has just shown there is no floor on RK3588 with L of 0. There is
+nothing for that A to be compensating, so whatever it holds says nothing about
+which of the two is true on my SoC. Saving you that setup is the most use I can
+make of your result.
 
-The measurement that does separate them is on RK3576 and it is mine to run. The
+The measurement that does separate them is on RK3576 and it is mine. The
 vendor's coefficient buffer is built at load time and is not in the .rknn, but
-it can be dumped from a live run and I have done that before. Doing it for a
-model whose output actually falls below its zero point, and asking whether the
-vendor's A carries a lift or not, answers it directly. If it does, the
-compensation was hiding in A. If it does not, there is an enable I have not
-found. That is a board round here, not a setup on your bench.
+it can be dumped from a live run and I have done that. Doing it for a model
+whose output actually falls below its zero point, and asking whether the
+vendor's A carries a lift, answers it. If it does, the compensation was hiding
+in A. If it does not, there is an enable I have not found. Either way it is a
+board round here.
 
-What your result changed, and it changed the shape of the question rather than
-one row of it. I had two explanations and a reason to prefer neither. You have
-removed the one that was doing the most work, that the floor is a family trait
-and the compensation therefore has to be hiding on every SoC. It is not a family
-trait. So on RK3576 the difference between the vendor stack and mine is
-something in my configuration, on silicon where the same 0x40ac expression
-demonstrably does not floor the vendor. That is a much smaller place to look and
-it is entirely on my side of the fence.
+Your result changed the shape of the question. I had two explanations and no
+reason to prefer either. You have removed the one that was doing the most work,
+that the floor is a family trait and the compensation therefore has to be hiding
+on every SoC. It is not a family trait. So on RK3576 the difference between the
+vendor stack and mine is something in my configuration, on silicon where the
+same 0x40ac expression demonstrably does not floor the vendor. That is a much
+smaller place to look and all of it is on my side.
 
-Thank you also for building the model to the case rather than to the shape. Bias
-centered so the outputs straddle the zero point, 59 percent of the raw reference
-below it, and mesa main so nothing in software could be compensating. The run
-answers the question I asked instead of a nearby one, and the collapse to 0 of
-56 against max(cpu, zp) is the control that says the comparison was live.
+Thank you for building the model to the case and not to the shape. Bias centered
+so the outputs straddle the zero point, 59 percent of the raw reference below
+it, and mesa main so nothing in software could be compensating. It answers the
+question I asked. And the collapse to 0 of 56 against max(cpu, zp) is the
+control that says the comparison was live.
 
-On the counts, one precision so the list is not read as more than it is. Of the
-thirteen you have now covered, eight discriminate, and those eight land on five
-distinct remainders modulo 32, which are 18, 20, 24, 26 and 28. Ten remainders
-in the range have no data on either SoC. That is a long way from one data point
-repeated, which is where 56, 88 and 120 left it, and it is not the whole space.
-What it does establish is that the upstream constant computes whole on RK3588 at
-every count anybody has proposed, with no channel pinned at the zero point in
-any of them, which is the thing that mattered.
+One precision on the counts. Of the thirteen you have covered, eight
+discriminate, and those eight land on five distinct remainders modulo 32, which
+are 18, 20, 24, 26 and 28. Ten remainders in the range still have no data on
+either SoC. That is far past where 56, 88 and 120 left it, when the three were
+one data point repeated, and it is short of the whole space. What it establishes
+is that the upstream constant computes whole on RK3588 at every count anybody
+has proposed, with no channel pinned at the zero point in any of them.
 
 Regards,
 Jiaxing
