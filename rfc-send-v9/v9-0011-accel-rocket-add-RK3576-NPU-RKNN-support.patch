@@ -1,7 +1,7 @@
-From a27a00b35f89cbab7688714895b6f4a82b5adb57 Mon Sep 17 00:00:00 2001
+From 12c1e7c19863aaf5f9f974725ea12a5758e6300c Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
-Subject: [PATCH v9 10/12] accel/rocket: add RK3576 NPU (RKNN) support
+Subject: [PATCH v9 11/13] accel/rocket: add RK3576 NPU (RKNN) support
 
 The RK3576 has two cores of the same RKNN block and a few platform
 differences:
@@ -221,7 +221,7 @@ index 2c673bb99..0cd692a66 100644
  struct rocket_iommu_domain {
  	struct iommu_domain *domain;
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 0bb11c718..afd7b82fb 100644
+index e09bbdd4d..cc7c123a7 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -21,6 +21,29 @@

@@ -1,7 +1,7 @@
-From a5f2eb05efdc530cf5aef98624d16af2bf600e75 Mon Sep 17 00:00:00 2001
+From 2e3aef569915835c78ff0136e7a230809a8a85e4 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:47:52 +1200
-Subject: [PATCH v9 03/12] accel/rocket: factor the completion tail out of the
+Subject: [PATCH v9 04/13] accel/rocket: factor the completion tail out of the
  IRQ handler
 
 rocket_job_handle_irq() stops the block and then either starts the job's
@@ -18,12 +18,14 @@ series minimal, so a bisect that stops before this one gets that fix and
 nothing else. There is one caller, and no functional change.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+
+Reviewed-by: Igor Paunovic <royalnet026@gmail.com>
 ---
  drivers/accel/rocket/rocket_job.c | 31 ++++++++++++++++++++-----------
  1 file changed, 20 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index d484a3a6f..0bb11c718 100644
+index 4cf370a6e..e09bbdd4d 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -341,6 +341,25 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)

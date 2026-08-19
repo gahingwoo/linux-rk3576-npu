@@ -1,0 +1,58 @@
+From 6100f43a9e5de4ffa62545d0bd67c1bcdfaf215d Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 19 Aug 2026 19:11:26 +1200
+Subject: [PATCH v9 03/13] accel/rocket: let the core suspend after a reset
+
+rocket_reset() drops the in-flight job's runtime PM reference with
+pm_runtime_put_noidle(), a bare decrement that requests nothing. The core
+is left at usage_count 0 but still runtime-active with no idle request
+pending, so it does not suspend until something else asks, and on a
+platform whose power domain does work on power-on that work never happens.
+
+On RK3576 that work is a bus interface reset the domain cycles when it
+comes up. Without it the NPU's IOMMU stops answering, and the job after a
+timeout returns a surface of the output zero point with rk_iommu reporting
+that MMU_DTE_ADDR is not functioning.
+
+Measured on a ROCK 4D in one boot, three runs, one variable between them.
+With the bare put the core reads runtime-active with its rail still up
+after the reset, the IOMMU reports the failure on the next attach and the
+inference returns 0 of 128 channels. With the reference put back through
+pm_runtime_put_autosuspend() the core reads suspended with the rail down,
+there is no IOMMU message, and the same inference returns 128 of 128. A
+third run repeating the first failed the same way.
+
+pm_runtime_put_autosuspend() also matches every other put in this driver,
+including the one in the completion path a few lines away, so the reset
+path no longer leaves the device in a state the rest of the driver never
+produces.
+
+Reported-by: Igor Paunovic <royalnet026@gmail.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_job.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 68c7ffefd..4cf370a6e 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -394,12 +394,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 
+ 	/*
+ 	 * No handler is running now, but we might still have stuck jobs. Let's
+-	 * make sure the PM counters stay balanced by manually calling
+-	 * pm_runtime_put_noidle().
++	 * make sure the PM counters stay balanced by putting the reference the
++	 * job took, and request idle while doing it so the core can suspend.
+ 	 */
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		if (core->in_flight_job)
+-			pm_runtime_put_noidle(core->dev);
++			pm_runtime_put_autosuspend(core->dev);
+ 
+ 		iommu_detach_group(NULL, core->iommu_group);
+ 
+-- 
+2.43.0
+
