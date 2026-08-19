@@ -2,112 +2,131 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-18 round 245. Run the four claims the v8 cover letter makes and that
-# I have not measured on this code.
+# 2026-08-19 round 246. Igor's reading of why the block does not come back
+# after a timeout, tested both ways in one boot.
 #
-# WHY. The "Where it stands" list in the cover letter was carried over from
-# v7. Three of its lines I verified this week. Four I did not, and this build
-# has moved the power rail, added synchronize_irq to the reset path and
-# swapped a udelay for a sleep since those four were last run. Carrying a
-# previous version's runs as if they were this version's is the exact habit
-# this whole round is cleaning up, so either they reproduce here or they come
-# out of the letter.
+# HIS READING. rocket_reset() ends with pm_runtime_put_noidle(), a bare
+# decrement that arms nothing. The device stays active with no idle request
+# pending, so the power domain never drops between the failed job and the next
+# one, and the BIU reset that the pmdomain patch cycles on power-on never
+# fires. If the MMU needs that reset to answer again, it never gets it. That
+# fits round 244, where two timeouts each left rk_iommu reporting
+# MMU_DTE_ADDR not functioning and the next inference returning a whole
+# surface of the output zero point.
 #
-# THE FOUR
-#   1 the NPU probes with the two domain list and no attach failure
-#   2 a convolution submitted three times with three different inputs is byte
-#     exact against the CPU reference each time, with nothing retiring the job
-#     but the interrupt
-#   3 the NPU interrupt count goes from zero to three across those submits,
-#     one each and no more
-#   4 unbind and rebind is clean with no warning
+# WHAT THIS IMAGE ADDS
+#   rocket.reset_autosuspend  arms the autosuspend timer after a reset instead
+#                             of the bare put. ⚠ It is a real module_param,
+#                             checked in the built Image, unlike task_con16
+#                             which this project cited for weeks and which was
+#                             never defined.
+#   the interrupt mask        INTERRUPT_MASK is now cleared before the
+#                             synchronize_irq, which Igor asked for and I
+#                             agreed to on the list. Not under test here, it
+#                             rides along.
 #
 # READING RULES, fixed before the run.
 #
-#   Claim 2 has two halves and they are scored separately. perch.py's headline
-#   is maxdiff at most 1, which tolerates an off by one, so this image adds a
-#   strict line. If EXACT says BYTE EXACT on all three seeds the word stays in
-#   the letter. If it says NOT byte exact the word comes out and is replaced
-#   by what the strict count actually is. Either way the three seeds differ, so
-#   a stale output buffer cannot pass as three recomputations.
+#   Entry 1 is the control. Rounds 240 through 245 all got 128 of 128 with npu
+#   min 128 max 255 across 128 distinct values. If that moved, the mask or the
+#   param did it and nothing else counts.
 #
-#   Claim 3 is the interrupt line read before and after each submit. Exactly
-#   one per submit and no more. Any other number and the claim is wrong as
-#   worded, whichever direction it goes.
+#   Entries 3 and 5 are the two arms, same boot, same model, one variable.
+#     3  autosuspend off, the shipped behaviour. Round 244 says this fails,
+#        and it must fail again or the failure is not deterministic and
+#        neither arm proves anything.
+#     5  autosuspend on. If Igor is right this computes.
 #
-#   Claim 4 is dmesg between the unbind and the rebind. Any WARNING, any call
-#   trace, any refcount message and it is not clean. The run after the rebind
-#   is the part that matters most, since a rebind that leaves a dead block is
-#   worse than one that warns.
+#   ⚠ THE TRAP. If entry 3 computes, stop reading. Two timeouts in round 242
+#   and 244 behaved differently already, and an intermittent failure cannot be
+#   cured by a knob in a two-arm test.
 #
-#   ⚠ NOT A CLAIM AND NOT UNDER TEST HERE. The reset path still does not bring
-#   the block back after a timeout, round 244 showed that twice with rk_iommu
-#   reporting MMU_DTE_ADDR not functioning. Nothing below times a job out, so
-#   nothing below says anything about that.
+#   Entry 7 is the second mechanism, and it is deliberately NOT the param. It
+#   forces a suspend and a resume through sysfs before the next job. If 5 and
+#   7 both compute the two agree; if only 7 does, the timer never fired and
+#   the fix is a forced cycle rather than an armed one.
+#
+# The rail counters print either side so a domain that never dropped can be
+# told from one that did.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
+P=/sys/module/rocket/parameters/reset_autosuspend
+GD=/sys/kernel/debug/pm_genpd
+RD=
 log() { echo "$@" > "$C"; }
 w() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
-irqs() { log "    IRQ $1  $(grep -iE 'npu|rknn' /proc/interrupts | tr -s ' ' | sed 's/^ //' | tr '\n' '|')"; }
+st() {
+	log "    STATE $1  reset_autosuspend=$(cat $P 2>/dev/null)  rail_open=$(cat $RD/open_count 2>/dev/null) rail_use=$(cat $RD/use_count 2>/dev/null)  npu_active=$(cat $GD/npu/active_time 2>/dev/null)  rt=$(cat /sys/bus/platform/devices/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
+}
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
+	mount -t debugfs none /sys/kernel/debug 2>/dev/null
+	for d in /sys/kernel/debug/regulator/*vdd_npu*; do
+		[ -r "$d/open_count" ] && RD="$d"
+	done
+
+	if [ ! -w "$P" ]; then
+		log "  the parameter is not writable at $P. What is there:"
+		ls /sys/module/rocket/parameters/ 2>/dev/null | tr '\n' ' ' > "$C"
+		log ""
+		log "  the two arms cannot be run in one boot, stopping"
+		return 0
+	fi
+	echo 0 > "$P"
 
 	log ""
-	log "===== CLAIM 1) probe. Every rocket, rknn, iommu and power domain  ====="
-	log "=====    line from the boot log. Any attach failure shows here.   ====="
-	dmesg | grep -iE "rocket|rknn|27700000|27702000|power domain|genpd" > "$C" 2>&1
-	log ""
-	log "    the two domain list, from sysfs"
-	ls -1 /sys/bus/platform/devices/27700000.npu/power/ 2>/dev/null | tr '\n' ' ' > "$C" 2>&1
-	log ""
-	for d in /sys/bus/platform/devices/27700000.npu/*power-domain*; do log "    $d"; done 2>/dev/null
+	log "===== 1) THE CONTROL. 240 through 245 all got 128 of 128.        ====="
+	w conv2d-cal.tflite ""
+	st "after the control"
 
 	log ""
-	log "===== CLAIM 2 and 3) three submits, three different inputs.       ====="
-	log "=====    Read the EXACT line on each. The interrupt count must    ====="
-	log "=====    rise by exactly one per submit.                          ====="
-	irqs "before any submit"
-	w conv2d-cal.tflite "ROCKET_SEED=7"
-	irqs "after submit 1"
-	w conv2d-cal.tflite "ROCKET_SEED=11"
-	irqs "after submit 2"
-	w conv2d-cal.tflite "ROCKET_SEED=23"
-	irqs "after submit 3"
+	log "===== 2) ARM A fixture. autosuspend OFF, force a timeout.        ====="
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	st "after the timeout, arm A"
 
 	log ""
-	log "===== CLAIM 4) unbind and rebind                                  ====="
-	dmesg -c > /dev/null 2>&1
-	log "    unbinding"
-	echo 27700000.npu > /sys/bus/platform/drivers/rocket/unbind 2>&1 > "$C"
-	sleep 2
-	log "    dmesg since the unbind"
-	dmesg > "$C" 2>&1
-	log "    rebinding"
-	echo 27700000.npu > /sys/bus/platform/drivers/rocket/bind 2>&1 > "$C"
+	log "===== 3) ARM A result. Round 244 says this comes back empty.     ====="
+	log "=====    It must, or the failure is not deterministic.           ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== 4) ARM B fixture. autosuspend ON, force a timeout.         ====="
+	echo 1 > "$P"
+	st "parameter flipped"
+	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
+	st "after the timeout, arm B"
 	sleep 3
-	log "    dmesg since the rebind"
-	dmesg > "$C" 2>&1
-	log "    warnings and traces in that window: $(dmesg | grep -ciE 'WARNING|Call trace|refcount|BUG')"
 
 	log ""
-	log "===== CLAIM 4b) the rebound block must still compute              ====="
-	irqs "after the rebind, before the submit"
-	w conv2d-cal.tflite "ROCKET_SEED=7"
-	irqs "after the post rebind submit"
+	log "===== 5) ARM B result. If Igor is right this computes.           ====="
+	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read the EXACT lines first. They decide one word in the     ====="
-	log "=====    cover letter, and the word is currently wrong or right   ====="
-	log "=====    with no evidence either way.                             ====="
+	log "===== 6) the other mechanism. Back to OFF, time out again, then  ====="
+	log "=====    force a suspend and resume by hand rather than by timer ====="
+	echo 0 > "$P"
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	st "after the timeout, arm C"
+	for d in /sys/bus/platform/devices/*.npu/power/control; do echo auto > "$d" 2>/dev/null; done
+	sleep 5
+	st "after five seconds of forced auto"
+
+	log ""
+	log "===== 7) ARM C result                                            ====="
+	w conv2d-cal.tflite ""
+	st "at the end"
+
+	log ""
+	log "===== Read entry 3 first. If it computes, the rest is noise.     ====="
 	sync
 }
 case "$1" in
