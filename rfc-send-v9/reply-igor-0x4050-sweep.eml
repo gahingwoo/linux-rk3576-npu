@@ -1,0 +1,62 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+References: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
+
+Hi Igor,
+
+The 88 and 120 sweep, which I said would go out either way and then left out of
+three flashes before this one.
+
+  oc     parity of DIV_ROUND_UP(oc,16)   the oc modulo 32 rule it replaced
+  88     88 of 88 channels correct       hangs the block, 64 of 88 partial
+  120    120 of 120 channels correct     hangs the block, 96 of 120 partial
+
+Both counts discriminate, DIV_ROUND_UP even and oc modulo 32 nonzero, so the
+two rules genuinely disagree there rather than agreeing by accident the way
+1001 did. The partial figures are from runs that timed out, so treat the hang
+as the result and the number as colour. 64 of 88 came back on two separate
+boots.
+
+So RK3576 needs the toggle at exactly the counts where yours does not, measured
+at the shapes you suggested rather than at 56 alone.
+
+I owe you a correction on the clamp, and it was my inference rather than your
+data. I wrote that since the vendor userspace on the same silicon does not
+clamp, the clamp had to be mine and there was no hardware behaviour left to
+appeal to. The first half holds and the conclusion does not. The output stage
+is
+
+    byte = clamp(max(requant + L, 0) + offset, -128, 127) + 128
+
+with the floor applied before the offset, so a negative requant is gone before
+the offset can do anything about it. It is the silicon. The vendor does not
+clamp because it lifts the accumulator first and takes the same amount back out
+of the offset, which is the half I was missing. L is the output zero point,
+which is the smallest lift that clears the floor, and with it the expression
+collapses to clamp(requant + out_zp, 0, 255) with the offset a constant -128.
+conv2d-cal went from 0 of 128 channels against the unclamped reference to 128
+of 128, and every model whose zero point is zero came back byte identical to
+emitting no lift at all.
+
+The unclamped reference you pushed me towards has a second half I did not
+expect, and it may touch your numbers as well. Scoring against the tflite
+interpreter is not the same as scoring against the operation. Its requant
+rounds a half away from zero, and computed offline against exact integer
+arithmetic it reads high on 14.41 percent of a MobileNet depthwise's pixels,
+while the board measures my driver differing from the interpreter on 14.38
+percent of the same pixels, every one of them the other way. Against exact
+arithmetic that layer is 99.98 percent of pixels identical. If the RK3588
+figures you sent were against the interpreter too, some of what reads as error
+there may not be.
+
+Still owed, and I let the series go out without it. RGP_CNTER 8, OW_SRC 1 and
+the two in the reserved range have still never been varied one at a time. I
+said I would do that before the Mesa series went out and then opened it anyway,
+which was the wrong way round.
+
+v9 is ready. I am holding it to let v8 collect more review rather than
+resetting the thread, and I will say so here when it goes.
+
+Regards,
+Jiaxing
