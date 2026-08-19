@@ -6,8 +6,7 @@ MobileNet V1 runs end to end on the NPU and **returns the right label**: on the
 test image it picks class 754, the class the CPU reference picks, with the CPU's
 top five in the same order. Every one of its layers, run on its own, is **99.93
 to 99.99 percent of pixels identical to exact integer arithmetic**, which is
-closer than the tflite interpreter this project spent months scoring itself
-against. An open LLM runtime computes a signed int8 matmul through this driver
+closer than the tflite interpreter most of the numbers here are scored against. An open LLM runtime computes a signed int8 matmul through this driver
 **byte exact**, at 11.9 GB/s of weight bandwidth. Details below.
 
 ## Companion projects
@@ -80,15 +79,20 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
-## The reference was the inaccurate one (2026-08-19)
+## The reference is the inaccurate one, measured on the board this time (2026-08-19)
 
-Every accuracy figure in this project was scored against the tflite
-interpreter. On MobileNet's own layers the interpreter is the one that is
-wrong.
+⚠ **This section re-establishes something rounds 99 to 101 had already settled**,
+and `vendor-capture/chainmodel.py` has printed since 13 August. Its own
+docstring says the pervasive one sided off by one is tflite's double rounding
+and not the hardware, and that by operator 8 a perfectly correct accelerator
+would score 34 of 256 channels against the CPU. Six board rounds went into
+rediscovering that. The two numbers below, 4 of 128 at operator 6 and 34 of 256
+at operator 8, are the ones that file predicted. What is new here is the per
+operator measurement on hardware rather than the prediction, and it agrees.
 
 Its requant is a `SaturatingRoundingDoublingHighMul` followed by a
-`RoundingDivideByPOT`, which rounds a half away from zero. Computed offline
-against exact integer arithmetic, with one rounding at the end and nothing
+`RoundingDivideByPOT`, which rounds a half away from zero. Computed against
+exact integer arithmetic, with one rounding at the end and nothing
 approximated, it reads high on 14.41 percent of a MobileNet depthwise's pixels.
 The board measured this driver differing from the interpreter on 14.38 percent
 of the same pixels, every one of them the other way.
@@ -108,7 +112,8 @@ control: the interpreter barely deviates there, this driver does by 0.03
 percent, and scoring it against exact arithmetic changes nothing. Had the new
 reference simply agreed with everything, that row would have moved too.
 
-**The `85.62%` that sat in this file for weeks was never a driver problem.**
+**The `85.62%` that sat in this file for weeks was never a driver problem**, and
+the file already said as much elsewhere.
 
 ⚠ This makes a whole class of knob a trap. `ROCKET_ABIAS=1` takes that
 depthwise from 85.62 to 98.88 percent agreement with the interpreter and from
@@ -123,7 +128,8 @@ tensor agree in every column, and what accumulates with depth is the
 reference's rounding rather than the hardware's error.
 
 `rootfs-overlay/opt/npu-test/exactref.py` computes the exact reference for a
-single convolution and `perch.py` prints it alongside.
+single convolution and `perch.py` prints it alongside, which is the on board
+per operator half of what `chainmodel.py` predicts offline for a whole graph.
 
 ## The output stage floors at zero, and the fix is one constant (2026-08-19)
 
