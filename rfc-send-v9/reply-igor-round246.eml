@@ -1,0 +1,49 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v8 02/12] accel/rocket: wait for a running IRQ handler before resetting a core
+In-Reply-To: <20260819065146.5904-1-royalnet026@gmail.com>
+References: <20260819065146.5904-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+You were right, and it is one line.
+
+Three runs in one boot on a ROCK 4D, one variable between them. Each
+forces a timeout and then runs the same convolution.
+
+  put                after the timeout          the next inference
+  put_noidle         runtime-active, rail up    0 of 128, MMU_DTE_ADDR
+  put_autosuspend    suspended, rail down       128 of 128, no message
+  put_noidle again   runtime-active, rail up    0 of 128, MMU_DTE_ADDR
+
+The domain never drops, the bus reset it cycles on power-on never fires,
+and the MMU stops answering. Your third bullet. The third run is there so
+the failure is deterministic rather than intermittent, which two arms
+could not have shown.
+
+The fourth run in that round is void and I am saying so rather than
+letting it read as evidence. It meant to force a suspend by hand and
+separate an armed timer from a cycle happening at all. I wrote "auto" to a
+power/control that was already auto, so it did nothing. Five seconds later
+the state line still reads runtime-active with the rail up and genpd
+active_time still climbing. It failed the way the first run did, so it is
+a second instance of the bare put and nothing about forcing.
+
+pm_runtime_put_autosuspend() is patch 3 of 13 in v9, its own patch rather
+than folded, with your Reported-by. The interrupt mask goes into the sync
+patch, where it makes that patch's own sentence true, and the lockdep
+point is in the message. Your Reviewed-by on the extraction is carried.
+
+Twenty resets recovering on RK3588 with the domain dropping every time
+does not contradict this, since the dropping is the step my failing runs
+are missing. One difference between the two tests is worth stating now
+rather than after we have both quoted it. Your induced resets come from
+JOB_TIMEOUT_MS at 2 ms against healthy jobs of about 5 ms, so the block
+being reset is working. Mine come from a job that hung. Whether that is
+why your domain drops and mine does not, I cannot tell from here, and
+RK3588 may simply have nothing behind the domain that needs cycling.
+
+Both limits you drew are the right calls. Testing through a path you have
+reported as broken would have told neither of us anything, and only the
+differential earns the tag.
+
+Jiaxing
