@@ -120,9 +120,20 @@ porting the reason cost one board round, because charsiu's output zero point is
 zero and its offset was already -128, so the compensation came free there.
 
 ⚠ Every accuracy figure in this file dated before this one, on a model whose
-output zero point is not zero, was scored against `max(cpu, out_zp)`. The
-MobileNet numbers are not affected: every layer in it has an output zero point
-of zero, where the floor cannot move a uint8 pixel.
+output zero point is not zero, was scored against `max(cpu, out_zp)`. Of the
+133 models in the regression set, 31 have at least one operator with a nonzero
+output zero point and are in that class.
+
+An earlier version of this section said MobileNet was not among them because
+every layer in it has an output zero point of zero. That is wrong. Its final
+classifier convolution, a 1x1 over 1024 channels to 1001, has an output zero
+point of 66, and the floor pinned every logit below it. What survives is the
+`1000 of 1001` figure itself, which is measured on the softmax output, and that
+tensor's zero point is zero, so the old reference was not hiding anything at
+the point of measurement. What does not survive is the assumption that nothing
+upstream of it moved. The label is still right for a reason that does not
+depend on the floor, since the top logit is far above 66, but the numbers
+between here and there have not been re-measured yet.
 
 ## An LLM runtime computes on this driver, and it has been timed (2026-08-15)
 

@@ -2,55 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 249. The lift and the offset, moved together this time.
+# 2026-08-19 round 250. Re-score the ledger, and pay a debt.
 #
-# WHAT ROUND 248 SAID. Lifting the accumulator alone did not lower the floor,
-# it raised the whole surface into the top rail. Four sweep points and the
-# regression guard between them determine the output stage completely:
+# WHY. Round 249 fixed the output stage's floor and retired the reference that
+# hid it. 31 of the 133 models here have at least one operator with a nonzero
+# output zero point, so every score they ever got was against max(cpu, out_zp),
+# with both surfaces flattened the same way below it. We do not currently know
+# which of them are correct. Deciding what to build next on top of that ledger
+# is deciding on a number nobody has measured, so this round measures it.
 #
-#     byte = clamp(max(requant + L, 0) + offset, -128, 127) + 128
-#
-# Every entry fits it. conv2d-cal at L=128 with offset 0 rails everything above
-# requant 0 and comes back maxdiff 127 with half the wrong pixels sitting on a
-# rail, which is what the equation says. L=192 and L=256 push the floor up to
-# 171 and 235 and collapse the distinct count to 80 and 16, same reason.
-# ⚠And pw33x64w56, whose out_zp is 0 so its offset is already -128, came back
-# uniformly maxdiff 128 -- the lift with nothing taking it back. That entry is
-# the one that fixes the sign and the amount.
-#
-# So a byte of clamp(requant + out_zp, 0, 255), which is what the operation
-# means, needs L + offset == out_zp - 128 AND L >= 128 so the floor never
-# bites. This driver shipped L = 0 with offset = out_zp - 0x80: the sum is
-# satisfied and the floor bites. Round 248 changed L and left the offset, which
-# breaks the sum. This round is L = 128 with the offset 128 lower, which is the
-# only pair that satisfies both, and rkt_out_lift() is now the single place
-# both read so they cannot drift apart again.
+# ⚠ I already got this wrong once today by assuming instead of measuring. I
+# wrote in public that MobileNet was unaffected because every layer in it has
+# an output zero point of zero. Its classifier convolution, op28, a 1x1 over
+# 1024 channels to 1001, has an output zero point of 66. The graph output is a
+# softmax whose zero point IS zero, so the 1000 of 1001 figure was not itself
+# inflated, but everything upstream of it was floored and has not been
+# re-measured. Entry 5 is that measurement.
 #
 # THE READING RULE, fixed before the run.
 #
-#   Read entry 1 FIRST. ROCKET_NO_LIFT=1 sets L to 0 AND restores the old
-#   offset, so it must reproduce rounds 240 through 248 exactly: 128 of 128
-#   against max(cpu,zp), npu min 128, 0 of 128 against the UNCLAMPED cpu. If it
-#   does not, the round is void.
+#   perch.py's primary reference is now the raw CPU output, so the headline
+#   "N of M channels match" is already the honest score and readlog.py's match
+#   column can be read directly. No second lookup.
 #
-#   The answer is entry 2's "vs UNCLAMPED cpu" count. It has been 0 of 128 every
-#   round since the metric existed. 128 of 128 means the floor is gone and the
-#   arithmetic underneath was right all along.
+#   Entries 1 and 2 are the anchor. conv2d-cal must reproduce round 249: 128 of
+#   128 with the lift, and 0 of 128 with ROCKET_NO_LIFT=1. If it does not, the
+#   image is not what I think it is and nothing below counts.
 #
-#   ⚠If entry 2 is neither 0 nor 128, read "npu min" and the maxdiff before
-#   concluding anything: a partial result means the pair is right in form and
-#   wrong in amount, and entries 3 and 4 are there to say by how much.
+#   ⚠ EXPECT REGRESSIONS AND DO NOT EXPLAIN THEM AWAY. A model that scored well
+#   before and scores badly now was probably never right; the old reference
+#   just could not see it. That is the result, not a setback.
 #
-#   Entries 6 to 9 are the regression guard and they are the real risk. Both
-#   shapes were correct before at out_zp 0. The offset there goes from -128 to
-#   -256, which is a value this driver has never written. If they break while
-#   entry 2 works, the fix is right for out_zp 128 and wrong in general.
+#   ⚠ conv2x and dwconv carry NEGATIVE output zero points, down to -128, so
+#   their offset becomes out_zp - 0x80 - 128, as low as -384. This driver has
+#   never written a value like that. Read those two as a question about the
+#   fix's range, separately from the rest.
+#
+# PART B pays a promise. rfc-send-v7/reply-igor-clamp.eml said the 88 and 120
+# sweep was queued for the next flash and I would send what it says either way.
+# The board has been flashed three times since and it was in none of them.
+# Both counts are discriminating: DIV_ROUND_UP(oc,16) is even for each while
+# oc % 32 is nonzero, so the parity rule and the modulo rule disagree there.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 log() { echo "$@" > "$C"; }
-w() { log ""; log "  -- $1   $2"; sleep 2; \
+w() { log ""; log "  -- $1   $2"; sleep 1; \
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
 
@@ -61,42 +59,49 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, and read it first. L=0 and the old offset,  ====="
-	log "=====    so this must reproduce 240 to 248: 128/128 clamped, npu  ====="
-	log "=====    min 128, 0/128 UNCLAMPED. Otherwise the round is void.   ====="
-	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
-
-	log ""
-	log "===== 2) THE QUESTION. L=128 with the offset 128 lower.           ====="
-	log "=====    Read the UNCLAMPED count.                                ====="
+	log "===== 1-2) THE ANCHOR. Must reproduce round 249 or the round is void ====="
 	w conv2d-cal.tflite ""
-
-	log ""
-	log "===== 3-4) only if 2 is partial: is the amount off. Both keep the ====="
-	log "=====      pair intact, since the offset follows the knob.        ====="
-	w conv2d-cal.tflite "ROCKET_LIFT=129"
-	w conv2d-cal.tflite "ROCKET_LIFT=160"
-
-	log ""
-	log "===== 5) the control again, so a drift across the log is visible  ====="
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 6-9) THE REGRESSION GUARD, and the real risk. Both were     ====="
-	log "=====      correct before at out_zp 0, where the offset now goes  ====="
-	log "=====      to -256, a value this driver has never written.        ====="
-	w pw33x64w56.tflite "ROCKET_NO_LIFT=1"
-	w pw33x64w56.tflite ""
-	w cal_k3.tflite "ROCKET_NO_LIFT=1"
-	w cal_k3.tflite ""
+	log "===== 3-6) PART B, THE DEBT. 0x4050 at oc 88 and 120, each with the ====="
+	log "=====      parity rule and with the modulo rule it replaced.        ====="
+	log "=====      Both counts are discriminating. Owed to Igor since v7.   ====="
+	w pw64x88w56.tflite ""
+	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
+	w pw64x120w56.tflite ""
+	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
 
 	log ""
-	log "===== 10-11) and the two the MR's table quotes, at out_zp 128.    ====="
-	w cal_oc16.tflite "ROCKET_NO_LIFT=1"
-	w cal_oc16.tflite ""
+	log "===== 7) MOBILENET END TO END. Its op28 has out_zp 66 and was       ====="
+	log "=====    floored. The public 1000 of 1001 is measured downstream of ====="
+	log "=====    that, on a softmax whose zero point is 0.                  ====="
+	w mobilenet_v1_1.0_224_quant.tflite ""
 
 	log ""
-	log "===== Read entry 1 first. Then entry 2's UNCLAMPED count.         ====="
+	log "===== 8+) THE RE-SCORE. Every model with a nonzero output zero      ====="
+	log "=====     point, against the raw CPU output for the first time.     ====="
+	for m in cal_izp0 cal_k1 cal_k3_imp cal_k5_imp cal_s1 pw2_zp128 \
+	         md003 md003_80 md003_oc128 md003_s2 md011; do
+		w "$m.tflite" ""
+	done
+
+	log ""
+	log "===== NEGATIVE OUTPUT ZERO POINTS. offset goes as low as -384,      ====="
+	log "=====   a value this driver has never written. Read separately.     ====="
+	w add.tflite ""
+	w conv2x.tflite ""
+	w dwconv.tflite ""
+
+	log ""
+	log "===== the MobileNet layer slices, all out_zp 0 and 66               ====="
+	for m in mn_L00 mn_L01 mn_L02 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L08 \
+	         mn_L12 mn_L18 mn_L24 mn_L26; do
+		w "$m.tflite" ""
+	done
+
+	log ""
+	log "===== Read entries 1 and 2 first. Regressions here are results.     ====="
 	sync
 }
 case "$1" in
