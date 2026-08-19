@@ -4,11 +4,11 @@ Mainline kernel bring-up for the RK3576 NPU on Radxa ROCK 4D.
 
 MobileNet V1 runs end to end on the NPU and **returns the right label**: on the
 test image it picks class 754, the class the CPU reference picks, with the CPU's
-top five in the same order. 1000 of its 1001 outputs are within one count of the
-reference, though that reference is degenerate and an empty buffer scores 983 on
-it, so the label is what settles it. An open LLM runtime computes a signed int8
-matmul through this driver **byte exact**, at 11.9 GB/s of weight bandwidth.
-Details below.
+top five in the same order. Every one of its layers, run on its own, is **99.93
+to 99.99 percent of pixels identical to exact integer arithmetic**, which is
+closer than the tflite interpreter this project spent months scoring itself
+against. An open LLM runtime computes a signed int8 matmul through this driver
+**byte exact**, at 11.9 GB/s of weight bandwidth. Details below.
 
 ## Companion projects
 
@@ -79,6 +79,51 @@ Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
+
+## The reference was the inaccurate one (2026-08-19)
+
+Every accuracy figure in this project was scored against the tflite
+interpreter. On MobileNet's own layers the interpreter is the one that is
+wrong.
+
+Its requant is a `SaturatingRoundingDoublingHighMul` followed by a
+`RoundingDivideByPOT`, which rounds a half away from zero. Computed offline
+against exact integer arithmetic, with one rounding at the end and nothing
+approximated, it reads high on 14.41 percent of a MobileNet depthwise's pixels.
+The board measured this driver differing from the interpreter on 14.38 percent
+of the same pixels, every one of them the other way.
+
+| layer | vs the interpreter | **vs exact arithmetic** | the interpreter's own error |
+|---|---|---|---|
+| `mn_dw1` | 85.62% | **99.98%** | 14.41%, all high |
+| `mn_pw2` | 99.22% | **99.93%** | 0.86%, all high |
+| `mn_pw24` | 99.81% | **99.99%** | 0.18%, all high |
+| `mn_conv0` | 99.80% | **99.98%** | 0.22%, all high |
+| `mn_dw25` | 99.29% | **99.98%** | 0.70%, all high |
+| `conv2d-cal` | 99.81% | 99.80% | 0.03%, both ways |
+
+That depthwise's multiplier is 0.292, so its final divide is by two and one
+pixel in seven lands on a tie the interpreter rounds up. `conv2d-cal` is the
+control: the interpreter barely deviates there, this driver does by 0.03
+percent, and scoring it against exact arithmetic changes nothing. Had the new
+reference simply agreed with everything, that row would have moved too.
+
+**The `85.62%` that sat in this file for weeks was never a driver problem.**
+
+⚠ This makes a whole class of knob a trap. `ROCKET_ABIAS=1` takes that
+depthwise from 85.62 to 98.88 percent agreement with the interpreter and from
+99.98 down to 84.47 percent against exact arithmetic. It takes `mn_pw24` to
+byte exact against the interpreter and away from exact. Chasing agreement with
+the reference is chasing its rounding.
+
+The chain degradation this file used to describe follows from the same thing.
+Every operator run in isolation is within one count with all its misses one
+sided, a two operator model and the full 31 operator graph read at the same
+tensor agree in every column, and what accumulates with depth is the
+reference's rounding rather than the hardware's error.
+
+`rootfs-overlay/opt/npu-test/exactref.py` computes the exact reference for a
+single convolution and `perch.py` prints it alongside.
 
 ## The output stage floors at zero, and the fix is one constant (2026-08-19)
 
