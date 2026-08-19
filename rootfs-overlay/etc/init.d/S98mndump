@@ -2,46 +2,49 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 248. The lift, and whether the clamp was always the silicon.
+# 2026-08-19 round 249. The lift and the offset, moved together this time.
 #
-# WHAT CHANGED. charsiu measured this output stage on this silicon in its own
-# round 163, with a control that separates a floor at zero from a rail at -128,
-# and wrote the result into src/job.c:
+# WHAT ROUND 248 SAID. Lifting the accumulator alone did not lower the floor,
+# it raised the whole surface into the top rail. Four sweep points and the
+# regression guard between them determine the output stage completely:
 #
-#     out = clamp(max(requant, 0) + offset, -128, 127)
+#     byte = clamp(max(requant + L, 0) + offset, -128, 127) + 128
 #
-# The clamp comes BEFORE the offset, so a negative requant is gone before the
-# offset can do anything about it. There IS a fused ReLU. That is the floor
-# conv2d-cal has shown since June, and it means the MR's "It is not the
-# silicon" is wrong, whatever the vendor does on top of it.
+# Every entry fits it. conv2d-cal at L=128 with offset 0 rails everything above
+# requant 0 and comes back maxdiff 127 with half the wrong pixels sitting on a
+# rail, which is what the equation says. L=192 and L=256 push the floor up to
+# 171 and 235 and collapse the distinct count to 80 and 16, same reason.
+# ⚠And pw33x64w56, whose out_zp is 0 so its offset is already -128, came back
+# uniformly maxdiff 128 -- the lift with nothing taking it back. That entry is
+# the one that fixes the sign and the amount.
 #
-# charsiu also has the compensation and says it costs nothing. Add 128/mult to
-# A, which raises the surface by exactly 128 in the requant domain and puts
-# every value a signed byte can hold above the floor; offset = out_zp - 0x80,
-# which this driver already emits, takes the same 128 back. The lift lives in
-# an int32 accumulator and comes out in the output domain.
-#
-# ⚠ WHAT IS NOT SETTLED. charsiu's 128 was measured against charsiu's output
-# convention and I could not settle offline whether Mesa's is the same one. So
-# the amount is a knob, not a constant, and entries 3 to 5 sweep it. If the two
-# conventions agree, 128 is right. If they do not, the sweep says by how much.
+# So a byte of clamp(requant + out_zp, 0, 255), which is what the operation
+# means, needs L + offset == out_zp - 128 AND L >= 128 so the floor never
+# bites. This driver shipped L = 0 with offset = out_zp - 0x80: the sum is
+# satisfied and the floor bites. Round 248 changed L and left the offset, which
+# breaks the sum. This round is L = 128 with the offset 128 lower, which is the
+# only pair that satisfies both, and rkt_out_lift() is now the single place
+# both read so they cannot drift apart again.
 #
 # THE READING RULE, fixed before the run.
 #
-#   Read entry 1 FIRST. It is ROCKET_NO_LIFT=1 and it must reproduce rounds 240
-#   through 247 exactly: 128 of 128 against max(cpu,zp), npu min 128, and 0 of
-#   128 against the UNCLAMPED cpu. If it does not, the default changed the build
-#   in a way I did not intend and the whole round is void.
+#   Read entry 1 FIRST. ROCKET_NO_LIFT=1 sets L to 0 AND restores the old
+#   offset, so it must reproduce rounds 240 through 248 exactly: 128 of 128
+#   against max(cpu,zp), npu min 128, 0 of 128 against the UNCLAMPED cpu. If it
+#   does not, the round is void.
 #
-#   The answer is entry 2's "vs UNCLAMPED cpu" count, which has been 0 of 128
-#   every round since the metric existed. 128 of 128 means solved. 0 of 128
-#   means the lift does nothing in this direction and the sweep is what is left
-#   to read.
+#   The answer is entry 2's "vs UNCLAMPED cpu" count. It has been 0 of 128 every
+#   round since the metric existed. 128 of 128 means the floor is gone and the
+#   arithmetic underneath was right all along.
 #
-#   Entries 7 and 8 are the regression guard, and they are NOT a formality. The
-#   lift is not invisible at out_zp 0: it shifts the requant up and the offset,
-#   which is -128 there, is what takes it back. If those two break, the offset
-#   does not compensate and the port is wrong even if entry 2 looks better.
+#   ⚠If entry 2 is neither 0 nor 128, read "npu min" and the maxdiff before
+#   concluding anything: a partial result means the pair is right in form and
+#   wrong in amount, and entries 3 and 4 are there to say by how much.
+#
+#   Entries 6 to 9 are the regression guard and they are the real risk. Both
+#   shapes were correct before at out_zp 0. The offset there goes from -128 to
+#   -256, which is a value this driver has never written. If they break while
+#   entry 2 works, the fix is right for out_zp 128 and wrong in general.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -58,36 +61,39 @@ start() {
 	dmesg -n 4 2>/dev/null
 
 	log ""
-	log "===== 1) THE CONTROL, and read it first. No lift, so this must    ====="
-	log "=====    reproduce 240 to 247 exactly: 128/128 clamped, npu min   ====="
-	log "=====    128, and 0/128 against the UNCLAMPED cpu. If it does     ====="
-	log "=====    not, the round is void.                                  ====="
+	log "===== 1) THE CONTROL, and read it first. L=0 and the old offset,  ====="
+	log "=====    so this must reproduce 240 to 248: 128/128 clamped, npu  ====="
+	log "=====    min 128, 0/128 UNCLAMPED. Otherwise the round is void.   ====="
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 2) THE QUESTION. charsiu's 128. Read the UNCLAMPED count.   ====="
+	log "===== 2) THE QUESTION. L=128 with the offset 128 lower.           ====="
+	log "=====    Read the UNCLAMPED count.                                ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 3-5) the sweep, in case 128 is the wrong amount for this    ====="
-	log "=====      driver's convention. Whichever maximises UNCLAMPED     ====="
-	log "=====      names the convention.                                  ====="
-	w conv2d-cal.tflite "ROCKET_LIFT=64"
-	w conv2d-cal.tflite "ROCKET_LIFT=192"
-	w conv2d-cal.tflite "ROCKET_LIFT=256"
+	log "===== 3-4) only if 2 is partial: is the amount off. Both keep the ====="
+	log "=====      pair intact, since the offset follows the knob.        ====="
+	w conv2d-cal.tflite "ROCKET_LIFT=129"
+	w conv2d-cal.tflite "ROCKET_LIFT=160"
 
 	log ""
-	log "===== 6) the control again, so a drift across the log is visible  ====="
+	log "===== 5) the control again, so a drift across the log is visible  ====="
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 7-8) THE REGRESSION GUARD. Both were correct before. Both   ====="
-	log "=====      have out_zp 0, where the offset is -128 and is what    ====="
-	log "=====      cancels the lift. If they break, the port is wrong.    ====="
+	log "===== 6-9) THE REGRESSION GUARD, and the real risk. Both were     ====="
+	log "=====      correct before at out_zp 0, where the offset now goes  ====="
+	log "=====      to -256, a value this driver has never written.        ====="
 	w pw33x64w56.tflite "ROCKET_NO_LIFT=1"
 	w pw33x64w56.tflite ""
 	w cal_k3.tflite "ROCKET_NO_LIFT=1"
 	w cal_k3.tflite ""
+
+	log ""
+	log "===== 10-11) and the two the MR's table quotes, at out_zp 128.    ====="
+	w cal_oc16.tflite "ROCKET_NO_LIFT=1"
+	w cal_oc16.tflite ""
 
 	log ""
 	log "===== Read entry 1 first. Then entry 2's UNCLAMPED count.         ====="
