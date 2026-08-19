@@ -5,58 +5,57 @@ References: <CAEWPSH7ETfw2TDjUfOvcVtDm19FC43x2vP=Lh7m+XPOGptnPWA@mail.gmail.com>
 
 Hi Igor,
 
-The 88 and 120 sweep, which I said would go out either way and then left out of
-three flashes before this one.
+I owe you a correction, and it is on the clamp.
 
-  oc     parity of DIV_ROUND_UP(oc,16)   the oc modulo 32 rule it replaced
-  88     88 of 88 channels correct       hangs the block, 64 of 88 partial
-  120    120 of 120 channels correct     hangs the block, 96 of 120 partial
-
-Both counts discriminate, DIV_ROUND_UP even and oc modulo 32 nonzero, so the
-two rules genuinely disagree there rather than agreeing by accident the way
-1001 did. The partial figures are from runs that timed out, so treat the hang
-as the result and the number as colour. 64 of 88 came back on two separate
-boots.
-
-So RK3576 needs the toggle at exactly the counts where yours does not, measured
-at the shapes you suggested rather than at 56 alone.
-
-I owe you a correction on the clamp, and it was my inference rather than your
-data. I wrote that since the vendor userspace on the same silicon does not
-clamp, the clamp had to be mine and there was no hardware behaviour left to
-appeal to. The first half holds and the conclusion does not. The output stage
-is
+I wrote that since the vendor userspace on the same silicon does not clamp, the
+clamp had to be mine and there was no hardware behaviour left to appeal to. The
+first half holds and the conclusion does not. The output stage is
 
     byte = clamp(max(requant + L, 0) + offset, -128, 127) + 128
 
 with the floor applied before the offset, so a negative requant is gone before
-the offset can do anything about it. It is the silicon. The vendor does not
-clamp because it lifts the accumulator first and takes the same amount back out
-of the offset, which is the half I was missing. L is the output zero point,
-which is the smallest lift that clears the floor, and with it the expression
-collapses to clamp(requant + out_zp, 0, 255) with the offset a constant -128.
-conv2d-cal went from 0 of 128 channels against the unclamped reference to 128
-of 128, and every model whose zero point is zero came back byte identical to
-emitting no lift at all.
+the offset can do anything about it. That is the silicon, and this driver was
+shipping L of 0.
 
-The unclamped reference you pushed me towards has a second half I did not
-expect, and it may touch your numbers as well. Scoring against the tflite
-interpreter is not the same as scoring against the operation. Its requant
-rounds a half away from zero, and computed offline against exact integer
-arithmetic it reads high on 14.41 percent of a MobileNet depthwise's pixels,
-while the board measures my driver differing from the interpreter on 14.38
-percent of the same pixels, every one of them the other way. Against exact
-arithmetic that layer is 99.98 percent of pixels identical. If the RK3588
-figures you sent were against the interpreter too, some of what reads as error
-there may not be.
+L is the output zero point, which is the smallest lift that clears the floor,
+and with it the expression collapses to clamp(requant + out_zp, 0, 255) with the
+offset a constant -128. On hardware conv2d-cal went from 0 of 128 channels
+against the unclamped output to 128 of 128, and every model whose zero point is
+zero came back byte identical to emitting no lift at all, which is the control I
+would want to see if someone told me this.
 
-Still owed, and I let the series go out without it. RGP_CNTER 8, OW_SRC 1 and
-the two in the reserved range have still never been varied one at a time. I
-said I would do that before the Mesa series went out and then opened it anyway,
-which was the wrong way round.
+The reason I am not claiming to understand it, and it is a real tension rather
+than a detail. If the vendor compensated the way I now do, its output offset
+would be a constant -128. It is not. Across six compiled .rknn, DPU 0x40ac
+reads -2, +9, +17, 0, -128 and +10, which is out_zp - 0x80 exactly, the same
+expression this driver used before the fix. A floor that is unconditional in the
+silicon should therefore pin the vendor's output too, and measured on the same
+board it does not. So either the compensation is somewhere I cannot see, which
+would be A, since librknnrt builds the coefficient buffer at load time and it is
+not in the .rknn, or the floor has an enable I have not found. My model fits
+everything I can measure on my own stack and does not explain that row.
 
-v9 is ready. I am holding it to let v8 collect more review rather than
-resetting the thread, and I will say so here when it goes.
+If you can read A on RK3588, or force an output below its zero point there, that
+would separate the two.
+
+Two things I should not repeat at you. The 88 and 120 sweep went out on the
+17th, and the reference argument is older than that. I lost track of both and
+nearly sent you a mail announcing them as news.
+
+One thing that column earned. Scoring each MobileNet operator on the board
+against exact arithmetic rather than against tflite puts every one of them
+between 99.93 and 99.99 percent of pixels identical, and the per operator
+figures chainmodel.py predicts, 4 of 128 at operator 6 and 34 of 256 at
+operator 8, came back exactly on hardware. Your reading rule was right.
+
+What is still genuinely open on my side and unchanged. RGP_CNTER 8, OW_SRC 1 and
+the two in the reserved range have never been varied one at a time. I said that
+would happen before the Mesa series went out and then opened it anyway, which
+was the wrong way round. And of the discriminating counts, 20, 50, 60, 90 and
+114 remain unrun on either SoC.
+
+v9 is ready. I am holding it to let v8 collect more review rather than resetting
+the thread, and I will say so here when it goes.
 
 Regards,
 Jiaxing
