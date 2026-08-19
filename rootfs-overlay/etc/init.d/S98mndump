@@ -2,44 +2,48 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 252. The lift on the depthwise record, which 249 missed.
+# 2026-08-19 round 253. The lift is the output zero point, not a constant.
 #
-# WHAT 251 FOUND. The gate worked, the block survived to the last entry, and
-# the log is clean. Two results out of it.
+# WHAT 252 SETTLED. The depthwise record was the second site and fixing it
+# worked: mn_dw1 at 32 of 32 and mn_dw25 at 1024 of 1024 are now byte identical
+# with and without the lift, exactly as pw33x64w56 is, and MobileNet went from
+# 977 back to 999. conv2x and md003_s2 came back identical on both arms, so
+# those two are old failures and not mine.
 #
-#   The 0x4050 sweep Igor is owed is COMPLETE and the parity rule wins at both
-#   counts. 88 of 88 and 120 of 120 with it, 64 of 88 and 96 of 120 with the
-#   modulo rule it replaced, and the modulo arm hangs the block at both.
+# WHAT IT DID NOT SETTLE. The regression is not fully undone. MobileNet is 999
+# of 1001 against 1000 without any lift, and mn_L02 is 16 of 64 against 22. The
+# residual is rounding: lift/mult goes into A as an integer while lift/mult is
+# not one, so each layer lands within half a count of where it should and a
+# chain accumulates it. Invisible on one operator, which is why all three
+# single operator cases were identical.
 #
-#   And the lift broke every model carrying a depthwise. MobileNet went 1000 of
-#   1001 without it to 977 with it, which is below the 983 an empty buffer
-#   scores. mn_L02 went 22 of 64 to 6 of 64 and its maxdiff 6 to 255. mn_L00,
-#   which is a plain first convolution with no depthwise in it, stayed at 32 of
-#   32.
+# THE CHANGE, and it is derived rather than swept. A valid uint8 output means
+# the requantised value lies in [-out_zp, 255 - out_zp], so out_zp is the
+# SMALLEST lift that clears the floor, and with it
 #
-# WHY, and it is the same mistake as round 248 in a second place. A is written
-# in TWO records. The regular convolution's 64 byte record got the lift in 249;
-# the depthwise 48 byte record at rkt_coefs.c did not. rkt_fill_regcmd takes
-# the lift back out of the output offset for EVERY task either way, so a
-# depthwise got the compensation without the thing being compensated. Fixed by
-# adding the same term to the depthwise A.
+#   clamp(max(rq + out_zp, 0) - 128, -128, 127) + 128 == clamp(rq + out_zp, 0, 255)
 #
-# THE READING RULE, fixed before the run.
+# which is what the operation means, with the offset a constant -128. The floor
+# stops being an obstacle and becomes the output's own lower clamp. Where the
+# zero point is 0 the lift is 0 and there is nothing left to round.
 #
-#   Entries 1 and 2 are the anchor and must reproduce 249, 250 and 251.
+# THE READING RULE, fixed before the run, and it is sharp on purpose.
 #
-#   ⚠ THE BAR IS THE NO-LIFT NUMBER, NOT PERFECTION. These models have out_zp
-#   0, where the floor was invisible, so the no-lift arm was already the honest
-#   score and the lift should return them to it, not beat it. mn_L02 must come
-#   back to 22 of 64 at maxdiff 6, mn_L26 to 574 of 1024, MobileNet to 1000 of
-#   1001. Landing there means the depthwise lift was the whole story. Landing
-#   short means it was not, and the remaining gap is the result.
+#   ⚠ Every model whose output zero point is 0 must come back BYTE IDENTICAL to
+#   its no-lift arm, because the lift is now literally zero there. Not close.
+#   Identical. mn_L02 must be exactly 22 of 64 at maxdiff 6, mn_L26 exactly 574
+#   of 1024, pw33x64w56 64 of 64. If any of them differs at all, the lift is
+#   reaching somewhere it should not and the reasoning above is wrong.
 #
-#   ⚠ mn_L02 at 22 of 64 was ALREADY WRONG before any of this. Do not read a
-#   return to 22 as success at anything except undoing my own regression.
+#   ⚠ MobileNet must be at least 1000 of 1001. Its op28 has out_zp 66 and is
+#   the one place in it the floor ever bit, so it should now be fixed at no cost
+#   to the 27 layers around it.
 #
-#   ⚠ Any entry printing POISON is void, and so is everything after it until an
-#   OK health check.
+#   ⚠ conv2d-cal must stay 128 of 128. Its zero point is 128, so its lift is
+#   unchanged from 249 and this must not move it.
+#
+#   ⚠ POISON means void, for that entry and everything after it until an OK
+#   health check.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -83,53 +87,49 @@ start() {
 	fi
 
 	log ""
-	log "===== 1-2) THE ANCHOR, a regular conv. The depthwise change must   ====="
-	log "=====      not touch it.                                           ====="
+	log "===== 1-2) THE ANCHOR. out_zp 128, so its lift is unchanged from   ====="
+	log "=====      249 and this must not move it.                          ====="
 	w conv2d-cal.tflite ""
 	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 3-8) THE QUESTION. Each pair is its own control. The bar is  ====="
-	log "=====      the no-lift arm beside it, not 100 percent.             ====="
-	w mn_L02.tflite ""
-	w mn_L02.tflite "ROCKET_NO_LIFT=1"
-	w mn_L26.tflite ""
-	w mn_L26.tflite "ROCKET_NO_LIFT=1"
+	log "===== 3-4) MOBILENET. op28 has out_zp 66 and is the only place in  ====="
+	log "=====      it the floor ever bit. Must be at least 1000 of 1001.   ====="
 	w mobilenet_v1_1.0_224_quant.tflite ""
 	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 9-14) bare depthwise, where the record being fixed is the    ====="
-	log "=====       only one in play                                       ====="
-	w mn_dw1.tflite ""
-	w mn_dw1.tflite "ROCKET_NO_LIFT=1"
-	w mn_dw25.tflite ""
-	w mn_dw25.tflite "ROCKET_NO_LIFT=1"
-	w dwconv.tflite ""
-	w dwconv.tflite "ROCKET_NO_LIFT=1"
+	log "===== 5+) EVERY out_zp 0 MODEL, PAIRED. The lift is now literally  ====="
+	log "=====     zero on these, so each pair must be IDENTICAL. Any       ====="
+	log "=====     difference at all falsifies the reasoning.               ====="
+	for m in mn_L02 mn_L26 mn_L01 mn_L08 mn_L24 pw33x64w56 mn_dw1 mn_dw25; do
+		w "$m.tflite" ""
+		w "$m.tflite" "ROCKET_NO_LIFT=1"
+	done
 
 	log ""
-	log "===== 15-16) a single pointwise at out_zp 0, which 249 showed is   ====="
-	log "=====        byte for byte identical either way. Must stay so.     ====="
-	w pw33x64w56.tflite ""
-	w pw33x64w56.tflite "ROCKET_NO_LIFT=1"
-
-	log ""
-	log "===== 17+) the rest of the MobileNet slices, lift on, against 251  ====="
-	for m in mn_L00 mn_L01 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L08 \
-	         mn_L12 mn_L18 mn_L24; do
+	log "===== the cal family, out_zp 128, where the lift does the work     ====="
+	for m in cal_izp0 cal_k1 cal_k3 cal_k3_imp cal_k5_imp cal_s1 cal_oc16 \
+	         pw2_zp128; do
 		w "$m.tflite" ""
 	done
 
 	log ""
-	log "===== and the two that were never attributable, each with a arm    ====="
-	w conv2x.tflite ""
-	w conv2x.tflite "ROCKET_NO_LIFT=1"
+	log "===== md003 family, out_zp 127, and the two old failures           ====="
+	w md003.tflite ""
+	w md003_oc128.tflite ""
 	w md003_s2.tflite ""
-	w md003_s2.tflite "ROCKET_NO_LIFT=1"
+	w conv2x.tflite ""
+	w dwconv.tflite ""
 
 	log ""
-	log "===== a final anchor, so the log says whether the block survived   ====="
+	log "===== the rest of the MobileNet slices                             ====="
+	for m in mn_L00 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L12 mn_L18; do
+		w "$m.tflite" ""
+	done
+
+	log ""
+	log "===== a final anchor                                               ====="
 	w conv2d-cal.tflite ""
 
 	log ""
