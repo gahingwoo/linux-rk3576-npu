@@ -2,49 +2,57 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 255. The one count is a rounding rule, and this measures it.
+# 2026-08-19 round 256. Are the one count misses exact ties, or not.
 #
-# WHAT 254 SETTLED, and the rule it was read by was fixed in advance.
+# WHAT 255 REFUTED, and it was my reading that was wrong rather than the
+# measurement. The knob reached the hardware, every value moved every model
+# monotonically, so the round counts.
 #
-#   EVERY isolated operator came back at maxdiff 1 with 100.0 percent of its
-#   misses being the hardware reading LOW. mn_conv0 32 of 32, mn_dw1 32 of 32,
-#   mn_pw2 64 of 64 at three input seeds, mn_pw24 1024 of 1024, mn_dw25 1024 of
-#   1024. There is no per layer bug.
+#   mn_pw2    99.22% exact at 0, then 87.75  74.53  59.66  46.41 at .25 to 1.0
+#   mn_dw1    85.62% at 0, then 98.88  86.43  76.07  76.07
+#   mn_conv0  99.80% at 0, 72.65 at .5
+#   conv2d-cal 99.81% at 0, WORSE IN BOTH DIRECTIONS, 74.94 at +.25 and 75.18
+#              at -.25, so it already sits at its own optimum
 #
-#   The graph size control passed exactly. mn_conv0dw1 at 2 operators and
-#   mn_L01 at 31 agreed in every column, 28 of 32 and 89.31 percent exact and
-#   maxdiff 3 and 99.3 percent low. So the variable is depth, not graph size,
-#   and the chain degradation is propagation of that one count.
+# maxdiff stayed 1 at every value on every layer. The term only moves WHICH
+# pixels are off by one, never by how much.
 #
-# WHAT IT POINTS AT. 100.0 percent one sided is a systematic rounding
-# difference, not noise. The hardware computes floor((acc + A) * mult) while
-# tflite's requant rounds a half away from zero. A is added before the
-# multiply, so adding 0.5/mult to it turns that floor into a round. It is the
-# same mechanism as the lift, in the same place, and the offset deliberately
-# does not take it back.
+# ⚠ THE MISTAKE. 100 percent of misses being low does NOT mean every pixel is
+# half a count low. It means the FEW pixels that miss all miss low, and on
+# mn_pw2 that is 0.78 percent of them. Adding half a count moves the rounding
+# boundary under EVERY pixel, which fixes that 0.78 percent and breaks a much
+# larger population that was exact. The fall is about 12 percent per 0.25,
+# which is the fraction of pixels a shift of that size pushes across an integer
+# boundary. A global constant cannot be the fix.
 #
-# ⚠ WHY THIS IS A SWEEP AND NOT 0.5. The sign is not uniform. conv2d-cal's
-# misses are all the other way, the hardware reading HIGH, and rkt_out_cvt adds
-# 1 to the emitted scale, which biases the multiplier up. Two opposed sources
-# of one count exist and their balance depends on the model, so the amount is
-# measured. ROCKET_ROUND defaults to 0 and reproduces every round through 254.
+# ⚠ EXCEPT mn_dw1, which went 85.62 to 98.88 at 0.25 and is the one case this
+# project already described. Its multiplier is 0.292, and the note in the readme
+# says that for a multiplier of 0.2922 the final divide is by two, so the
+# intermediate lands on exactly one half for half the pixels and the reference
+# rounds up every time. When the divide is by a small power of two the ties are
+# a large population and the rounding rule dominates.
+#
+# THE QUESTION THIS ROUND ASKS. Are the missing pixels EXACT TIES. 0.25 was
+# already too coarse to tell and the small end was never measured.
 #
 # THE READING RULE, fixed before the run.
 #
-#   The isolated layers decide it, because their answer is unambiguous. Read
-#   mn_pw2 and mn_dw1 first, at maxd and npu LOW.
+#   If they are ties, exactness jumps to its maximum at the SMALLEST positive
+#   value and then sits flat until the value grows enough to start pushing
+#   ordinary pixels across, because breaking a tie needs any epsilon at all and
+#   costs nothing else. The curve would be a step, then a plateau, then the
+#   linear fall 255 already measured.
 #
-#     maxd 1 -> 0 anywhere        that value is the rounding and it is real
-#     maxd stays 1, LOW 100 -> 0  overshoot, the true value is smaller
-#     nothing moves at any value  the term is not reaching the hardware and
-#                                 the round is void, not negative
+#   If they are not ties, exactness moves smoothly from the very first step and
+#   there is no plateau. Then no global constant fixes this and the one count
+#   is the reference's own rounding, which is where the readme already had it.
 #
-#   ⚠ conv2d-cal is the counter case and must be read the OTHER way. Its misses
-#   are already HIGH, so a positive round should make it WORSE. If it improves
-#   too then the story is wrong and something else is going on.
+#   ⚠ Read mn_dw1 first. It has the largest tie population by the multiplier
+#   argument, so if anything shows a step it does.
 #
-#   ⚠ A chain improving is not evidence on its own. If the isolated layers do
-#   not move, a chain that moves is noise.
+#   ⚠ mn_pw2 and mn_conv0 are the control. They sit at 99.2 and 99.8 already,
+#   so a tiny epsilon must cost them almost nothing. If they fall immediately
+#   then even an epsilon moves ordinary pixels and the step cannot be clean.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -88,45 +96,42 @@ start() {
 	fi
 
 	log ""
-	log "===== 1) the anchor, round off, must reproduce 254                 ====="
+	log "===== 1) the anchor, knob off                                      ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2-9) THE SWEEP on the two isolated layers whose misses are   ====="
-	log "=====      100 percent low. maxd 1 going to 0 is the answer.       ====="
-	for r in 0.25 0.5 0.75 1.0; do
-		w mn_pw2.tflite "ROCKET_ROUND=$r"
+	log "===== 2+) THE SMALL END on mn_dw1, which has the biggest tie       ====="
+	log "=====     population by the multiplier argument. A step here is    ====="
+	log "=====     the answer.                                              ====="
+	w mn_dw1.tflite ""
+	for r in 0.001 0.01 0.05 0.1 0.15 0.2 0.25; do
 		w mn_dw1.tflite "ROCKET_ROUND=$r"
 	done
 
 	log ""
-	log "===== 10-11) the same two with the knob off, so the sweep has a    ====="
-	log "=====        baseline in this same boot                            ====="
+	log "===== the control: two layers already at 99 percent. A tiny        ====="
+	log "=====   epsilon must cost them almost nothing.                     ====="
 	w mn_pw2.tflite ""
-	w mn_dw1.tflite ""
-
-	log ""
-	log "===== 12-15) THE COUNTER CASE. conv2d-cal's misses are already     ====="
-	log "=====        HIGH, so a positive round must make it WORSE.         ====="
-	w conv2d-cal.tflite "ROCKET_ROUND=0.25"
-	w conv2d-cal.tflite "ROCKET_ROUND=0.5"
-	w conv2d-cal.tflite "ROCKET_ROUND=-0.25"
-	w conv2d-cal.tflite "ROCKET_ROUND=-0.5"
-
-	log ""
-	log "===== 16-19) the other isolated layers at the best guess           ====="
-	w mn_conv0.tflite "ROCKET_ROUND=0.5"
+	for r in 0.001 0.01 0.05 0.1; do
+		w mn_pw2.tflite "ROCKET_ROUND=$r"
+	done
 	w mn_conv0.tflite ""
-	w mn_pw24.tflite "ROCKET_ROUND=0.5"
-	w mn_dw25.tflite "ROCKET_ROUND=0.5"
+	w mn_conv0.tflite "ROCKET_ROUND=0.01"
+	w mn_conv0.tflite "ROCKET_ROUND=0.1"
 
 	log ""
-	log "===== 20-23) and only then the chains, which are not evidence on   ====="
-	log "=====        their own                                             ====="
-	w mn_L02.tflite "ROCKET_ROUND=0.5"
-	w mn_L02.tflite ""
-	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_ROUND=0.5"
-	w mobilenet_v1_1.0_224_quant.tflite ""
+	log "===== and the negative small end, in case the tie breaks the       ====="
+	log "=====   other way on a layer whose misses are high                 ====="
+	w conv2d-cal.tflite "ROCKET_ROUND=0.01"
+	w conv2d-cal.tflite "ROCKET_ROUND=-0.01"
+	w conv2d-cal.tflite "ROCKET_ROUND=-0.1"
+
+	log ""
+	log "===== the deep pair, same question at the other end of the net     ====="
+	w mn_dw25.tflite ""
+	w mn_dw25.tflite "ROCKET_ROUND=0.01"
+	w mn_pw24.tflite ""
+	w mn_pw24.tflite "ROCKET_ROUND=0.01"
 
 	log ""
 	log "===== a final anchor                                               ====="
