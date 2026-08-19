@@ -20,10 +20,13 @@ So ask the question at channel granularity. 256 bytes is
 The shape of the answer names the element size directly, which no amount of
 guessing at values has managed.
 
-The hardware ReLUs at the output zero point, so the reference is max(cpu, zp),
-the same one test_model.py uses. That clamp is scored BOTH ways now: on an
-operator whose out_zp is not zero it rewrites every pixel below it, and a
-channel can then match for the wrong reason.
+THE REFERENCE IS NOW THE RAW CPU OUTPUT. It used to be max(cpu, zp), because
+the output stage floored everything at the output zero point and nothing this
+driver wrote would move it. Round 249 fixed that floor, so the clamped
+reference no longer describes the hardware: it reports a CORRECT output as zero
+channels matching. Both scores are still printed, since every log before 249
+was read against the clamped one. PERCH_CLAMPED_REF=1 restores the old primary
+for comparing against those logs directly.
 
 Usage: TEFLON_LIB=... perch.py <model.tflite>
 """
@@ -58,7 +61,8 @@ ci, co = cpu.get_input_details()[0], cpu.get_output_details()[0]
 cpu.set_tensor(ci["index"], data.astype(ci["dtype"]).reshape(ci["shape"]))
 cpu.invoke()
 raw = cpu.get_tensor(co["index"])[0].astype(int)
-ref = np.maximum(raw, int(co["quantization"][1]))
+clamped = np.maximum(raw, int(co["quantization"][1]))
+ref = clamped if os.environ.get("PERCH_CLAMPED_REF") else raw
 
 # A classifier's output is (N,) not (H, W, C), and indexing it as a surface
 # threw an IndexError that ended the run before the regression got to print.
@@ -67,6 +71,7 @@ if got.ndim == 1:
     got = got.reshape(1, 1, -1)
     ref = ref.reshape(1, 1, -1)
     raw = raw.reshape(1, 1, -1)
+    clamped = clamped.reshape(1, 1, -1)
 
 oc = got.shape[2]
 bad = []
@@ -173,7 +178,7 @@ print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
 # the regression set only conv2d-cal has out_zp 128. So the clamp is expected
 # to move NOTHING on five of them, and only conv2d-cal can say anything. If a
 # zero point model reports a nonzero footprint below, this reading is wrong.
-moved = int((raw != ref).sum())
+moved = int((raw != clamped).sum())
 if moved == 0:
     print(f"    UNCLAMPED reference: identical, the clamp moves no pixel here",
           flush=True)
@@ -182,13 +187,22 @@ else:
                if int(np.abs(got[:, :, c] - raw[:, :, c]).max()) > 1]
     raw_flat = np.array([len(np.unique(raw[:, :, c])) == 1 for c in range(oc)])
     good_raw = np.array([c not in bad_raw for c in range(oc)])
-    ch_moved = sum(1 for c in range(oc) if (raw[:, :, c] != ref[:, :, c]).any())
+    ch_moved = sum(1 for c in range(oc)
+                   if (raw[:, :, c] != clamped[:, :, c]).any())
     px = got.shape[0] * got.shape[1] * oc
     print(f"    UNCLAMPED reference: the clamp rewrites {moved}/{px} pixels "
           f"across {ch_moved}/{oc} channels", flush=True)
     one_px = got.shape[0] * got.shape[1] == 1
+    # ⚠ Both rows must be scored against their OWN reference. Since round 249
+    # the primary is the raw CPU output, so `bad` is already the unclamped
+    # score and reusing it here would print the same number twice under two
+    # names.
+    bad_cl = [c for c in range(oc)
+              if int(np.abs(got[:, :, c] - clamped[:, :, c]).max()) > 1]
+    cl_flat = np.array([len(np.unique(clamped[:, :, c])) == 1
+                        for c in range(oc)])
     for name, b, fl in (("vs UNCLAMPED cpu", bad_raw, raw_flat),
-                        ("vs max(cpu,zp) ", bad, ref_flat)):
+                        ("vs max(cpu,zp) ", bad_cl, cl_flat)):
         ok = np.array([c not in b for c in range(oc)])
         comp = "n/a" if one_px else str(int((ok & ~fl).sum()))
         print(f"      {name}: {oc - len(b)}/{oc} channels match    "

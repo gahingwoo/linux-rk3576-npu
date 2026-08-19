@@ -1,0 +1,784 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:27.0%, RX DQS Vref:27.8%, TX Vref:20.0%,21.0%
+DQ roc:
+p5 n0, p7 n0, p1 n0, p6 n0, p5 n3, p6 n0, p0 n3, p1 n0, p2 n1, 
+p5 n0, p0 n0, p5 n0, p3 n0, p7 n2, p5 n0, p0 n4, p3 n0, p1 n2, 
+
+DQ rds:l0 h1 l0 h1 l0 h1 l0 h1, l0 h1 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:29.6%, TX Vref:20.0%,22.0%
+DQ roc:
+p4 n0, p3 n0, p5 n0, p3 n0, p6 n0, p6 n0, p2 n6, p2 n0, p6 n0, 
+p3 n0, p7 n0, p6 n0, p5 n1, p7 n0, p4 n0, p1 n0, p0 n3, p6 n0, 
+
+DQ rds:h1 h2 h1 l0 l0 h1 l0 l0, h1 l0 h1 l0 l0 l0 h2 l0 
+DQS roc: p0, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004818] Console: colour dummy device 80x25
+[    0.005353] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006310] pid_max: default: 32768 minimum: 301
+[    0.007203] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007961] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009155] VFS: Finished mounting rootfs on nullfs
+[    0.012592] rcu: Hierarchical SRCU implementation.
+[    0.013092] rcu:     Max phase no-delay instances is 1000.
+[    0.013889] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021519] EFI services will not be available.
+[    0.022604] smp: Bringing up secondary CPUs ...
+[    0.023750] Detected VIPT I-cache on CPU1
+[    0.023870] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024751] Detected VIPT I-cache on CPU2
+[    0.024832] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025664] Detected VIPT I-cache on CPU3
+[    0.025743] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026646] CPU features: detected: Spectre-v3a
+[    0.026665] CPU features: detected: Spectre-BHB
+[    0.026671] CPU features: detected: ARM erratum 1742098
+[    0.026679] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026685] Detected PIPT I-cache on CPU4
+[    0.026768] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027571] Detected PIPT I-cache on CPU5
+[    0.027633] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028414] Detected PIPT I-cache on CPU6
+[    0.028480] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029269] Detected PIPT I-cache on CPU7
+[    0.029336] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029476] smp: Brought up 1 node, 8 CPUs
+[    0.038661] SMP: Total of 8 processors activated.
+[    0.039118] CPU: All CPU(s) started at EL2
+[    0.039533] CPU features: detected: 32-bit EL0 Support
+[    0.040011] CPU features: detected: 32-bit EL1 Support
+[    0.040492] CPU features: detected: CRC32 instructions
+[    0.040981] CPU features: detected: PMUv3
+[    0.041436] alternatives: applying system-wide alternatives
+[    0.045169] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050554] devtmpfs: initialized
+[    0.067318] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.068092] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069233] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069823] 0 pages in range for non-PLT usage
+[    0.069828] 511152 pages in range for PLT usage
+[    0.076925] DMI: not present or invalid.
+[    0.081350] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.082991] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.084109] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.084896] audit: initializing netlink subsys (disabled)
+[    0.085565] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.090687] thermal_sys: Registered thermal governor 'step_wise'
+[    0.090696] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.091371] cpuidle: using governor menu
+[    0.092638] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.093475] ASID allocator initialised with 32768 entries
+[    0.098687] Serial: AMBA PL011 UART driver
+[    0.107593] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.108945] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.110225] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.111446] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.112681] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.123026] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.123738] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.124783] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.126753] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.182723] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.183360] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.194258] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.194892] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.195473] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.196099] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.196677] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.197318] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.197898] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.198523] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.201750] ACPI: Interpreter disabled.
+[    0.212554] iommu: Default domain type: Translated
+[    0.213003] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.214197] SCSI subsystem initialized
+[    0.214936] usbcore: registered new interface driver usbfs
+[    0.215487] usbcore: registered new interface driver hub
+[    0.216016] usbcore: registered new device driver usb
+[    0.219135] pps_core: LinuxPPS API ver. 1 registered
+[    0.219598] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.220445] PTP clock support registered
+[    0.221090] EDAC MC: Ver: 3.0.0
+[    0.222026] scmi_core: SCMI protocol bus registered
+[    0.224933] FPGA manager framework
+[    0.226416] vgaarb: loaded
+[    0.227241] clocksource: Switched to clocksource arch_sys_counter
+[    0.228118] VFS: Disk quotas dquot_6.6.0
+[    0.228511] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.229390] pnp: PnP ACPI: disabled
+[    0.237063] NET: Registered PF_INET protocol family
+[    0.237987] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.250861] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.251812] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.252543] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.254272] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.256834] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.257554] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.258850] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.259858] RPC: Registered named UNIX socket transport module.
+[    0.260409] RPC: Registered udp transport module.
+[    0.260844] RPC: Registered tcp transport module.
+[    0.261277] RPC: Registered tcp-with-tls transport module.
+[    0.261782] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.262385] PCI: CLS 0 bytes, default 64
+[    0.266496] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.267181] kvm [1]: nv: 710 fine grained trap handlers
+[    0.268159] kvm [1]: IPA Size Limit: 40 bits
+[    0.271222] kvm [1]: vgic interrupt IRQ9
+[    0.271656] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.274221] Initialise system trusted keyrings
+[    0.274859] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.276019] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.276878] NFS: Registering the id_resolver key type
+[    0.277403] Key type id_resolver registered
+[    0.277792] Key type id_legacy registered
+[    0.278182] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.278802] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.279964] Key type asymmetric registered
+[    0.280349] Asymmetric key parser 'x509' registered
+[    0.280843] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.281528] io scheduler mq-deadline registered
+[    0.281950] io scheduler kyber registered
+[    0.282358] io scheduler bfq registered
+[    0.291176] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.292966] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.294839] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.296723] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.298346] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.299987] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.301733] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.303361] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.304987] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.306613] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.308256] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.309884] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.311657] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.313284] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.315034] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.316811] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.354694] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.423053] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.423780] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.426524] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.427267] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.429790] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.430494] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.465450] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.469767] printk: legacy console [ttyS0] disabled
+[    0.470573] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.471547] printk: legacy console [ttyS0] enabled
+[    0.471547] printk: legacy console [ttyS0] enabled
+[    0.472413] printk: legacy bootconsole [uart8250] disabled
+[    0.472413] printk: legacy bootconsole [uart8250] disabled
+[    0.480991] msm_serial: driver initialized
+[    0.482891] SuperH (H)SCI(F) driver initialized
+[    0.484147] STM32 USART driver initialized
+[    0.491339] random: crng init done
+[    0.494780] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.496901] platform 27d00000.vop: Adding to iommu group 1
+[    0.504897] loop: module loaded
+[    0.507868] megasas: 07.734.00.00-rc1
+[    0.523646] tun: Universal TUN/TAP device driver, 1.6
+[    0.525079] VFIO - User Level meta-driver version: 0.3
+[    0.536786] usbcore: registered new interface driver usb-storage
+[    0.547274] i2c_dev: i2c /dev entries driver
+[    0.552316] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.553224] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.554123] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.594742] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.595446] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.596423] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.597367] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.598318] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.605749] scsi host0: ufshcd
+[    1.037835] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.038620] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.039416] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.040079] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.048332] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.048861] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.049942] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.050917] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.051588] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.052341] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.059345] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.062923] usbcore: registered new interface driver usbhid
+[    1.063452] usbhid: USB HID core driver
+[    1.075440] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.077585] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.099077] NET: Registered PF_INET6 protocol family
+[    1.100636] Segment Routing with IPv6
+[    1.100990] In-situ OAM (IOAM) with IPv6
+[    1.101397] NET: Registered PF_PACKET protocol family
+[    1.101908] Key type dns_resolver registered
+[    1.131197] registered taskstats version 1
+[    1.131844] Loading compiled-in X.509 certificates
+[    1.141747] Demotion targets for Node 0: null
+[    1.298200] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.304340] cpu cpu0: EM: created perf domain
+[    1.306605] cpu cpu4: EM: created perf domain
+[    1.314184] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.314867] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.315477] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.316033] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.323536] platform 27700000.npu: Adding to iommu group 2
+[    1.331029] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.332837] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.337633] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.339205] clk: Not disabling unused clocks
+[    1.339598] PM: genpd: Disabling unused power domains
+[    1.340179] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.351244] Waiting for root device /dev/mmcblk0p2...
+[    1.409093] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.424305] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 82
+[    1.425252] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.426672] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.430270]  mmcblk0: p1 p2
+[    1.455604] EXT4-fs (mmcblk0p2): mounted filesystem d75f8278-5856-4341-bff4-3919983757e6 r/w with ordered data mode. Quota mode: none.
+[    1.456725] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.457656] devtmpfs: mounted
+[    1.458074] VFS: Pivoted into new rootfs
+[    1.461688] Freeing unused kernel memory: 13248K
+[    1.462233] Run /sbin/init as init process
+[    1.531537] EXT4-fs (mmcblk0p2): re-mounted d75f8278-5856-4341-bff4-3919983757e6.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.510398] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.511277] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.511998] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.512724] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.513633] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.514541] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.515468] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.516377] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.517345] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.518254] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.519163] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.520095] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.521043] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.521966] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+
+===== 1) THE CONTROL, and read it first. L=0 and the old offset,  =====
+=====    so this must reproduce 240 to 248: 128/128 clamped, npu  =====
+=====    min 128, 0/128 UNCLAMPED. Otherwise the round is void.   =====
+
+  -- conv2d-cal.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204788/204800 pixels, 124/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=128 min=128 max=255 | cpu distinct=128 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 0/128 channels match    COMPUTED 0    reference constant 0/128
+      vs max(cpu,zp) : 128/128 channels match    COMPUTED 128    reference constant 0/128
+      128 channels agree with the reference ONLY because both sides were clamped
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 7/40, first [3, 6, 19, 22, 25, 28] last [6, 19, 22, 25, 28, 39]
+    cols with any error: 12/40, first [0, 4, 11, 15, 22, 25] last [26, 27, 29, 33, 36, 37]
+    row maxdiff profile, every 8th: [0, 0, 0, 0, 0]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 0 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 0 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.99%   off by exactly 1: 10, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.0, 0.0, 0.0, 0.0, 0.0]
+      rows above twice the median rate: 6, first [2, 5, 18, 21] last [18, 21, 24, 27]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (93, 0.0), (92, 0.0)]   highest [(127, 0.0), (76, 0.003), (85, 0.003)]
+    RAW ch 85 rows [1, 2] cols 1..16
+      y1 npu [156, 209, 217, 236, 128, 128, 128, 128, 128, 128, 216, 178, 209, 160, 128, 128]
+      y1 ref [156, 209, 217, 236, 128, 128, 128, 128, 128, 128, 216, 178, 209, 160, 128, 128]
+      y2 npu [128, 128, 128, 128, 191, 211, 219, 196, 128, 128, 128, 128, 128, 156, 202, 206]
+      y2 ref [128, 128, 128, 128, 191, 211, 219, 196, 128, 128, 128, 128, 128, 156, 202, 206]
+    every channel correct
+
+===== 2) THE QUESTION. L=128 with the offset 128 lower.           =====
+=====    Read the UNCLAMPED count.                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 103797/204800 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=128 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [125, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 125 off>1 2413 | rowN max 103 off>1 2453 | col0 max 124 off>1 2446 | colN max 120 off>1 2448 | interior max 128 off>1 89499
+    affine fit over 128 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0013 (min 1.0004 max 1.0022)
+      b median -0.21    correlation median +1.0000
+      b spread: min -0.41 max -0.06 std 0.05   SAME on every channel
+      b per channel, lowest 4: ch30=-0.4, ch52=-0.4, ch0=-0.3, ch100=-0.3   highest 4: ch84=-0.1, ch24=-0.1, ch65=-0.1, ch7=-0.1
+      lowest a: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (24, 1.0008, -0.1)]
+      highest a: [(10, 1.0019, -0.3), (52, 1.0021, -0.4), (30, 1.0022, -0.4)]
+    residual: within 1  51.7%   within 2  52.6%   within 4  54.7%   within 8  58.3%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 50.64%   off by exactly 1: 1742, of which npu LOW  90.9%
+    off-by-1 by row, every 8th: [0.01, 0.008, 0.01, 0.01, 0.009]
+    off-by-1 by channel: median 0.008   lowest [(87, 0.0), (106, 0.0), (19, 0.0)]   highest [(21, 0.029), (36, 0.031), (73, 0.035)]
+    RAW ch 73 rows [1, 2] cols 1..16
+      y1 npu [126, 69, 95, 124, 126, 125, 127, 170, 213, 122, 105, 83, 116, 116, 131, 110]
+      y1 ref [128, 128, 128, 128, 128, 128, 128, 170, 213, 128, 128, 128, 128, 128, 131, 128]
+      y2 npu [93, 166, 175, 130, 93, 86, 119, 99, 129, 111, 165, 191, 229, 125, 69, 94]
+      y2 ref [128, 166, 175, 130, 128, 128, 128, 128, 129, 128, 165, 191, 229, 128, 128, 128]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (24, 1.0008, -0.1)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== 3-4) only if 2 is partial: is the amount off. Both keep the =====
+=====      pair intact, since the offset follows the knob.        =====
+
+  -- conv2d-cal.tflite   ROCKET_LIFT=129
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 103774/204800 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=128 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [125, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 125 off>1 2413 | rowN max 103 off>1 2453 | col0 max 124 off>1 2446 | colN max 120 off>1 2448 | interior max 128 off>1 89499
+    affine fit over 128 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0013 (min 1.0004 max 1.0022)
+      b median -0.21    correlation median +1.0000
+      b spread: min -0.41 max -0.06 std 0.05   SAME on every channel
+      b per channel, lowest 4: ch30=-0.4, ch52=-0.4, ch0=-0.3, ch100=-0.3   highest 4: ch24=-0.1, ch43=-0.1, ch65=-0.1, ch7=-0.1
+      lowest a: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (43, 1.0007, -0.1)]
+      highest a: [(0, 1.0018, -0.3), (52, 1.0021, -0.4), (30, 1.0022, -0.4)]
+    residual: within 1  51.7%   within 2  52.6%   within 4  54.7%   within 8  58.3%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 50.62%   off by exactly 1: 1764, of which npu LOW  89.7%
+    off-by-1 by row, every 8th: [0.011, 0.008, 0.01, 0.01, 0.009]
+    off-by-1 by channel: median 0.008   lowest [(50, 0.0), (42, 0.0), (45, 0.0)]   highest [(21, 0.029), (36, 0.031), (73, 0.035)]
+    RAW ch 73 rows [1, 2] cols 1..16
+      y1 npu [126, 69, 95, 124, 126, 125, 127, 170, 213, 122, 105, 83, 116, 116, 131, 110]
+      y1 ref [128, 128, 128, 128, 128, 128, 128, 170, 213, 128, 128, 128, 128, 128, 131, 128]
+      y2 npu [93, 166, 175, 130, 93, 86, 119, 99, 129, 111, 165, 191, 229, 125, 69, 94]
+      y2 ref [128, 166, 175, 130, 128, 128, 128, 128, 129, 128, 165, 191, 229, 128, 128, 128]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (43, 1.0007, -0.1)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+  -- conv2d-cal.tflite   ROCKET_LIFT=160
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 103797/204800 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=128 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [125, 128, 128, 128, 128]
+    maxdiff excluding the outer ring: 128    whole surface: 128
+    by edge: row0 max 125 off>1 2413 | rowN max 103 off>1 2453 | col0 max 124 off>1 2446 | colN max 120 off>1 2448 | interior max 128 off>1 89499
+    affine fit over 128 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0013 (min 1.0004 max 1.0022)
+      b median -0.21    correlation median +1.0000
+      b spread: min -0.41 max -0.06 std 0.05   SAME on every channel
+      b per channel, lowest 4: ch30=-0.4, ch52=-0.4, ch0=-0.3, ch100=-0.3   highest 4: ch84=-0.1, ch24=-0.1, ch65=-0.1, ch7=-0.1
+      lowest a: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (24, 1.0008, -0.1)]
+      highest a: [(10, 1.0019, -0.3), (52, 1.0021, -0.4), (30, 1.0022, -0.4)]
+    residual: within 1  51.7%   within 2  52.6%   within 4  54.7%   within 8  58.3%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 50.64%   off by exactly 1: 1742, of which npu LOW  90.9%
+    off-by-1 by row, every 8th: [0.01, 0.008, 0.01, 0.01, 0.009]
+    off-by-1 by channel: median 0.008   lowest [(87, 0.0), (106, 0.0), (19, 0.0)]   highest [(21, 0.029), (36, 0.031), (73, 0.035)]
+    RAW ch 73 rows [1, 2] cols 1..16
+      y1 npu [126, 69, 95, 124, 126, 125, 127, 170, 213, 122, 105, 83, 116, 116, 131, 110]
+      y1 ref [128, 128, 128, 128, 128, 128, 128, 170, 213, 128, 128, 128, 128, 128, 131, 128]
+      y2 npu [93, 166, 175, 130, 93, 86, 119, 99, 129, 111, 165, 191, 229, 125, 69, 94]
+      y2 ref [128, 166, 175, 130, 128, 128, 128, 128, 129, 128, 165, 191, 229, 128, 128, 128]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [(7, 1.0004, -0.1), (65, 1.0005, -0.1), (24, 1.0008, -0.1)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== 5) the control again, so a drift across the log is visible  =====
+
+  -- conv2d-cal.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204788/204800 pixels, 124/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=128 min=128 max=255 | cpu distinct=128 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 0/128 channels match    COMPUTED 0    reference constant 0/128
+      vs max(cpu,zp) : 128/128 channels match    COMPUTED 128    reference constant 0/128
+      128 channels agree with the reference ONLY because both sides were clamped
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 7/40, first [3, 6, 19, 22, 25, 28] last [6, 19, 22, 25, 28, 39]
+    cols with any error: 12/40, first [0, 4, 11, 15, 22, 25] last [26, 27, 29, 33, 36, 37]
+    row maxdiff profile, every 8th: [0, 0, 0, 0, 0]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 0 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 0 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.99%   off by exactly 1: 10, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.0, 0.0, 0.0, 0.0, 0.0]
+      rows above twice the median rate: 6, first [2, 5, 18, 21] last [18, 21, 24, 27]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (93, 0.0), (92, 0.0)]   highest [(127, 0.0), (76, 0.003), (85, 0.003)]
+    RAW ch 85 rows [1, 2] cols 1..16
+      y1 npu [156, 209, 217, 236, 128, 128, 128, 128, 128, 128, 216, 178, 209, 160, 128, 128]
+      y1 ref [156, 209, 217, 236, 128, 128, 128, 128, 128, 128, 216, 178, 209, 160, 128, 128]
+      y2 npu [128, 128, 128, 128, 191, 211, 219, 196, 128, 128, 128, 128, 128, 156, 202, 206]
+      y2 ref [128, 128, 128, 128, 191, 211, 219, 196, 128, 128, 128, 128, 128, 156, 202, 206]
+    every channel correct
+
+===== 6-9) THE REGRESSION GUARD, and the real risk. Both were     =====
+=====      correct before at out_zp 0, where the offset now goes  =====
+=====      to -256, a value this driver has never written.        =====
+
+  -- pw33x64w56.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+  pw33x64w56.tflite out(56, 56, 64): 64/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 200132/200704 pixels, 41/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 37    trivial (reference is constant): 27
+    npu distinct=162 min=0 max=200 | cpu distinct=162 | out_zp=0
+    channels that are CONSTANT: 27/64, of which pinned at out_zp: 27  (not empty)
+    reference channels that are constant: 27/64    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.71%   off by exactly 1: 533, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.003, 0.003, 0.004, 0.001, 0.003, 0.002, 0.004]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (25, 0.0), (26, 0.0)]   highest [(2, 0.016), (53, 0.02), (4, 0.02)]
+    RAW ch 4 rows [1, 2] cols 1..16
+      y1 npu [115, 98, 113, 117, 123, 102, 94, 117, 111, 152, 141, 123, 129, 98, 98, 137]
+      y1 ref [115, 98, 113, 117, 123, 103, 94, 117, 111, 152, 141, 123, 129, 98, 98, 137]
+      y2 npu [97, 95, 103, 140, 146, 126, 132, 101, 95, 109, 117, 113, 99, 91, 111, 117]
+      y2 ref [97, 95, 103, 140, 146, 126, 132, 101, 95, 109, 117, 113, 99, 91, 111, 117]
+    every channel correct
+
+  -- pw33x64w56.tflite   
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+rocket: OUT_CVT computed_shift=21 scale=0x4301 -> emitting shift=21
+  pw33x64w56.tflite out(56, 56, 64): 64/64 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 199841/200704 pixels, 37/64 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 37    trivial (reference is constant): 27
+    npu distinct=162 min=0 max=200 | cpu distinct=162 | out_zp=0
+    channels that are CONSTANT: 27/64, of which pinned at out_zp: 27  (not empty)
+    reference channels that are constant: 27/64    npu constant but reference varies: 0
+    UNCLAMPED reference: identical, the clamp moves no pixel here
+    rows with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    cols with any error: 56/56, first [0, 1, 2, 3, 4, 5] last [50, 51, 52, 53, 54, 55]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.57%   off by exactly 1: 801, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.005, 0.003, 0.005, 0.003, 0.005, 0.004, 0.005]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (25, 0.0), (26, 0.0)]   highest [(18, 0.02), (4, 0.02), (2, 0.02)]
+    RAW ch 2 rows [1, 2] cols 1..16
+      y1 npu [41, 9, 26, 18, 18, 0, 3, 1, 16, 37, 33, 58, 53, 4, 25, 1]
+      y1 ref [41, 9, 26, 18, 19, 0, 3, 1, 16, 37, 33, 58, 53, 4, 25, 1]
+      y2 npu [3, 6, 6, 25, 25, 59, 53, 4, 9, 25, 24, 8, 0, 9, 13, 22]
+      y2 ref [3, 6, 6, 25, 25, 59, 53, 4, 9, 25, 24, 8, 0, 9, 13, 22]
+    every channel correct
+
+  -- cal_k3.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_k3.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204785/204800 pixels, 125/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=102 min=128 max=237 | cpu distinct=102 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 98391/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 0/128 channels match    COMPUTED 0    reference constant 0/128
+      vs max(cpu,zp) : 128/128 channels match    COMPUTED 128    reference constant 0/128
+      128 channels agree with the reference ONLY because both sides were clamped
+      cpu unclamped min=29 max=237 distinct=196
+    rows with any error: 10/40, first [2, 9, 12, 15, 18, 21] last [18, 21, 24, 31, 34, 37]
+    cols with any error: 14/40, first [0, 6, 8, 9, 11, 17] last [22, 28, 30, 31, 33, 36]
+    row maxdiff profile, every 8th: [0, 0, 0, 1, 0]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 0 off>1 0 | rowN max 0 off>1 0 | col0 max 1 off>1 0 | colN max 0 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.99%   off by exactly 1: 14, of which npu LOW 100.0%
+    off-by-1 by row, every 8th: [0.0, 0.0, 0.0, 0.0, 0.0]
+      rows above twice the median rate: 10, first [1, 8, 11, 14] last [23, 30, 33, 36]
+    off-by-1 by channel: median 0.000   lowest [(0, 0.0), (92, 0.0), (91, 0.0)]   highest [(5, 0.003), (114, 0.003), (74, 0.004)]
+    RAW ch 74 rows [1, 2] cols 1..16
+      y1 npu [128, 138, 128, 128, 148, 133, 144, 141, 128, 128, 160, 128, 128, 156, 138, 153]
+      y1 ref [128, 138, 128, 128, 148, 133, 144, 141, 128, 128, 160, 128, 128, 156, 138, 153]
+      y2 npu [153, 141, 128, 128, 138, 128, 128, 137, 140, 165, 156, 128, 128, 128, 139, 128]
+      y2 ref [153, 141, 128, 128, 138, 128, 128, 137, 140, 165, 156, 128, 128, 128, 139, 128]
+    every channel correct
+
+  -- cal_k3.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_k3.tflite out(40, 40, 128): 0/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 106214/204800 pixels, 0/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=196 min=29 max=237 | cpu distinct=102 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 98391/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=29 max=237 distinct=196
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [95, 99, 99, 95, 99]
+    maxdiff excluding the outer ring: 99    whole surface: 99
+    by edge: row0 max 95 off>1 2403 | rowN max 80 off>1 2361 | col0 max 99 off>1 2399 | colN max 73 off>1 2391 | interior max 99 off>1 86433
+    affine fit over 128 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0012 (min 1.0000 max 1.0029)
+      b median -0.19    correlation median +1.0000
+      b spread: min -0.42 max -0.02 std 0.06   SAME on every channel
+      b per channel, lowest 4: ch89=-0.4, ch48=-0.3, ch100=-0.3, ch114=-0.3   highest 4: ch59=-0.1, ch61=-0.0, ch11=-0.0, ch124=-0.0
+      lowest a: [(124, 1.0, -0.0), (11, 1.0001, -0.0), (61, 1.0002, -0.0)]
+      highest a: [(37, 1.002, -0.3), (48, 1.002, -0.3), (89, 1.0029, -0.4)]
+    residual: within 1  53.2%   within 2  54.7%   within 4  57.6%   within 8  62.8%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 51.87%   off by exactly 1: 2535, of which npu LOW  92.7%
+    off-by-1 by row, every 8th: [0.014, 0.012, 0.014, 0.012, 0.016]
+    off-by-1 by channel: median 0.010   lowest [(63, 0.0), (71, 0.0), (66, 0.0)]   highest [(0, 0.046), (99, 0.048), (47, 0.048)]
+    RAW ch 47 rows [1, 2] cols 1..16
+      y1 npu [149, 138, 157, 128, 133, 129, 122, 76, 152, 181, 120, 144, 117, 146, 119, 140]
+      y1 ref [149, 138, 157, 128, 133, 129, 128, 128, 152, 181, 128, 144, 128, 146, 128, 140]
+      y2 npu [142, 92, 129, 168, 125, 148, 134, 122, 143, 122, 109, 92, 180, 149, 137, 156]
+      y2 ref [141, 128, 129, 168, 128, 148, 134, 128, 143, 128, 128, 128, 180, 149, 137, 156]
+    WRONG channels (128): 0..127
+    first 8 channel maxdiffs: [(124, 1.0, -0.0), (11, 1.0001, -0.0), (61, 1.0002, -0.0)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== 10-11) and the two the MR's table quotes, at out_zp 128.    =====
+
+  -- cal_oc16.tflite   ROCKET_NO_LIFT=1
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_oc16.tflite out(40, 40, 16): 16/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 25600/25600 pixels, 16/16 channels identical, BYTE EXACT
+    of those, COMPUTED (reference varies): 16    trivial (reference is constant): 0
+    npu distinct=116 min=128 max=255 | cpu distinct=116 | out_zp=128
+    channels that are CONSTANT: 0/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 12566/25600 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 0/16 channels match    COMPUTED 0    reference constant 0/16
+      vs max(cpu,zp) : 16/16 channels match    COMPUTED 16    reference constant 0/16
+      16 channels agree with the reference ONLY because both sides were clamped
+      cpu unclamped min=9 max=255 distinct=230
+    rows with any error: 0/40
+    cols with any error: 0/40
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 100.00%   off by exactly 1: 0
+    every channel correct
+
+  -- cal_oc16.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  cal_oc16.tflite out(40, 40, 16): 0/16 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 13009/25600 pixels, 0/16 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 0    trivial (reference is constant): 0
+    npu distinct=230 min=9 max=255 | cpu distinct=116 | out_zp=128
+    channels that are CONSTANT: 0/16, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/16    npu constant but reference varies: 0
+    UNCLAMPED reference: the clamp rewrites 12566/25600 pixels across 16/16 channels
+      vs UNCLAMPED cpu: 16/16 channels match    COMPUTED 16    reference constant 0/16
+      vs max(cpu,zp) : 0/16 channels match    COMPUTED 0    reference constant 0/16
+      cpu unclamped min=9 max=255 distinct=230
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [103, 119, 113, 118, 109]
+    maxdiff excluding the outer ring: 119    whole surface: 119
+    by edge: row0 max 103 off>1 297 | rowN max 101 off>1 305 | col0 max 119 off>1 299 | colN max 95 off>1 306 | interior max 119 off>1 11206
+    affine fit over 16 wrong channels, unclipped pixels only, ref = a*npu + b:  a median 1.0013 (min 1.0004 max 1.0019)
+      b median -0.21    correlation median +1.0000
+      b spread: min -0.32 max -0.06 std 0.07   SAME on every channel
+      b per channel, lowest 4: ch0=-0.3, ch10=-0.3, ch11=-0.3, ch3=-0.3   highest 4: ch8=-0.2, ch4=-0.2, ch9=-0.1, ch7=-0.1
+      lowest a: [(7, 1.0004, -0.1), (9, 1.0008, -0.1), (8, 1.001, -0.2)]
+      highest a: [(11, 1.0018, -0.3), (0, 1.0018, -0.3), (10, 1.0019, -0.3)]
+    residual: within 1  51.6%   within 2  52.7%   within 4  54.9%   within 8  58.4%
+      of the pixels off by more than 1, 100.0% are at a rail of the hardware output
+    interior: exact 50.77%   off by exactly 1: 168, of which npu LOW  85.7%
+    off-by-1 by row, every 8th: [0.008, 0.008, 0.01, 0.008, 0.005]
+    off-by-1 by channel: median 0.007   lowest [(3, 0.0), (5, 0.0), (14, 0.0)]   highest [(15, 0.012), (0, 0.013), (8, 0.019)]
+    RAW ch 8 rows [1, 2] cols 1..16
+      y1 npu [148, 204, 183, 140, 159, 168, 157, 69, 42, 139, 146, 150, 158, 141, 168, 167]
+      y1 ref [148, 204, 183, 140, 159, 168, 157, 128, 128, 139, 146, 150, 158, 141, 168, 167]
+      y2 npu [167, 108, 20, 99, 101, 184, 176, 134, 146, 196, 98, 46, 61, 148, 224, 177]
+      y2 ref [167, 128, 128, 128, 128, 184, 176, 134, 146, 196, 128, 128, 128, 148, 224, 177]
+    WRONG channels (16): 0..15
+    first 8 channel maxdiffs: [(7, 1.0004, -0.1), (9, 1.0008, -0.1), (8, 1.001, -0.2)]
+    channels 64..71 maxdiffs: []
+    COMPUTED-correct channels: []
+
+===== Read entry 1 first. Then entry 2's UNCLAMPED count.         =====
+
+RK3576 NPU bringup
+rock4d login: 
