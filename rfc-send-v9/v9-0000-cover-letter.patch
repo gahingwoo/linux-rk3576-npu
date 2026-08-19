@@ -1,9 +1,67 @@
 From b75d03550e329caf394a0de4aa3c68fae1f68cb0 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:12:46 +1200
-Subject: [PATCH v9 00/13] *** SUBJECT HERE ***
+Subject: [PATCH v9 00/13] accel/rocket: RK3576 NPU (RKNN) enablement
 
-*** BLURB HERE ***
+Based on Igor Paunovic's "[PATCH v2] accel/rocket: request the core
+clocks by name", as v6 through v8 were.
+
+  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
+
+Tested on a Radxa ROCK 4D, on next-20260814.
+
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently. Two extra convolution buffer clocks, two power domains per
+core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
+that packs the task number into sixteen bits rather than twelve.
+
+The reason for v9 is a new 3/13, and the rest is review
+======================================================
+
+RK3576 did not recover from a job timeout. The block came back with
+MMU_DTE_ADDR complaining and every following inference returned the
+output zero point. rocket_reset() called pm_runtime_put_noidle(), which
+drops the usage count without starting the idle path, so the core stayed
+runtime-active, the power domain never dropped, the BIU reset the domain
+cycles on power-on never fired, and the MMU never answered again.
+
+pm_runtime_put_autosuspend() is the whole fix. Measured three runs in one
+boot on a ROCK 4D with one variable between them, each forcing a timeout
+and then running the same convolution:
+
+  put                after the timeout          the next inference
+  put_noidle         runtime-active, rail up    0 of 128, MMU_DTE_ADDR
+  put_autosuspend    suspended, rail down       128 of 128, no message
+  put_noidle again   runtime-active, rail up    0 of 128, MMU_DTE_ADDR
+
+The third run is there so the failure reads as deterministic rather than
+intermittent. Igor Paunovic reported the underlying observation.
+
+The rest of v9 is review from the v8 thread:
+
+  * 2/13 now masks the block before synchronize_irq(). hw_submit() arms
+    INTERRUPT_MASK on every submit and only the hardirq clears it, so on
+    an ordinary timeout it is still live and a completion can arrive
+    after the sync returns. The next submit re-arms it. Igor Paunovic
+    raised this.
+
+    His Tested-by on the v8 shape of that patch is deliberately NOT
+    carried here, because this is not the patch he tested. 1/13 is
+    unchanged and keeps his.
+
+  * 11/13 includes <linux/device-id/of.h> rather than
+    <linux/mod_devicetable.h>, which Uwe Kleine-Koenig asked for. The
+    driver needed nothing else out of the wider header.
+
+  * 5/13 carries a git note naming the base and the one prerequisite, so
+    the dependency is in the patch rather than only in this letter, which
+    Rob Herring's bot asked for. dt_binding_check is clean on all three
+    bindings the series touches with dtschema 2026.6 and yamllint 1.38.0.
+
+Nothing else moved. The completion path, the register field layout v7
+corrected, and the rail and reset arrangement v8 settled are all
+unchanged.
 
 Jiaxing Hu (13):
   accel/rocket: take the completion register writes under job_lock

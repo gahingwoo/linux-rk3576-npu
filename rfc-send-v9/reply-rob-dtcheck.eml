@@ -1,0 +1,37 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v8 04/12] dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+In-Reply-To: <178709455518.1014304.1443906758035976924.robh@kernel.org>
+References: <178709455518.1014304.1443906758035976924.robh@kernel.org>
+
+Hi Rob,
+
+Taking the last paragraph first, since that is the actionable one.
+
+The dependency is now noted in the patch itself, as a git note that
+format-patch carries below the ---, rather than only in the cover letter
+where it was. It says the patch touches only Documentation and applies to
+v7.2 on its own, and that the series it belongs to is based on next-20260814 plus
+Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks by name",
+which the driver patches need and this one does not.
+
+  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
+
+I re-ran dt_binding_check today after your mail, on the three bindings this
+series touches, with dtschema 2026.6, which is the current release on PyPI,
+and yamllint 1.38.0.
+
+  npu/rockchip,rk3588-rknn-core.yaml       clean
+  power/rockchip,power-controller.yaml     clean
+  iommu/rockchip,iommu.yaml                clean
+
+None of the three reports in your mail is in a file this patch touches. The
+unresolvable reference is in mfd/qcom,spmi-pmic.yaml, and the refcheckdocs
+hits are in two translations and arch/arm/xen/enlighten.c. I mention it only
+so it is clear I read them rather than assumed, not to argue the bot was
+wrong to print them.
+
+v9 is what carries the note, and I will post it with the rest of the review
+folded in.
+
+Regards,
+Jiaxing

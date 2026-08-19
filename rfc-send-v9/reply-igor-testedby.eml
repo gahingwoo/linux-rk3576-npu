@@ -1,0 +1,45 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v8 02/12] accel/rocket: wait for a running IRQ handler before resetting a core
+In-Reply-To: <20260819073530.6087-1-royalnet026@gmail.com>
+References: <20260819073530.6087-1-royalnet026@gmail.com>
+
+Hi Igor,
+
+A differential base on the same machine in the same session is more than I
+asked for, and the row that matters is the one where the two kernels agree,
+12 and 8 against 12 and 13, all clean, 48 of 48 both passes on either. That
+is the shape of a patch that fixes a race nobody can trigger on demand, and
+it is worth more than a green run on the patched kernel alone would have
+been.
+
+Your sentence about what the protocol cannot say is the right one to keep. I
+cannot manufacture a real hang deliberately either. What my failing runs have
+is a block that does not come back, and the domain staying up is a
+consequence of that rather than something I arranged, so I agree we do not
+have evidence either way about how an RK3588 would behave in the same state.
+
+On where the tags land, and I want to be exact rather than generous to
+myself. 1/12 is unchanged in v9 and your v7 tag re-run on the v8 shape
+carries, so it stays. 2/13 in v9 is NOT the patch you tested, because it folds in the
+INTERRUPT_MASK write we discussed, so the reset path masks the block before
+synchronize_irq() rather than leaving it armed. I have therefore left your
+Tested-by off it. It is your attestation and a changed patch is a different
+claim, so I would rather post it bare and have you put it back than carry it
+across a change you flagged yourself.
+
+Saying the word, then. v9 is thirteen patches and I will post it shortly. The
+delta from v8 is that INTERRUPT_MASK fold, a new 3/13 that lets the core
+suspend after a reset, Uwe Kleine-Koenig's narrower device-id header, and a
+git note on the binding for Rob Herring's bot. Nothing else in the reset path
+moved.
+
+The new 3/13 is worth a line here because it came out of your third bullet.
+On RK3576 pm_runtime_put_noidle() left the core runtime-active with the rail
+up after a timeout, so the domain never dropped, the bus reset never cycled,
+and the MMU stopped answering. put_autosuspend() is the fix and I measured it
+three runs in one boot with one variable. On RK3588 I would expect it to be
+invisible, since your resets already drop the domain every time, and that is
+one more thing your harness would tell us that mine cannot.
+
+Regards,
+Jiaxing
