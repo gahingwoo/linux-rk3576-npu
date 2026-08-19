@@ -25,31 +25,40 @@ reference.
 """
 import numpy as np
 
+#
+# ⚠ THE REASON IS RETURNED, NEVER SWALLOWED. Round 258 shipped this module
+# without the tflite flatbuffer package in the rootfs, so the import failed,
+# every call returned a bare None, and the whole round printed nothing at all:
+# no result, no error, no way to tell "not covered" from "not installed". A
+# probe that can fail silently is not a probe.
+#
+IMPORT_ERROR = None
 try:
     from tflite.Model import Model
     from tflite.BuiltinOperator import BuiltinOperator as BO
     from tflite.Padding import Padding
     from tflite.Conv2DOptions import Conv2DOptions
     from tflite.DepthwiseConv2DOptions import DepthwiseConv2DOptions
-except Exception:
+except Exception as e:
     Model = None
+    IMPORT_ERROR = f"{type(e).__name__}: {e}"
 
 
 def exact_reference(path, x_uint8):
-    """Return the exact uint8 output, or None if this model is not covered."""
+    """Return (array, None) on success or (None, reason) explaining why not."""
     if Model is None:
-        return None
+        return None, f"tflite flatbuffer package missing, {IMPORT_ERROR}"
     m = Model.GetRootAsModel(bytearray(open(path, 'rb').read()), 0)
     sg = m.Subgraphs(0)
     if sg.OperatorsLength() != 1:
-        return None
+        return None, f"{sg.OperatorsLength()} operators, only single operator models are covered"
     op = sg.Operators(0)
     code = m.OperatorCodes(op.OpcodeIndex()).BuiltinCode()
     depthwise = code == BO.DEPTHWISE_CONV_2D
     if code != BO.CONV_2D and not depthwise:
-        return None
+        return None, f"operator code {code} is not a convolution"
     if op.InputsLength() < 3:
-        return None
+        return None, "no bias tensor"
 
     it = sg.Tensors(op.Inputs(0))
     wt = sg.Tensors(op.Inputs(1))
@@ -59,14 +68,14 @@ def exact_reference(path, x_uint8):
     wsh = [wt.Shape(i) for i in range(wt.ShapeLength())]
     osh = [ot.Shape(i) for i in range(ot.ShapeLength())]
     if len(ish) != 4 or len(wsh) != 4 or len(osh) != 4:
-        return None
+        return None, "not a 4D convolution"
 
     o = DepthwiseConv2DOptions() if depthwise else Conv2DOptions()
     o.Init(op.BuiltinOptions().Bytes, op.BuiltinOptions().Pos)
     sy, sx = o.StrideH(), o.StrideW()
     same = o.Padding() == Padding.SAME
     if depthwise and o.DepthMultiplier() != 1:
-        return None
+        return None, f"depth multiplier {o.DepthMultiplier()}"
 
     W = np.frombuffer(m.Buffers(wt.Buffer()).DataAsNumpy().tobytes(),
                       dtype=np.uint8).reshape(wsh).astype(np.int64)
@@ -116,4 +125,4 @@ def exact_reference(path, x_uint8):
     # point approximation, which is the whole point of calling it exact.
     #
     y = np.floor(acc * mult + out_zp + 0.5)
-    return np.clip(y, 0, 255).astype(np.int64)[0]
+    return np.clip(y, 0, 255).astype(np.int64)[0], None

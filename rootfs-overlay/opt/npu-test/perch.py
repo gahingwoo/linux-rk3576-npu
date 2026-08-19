@@ -192,8 +192,10 @@ print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
 try:
     from exactref import exact_reference
 
-    _ex = exact_reference(model, data.astype(np.uint8))
-    if _ex is not None:
+    _ex, _why = exact_reference(model, data.astype(np.uint8))
+    if _ex is None:
+        print(f"    EXACT ARITHMETIC reference: not computed, {_why}", flush=True)
+    else:
         _ex = _ex.reshape(got.shape)
         _bad_ex = [c for c in range(oc)
                    if int(np.abs(got[:, :, c] - _ex[:, :, c]).max()) > 1]

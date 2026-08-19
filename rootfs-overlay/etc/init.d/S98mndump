@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 258. Score against what the operation means.
+# 2026-08-19 round 259. Round 258 again, with the reference actually shipped.
 #
 # 🔑 WHAT 257 SETTLED, and it ends the one count hunt rather than continuing it.
 #
@@ -51,6 +51,19 @@
 #   the new reference and the whole line needs rechecking.
 #
 #   ⚠ The knobs are off. This measures what the driver already does.
+#
+# ⚠ WHY THIS IS A REPEAT, and the fault was mine and silent. 258 shipped
+# exactref.py without the tflite flatbuffer package in the rootfs. The board has
+# tflite_runtime, which is the interpreter, and not tflite, which is the schema
+# bindings the module reads a model with. The import failed, the module set its
+# handle to None and returned a bare None, the caller's guard skipped the print,
+# and the round produced NOTHING: no result, no error, and no way to tell "this
+# model is not covered" from "this was never installed".
+#
+# Both halves are fixed. The tflite and flatbuffers packages are in the rootfs
+# now, 1 MB of pure Python between them, and exact_reference returns a REASON
+# rather than a bare None so every decline says which one it is. A probe that
+# can fail silently is not a probe, and this one cost a whole flash.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
