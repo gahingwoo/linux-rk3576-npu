@@ -2,48 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 253. The lift is the output zero point, not a constant.
+# 2026-08-19 round 254. Is the chain degradation propagation, or a layer bug.
 #
-# WHAT 252 SETTLED. The depthwise record was the second site and fixing it
-# worked: mn_dw1 at 32 of 32 and mn_dw25 at 1024 of 1024 are now byte identical
-# with and without the lift, exactly as pw33x64w56 is, and MobileNet went from
-# 977 back to 999. conv2x and md003_s2 came back identical on both arms, so
-# those two are old failures and not mine.
+# WHAT 253 LEFT. The clamp is closed and every single operator shape is right,
+# but reading a whole network at increasing depth degrades. Scored per pixel
+# rather than per channel, which is the honest way since the later layers have
+# more channels and fewer pixels each:
 #
-# WHAT IT DID NOT SETTLE. The regression is not fully undone. MobileNet is 999
-# of 1001 against 1000 without any lift, and mn_L02 is 16 of 64 against 22. The
-# residual is rounding: lift/mult goes into A as an integer while lift/mult is
-# not one, so each layer lands within half a count of where it should and a
-# chain accumulates it. Invisible on one operator, which is why all three
-# single operator cases were identical.
+#   layer  exact   within1  maxd  errors that are npu LOW
+#   L00    99.80%  100.0%      1  100.0%
+#   L01    89.31%   99.9%      3   99.3%
+#   L02    84.18%   98.1%      6   58.6%     <- the change happens here
+#   L03    73.42%   94.6%     13   78.6%
+#   L07    60.25%   89.5%     10   53.1%
+#   L18    66.52%   89.6%      8   53.3%
+#   L26    85.07%   87.5%     28   50.0%
 #
-# THE CHANGE, and it is derived rather than swept. A valid uint8 output means
-# the requantised value lies in [-out_zp, 255 - out_zp], so out_zp is the
-# SMALLEST lift that clears the floor, and with it
+# Two things in that table. It SATURATES around 60 to 66 percent rather than
+# collapsing, so it is not a per layer multiplier. And the errors stop being
+# one sided at L02. At L00 and L01 every miss is the hardware reading LOW,
+# which is the tflite rounding artefact this project already documented: its
+# requant lands on exactly one half for half the pixels and rounds up every
+# time. From L02 the sign is a coin flip, which is a different thing.
 #
-#   clamp(max(rq + out_zp, 0) - 128, -128, 127) + 128 == clamp(rq + out_zp, 0, 255)
+# L02 is the first pointwise.
 #
-# which is what the operation means, with the offset a constant -128. The floor
-# stops being an obstacle and becomes the output's own lower clamp. Where the
-# zero point is 0 the lift is 0 and there is nothing left to round.
+# THE HYPOTHESIS. The degradation is error PROPAGATION and not a layer bug. The
+# first layer is fed an exact image so its only error is its own rounding, which
+# is one sided. Every later layer is fed an input that already carries plus or
+# minus one, so its error is two sided. If that is right there is no bug to find
+# in any single operator and the question becomes whether to accept one count
+# per layer or to fix the reference.
 #
-# THE READING RULE, fixed before the run, and it is sharp on purpose.
+# THE LADDER, and every isolated model here produces the SAME output tensor as
+# the chained one beside it:
 #
-#   ⚠ Every model whose output zero point is 0 must come back BYTE IDENTICAL to
-#   its no-lift arm, because the lift is now literally zero there. Not close.
-#   Identical. mn_L02 must be exactly 22 of 64 at maxdiff 6, mn_L26 exactly 574
-#   of 1024, pw33x64w56 64 of 64. If any of them differs at all, the lift is
-#   reaching somewhere it should not and the reasoning above is wrong.
+#   mn_conv0     1 op    224x224x3   -> 112x112x32    against mn_L00
+#   mn_conv0dw1  2 ops   224x224x3   -> 112x112x32    against mn_L01
+#   mn_dw1       1 op    112x112x32  -> 112x112x32
+#   mn_pw2       1 op    112x112x32  -> 112x112x64    against mn_L02
+#   mn_pw24      1 op    7x7x512     -> 7x7x1024      against mn_L24
+#   mn_dw25      1 op    7x7x1024    -> 7x7x1024
 #
-#   ⚠ MobileNet must be at least 1000 of 1001. Its op28 has out_zp 66 and is
-#   the one place in it the floor ever bit, so it should now be fixed at no cost
-#   to the 27 layers around it.
+# THE READING RULE, fixed before the run.
 #
-#   ⚠ conv2d-cal must stay 128 of 128. Its zero point is 128, so its lift is
-#   unchanged from 249 and this must not move it.
+#   Read maxd and the npu LOW percentage of the ISOLATED models first.
 #
-#   ⚠ POISON means void, for that entry and everything after it until an OK
-#   health check.
+#   If every isolated layer comes back maxd 1 with npu LOW near 100 percent,
+#   the operators are accurate and one sided against the reference, the chain's
+#   two sidedness is propagation, and there is no per layer bug to chase.
+#
+#   If any isolated layer is worse than maxd 1, THAT layer is the bug and the
+#   propagation story is secondary. mn_pw2 is the one that decides it, since
+#   L02 is where the one sidedness breaks.
+#
+#   ⚠ mn_conv0dw1 against mn_L01 is a control on a different axis. Same output
+#   tensor, same two layers, 2 operators against 31. They must agree. If they
+#   do not then depth is not the variable and graph size is, which would be a
+#   dispatch question rather than an arithmetic one.
+#
+#   ⚠ CAVEAT I am not hiding. perch.py feeds a ramp, (i * 7) mod 251, so an
+#   isolated layer sees a broad input range while in the network it would see a
+#   post ReLU6 activation with a much narrower one. An isolated layer coming
+#   back clean proves its arithmetic across the range, which is the stronger
+#   claim, but it is not the same input. The two seed entries at the end are
+#   there to say whether the answer depends on that distribution at all.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -87,46 +110,40 @@ start() {
 	fi
 
 	log ""
-	log "===== 1-2) THE ANCHOR. out_zp 128, so its lift is unchanged from   ====="
-	log "=====      249 and this must not move it.                          ====="
+	log "===== 1) the anchor                                                ====="
 	w conv2d-cal.tflite ""
-	w conv2d-cal.tflite "ROCKET_NO_LIFT=1"
 
 	log ""
-	log "===== 3-4) MOBILENET. op28 has out_zp 66 and is the only place in  ====="
-	log "=====      it the floor ever bit. Must be at least 1000 of 1001.   ====="
-	w mobilenet_v1_1.0_224_quant.tflite ""
-	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_NO_LIFT=1"
+	log "===== 2-4) DEPTH 1. One operator, two, and the whole graph read    ====="
+	log "=====      at the same tensor.                                     ====="
+	w mn_conv0.tflite ""
+	w mn_L00.tflite ""
+	w mn_conv0dw1.tflite ""
 
 	log ""
-	log "===== 5+) EVERY out_zp 0 MODEL, PAIRED. The lift is now literally  ====="
-	log "=====     zero on these, so each pair must be IDENTICAL. Any       ====="
-	log "=====     difference at all falsifies the reasoning.               ====="
-	for m in mn_L02 mn_L26 mn_L01 mn_L08 mn_L24 pw33x64w56 mn_dw1 mn_dw25; do
-		w "$m.tflite" ""
-		w "$m.tflite" "ROCKET_NO_LIFT=1"
-	done
+	log "===== 5-6) DEPTH 2. The 31 op graph read at the same tensor as     ====="
+	log "=====      mn_conv0dw1, and layer 1 alone.                         ====="
+	w mn_L01.tflite ""
+	w mn_dw1.tflite ""
 
 	log ""
-	log "===== the cal family, out_zp 128, where the lift does the work     ====="
-	for m in cal_izp0 cal_k1 cal_k3 cal_k3_imp cal_k5_imp cal_s1 cal_oc16 \
-	         pw2_zp128; do
-		w "$m.tflite" ""
-	done
+	log "===== 7-8) THE ONE THAT DECIDES IT. L02 is where the errors stop   ====="
+	log "=====      being one sided, and it is the first pointwise.         ====="
+	w mn_pw2.tflite ""
+	w mn_L02.tflite ""
 
 	log ""
-	log "===== md003 family, out_zp 127, and the two old failures           ====="
-	w md003.tflite ""
-	w md003_oc128.tflite ""
-	w md003_s2.tflite ""
-	w conv2x.tflite ""
-	w dwconv.tflite ""
+	log "===== 9-11) DEEP IN THE NETWORK, same comparison                   ====="
+	w mn_pw24.tflite ""
+	w mn_dw25.tflite ""
+	w mn_L24.tflite ""
 
 	log ""
-	log "===== the rest of the MobileNet slices                             ====="
-	for m in mn_L00 mn_L03 mn_L04 mn_L05 mn_L06 mn_L07 mn_L12 mn_L18; do
-		w "$m.tflite" ""
-	done
+	log "===== 12-15) does the answer depend on the input distribution      ====="
+	w mn_pw2.tflite "ROCKET_SEED=3"
+	w mn_pw2.tflite "ROCKET_SEED=11"
+	w mn_L02.tflite "ROCKET_SEED=3"
+	w mn_L02.tflite "ROCKET_SEED=11"
 
 	log ""
 	log "===== a final anchor                                               ====="
