@@ -2,131 +2,86 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 246. Igor's reading of why the block does not come back
-# after a timeout, tested both ways in one boot.
+# 2026-08-19 round 247. The weight zero point, and whether the clamp is in it.
 #
-# HIS READING. rocket_reset() ends with pm_runtime_put_noidle(), a bare
-# decrement that arms nothing. The device stays active with no idle request
-# pending, so the power domain never drops between the failed job and the next
-# one, and the BIU reset that the pmdomain patch cycles on power-on never
-# fires. If the MMU needs that reset to answer again, it never gets it. That
-# fits round 244, where two timeouts each left rk_iommu reporting
-# MMU_DTE_ADDR not functioning and the next inference returning a whole
-# surface of the output zero point.
+# WHAT THIS IS ABOUT. No model in the regression set has a weight zero point of
+# 128. conv2d-cal is 133. The shipped path writes the weight bytes as w - 0x80
+# and corrects for that in the ABC B column, which is 0x80 - wt_zp, so -5 here.
+# The two TODOs beside that line ask why the blob converts to signed, so the
+# 0x80 is copied rather than derived. The development branch has another form,
+# w - wt_zp with no correction needed, whose commit from 26 June says it is
+# byte exact offline against the CPU reference on this exact model. The two are
+# equal only if the hardware applies B the way this driver assumes. The clamp
+# appears on the shipped one and the other has never run on hardware.
 #
-# WHAT THIS IMAGE ADDS
-#   rocket.reset_autosuspend  arms the autosuspend timer after a reset instead
-#                             of the bare put. ⚠ It is a real module_param,
-#                             checked in the built Image, unlike task_con16
-#                             which this project cited for weeks and which was
-#                             never defined.
-#   the interrupt mask        INTERRUPT_MASK is now cleared before the
-#                             synchronize_irq, which Igor asked for and I
-#                             agreed to on the list. Not under test here, it
-#                             rides along.
+# ⚠ WHY THIS IS NOT A ONE KNOB TEST, which is what I first wrote it as.
+# ROCKET_WT_ZP changes the weight bytes ONLY. The B column is written
+# unconditionally. Turning it on alone gives the correction twice, which is a
+# third thing rather than the alternative design. The alternative is
+# ROCKET_WT_ZP=1 with ROCKET_B_VALUE=0 together.
 #
-# READING RULES, fixed before the run.
+# THE READING RULE, fixed before the run. Entry 2 is the question and the
+# answer is whether npu min stops being 128. Nothing else needs reading first.
 #
-#   Entry 1 is the control. Rounds 240 through 245 all got 128 of 128 with npu
-#   min 128 max 255 across 128 distinct values. If that moved, the mask or the
-#   param did it and nothing else counts.
+# ⚠ THE INSTRUMENT CHECK, and the round is void without it. Entries 3 and 4
+# each apply one half of the change alone, so each is arithmetically wrong in a
+# known direction. They exist to prove the two knobs reach the hardware at all.
+# If 3 and 4 both come back identical to entry 1 then neither knob is live,
+# entry 2 proves nothing whatever it says, and the right next step is to find
+# out why rather than to read the result. This is the control the task_con16
+# round did not have.
 #
-#   Entries 3 and 5 are the two arms, same boot, same model, one variable.
-#     3  autosuspend off, the shipped behaviour. Round 244 says this fails,
-#        and it must fail again or the failure is not deterministic and
-#        neither arm proves anything.
-#     5  autosuspend on. If Igor is right this computes.
-#
-#   ⚠ THE TRAP. If entry 3 computes, stop reading. Two timeouts in round 242
-#   and 244 behaved differently already, and an intermittent failure cannot be
-#   cured by a knob in a two-arm test.
-#
-#   Entry 7 is the second mechanism, and it is deliberately NOT the param. It
-#   forces a suspend and a resume through sysfs before the next job. If 5 and
-#   7 both compute the two agree; if only 7 does, the timer never fired and
-#   the fix is a forced cycle rather than an armed one.
-#
-# The rail counters print either side so a domain that never dropped can be
-# told from one that did.
+# THE BASELINE is entry 1. Rounds 240 through 246 all got 128 of 128 with npu
+# min 128 max 255 across 128 distinct values.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-P=/sys/module/rocket/parameters/reset_autosuspend
-GD=/sys/kernel/debug/pm_genpd
-RD=
 log() { echo "$@" > "$C"; }
 w() { log ""; log "  -- $1   $2"; sleep 2; \
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1; }
-
-st() {
-	log "    STATE $1  reset_autosuspend=$(cat $P 2>/dev/null)  rail_open=$(cat $RD/open_count 2>/dev/null) rail_use=$(cat $RD/use_count 2>/dev/null)  npu_active=$(cat $GD/npu/active_time 2>/dev/null)  rt=$(cat /sys/bus/platform/devices/*.npu/power/runtime_status 2>/dev/null | tr '\n' ' ')"
-}
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-	mount -t debugfs none /sys/kernel/debug 2>/dev/null
-	for d in /sys/kernel/debug/regulator/*vdd_npu*; do
-		[ -r "$d/open_count" ] && RD="$d"
-	done
-
-	if [ ! -w "$P" ]; then
-		log "  the parameter is not writable at $P. What is there:"
-		ls /sys/module/rocket/parameters/ 2>/dev/null | tr '\n' ' ' > "$C"
-		log ""
-		log "  the two arms cannot be run in one boot, stopping"
-		return 0
-	fi
-	echo 0 > "$P"
 
 	log ""
-	log "===== 1) THE CONTROL. 240 through 245 all got 128 of 128.        ====="
-	w conv2d-cal.tflite ""
-	st "after the control"
-
-	log ""
-	log "===== 2) ARM A fixture. autosuspend OFF, force a timeout.        ====="
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
-	st "after the timeout, arm A"
-
-	log ""
-	log "===== 3) ARM A result. Round 244 says this comes back empty.     ====="
-	log "=====    It must, or the failure is not deterministic.           ====="
+	log "===== 1) THE BASELINE. 240 through 246 all got 128 of 128 with    ====="
+	log "=====    npu min 128 max 255 and 128 distinct values.             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 4) ARM B fixture. autosuspend ON, force a timeout.         ====="
-	echo 1 > "$P"
-	st "parameter flipped"
-	w pw64x120w56.tflite "ROCKET_DPU4050_MOD32=1"
-	st "after the timeout, arm B"
-	sleep 3
+	log "===== 2) THE QUESTION. Weights as w - wt_zp and B switched off,   ====="
+	log "=====    which is the form proven byte exact offline in June.     ====="
+	log "=====    Read npu min.                                            ====="
+	w conv2d-cal.tflite "ROCKET_WT_ZP=1 ROCKET_B_VALUE=0"
 
 	log ""
-	log "===== 5) ARM B result. If Igor is right this computes.           ====="
+	log "===== 3) INSTRUMENT CHECK A. Weights moved, B left on, so the     ====="
+	log "=====    correction is applied twice. Must differ from entry 1.   ====="
+	w conv2d-cal.tflite "ROCKET_WT_ZP=1"
+
+	log ""
+	log "===== 4) INSTRUMENT CHECK B. B off, weights left alone, so the    ====="
+	log "=====    correction is missing. Must differ from entry 1.         ====="
+	w conv2d-cal.tflite "ROCKET_B_VALUE=0"
+
+	log ""
+	log "===== 5) the baseline again, so a drift across the log is visible ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 6) the other mechanism. Back to OFF, time out again, then  ====="
-	log "=====    force a suspend and resume by hand rather than by timer ====="
-	echo 0 > "$P"
-	w pw64x88w56.tflite "ROCKET_DPU4050_MOD32=1"
-	st "after the timeout, arm C"
-	for d in /sys/bus/platform/devices/*.npu/power/control; do echo auto > "$d" 2>/dev/null; done
-	sleep 5
-	st "after five seconds of forced auto"
+	log "===== 6) if entry 2 lifted the floor, does the same pair hold on  ====="
+	log "=====    a shape that already computes. wt_zp is 130 here and     ====="
+	log "=====    out_zp is 0, so the clamp was never visible on it.       ====="
+	w pw33x64w56.tflite ""
+	w pw33x64w56.tflite "ROCKET_WT_ZP=1 ROCKET_B_VALUE=0"
 
 	log ""
-	log "===== 7) ARM C result                                            ====="
-	w conv2d-cal.tflite ""
-	st "at the end"
-
-	log ""
-	log "===== Read entry 3 first. If it computes, the rest is noise.     ====="
+	log "===== Read entry 3 and 4 first. If neither moved, entry 2 is void ====="
 	sync
 }
 case "$1" in
