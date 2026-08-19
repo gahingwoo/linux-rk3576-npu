@@ -1,0 +1,63 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v8 02/12] accel/rocket: wait for a running IRQ handler before resetting a core
+In-Reply-To: <CAEWPSH7tM9WQUJ0H13ghkiHGzDcdycC1syTuO5B8DpC6cUSnfg@mail.gmail.com>
+References: <CAEWPSH7tM9WQUJ0H13ghkiHGzDcdycC1syTuO5B8DpC6cUSnfg@mail.gmail.com>
+
+Hi Igor,
+
+I checked all of it against the tree and it holds.
+
+The lockdep point goes in the commit message. That the wait is on a
+waitqueue rather than a lock, so nothing would have reported the deadlock,
+is a better argument for the placement than mine.
+
+Masking before the sync, yes. INTERRUPT_MASK is armed in hw_submit and
+cleared only in the hardirq, and rocket_reset never touches it, so on an
+ordinary timeout it is live. Your line numbers are next-20260814 and mine
+have the series on top, so here it is rocket_job.c:165 and :499. I agree
+it is not a hole and that reset.pending already closes the resubmit
+branch. I want the sentence the patch adds to be true on its own, not true
+because something else prevents the case.
+
+The runtime PM facts are right. rocket_job_is_idle is atomic_read on
+credit_count, runtime_suspend returns -EBUSY only on that and then drops
+the clocks, and drm_sched_stop zeroes the counter until drm_sched_start at
+the end of the reset. The driver does claim idle for the whole body while
+holding nothing, and the two puts differ the way you describe.
+
+I am not folding that into 2/12. It changes behaviour in the shared path
+instead of adding a fence, and on this SoC it meets a power domain that
+cycles a bus reset on power-on, so it wants its own patch and a board run.
+It is next in the reset path either way.
+
+Your question. MMU_DTE_ADDR predates the rail by about a hundred rounds.
+The entry after a timed out job has come back at one constant with that
+reset error beside it since round 138, recorded in the paper and the
+log-book, and the rail moved to domain-supply in round 241.
+
+One near counterexample, since you would find it. The round before the one
+in the cover letter timed a job out and logged no MMU_DTE_ADDR. It had no
+job after the timeout, because the shape that times out runs last on
+purpose, so the attach never happened. Your first bullet from the other
+side.
+
+I ran your test on the archive. The run with the two MMU_DTE_ADDR lines
+has zero "stall request timed out" and zero "paging request timed out", so
+the MMU is not responding at all rather than sitting in a wrong state.
+
+The third bullet is what I will build. If put_noidle leaves the device
+active with no idle request pending, the domain never drops between the
+failed job and the next one, and the bus reset that 9/12 cycles on
+power-on never gets cycled. That fits what I have, including the block
+being fine after a reboot and not otherwise. The next image swaps
+put_noidle for put_autosuspend, and separately forces a suspend and resume
+before the next job, so the two do not confound. You get the result either
+way.
+
+Your aside is right and it is not mine. rocket_reset_work is defined,
+INIT_WORK'd and never queued, and it is that way in the base this series
+sits on, untouched by the twelve.
+
+No tag wanted, for the reason you give.
+
+Jiaxing
