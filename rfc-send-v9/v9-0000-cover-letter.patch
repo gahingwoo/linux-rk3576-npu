@@ -1,0 +1,42 @@
+From ce00de52a6a22eb72eb029fe219cf831107a97f7 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 19 Aug 2026 18:56:24 +1200
+Subject: [PATCH v9 00/12] *** SUBJECT HERE ***
+
+*** BLURB HERE ***
+
+Jiaxing Hu (12):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../bindings/iommu/rockchip,iommu.yaml        | 28 ++++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 47 ++++++++-
+ .../power/rockchip,power-controller.yaml      |  8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 13 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 82 +++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 28 +++++-
+ drivers/accel/rocket/rocket_core.h            | 11 ++-
+ drivers/accel/rocket/rocket_device.c          |  7 +-
+ drivers/accel/rocket/rocket_drv.c             | 28 ++++--
+ drivers/accel/rocket/rocket_drv.h             |  2 +
+ drivers/accel/rocket/rocket_job.c             | 97 ++++++++++++++-----
+ drivers/pmdomain/rockchip/pm-domains.c        | 75 +++++++++-----
+ 12 files changed, 364 insertions(+), 62 deletions(-)
+
+
+base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
+prerequisite-patch-id: 46ebb679e93d3d25393e8cbf8fc3c955bcc01bd4
+-- 
+2.43.0
+
