@@ -655,7 +655,7 @@ verification run above measured directly by leaving all of it out.
 
 The Mesa side has its first upstream-shaped slice open as
 [mesa!43804](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804),
-five patches and 703 lines for one regular convolution, posted and not yet
+five patches and 711 lines for one regular convolution, posted and not yet
 reviewed. It is narrow on purpose and declines the depthwise, pointwise and
 image-input types MobileNet is built from, so the end to end result above comes
 from the development tree rather than from it. The rest still lives in
