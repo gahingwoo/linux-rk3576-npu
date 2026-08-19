@@ -2,57 +2,59 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 256. Are the one count misses exact ties, or not.
+# 2026-08-19 round 257. One count on the accumulator, asked of every operator.
 #
-# WHAT 255 REFUTED, and it was my reading that was wrong rather than the
-# measurement. The knob reached the hardware, every value moved every model
-# monotonically, so the round counts.
+# ⚠ WHAT WAS WRONG WITH 256, and it was the knob rather than the board.
+# ROCKET_ROUND is in requant counts and lands in A as round(value/mult), which
+# is an INTEGER. The smallest step it can make is one accumulator count, and
+# which requant value produces that step depends entirely on the operator. So
+# the sweep from 0.001 to 0.25 was asking different models different questions:
 #
-#   mn_pw2    99.22% exact at 0, then 87.75  74.53  59.66  46.41 at .25 to 1.0
-#   mn_dw1    85.62% at 0, then 98.88  86.43  76.07  76.07
-#   mn_conv0  99.80% at 0, 72.65 at .5
-#   conv2d-cal 99.81% at 0, WORSE IN BOTH DIRECTIONS, 74.94 at +.25 and 75.18
-#              at -.25, so it already sits at its own optimum
+#   model       mult      what 0.01 actually added to A
+#   mn_dw1      0.2922    0, and 1 only from 0.15 up
+#   mn_pw2      0.0304    0, then 2 at 0.05 and 3 at 0.1
+#   mn_conv0    0.0072    1
+#   mn_pw24     0.0082    1
+#   mn_dw25     0.1262    0, at every value in the round
+#   conv2d-cal  0.000955  10, and -10 for the negative arm
 #
-# maxdiff stayed 1 at every value on every layer. The term only moves WHICH
-# pixels are off by one, never by how much.
+# The step I read at 0.15 on mn_dw1 as a property of the pixel distribution is
+# just round(0.15/0.2922) crossing from 0 to 1. The plateau above it and the
+# flat below it are the same integer, which is why both were perfectly flat.
 #
-# ⚠ THE MISTAKE. 100 percent of misses being low does NOT mean every pixel is
-# half a count low. It means the FEW pixels that miss all miss low, and on
-# mn_pw2 that is 0.78 percent of them. Adding half a count moves the rounding
-# boundary under EVERY pixel, which fixes that 0.78 percent and breaks a much
-# larger population that was exact. The fall is about 12 percent per 0.25,
-# which is the fraction of pixels a shift of that size pushes across an integer
-# boundary. A global constant cannot be the fix.
+# WHAT 256 DID ESTABLISH, where it happened to land on 1:
 #
-# ⚠ EXCEPT mn_dw1, which went 85.62 to 98.88 at 0.25 and is the one case this
-# project already described. Its multiplier is 0.292, and the note in the readme
-# says that for a multiplier of 0.2922 the final divide is by two, so the
-# intermediate lands on exactly one half for half the pixels and the reference
-# rounds up every time. When the divide is by a small power of two the ties are
-# a large population and the rounding rule dominates.
+#   mn_pw24   99.81% of pixels exact -> 100.00%, BYTE EXACT
+#   mn_dw1    85.62% -> 98.88%
+#   mn_conv0  99.80% -> 99.80%, unchanged, but every miss flipped from low to
+#             high, so its misses sit within one count of the boundary
 #
-# THE QUESTION THIS ROUND ASKS. Are the missing pixels EXACT TIES. 0.25 was
-# already too coarse to tell and the small end was never measured.
+# conv2d-cal, mn_pw2 and mn_dw25 have never been tested at 1 at all.
+#
+# ROCKET_ABIAS adds an integer to A directly, so every operator is asked the
+# same question. The multiplier is also verified not to be the story: the
+# realized scale times two to the minus shift is within 0.0053 percent of the
+# true multiplier on all six of these.
 #
 # THE READING RULE, fixed before the run.
 #
-#   If they are ties, exactness jumps to its maximum at the SMALLEST positive
-#   value and then sits flat until the value grows enough to start pushing
-#   ordinary pixels across, because breaking a tie needs any epsilon at all and
-#   costs nothing else. The curve would be a step, then a plateau, then the
-#   linear fall 255 already measured.
+#   The question is whether ONE count on the accumulator is a general fix or a
+#   coincidence on two operators. Read the three that were never tested first,
+#   since they carry the new information: conv2d-cal, mn_pw2, mn_dw25 at +1.
 #
-#   If they are not ties, exactness moves smoothly from the very first step and
-#   there is no plateau. Then no global constant fixes this and the one count
-#   is the reference's own rounding, which is where the readme already had it.
+#     all three improve            it is general, and the next question is why
+#     the two known ones improve
+#       and the new three do not   it is per operator and there is no single
+#                                  constant, which is a real answer too
+#     nothing moves anywhere       the knob is not reaching and the round is
+#                                  void rather than negative
 #
-#   ⚠ Read mn_dw1 first. It has the largest tie population by the multiplier
-#   argument, so if anything shows a step it does.
+#   ⚠ -1 is in the sweep on every model. If +1 and -1 both make a model worse
+#   it is already at its optimum, which is what conv2d-cal looked like in 255
+#   before I knew it was being moved by 10.
 #
-#   ⚠ mn_pw2 and mn_conv0 are the control. They sit at 99.2 and 99.8 already,
-#   so a tiny epsilon must cost them almost nothing. If they fall immediately
-#   then even an epsilon moves ordinary pixels and the step cannot be clean.
+#   ⚠ BYTE EXACT is the bar worth watching, not the channel count. Every one of
+#   these already passes at maxdiff 1.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -100,38 +102,35 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2+) THE SMALL END on mn_dw1, which has the biggest tie       ====="
-	log "=====     population by the multiplier argument. A step here is    ====="
-	log "=====     the answer.                                              ====="
-	w mn_dw1.tflite ""
-	for r in 0.001 0.01 0.05 0.1 0.15 0.2 0.25; do
-		w mn_dw1.tflite "ROCKET_ROUND=$r"
+	log "===== 2+) THE THREE NEVER TESTED AT ONE COUNT. These carry the     ====="
+	log "=====     new information, so read them first.                     ====="
+	for m in conv2d-cal mn_pw2 mn_dw25; do
+		w "$m.tflite" ""
+		w "$m.tflite" "ROCKET_ABIAS=1"
+		w "$m.tflite" "ROCKET_ABIAS=-1"
+		w "$m.tflite" "ROCKET_ABIAS=2"
 	done
 
 	log ""
-	log "===== the control: two layers already at 99 percent. A tiny        ====="
-	log "=====   epsilon must cost them almost nothing.                     ====="
-	w mn_pw2.tflite ""
-	for r in 0.001 0.01 0.05 0.1; do
-		w mn_pw2.tflite "ROCKET_ROUND=$r"
+	log "===== the two that improved at one count in 256, now asked with    ====="
+	log "=====   the knob that means what it says                           ====="
+	for m in mn_pw24 mn_dw1; do
+		w "$m.tflite" ""
+		w "$m.tflite" "ROCKET_ABIAS=1"
+		w "$m.tflite" "ROCKET_ABIAS=-1"
+		w "$m.tflite" "ROCKET_ABIAS=2"
 	done
+
+	log ""
+	log "===== and the one whose misses flipped without its count changing  ====="
 	w mn_conv0.tflite ""
-	w mn_conv0.tflite "ROCKET_ROUND=0.01"
-	w mn_conv0.tflite "ROCKET_ROUND=0.1"
+	w mn_conv0.tflite "ROCKET_ABIAS=1"
+	w mn_conv0.tflite "ROCKET_ABIAS=-1"
 
 	log ""
-	log "===== and the negative small end, in case the tie breaks the       ====="
-	log "=====   other way on a layer whose misses are high                 ====="
-	w conv2d-cal.tflite "ROCKET_ROUND=0.01"
-	w conv2d-cal.tflite "ROCKET_ROUND=-0.01"
-	w conv2d-cal.tflite "ROCKET_ROUND=-0.1"
-
-	log ""
-	log "===== the deep pair, same question at the other end of the net     ====="
-	w mn_dw25.tflite ""
-	w mn_dw25.tflite "ROCKET_ROUND=0.01"
-	w mn_pw24.tflite ""
-	w mn_pw24.tflite "ROCKET_ROUND=0.01"
+	log "===== a chain, read last and not evidence on its own               ====="
+	w mobilenet_v1_1.0_224_quant.tflite ""
+	w mobilenet_v1_1.0_224_quant.tflite "ROCKET_ABIAS=1"
 
 	log ""
 	log "===== a final anchor                                               ====="
