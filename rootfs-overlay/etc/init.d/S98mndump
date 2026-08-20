@@ -2,58 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 263. Turn 262's fit into a reading, and find the other
-# forty eight channels.
+# 2026-08-20 round 264. Half the channels have no home, and half the bytes are
+# dead. Whether those are the same half.
 #
-# WHAT 262 GOT. The dense sweep hit the first branch of its own reading rule,
-# with the control passing too: bytes 9 to 15 continued channel 4 at k = 18 to
-# 30, and 17 to 31 came back channel 8 at k = 2 to 14 then channel 12 at k = 16
-# upward. An eight byte block is one channel and one k block.
-#
-# A rule through every one of the 88 measured points, no miss:
+# WHERE 263 LEFT IT. Six unmeasured bytes came back at exactly the k and the
+# channel the rule predicted, and two predicted dead were dead. The k side is a
+# reading rather than a fit now. The channel side turned out to be TWO
+# consecutive channels per nibble.
 #
 #   G = B/128,  b = B%128,  blk = b/8
-#   b >= 64             dead
-#   channel = 4*blk + 32*(G & 1)
-#   k       = 16*(blk & 1) + 2*(b % 8) + 32*(G >> 1), high nibble +1
+#   b >= 64                       dead
+#   channel = 4*blk + 32*(G & 1)  and that channel + 1
+#   k = 16*(blk & 1) + 2*(b % 8) + 32*(G >> 1), high nibble +1
 #
-# It also explains 261's K dependence without being asked to. A byte whose
-# 32*(G >> 1) reaches K is out of range and dead, which is why 512 was dead at
-# K = 64 and came back as k = 64 at K = 128.
+# That addresses c mod 4 in {0, 1}, which is 32 of 64 channels, and leaves the
+# b >= 64 half of every 128 byte region dead. Two halves missing. Nothing so far
+# says they are the same half.
 #
-# ⚠ IT IS STILL A FIT, and 262's own harness said not to put one in the tree
-# from a single log. Six bytes nobody has measured are in this round with the
-# rule's answers written above the byte list before the run:
+# WHAT THIS ROUND DOES. Sweeps the dead half properly, because four points is
+# not a sweep and two of them sat on block boundaries. And sweeps N, because a
+# map that covers half the channels whatever N is differs from one that covers
+# all of a small N and runs out later.
 #
-#   byte  57  channel 28  k 18      byte 100  dead
-#   byte 140  channel 36  k 24      byte 200  dead
-#   byte 384  channel 32  k 32
-#   byte 392  channel 36  k 48
-#
-# THE OTHER THING, and it is the bigger one. Every channel that rule produces
-# is a multiple of four. At 64 output channels it addresses 16 of them and has
-# nothing to say about the other 48. The probe was reporting the FIRST channel
-# that lights and breaking, which cannot tell a nibble that feeds channel 4j
-# from one that feeds 4j through 4j+3. It now prints all of them.
+# ⚠ NO TWO OPTION PREDICTION THIS TIME, and that is deliberate. Three rounds
+# running the answer was outside the two written down. Byte 8 was channel 4 at
+# k = 16 when the choices offered were channel 1 at k = 0 or channel 0 at
+# k = 16. The channel width was two when the choices were one and four. The
+# predeclared rule keeps earning its place because it forces the controls, but
+# picking between my two readings has gone nought for three, so what is written
+# below is what each observation would MEAN, with room for none of them.
 #
 # THE READING RULE, fixed before the run.
 #
-#   Read the channel lists first, on bytes 0 and 8.
+#   At N = 16 the rule addresses channels 0, 1, 4, 5, 8, 9, 12, 13 and nothing
+#   else. Read the channel lists at N = 16 first.
 #
-#     one channel each, 0 and 4      the map really does skip 1, 2 and 3, and
-#                                    48 of 64 channels are somewhere unprobed
-#     four channels, 0-3 and 4-7     the channel dimension is four wide per
-#                                    nibble and the map is complete
+#     the same eight        the map skips c mod 4 in {2,3} at every N, and the
+#                           other half is somewhere no byte probed so far
+#     all sixteen           the map depends on N, and the rule above is a
+#                           special case of something wider
+#     something else        write down what, and do not force it into either
 #
-#   Then the six predictions. Six for six turns the fit into a reading and the
-#   packer can be written from it. Any miss and the rule is wrong somewhere
-#   the dense sweep could not see, which is worth more than six hits.
+#   Then the dead half, bytes 64 to 127. If any of them lights, the b >= 64
+#   reading is wrong and where it lights says what b really indexes. If none
+#   does across nineteen points, the dead half is real and the missing channels
+#   are not in it.
 #
-#   ⚠ A partial result is the interesting one. If four of six land, read WHICH
-#   two missed before touching the formula.
+#   ⚠ Byte 0 must be channel 0 and 1 at k = 0 in every one of the three runs.
+#   It is the same byte at three different N and it must not move.
 #
-#   ⚠ Anchors either side. A dead byte with a dead block above it is not a
-#   measurement.
+#   ⚠ Anchors either side, so a dead sweep is a dead sweep and not a dead block.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -101,23 +99,23 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) SIX PREDICTIONS AND THE CHANNEL LISTS.                    ====="
-	log "=====    57 -> ch 28 k 18     140 -> ch 36 k 24                    ====="
-	log "=====    384 -> ch 32 k 32    392 -> ch 36 k 48                    ====="
-	log "=====    100 and 200 -> dead                                       ====="
-	log "=====    and bytes 0, 8, 16, 24 with every channel printed         ====="
+	log "===== 2) N = 16. The rule says channels 0 1 4 5 8 9 12 13 only.    ====="
 	log ""
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 64 16 --kpair > "$C" 2>&1
+
+	log ""
+	log "===== 3) N = 32                                                    ====="
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 64 32 --kpair > "$C" 2>&1
+
+	log ""
+	log "===== 4) N = 64, the same bytes as 263 so the two logs compare     ====="
 	sleep 1
 	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
 
 	log ""
-	log "===== 3) the same at K = 128, where 384 and 392 are in range for   ====="
-	log "=====    a different reason, so the rule is not tested at one K    ====="
-	sleep 1
-	/opt/charsiu/charsiu_int4 1 128 64 --kpair > "$C" 2>&1
-
-	log ""
-	log "===== 4) the anchor again                                          ====="
+	log "===== 5) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
