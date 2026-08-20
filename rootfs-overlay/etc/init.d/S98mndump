@@ -2,67 +2,64 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 281. It computed. Now without the override, and at K = 32.
+# 2026-08-20 round 282. "Last pair" means the last one PRESENT, and an N whose
+# last group is even has never been run.
 #
-# ⚠⚠ 280 RAN AN int4 MATMUL AND IT WAS EXACT. 64 of 64 words, every channel,
-# against cpu_reference. First one on this stack.
+# 281 STOOD WITHOUT THE OVERRIDE. Two of four geometries were exact with nothing
+# on the command line, which settles two things at once:
 #
-#   entry 2   ch 0 moved off -6753 to -1887 and 64 of 64 EXACT
-#   entry 3   CHARSIU_INT4_ORDER=1 gave 0 of 64, so the intra group order is
-#             settled: byte j holds k = 2j low and k = 2j+1 high
-#   entry 4   the no HALFK control gave 0 of 64, and its npu values were
-#             IDENTICAL to entry 2's, which is the model confirming itself:
-#             the hardware computed the same thing and only the reference moved
-#   entry 6   int8 still 64 of 64
+#   K=64 N=64  64 of 64   the 0x3020 the driver emits, 2*(n-8)-1, is the value
+#                         the whole layout was measured at
+#   K=32 N=64  64 of 64   base[g] = (g/2)*8K + ... holds at BOTH K, so the two
+#                         tables really were one expression and not a table
+#                         memorised at 64
+#   no HALFK    0 of 64   the control still fails
+#   int8       64 of 64   the instrument is still sound
 #
-# BOTH SHIFT PLACEMENTS SCORED 64, AND THAT IS NOT A WEAK TEST. fp16 bits of an
-# integer have a zero low byte, 0x3C00, 0x4000, 0x4700, and abits is (a-0x80)<<8
-# which is also a multiple of 256, so every product is a multiple of 65536 and
-# the shift loses nothing per element. The two readings are identically equal
-# here, so the question does not arise for this packing rather than being
-# undecided by a kind test.
+# ⚠ AND TWO WERE PARTIAL, BY EXACTLY ONE GROUP OF EIGHT. N = 32 gave 24 of 32
+# and N = 16 gave 8 of 16. The base expression has one irregular term, the last
+# pair sitting 64 bytes in rather than 128, and it was written as g == 7 because
+# the map was read at N = 64 where the last group IS 7. At N = 32 the last group
+# is 3 and at N = 16 it is 1, and those are exactly the sizes of the shortfalls.
 #
-# WHAT DID NOT WORK. K = 32 came back 16 of 64, and the reason is in the base
-# table: it ran to 1656 while a K = 32 buffer is 1024, so channels 32 and up
-# were written past the end. 277's own sweep has the K = 32 table and the two
-# turn out to be one expression:
+# So "last" is the highest group in use, not 7. The packer now says
+# g == (n-1)/8.
 #
-#   K=64  0 128 512 640 1024 1152 1536 1600
-#   K=32  0 128 256 384  512  640  768  832
+# ⚠ THAT IS FITTED TO TWO FAILURES AND ONE SUCCESS AND IT IS NOT READ. Every N
+# it has seen has an ODD highest group: 7 at 64, 3 at 32, 1 at 16. At an N whose
+# highest group is EVEN the rule predicts no 64 anywhere, and nothing has ever
+# run there.
 #
-#   base[g] = (g/2) * 8K + (g odd ? (g == 7 ? 64 : 128) : 0)
-#
-# sixteen points, one expression. The last pair sits 64 bytes in rather than
-# 128 in BOTH tables independently, so that is read and not fitted, and it is
-# not a cap either: 3*512 + 128 + 56 is well inside 2048.
-#
-# ⚠ AND 0x3020 IS IN THE DRIVER NOW. Every int4 result of 280 needed an
-# override on the command line. The DPU writes ceil((v+1)/2) + 8 channels, so
-# v = 2*(n-8) - 1, which is 15, 47 and 111 at n of 16, 32 and 64. int8 keeps
-# n-1. Nothing in this round passes CHARSIU_OVERRIDE at all.
+# ⚠ AND 281's LOG COULD NOT SAY WHICH CHANNELS FAILED. It printed channels 0 to
+# 7 and a count, so "24 of 32" was consistent with a scattered eight as much as
+# with a group of eight, and the reading above is an inference from the SIZE of
+# the shortfall. The harness now prints an exact count per group of eight, so
+# this round can see the difference the last one could not.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND. N = 64, K = 64, NO override. It has to reproduce
-#   280's 64 of 64, or the emitted 0x3020 is not the value the layout was
-#   measured at.
+#   ⚠ ENTRY 3 AND 4 ARE THE FIX. N = 32 and N = 16, which were 24 of 32 and 8
+#   of 16, and nothing changed but which group gets the 64.
 #
-#   ENTRY 3 IS K = 32 AND IT IS THE NEW CLAIM. 16 of 64 last time, and the base
-#   table is the only thing changed. 64 of 64 means the expression holds at both
-#   K rather than the K = 64 table being memorised.
+#     both exact, and the per group line shows 8/8 everywhere
+#                          the irregular term is "the last group present" and
+#                          the layout now holds at three N and two K
+#     still short by one group, and the group is the LAST one
+#                          the term is not about being last either
+#     short somewhere else  281's shortfall was never a group at all and the
+#                          inference from its size was wrong
 #
-#   ENTRY 4 and 5 are N = 32 and N = 16, which the layout has never been run at.
-#   The base table is indexed by n/8 and stops early at small N, and 0x3020 now
-#   moves with N, so both could be wrong independently.
+#   ⚠ ENTRIES 5 TO 7 ARE THE PART THAT IS NOT FITTED. N = 24, 40 and 56 all
+#   have an EVEN highest group, 2, 4 and 6, where the rule says no group takes
+#   the 64. N = 48 has an odd one, 5, and should behave like 16, 32 and 64.
 #
-#     all four exact          the layout, the k parity, the order, the base
-#                             expression and the channel register are all one
-#                             consistent reading across four geometries
-#     N = 64 exact, others not  the tables were memorised at 64 and the
-#                             expression does not generalise
-#     none exact              the driver's 0x3020 is not what the override was
+#     the three even ones exact and 48 exact    the rule is read, not fitted,
+#                                               across seven values of N
+#     the even ones short by a group            the last group needs the 64
+#                                               whether it is odd or even and
+#                                               the pairing story is wrong
 #
-#   ENTRY 6 is the control that must FAIL and ENTRY 7 is int8, unchanged.
+#   ENTRY 8 is the control that must FAIL and ENTRY 9 is int8.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -120,28 +117,39 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. K=64 N=64, NO override. Must be 64 of 64.      ====="
+	log "===== 2) N = 64, the one that already worked. Must not regress.    ====="
 	log ""
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 64
 
 	log ""
-	log "===== 3) K = 32. Was 16 of 64. One base expression for both K.     ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 32 64
-
-	log ""
-	log "===== 4) N = 32, never run with this layout                        ====="
+	log "===== 3) N = 32. Was 24 of 32.                                     ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 32
 
 	log ""
-	log "===== 5) N = 16                                                    ====="
+	log "===== 4) N = 16. Was 8 of 16.                                      ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 16
 
 	log ""
-	log "===== 6) the control that must FAIL. no HALFK.                     ====="
+	log "##### the part that is NOT fitted: an EVEN highest group           #####"
+	log ""
+	log "===== 5) N = 24, highest group 2                                   ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 24
+
+	log ""
+	log "===== 6) N = 40, highest group 4                                   ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 40
+
+	log ""
+	log "===== 7) N = 56, highest group 6.  and N = 48, odd, must behave.   ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 56
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 48
+
+	log ""
+	log "===== 8) the control that must FAIL                                ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 
 	log ""
-	log "===== 7) int8 dense, unchanged. Must be 64 of 64.                  ====="
+	log "===== 9) int8 dense                                                ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
@@ -149,7 +157,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== four geometries, no override, or the reading does not hold.  ====="
+	log "===== read the per group line, not just the count.                 ====="
 	sync
 }
 case "$1" in
