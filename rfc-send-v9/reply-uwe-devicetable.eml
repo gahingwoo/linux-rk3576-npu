@@ -5,12 +5,18 @@ References: <aoQdns-GHS3fg5BJ@monoceros>
 
 Hi Uwe,
 
-Changed for v9, thank you. rocket_drv.h now includes <linux/device-id/of.h>
-and nothing in the driver needed anything else out of mod_devicetable.h.
+This changes in v9, thank you. rocket_drv.h will include <linux/device-id/of.h>
+instead, and nothing in the driver needed anything else out of
+mod_devicetable.h.
 
 I had not looked at what that header drags in. Checked after your mail, and on
-this build it is the only include the file needed for struct of_device_id.
-Dropping to the narrow one costs nothing here.
+this build the narrow one is all the file needs for struct of_device_id, so
+dropping to it costs nothing here.
+
+v9 is not posted yet, so please read that as what it will contain and not as
+done. I am holding it so v8 can collect more review rather than reset the
+thread. I said on v7 that I would put things this way round, after telling a
+reviewer something was fixed and then sending the next version without it.
 
 Regards,
 Jiaxing
