@@ -2,72 +2,73 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 273. k is solved. Make the activation count, and find the
-# halving in a mode where it might now be visible.
+# 2026-08-20 round 274. One k did the multiply. And three registers carrying the
+# channel count have never been touched.
 #
-# ⚠ THE k SHORTFALL IS FIXED, by CONV_CON1 PROC_PRECISION = 0. The full sweep
-# under it closes:
+# ⚠ 273's ENTRY 3 IS THE FIRST TIME THE OUTPUT DEPENDED ON THE ACTIVATION IN
+# THIS MODE. Under PROC_PRECISION = 0 with a ONE BYTE activation, a nibble pairs
+# with TWO k and they do different things:
 #
-#      0- 127: w0..w7      512- 639: w0..w7  k+32      1024-1151: w16..w23
-#    128- 255: dark        640- 767: dark              1280-1407: w24..w31
-#    256- 383: w8..w15     768- 895: w8..w15 k+32      1408-1535: w32..w39
-#    384- 511: dark        896-1023: dark              1536-2047: the k+32 half
+#   byte 0 low  -> k0 = 0x02bc = 700    which is 100 * 7, the one hot amplitude
+#                                       times the nibble. a * w, exactly.
+#               -> k1 = 0x0379 = 889    which is 127 * 7, the constant again.
 #
-# Four groups of eight bytes a channel, 32 bytes, 64 nibbles, 64 k. 0x1020 says
-# 32 bytes a kernel and 32 is now what gets fetched. The dark 768 bytes are
-# EXACTLY 24 channels times 32, so the buffer is the right size and 24 channels'
-# worth is simply never read. What is left is only the channel count.
+# So the mode CAN multiply by the activation. Whatever the 127 is, it is not
+# "this mode ignores the activation", because one of the two k did not ignore it.
 #
-# ⚠ AND I OWE A CORRECTION. 272's script said the output formula in charsiu's
-# README "has no standing" under the new mode. Wrong, and backwards. The formula
-# reproduces the SHIPPED column exactly, seven for seven, once the activation is
-# read as the raw 16 bit slot rather than an fp16 of the value:
+# A8_STRIDE1 on its own changed nothing in the --map column: 127, 254, 508, 889,
+# -127 for nibbles 1, 2, 4, 7, 15, identical to without it, and low and high
+# nibble equal. That is consistent, since --map drives a ramp where both paired
+# k are live and the 127 term wins.
 #
-#   out = ((int16)fp16bits(w) * (int16)abits) >> 16     abits = 256 for a = 1
-#   w 1 2 3 4 5 7 15  ->  60 64 66 68 69 71 -68        all seven exact,
-#                                                       and the high nibble,
-#                                                       abits 512, is 2x each
+# ⚠ ONE COST. A8_STRIDE1 halves the fetch back: 80 live groups where PP = 0
+# alone gave 160, and byte 512 goes dark. It buys the multiply and gives back
+# half the k.
 #
-# PROC_PRECISION = 0 is a DIFFERENT operation, not a broken one:
+# THE CHANNEL COUNT SURVIVED EVERYTHING AGAIN. All seven registers 269 found
+# inert are still inert with the fix on, in the other arithmetic mode. wrote is
+# 40 in every clean arm of five rounds. M = 4 gives 160, so M * (N/2 + 8) holds
+# at M of 1, 2 and 4.
 #
-#   out = 127 * w      w signed 4 bit, 15 gives -127, seven for seven linear
+# ⚠ AND HERE IS WHAT I EXCLUDED WRONGLY. The sweep list came from diffing the
+# int8 and int4 streams, so registers IDENTICAL in both were never swept. Three
+# of them carry n - 1:
 #
-# That is what an int4 matmul wants, except for the 127: the output does not
-# depend on the activation at all. --map with a ramp and --kpair with a one hot
-# of 100 both return 889 for a nibble of 7, so it is measured twice.
+#   CORE 0x3020 = n-1     DPU 0x402c = n-1     DPU_RDMA 0x5014 = n-1
 #
-# WHY THAT MIGHT BE THE PACKING RATHER THAN THE MODE. charsiu packs the
-# activation as a 2 byte fp16 whenever the weight is int4, with the int8 value
-# in the HIGH byte and the low byte zero, so the slot reads 256 for a = 1. An
-# integer mode reading a 1 byte activation would read the low byte, which is 0.
-# CHARSIU_A8_STRIDE1 already exists and switches the packing to a 1 byte element
-# with atom 16, and it has never been run against PROC_PRECISION = 0.
+# A register that is the same on both paths cannot CAUSE the difference, which
+# is why they were dropped, but it can perfectly well be the BOUND that int4
+# reaches and int8 does not. Nothing else has moved in five rounds and these
+# have never been asked.
+#
+# Also never swept, for the same reason: CNA 0x1010 CONV_CON2, which carries
+# KERNEL_GROUP, currently 0, and FEATURE_GRAINS, currently 255. A kernel is an
+# output channel and a group of them is exactly the shape of the missing factor.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND. PROC_PRECISION = 0 with a one byte activation.
+#   ⚠ ENTRY 3 IS THE CHANNEL ROUND. Each of the three n-1 registers set to 127
+#   at N = 64, which claims 128 channels.
 #
-#     values scale with the activation   PROC_PRECISION = 0 is a real integer
-#                                        multiply and the mode is usable
-#     values stay at 127 * w             the activation is not read in this mode
-#                                        at all, and the 127 is coming from
-#                                        somewhere else, most likely the A
-#                                        record of the coefficient buffer
-#     it hangs or goes dark              the packing and the mode are not
-#                                        compatible and w4a16 is the only way
+#     wrote goes to 72     that register is the source. 128/2 + 8 = 72, and the
+#                          halving is downstream of whichever one it is
+#     wrote goes to 128    that register is the source AND int4's halving is
+#                          somewhere between it and the write
+#     wrote stays 40       not that one. Three arms, and if all three stay the
+#                          count is not written down anywhere I have looked
 #
-#   ENTRY 3 is --kpair under the same, because A8_STRIDE1 changes the atom from
-#   8 to 16 and the whole k mapping with it, so the map has to be re-read rather
-#   than assumed.
+#   ENTRY 2 sweeps the one hot amplitude at the k that multiplied. --kpair drove
+#   100 hardcoded for eleven rounds, which was fine while the question was which
+#   k a nibble touches and useless once it became whether a is read at all.
 #
-#   ⚠ ENTRY 5 RE-SWEEPS THE REGISTERS 269 FOUND INERT, WITH THE FIX ON. They
-#   were swept in fp16 mode. A size register that does nothing when the
-#   activation is two bytes wide may do something when it is one, and the
-#   channel count has resisted four rounds, so the cheapest thing left is to ask
-#   the same question in the mode that changed.
+#     700, 7, 14, 35, 70 for amp 100, 1, 2, 5, 10    out = a * w exactly, and
+#                                                    this mode is a real integer
+#                                                    matmul
+#     the value does not track amp                   700 was a coincidence and
+#                                                    the k0 reading is wrong
 #
-#   ENTRY 6 confirms wrote = M * (N/2 + 8) at M = 4. 272 measured 80 at M = 2
-#   against 40 at M = 1, so the 40 is per row and the halving is not about M.
+#   ENTRY 4 sweeps KERNEL_GROUP and FEATURE_GRAINS on CONV_CON2, and SIZE_E_0 on
+#   0x4050, which is 4 on both paths and is the one BS_OW_CFG field never varied.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -126,48 +127,53 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### 2) THE ROUND. PROC_PRECISION=0 with a ONE BYTE activation.   #####"
-	for L in 1 2 4 7 15
+	log "##### 2) is it a*w. amp 1 2 5 10 100 at byte 0, nibble 7.          #####"
+	for A in 1 2 5 10 100
 	do
 		log ""
-		log "===== nibble $L   PP=0 + A8_STRIDE1"
-		c "CHARSIU_OVERRIDE=$FIX" "CHARSIU_A8_STRIDE1=1 CHARSIU_INT4_LIVE=$L" 1 64 64 --map 8 8
+		log "===== amp $A   PP=0 + A8_STRIDE1   (a*w would be $A x 7)"
+		c "CHARSIU_OVERRIDE=$FIX" "CHARSIU_A8_STRIDE1=1 CHARSIU_KPAIR_AMP=$A CHARSIU_KPAIR_BYTES=0" 1 64 64 --kpair
 	done
 
 	log ""
-	log "===== 3) the k map under PP=0 + A8_STRIDE1. The atom changed.      ====="
-	c "CHARSIU_OVERRIDE=$FIX" "CHARSIU_A8_STRIDE1=1 CHARSIU_KPAIR_BYTES=0,8,16,256,512,1024" 1 64 64 --kpair
+	log "##### 3) THE CHANNEL ROUND. the three n-1 registers, never swept.  #####"
+	for a in "0x3020=0x7f" "0x402c=0x7f" "0x5014=0x7f"
+	do
+		log ""
+		log "===== ARM $a   (claims 128 channels at N=64; 72 or 128 is a hit)"
+		c "CHARSIU_OVERRIDE=$a" X=1 1 64 64 --map 8 128
+	done
 
 	log ""
-	log "===== 4) the whole buffer under PP=0 + A8_STRIDE1                  ====="
-	c "CHARSIU_OVERRIDE=$FIX" CHARSIU_A8_STRIDE1=1 1 64 64 --map 8
-
-	log ""
-	log "##### 5) the inert registers again, WITH the fix on.               #####"
+	log "##### 4) CONV_CON2 and SIZE_E_0, the other never swept fields.     #####"
 	for a in \
-		"0x1020=0x40" \
-		"0x1028=0x0001003f" \
-		"0x1030=0x00800000" \
-		"0x103c=0x00010000" \
-		"0x1044=0x00010001" \
-		"0x4030=0x003f0710" \
-		"0x4044=0x00000001"
+		"0x1010=0x00010fff" \
+		"0x1010=0x00020fff" \
+		"0x1010=0x00040fff" \
+		"0x1010=0x000007ff" \
+		"0x1010=0x00001fff" \
+		"0x4050=0x00023303" \
+		"0x4050=0x0002330b" \
+		"0x4050=0x0002331b" \
+		"0x4050=0x0002332b" \
+		"0x1040=0x00000000" \
+		"0x1040=0x20000000"
 	do
 		log ""
-		log "===== ARM $a  + fix"
-		c "CHARSIU_OVERRIDE=$FIX,$a" X=1 1 64 64 --map 8 128
+		log "===== ARM $a"
+		c "CHARSIU_OVERRIDE=$a" X=1 1 64 64 --map 8 128
 	done
 
 	log ""
-	log "===== 6) M = 4 under the fix. wrote should be 160 if it is M*(N/2+8) ====="
-	c "CHARSIU_OVERRIDE=$FIX" X=1 4 64 64 --map 8 128
+	log "===== 5) whichever of 3 hits, with the k fix on as well            ====="
+	c "CHARSIU_OVERRIDE=$FIX,0x3020=0x7f" X=1 1 64 64 --map 8 128
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== does the value move with the activation. That is the round.  ====="
+	log "===== entry 3. If all three stay at 40 the count is somewhere new. ====="
 	sync
 }
 case "$1" in
