@@ -2,72 +2,78 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 270. Two defects, two units, one field at a time.
+# 2026-08-20 round 271. Is the doubled run real k, or two groups aliased.
 #
-# THE GATE EARNED ITS PLACE THE ROUND IT WENT IN. Two arms of 269 hung, 0x4038
-# and 0x4050 set to their int8 values, and the gate caught both, ran a health
-# check, saw the block come back and carried on. 268 lost a whole entry to the
-# same thing in silence.
+# 270 HIT, twice, and on the half it was aimed at. Two CONV_CON1 arms turned the
+# run from one group a channel into TWO:
 #
-# WHAT 269 SETTLED, and most of it is by elimination. The baseline reproduced
-# exactly, 40 channels and w0 through w7 with 64 onward dark. Nine arms were
-# clean and NOT ONE of them moved either number:
+#   0x100c = 0x20000120   RESERVED_1 48 -> 0        0 0 1 1 2 2 3 3 4 4 5 5 ...
+#   0x100c = 0x20600020   PROC_PRECISION 2 -> 0     0 0 1 1 2 2 3 3 4 4 5 5 ...
 #
-#   0x1020 0x1028 0x1030 0x103c 0x1044   five CNA size registers, excluded
-#   0x4030 0x4044                        excluded
+# Sixteen bytes a channel a pass instead of eight is 32 nibbles, and with the
+# pass at B+256 that is 64 k, which is exactly the half that was missing. Both
+# arms left "wrote" at 40, so the channel count did not move, which is the split
+# from 269 holding up.
 #
-# 0x1020 set to int8's 64 and 0x1030 to int8's 128 left the eight byte run
-# exactly where it was, so bytes per kernel is not what bounds the fetch.
+# ⚠ AND IT MIGHT BE NOTHING. --map only says which WORD lights. Two groups
+# feeding one channel at the SAME k looks identical to two groups feeding it at
+# k 0-15 and k 16-31. One is the fix and the other is an aliasing bug that
+# happens to look like it. --kpair can tell them apart and nothing else in this
+# tool can, so that is entries 2 and 3 and they come before anything else.
 #
-# ⚠ THE ONE STRUCTURAL RESULT. Setting 0x100c to int8's 0 left "wrote" at 40
-# and turned every byte in the sweep dark. So the write extent does not depend
-# on the weights being read at all. The two shortfalls are in different units:
+# THE REST OF 270. RESERVED_1 is heavily load bearing: 0 doubles the run, and
+# 16, 32 and 96 all go completely dark, with 48 the shipped value. GROUP_LINE_OFF
+# is inert. IN_PRECISION 2 -> 0 HALVES it again rather than doubling.
 #
-#   k per channel is 32 and not 64   -> CNA. 0x100c is the only CNA register
-#                                       that did anything, and it is CONV_CON1.
-#   channels is 8*(N/16+1) not N/8   -> DPU, since no CNA arm touched it.
+# On the DPU half exactly one field moved the channel count:
 #
-# The names come from mesa's registers.xml, which has both, and 0x100c is spelt
-# 0x100C there, which is why a grep for it came back empty the first time.
+#   0x4050 SIZE_E_2 3 -> 1     wrote 40 -> 32
 #
-#   CNA 0x100C CONV_CON1   CONV_MODE 0, IN_PRECISION 2, PROC_PRECISION 2,
-#                          RESERVED_1 48, GROUP_LINE_OFF 1
-#   DPU 0x4050 BS_OW_CFG   the field table round 260 measured
-#   DPU 0x4038 DATA_CUBE_NOTCH_ADDR   NOTCH_ADDR_0 0x53, NOTCH_ADDR_1 0
-#   DPU 0x4058 WDMA_SIZE_0  CHANNEL_WDMA and SIZE_C_WDMA
-#
-# ⚠ RESERVED_1 IS 48, IN A FIELD CALLED RESERVED. That is exactly the shape
-# round 260 found on 0x4050, where four of five fields were load bearing and
-# two of them were in the reserved range. It gets four arms rather than one.
-#
-# ⚠ 0x4058 IS NOT IN THE FOURTEEN. charsiu writes 0x80000000 on BOTH paths and
-# at every N, so CHANNEL_WDMA is 0 and SIZE_C_WDMA is 0 whatever the job asks
-# for, and int8 still writes all of its channels. It cannot be the difference.
-# It is here anyway because it is the register that NAMES the output channel
-# count and it has never been varied, and two arms is cheap.
+# So the +1 in 8*(N/16 + 1) is SIZE_E_2, which contributes 8 at 3 and 0 at 1.
+# The halving is NOT there: int8 runs SIZE_E_2 = 1 and gets all 64, int4 runs
+# SIZE_E_2 = 1 and gets 32. RGP_CNTER, SIZE_E_1 and OD_BYPASS are all inert,
+# RESERVED_0 hangs. 0x4038's NOTCH_ADDR_0 hangs and NOTCH_ADDR_1 is inert.
+# 0x4058 is inert in both its fields, which settles it: the register that NAMES
+# the output channel count is not what bounds it.
 #
 # THE READING RULE, fixed before the run.
 #
-#   TWO NUMBERS A LINE, independent, same as 269.
+#   ⚠ ENTRY 2 IS THE ROUND. Six bytes under the RESERVED_1 fix. The claim being
+#   tested makes a derived prediction, not a guess:
 #
-#     wrote      40 at baseline. 64 would be right.
-#     the words  w0 w1 w2 w3 w4 w5 w6 w7 then eight dark at baseline, one group
-#                a channel. Two groups a channel reads w0 w0 w1 w1 w2 w2 w3 w3.
+#     byte 0   -> w0 k0     byte 16  -> w1 k0      byte 256 -> w0 k32
+#     byte 8   -> w0 k16    byte 24  -> w1 k16     byte 264 -> w0 k48
 #
-#   ⚠ A CONV_CON1 ARM THAT GOES ALL DARK IS NOT A FAILURE. 0x100c = 0 did that
-#   and it is how we know the register is load bearing. What separates the
-#   fields is WHICH of them can be changed without going dark, and of those,
-#   whether any changes the run.
+#     byte 8 lands at k 16   the run really is 32 k a pass, the second pass at
+#                            +256 takes it to 64, and the k shortfall is FIXED
+#     byte 8 lands at k 0    two groups alias onto one k. The doubling is a bug
+#                            that looks like the fix and 270's hit is worthless
+#     byte 8 lands elsewhere write down where before deciding which it is
 #
-#   ⚠ THE BASELINE MUST REPRODUCE, entry 3, or every arm below is void.
+#   ENTRY 3 asks the same six of the PROC_PRECISION arm. Two different fields
+#   produced the same word pattern in 270 and there is no reason yet to think
+#   they do the same thing underneath. If the two disagree on k, they do not.
 #
-#   No prediction on which field. 269 ran ten arms and nine were null, which is
-#   the honest prior here.
+#   ENTRY 4 is the whole buffer under the fix. If entry 2 says fixed, this is
+#   the new map and it should reach the same 40 channels with twice the bytes.
+#
+#   ENTRY 5 sweeps SIZE_E_2 across all eight values. 3 gives 40 and 1 gives 32,
+#   so the field contributes an additive term and this reads the whole table. If
+#   any value gives 64 the channel count is done; if none does, the halving is
+#   elsewhere and the table still says what SIZE_E_2 means.
+#
+#   ENTRY 6 sweeps OUT_PRECISION on 0x4010 DATA_FORMAT, which is 5 for int4 and
+#   0 for int8 and has never been varied. It is the last unswept difference
+#   between the two paths that is not the requant.
+#
+#   ENTRY 7 combines the CONV_CON1 fix with SIZE_E_2, to see whether two fixes
+#   compose or fight.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 CH=/opt/charsiu/charsiu_int4
+FIX=0x100c=0x20000120
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -120,51 +126,46 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) BASELINE int4 N=64. 40 channels, w0..w7, 64+ dark.        ====="
+	log "===== 2) THE ROUND. kpair under RESERVED_1=0. byte 8 must be k 16. ====="
 	log ""
-	c "X=1" 1 64 64 --map 8 256
+	c "CHARSIU_OVERRIDE=$FIX CHARSIU_KPAIR_BYTES=0,8,16,24,256,264" 1 64 64 --kpair
 
 	log ""
-	log "##### CNA. CONV_CON1 field by field. The k shortfall lives here.   #####"
-	for a in \
-		"0x100c=0x00600120" \
-		"0x100c=0x20000120" \
-		"0x100c=0x20200120" \
-		"0x100c=0x20400120" \
-		"0x100c=0x20c00120" \
-		"0x100c=0x20600100" \
-		"0x100c=0x20600020" \
-		"0x100c=0x20600121"
+	log "===== 3) the same six under PROC_PRECISION=0. Do they agree.       ====="
+	c "CHARSIU_OVERRIDE=0x100c=0x20600020 CHARSIU_KPAIR_BYTES=0,8,16,24,256,264" 1 64 64 --kpair
+
+	log ""
+	log "===== 4) the whole buffer under the fix                            ====="
+	c "CHARSIU_OVERRIDE=$FIX" 1 64 64 --map 8
+
+	log ""
+	log "##### 5) SIZE_E_2 across all eight. 3 gives 40, 1 gives 32.        #####"
+	for v in 0x00023033 0x00023133 0x00023233 0x00023333 0x00023433 0x00023533 0x00023633 0x00023733
 	do
 		log ""
-		log "===== ARM $a"
-		c "CHARSIU_OVERRIDE=$a" 1 64 64 --map 8 128
+		log "===== ARM 0x4050=$v"
+		c "CHARSIU_OVERRIDE=0x4050=$v" 1 64 64 --map 8 128
 	done
 
 	log ""
-	log "##### DPU. The channel shortfall lives here.                       #####"
-	for a in \
-		"0x4050=0x80023333" \
-		"0x4050=0x00011333" \
-		"0x4050=0x00023133" \
-		"0x4050=0x00023313" \
-		"0x4050=0x00023331" \
-		"0x4038=0x00000080" \
-		"0x4038=0x00120053" \
-		"0x4058=0x8000003f" \
-		"0x4058=0x803f0000"
+	log "##### 6) OUT_PRECISION on 0x4010. int4 is 5, int8 is 0.            #####"
+	for v in 0x00000002 0x20000002 0x40000002 0x60000002 0x80000002 0xc0000002 0xe0000002
 	do
 		log ""
-		log "===== ARM $a"
-		c "CHARSIU_OVERRIDE=$a" 1 64 64 --map 8 128
+		log "===== ARM 0x4010=$v"
+		c "CHARSIU_OVERRIDE=0x4010=$v" 1 64 64 --map 8 128
 	done
+
+	log ""
+	log "===== 7) both fixes at once. Do they compose or fight.             ====="
+	c "CHARSIU_OVERRIDE=$FIX,0x4050=0x00023733" 1 64 64 --map 8 256
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== which CONV_CON1 fields survive, and does any DPU arm move 40 ====="
+	log "===== byte 8's k first. Nothing else in this round matters if 0.   ====="
 	sync
 }
 case "$1" in
