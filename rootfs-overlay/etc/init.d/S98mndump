@@ -2,64 +2,57 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 282. "Last pair" means the last one PRESENT, and an N whose
-# last group is even has never been run.
+# 2026-08-20 round 283. The write quantises to sixteen channels.
 #
-# 281 STOOD WITHOUT THE OVERRIDE. Two of four geometries were exact with nothing
-# on the command line, which settles two things at once:
+# 282 SETTLED THE LAST GROUP. Every N whose highest group is ODD came back
+# exact, and the per group line says every group:
 #
-#   K=64 N=64  64 of 64   the 0x3020 the driver emits, 2*(n-8)-1, is the value
-#                         the whole layout was measured at
-#   K=32 N=64  64 of 64   base[g] = (g/2)*8K + ... holds at BOTH K, so the two
-#                         tables really were one expression and not a table
-#                         memorised at 64
-#   no HALFK    0 of 64   the control still fails
-#   int8       64 of 64   the instrument is still sound
+#   N = 16  16/16      N = 32  32/32      N = 48  48/48      N = 64  64/64
 #
-# ⚠ AND TWO WERE PARTIAL, BY EXACTLY ONE GROUP OF EIGHT. N = 32 gave 24 of 32
-# and N = 16 gave 8 of 16. The base expression has one irregular term, the last
-# pair sitting 64 bytes in rather than 128, and it was written as g == 7 because
-# the map was read at N = 64 where the last group IS 7. At N = 32 the last group
-# is 3 and at N = 16 it is 1, and those are exactly the sizes of the shortfalls.
+# 32 and 16 were 24 and 8 before the fix, and 48 had never been run at all and
+# was exact first time. So the irregular 64 in the base expression belongs to
+# the highest group in use, and that part is now read across four values of N
+# and two values of K rather than fitted to one.
 #
-# So "last" is the highest group in use, not 7. The packer now says
-# g == (n-1)/8.
+# ⚠ THE THREE THAT FAILED DID NOT FAIL ON THE PACKING. The per group line, which
+# 281 did not have, shows whole groups at 0 of 8 at the TOP, and the count of
+# words WRITTEN is short by the same amount:
 #
-# ⚠ THAT IS FITTED TO TWO FAILURES AND ONE SUCCESS AND IT IS NOT READ. Every N
-# it has seen has an ODD highest group: 7 at 64, 3 at 32, 1 at 16. At an N whose
-# highest group is EVEN the rule predicts no 64 anywhere, and nothing has ever
-# run there.
+#   n     16  24  32  40  48  56  64
+#   wrote 16  16  32  32  48  48  64      = floor(n/16) * 16, seven for seven
 #
-# ⚠ AND 281's LOG COULD NOT SAY WHICH CHANNELS FAILED. It printed channels 0 to
-# 7 and a count, so "24 of 32" was consistent with a scattered eight as much as
-# with a group of eight, and the reading above is an inference from the SIZE of
-# the shortfall. The harness now prints an exact count per group of eight, so
-# this round can see the difference the last one could not.
+# So at n of 24, 40 and 56 the top eight channels were placed correctly and
+# never written. The DPU writes in units of sixteen channels and truncates.
+#
+# Asking for the next multiple of sixteen covers the real count and the extra
+# channels are computed and thrown away, so 0x3020 is now
+# 2*(ALIGN_UP(n,16) - 8) - 1, which is 47 at n of 24 and 32, 79 at 40 and 48,
+# and 111 at 56 and 64. glast reads the same rounded number, which changes no
+# base on any case measured so far but stops the register and the table
+# disagreeing about how many channels there are.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 3 AND 4 ARE THE FIX. N = 32 and N = 16, which were 24 of 32 and 8
-#   of 16, and nothing changed but which group gets the 64.
+#   ⚠ ENTRIES 3, 4 AND 5 ARE THE ROUND. n of 24, 40 and 56, which were 16 of
+#   24, 32 of 40 and 48 of 56.
 #
-#     both exact, and the per group line shows 8/8 everywhere
-#                          the irregular term is "the last group present" and
-#                          the layout now holds at three N and two K
-#     still short by one group, and the group is the LAST one
-#                          the term is not about being last either
-#     short somewhere else  281's shortfall was never a group at all and the
-#                          inference from its size was wrong
+#     wrote goes to 32, 48 and 64 and all three are exact
+#                        the write quantum is sixteen, the fix is the rounding,
+#                        and seven values of n now hold with no override
+#     wrote goes up but the top group is still 0/8
+#                        the channels are written now and the packing is wrong
+#                        for them, which is the opposite of what 282 said and
+#                        would mean the base for a group depends on the rounded
+#                        n after all
+#     wrote does not move
+#                        floor(n/16)*16 is not a function of what 0x3020 asks
+#                        for, and the quantum is somewhere else entirely
 #
-#   ⚠ ENTRIES 5 TO 7 ARE THE PART THAT IS NOT FITTED. N = 24, 40 and 56 all
-#   have an EVEN highest group, 2, 4 and 6, where the rule says no group takes
-#   the 64. N = 48 has an odd one, 5, and should behave like 16, 32 and 64.
+#   ⚠ ENTRY 2 AND ENTRIES 6 TO 8 MUST NOT REGRESS. n of 16, 32, 48 and 64 were
+#   all exact and their 0x3020 changed for 16 alone. If any of them moves, the
+#   rounding broke a case that already worked.
 #
-#     the three even ones exact and 48 exact    the rule is read, not fitted,
-#                                               across seven values of N
-#     the even ones short by a group            the last group needs the 64
-#                                               whether it is odd or even and
-#                                               the pairing story is wrong
-#
-#   ENTRY 8 is the control that must FAIL and ENTRY 9 is int8.
+#   ENTRY 9 is the control that must FAIL and ENTRY 10 is int8.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -100,6 +93,8 @@ c() {
 	return 0
 }
 
+M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
+
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
@@ -117,39 +112,41 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) N = 64, the one that already worked. Must not regress.    ====="
+	log "##### the three that were short. wrote must go to 32, 48, 64.      #####"
 	log ""
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 64
+	log "===== 3) N = 24. Was 16 of 24.                                     ====="
+	c "$M4" X=1 $MM 1 64 24
+	log ""
+	log "===== 4) N = 40. Was 32 of 40.                                     ====="
+	c "$M4" X=1 $MM 1 64 40
+	log ""
+	log "===== 5) N = 56. Was 48 of 56.                                     ====="
+	c "$M4" X=1 $MM 1 64 56
 
 	log ""
-	log "===== 3) N = 32. Was 24 of 32.                                     ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 32
+	log "##### the four that already worked. None may regress.              #####"
+	log ""
+	log "===== 6) N = 16                                                    ====="
+	c "$M4" X=1 $MM 1 64 16
+	log ""
+	log "===== 7) N = 32                                                    ====="
+	c "$M4" X=1 $MM 1 64 32
+	log ""
+	log "===== 8) N = 48                                                    ====="
+	c "$M4" X=1 $MM 1 64 48
+	log ""
+	log "===== 2) N = 64                                                    ====="
+	c "$M4" X=1 $MM 1 64 64
+	log ""
+	log "=====    and K = 32 at N = 64, the other K                         ====="
+	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "===== 4) N = 16. Was 8 of 16.                                      ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 16
-
-	log ""
-	log "##### the part that is NOT fitted: an EVEN highest group           #####"
-	log ""
-	log "===== 5) N = 24, highest group 2                                   ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 24
-
-	log ""
-	log "===== 6) N = 40, highest group 4                                   ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 40
-
-	log ""
-	log "===== 7) N = 56, highest group 6.  and N = 48, odd, must behave.   ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 56
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 48
-
-	log ""
-	log "===== 8) the control that must FAIL                                ====="
+	log "===== 9) the control that must FAIL                                ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 
 	log ""
-	log "===== 9) int8 dense                                                ====="
+	log "===== 10) int8 dense                                               ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
@@ -157,7 +154,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== read the per group line, not just the count.                 ====="
+	log "===== seven N and two K exact with no override would close M = 1.  ====="
 	sync
 }
 case "$1" in
