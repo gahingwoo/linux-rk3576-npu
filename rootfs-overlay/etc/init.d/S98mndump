@@ -2,79 +2,76 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 267. The hardware writes N/2 + 8 channels, and a sparse
-# sweep cannot see the shape of what is left.
+# 2026-08-20 round 268. Against int8, which is byte exact, at the same shapes.
 #
-# ⚠ THE NUMBER THIS ROUND IS ABOUT. 266's sentinel measured the extent of the
-# write, and it is not N:
+# WHAT 267 SETTLED. The dense sweep closed the discriminator on the clean side:
+# the number of words ever lit EQUALS the number written, at all three
+# geometries. 16 of 16, 24 of 24, 40 of 40. Words 32 to 39 at N = 64 are lit;
+# 266's sparse byte list simply never hit the bytes that reach them. So nothing
+# is writing channels it does not compute, and the whole map is:
 #
-#     N = 16   ->  16 words written        N = 64   ->  40 words written
-#     N = 32   ->  24 words written        which is N/2 + 8, three for three
+#   N=64            N=32              N=16
+#      0: w0-7         0: w0-7           0: w0-7
+#     64: .           64: .             64: w8-15
+#    128: w8-15      128: w8-15        128: .
+#    192: .          192: w16-23       192: .
+#    256: w0-7'      256: w0-7'        256: w0-7'
+#    320: .          320: .            320: w8-15'
+#    384: w8-15'     384: w8-15'       384: .
+#    448: .          448: w16-23'      448: .
+#    512: w16-23     512+: all dark    (' is the same channel at k + 32)
+#    640: w24-31
+#    704: w32-39
+#    768: w16-23'
+#    896: w24-31'
+#    960: w32-39'
+#   1024+: all dark
 #
-# At N = 16 that equals N, which is why every clean closed result this project
-# has is at N = 16. At N = 32 eight declared channels are never written and at
-# N = 64 it is twenty four. That is an OUTPUT configuration fact and it does not
-# depend on any of the weight address arithmetic.
+# TWO NUMBERS COME OUT OF IT AND THEY ARE DIFFERENT PROBLEMS.
 #
-# HOW 266's SIX WENT. Three of six, and the three that missed are all in the
-# second half of the buffer, which came back dark. 640 gave word 24, 768 gave
-# word 16 at k 32 and 896 gave word 24 at k 32, all as predicted. 1024, 1536 and
-# 1920 were predicted at words 32, 48 and 56 and lit nothing. Word 32 is inside
-# the 40 that get written, so that one is a real miss and not an invisible one.
+#   channels reached = N/2 + 8      16, 24, 40 at N = 16, 32, 64
+#   k per channel    = 32           two groups of eight bytes, at B and B+256,
+#                                   sixteen nibbles each, while K is 64
 #
-# ⚠ AND THAT VINDICATES SOMETHING I PUT IN DOUBT. charsiu's README says --bmap
-# found "the entire second half of the buffer is dark". Round 266's script
-# called that in doubt and predicted all six live. --bmap was right and the rule
-# was wrong to keep adding 16 per G past G = 7.
+# The second one is not the first one in disguise. Every channel that exists at
+# all gets exactly half its k, whatever N is.
 #
-# Bytes 1 to 7 landed 7 for 7 at N = 64, word 0 throughout with k = 2, 4, 6, 8,
-# 10, 12, 14. Bytes 192 and 320 were dark at N = 64, so the dead half is not a
-# G = 0 hole.
+# WHAT THIS ROUND DOES. Stops reasoning about it and diffs against int8, which
+# is byte exact on this silicon and whose map this project has already validated
+# --map against. Same K, same three N, same probe, same stride, one flag.
 #
-# WHAT THIS ROUND DOES. Stops sampling. --map holds one live nibble and feeds a
-# full input, so it needs ONE submit per byte instead of the 64 --kpair needs to
-# sweep k, and every nibble has now been shown across more than a hundred points
-# to pair with exactly one k, which retires the summation objection that --map
-# was written under. That buys a sweep of the WHOLE buffer at a stride of 8 at
-# all three geometries for under a thousand submits.
-#
-# ⚠ --map HAD THE SAME BYTE WIDTH DEFECT, the third place in that file to carry
-# it. It is correct as written for int8, where a channel is a byte, which is how
-# it passed its int8 validation and kept the bug on the w4a16 path. Fixed the
-# same way, whole bo against a sentinel.
+# ⚠ int8 writes ONE BYTE a channel where w4a16 writes four, so the line now
+# carries hib, the highest byte written, as well as the word count. A 64 channel
+# int8 job touches 64 bytes and 16 words; a 40 channel one touches 40 and 10.
+# Read hib for the int8 arm and the word count for the int4 arm.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ THE DISCRIMINATOR, and it is at N = 64. Forty words get written. The
-#   sweep covers every byte of the buffer at a stride of 8, so if a word is
-#   reachable at all this finds it.
+#   ⚠ THE ORACLE, entries 2 to 4. int8 at N = 16, 32 and 64.
 #
-#     words 0..39 all lit     the map was under sampled and nothing is wrong
-#                             with the output side. 24 channels of 64 are simply
-#                             not addressable and the weight side owes the rest.
-#     words 32..39 never lit  the hardware writes eight channels it computes
-#                             NOTHING for. That is an overrun past the real
-#                             channel count and the number to explain becomes
-#                             the 8, not the N/2.
-#     something above 39 lit  the sentinel read is wrong too and the extent
-#                             measurement goes back in the bin with the rest.
+#     hib = N-1 every time    int8 computes every channel it is asked for, and
+#                             both of the numbers above are int4 path defects,
+#                             in the registers that differ between the paths
+#     hib = N/2 + 7           the shortfall is not about int4 at all. It follows
+#                             the probe's own geometry, m = 1, and the thing to
+#                             fix is the job, not the precision
+#     no dead region in int8  then the dead half is int4's too, and the k
+#                             shortfall and the channel shortfall are one bug
 #
-#   THE INSTRUMENT CHECK, free. 39 bytes were covered by --kpair in 266 and are
-#   covered again here by a different probe with a different input. Every one of
-#   them must report the same word. If any disagrees, this round is about that
-#   and nothing else.
+#   ⚠ THE EXTENSION, entries 5 and 6. N = 48 and N = 128, neither a power of
+#   two step from what has been measured. N/2 + 8 says 32 channels and 72, and
+#   two groups a channel says 64 live groups and 144. Four numbers, and they are
+#   derived rather than fitted, since the formula was read off 16, 32 and 64.
 #
-#   ⚠ N = 16 IS THE CONTROL GEOMETRY. Sixteen words written, sixteen channels,
-#   and 266 lit every one of them. It must come back 16 of 16 lit with no word
-#   above 15, or the new probe is not measuring what the old one measured.
+#     all four land           N/2 + 8 is a law and not three points in a row
+#     N = 48 lands, 128 does not
+#                             there is a ceiling, and 72 against 64 says where
+#     neither                 the formula was three coincidences and the block
+#                             layout above is what to fit instead
 #
-#   THE LIVE BYTE SET. 266 could only say "these 39 bytes". A stride of 8 across
-#   the whole buffer says what fraction is fetched and whether it is contiguous
-#   runs, an interleave, or one bit. Count it before fitting anything to it.
-#
-#   No two option prediction on the shape. Predictions written in advance have
-#   gone 4 of 6, then 3 of 6, and both times the misses were where the rule was
-#   extrapolated past its data rather than where it was read off it.
+#   ⚠ THE CONTROL THAT MUST NOT MOVE. int8 at N = 16 must reproduce the map
+#   this project already recorded for it, n = byte/32 with no dead region. If it
+#   does not, --map is still broken and the int4 arms this round are void.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -122,27 +119,37 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) N = 16, the control geometry. 16 written, 16 reachable.   ====="
+	log "===== 2) INT8 N = 16, the oracle. hib must be 15 if it computes all ====="
 	log ""
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 16 --map 8 > "$C" 2>&1
+	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 16 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 3) N = 32. 24 written. How many are reachable.               ====="
+	log "===== 3) INT8 N = 32. hib 31 if it computes all, 23 if it does not ====="
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 32 --map 8 > "$C" 2>&1
+	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 32 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 4) N = 64. 40 written. Are words 32 to 39 EVER lit.          ====="
+	log "===== 4) INT8 N = 64. hib 63 if it computes all, 39 if it does not ====="
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
+	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 5) the anchor again                                          ====="
+	log "===== 5) int4 N = 48. N/2+8 says 32 channels and 64 live groups.   ====="
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 64 48 --map 8 > "$C" 2>&1
+
+	log ""
+	log "===== 6) int4 N = 128. N/2+8 says 72 channels and 144 live groups. ====="
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 64 128 --map 8 > "$C" 2>&1
+
+	log ""
+	log "===== 7) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Count the lit words per N against wrote. Then the live set.  ====="
+	log "===== int8's hib first. Everything else depends on which way it is ====="
 	sync
 }
 case "$1" in
