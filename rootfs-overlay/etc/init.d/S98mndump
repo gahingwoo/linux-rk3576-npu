@@ -2,79 +2,72 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 280. The packer was writing k 0 to 15 and nothing else, on
-# purpose, since round 173.
+# 2026-08-20 round 281. It computed. Now without the override, and at K = 32.
 #
-# ⚠ WHY EVERY int4 ARM OF 279 WAS IDENTICAL. Channels 0 to 7 came back as
-# -6753, -4633, -7670, -9732, -3554, -12306, -706 and -8100 in EVERY arm: HALFK
-# on and off, 0x3020 = 111 and not, N = 64, 32 and 16. The output did not move
-# by one count while HALFK zeroed 2048 of 4096 weights.
+# ⚠⚠ 280 RAN AN int4 MATMUL AND IT WAS EXACT. 64 of 64 words, every channel,
+# against cpu_reference. First one on this stack.
 #
-# It is not the hardware. charsiu_pack_weights refuses to place k >= 16 for
-# int4, deliberately, with a comment saying so, and HALFK only ever touched k
-# with (k mod 32) >= 16. The packer never wrote those, so both buffers were
-# byte identical and so were the outputs. N invariance falls out of the same
-# thing: the row it uses is (n/32)*512 + (n%32)*8, which has no N in it.
+#   entry 2   ch 0 moved off -6753 to -1887 and 64 of 64 EXACT
+#   entry 3   CHARSIU_INT4_ORDER=1 gave 0 of 64, so the intra group order is
+#             settled: byte j holds k = 2j low and k = 2j+1 high
+#   entry 4   the no HALFK control gave 0 of 64, and its npu values were
+#             IDENTICAL to entry 2's, which is the model confirming itself:
+#             the hardware computed the same thing and only the reference moved
+#   entry 6   int8 still 64 of 64
 #
-# ⚠ AND THAT ROW WAS READ WITH THE BROKEN PROBE. It comes from --map before the
-# byte width defect was fixed, so it is the stale map as well as an incomplete
-# one.
+# BOTH SHIFT PLACEMENTS SCORED 64, AND THAT IS NOT A WEAK TEST. fp16 bits of an
+# integer have a zero low byte, 0x3C00, 0x4000, 0x4700, and abits is (a-0x80)<<8
+# which is also a multiple of 256, so every product is a multiple of 65536 and
+# the shift loses nothing per element. The two readings are identically equal
+# here, so the question does not arise for this packing rather than being
+# undecided by a kind test.
 #
-# WHAT 265 TO 277 MEASURED, and the packer now writes.
+# WHAT DID NOT WORK. K = 32 came back 16 of 64, and the reason is in the base
+# table: it ran to 1656 while a K = 32 buffer is 1024, so channels 32 and up
+# were written past the end. 277's own sweep has the K = 32 table and the two
+# turn out to be one expression:
 #
-#   ADDRESS. With CORE 0x3020 = 111 all 64 channels are written and reachable
-#   and each is fed by TWO eight byte groups, one at its base and one 256 bytes
-#   later. From a stride 8 sweep of the whole buffer, 128 live groups of 256:
+#   K=64  0 128 512 640 1024 1152 1536 1600
+#   K=32  0 128 256 384  512  640  768  832
 #
-#     c 0..7  -> 0      c 16..23 -> 512    c 32..39 -> 1024   c 48..55 -> 1536
-#     c 8..15 -> 128    c 24..31 -> 640    c 40..47 -> 1152   c 56..63 -> 1600
+#   base[g] = (g/2) * 8K + (g odd ? (g == 7 ? 64 : 128) : 0)
 #
-#   A table, not a formula: seven of the eight steps are 128 or 384 and the last
-#   is 64, so a closed form would be fitted to one point.
+# sixteen points, one expression. The last pair sits 64 bytes in rather than
+# 128 in BOTH tables independently, so that is read and not fitted, and it is
+# not a cap either: 3*512 + 128 + 56 is well inside 2048.
 #
-#   k, and it is PER CHANNEL PARITY. byte 0 pairs with k 0 on channel 0, byte 8
-#   with k 16 on channel 1, byte 16 with k 0 on channel 2. An EVEN channel is
-#   fed k 0..15 and 32..47; an ODD channel is fed k 16..31 and 48..63.
-#   Confirmed independently at K = 32.
-#
-# ⚠ SO THE MASK IN 278 AND 279 WAS BACKWARDS ON HALF THE CHANNELS. Both zeroed
-# (k mod 32) >= 16 everywhere, which is what an even channel is fed. Fixed to
-# the parity rule.
+# ⚠ AND 0x3020 IS IN THE DRIVER NOW. Every int4 result of 280 needed an
+# override on the command line. The DPU writes ceil((v+1)/2) + 8 channels, so
+# v = 2*(n-8) - 1, which is 15, 47 and 111 at n of 16, 32 and 64. int8 keeps
+# n-1. Nothing in this round passes CHARSIU_OVERRIDE at all.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND, and the first thing to check is that the numbers
-#   MOVED. -6753 on channel 0 has been the same in every int4 arm for two
-#   rounds. If it is still -6753, the new packer is not reaching the buffer and
-#   nothing below means anything.
+#   ⚠ ENTRY 2 IS THE ROUND. N = 64, K = 64, NO override. It has to reproduce
+#   280's 64 of 64, or the emitted 0x3020 is not the value the layout was
+#   measured at.
 #
-#     the values move AND one reference is exact    an int4 matmul works, and
-#                                                   the shift placement is
-#                                                   settled in the same line
-#     the values move, neither exact                the address and k map are
-#                                                   right about which nibble
-#                                                   the hardware reads and
-#                                                   wrong about the arithmetic
-#                                                   or the order within a group
-#     the values do not move                        the packer edit missed. Check
-#                                                   the refusal: it returns
-#                                                   early unless K is 64 or 32
-#                                                   and N is at most 64.
+#   ENTRY 3 IS K = 32 AND IT IS THE NEW CLAIM. 16 of 64 last time, and the base
+#   table is the only thing changed. 64 of 64 means the expression holds at both
+#   K rather than the K = 64 table being memorised.
 #
-#   ENTRY 3 sweeps CHARSIU_INT4_ORDER, which picks the order of the 16 nibbles
-#   inside a group and is the one thing in the map still guessed rather than
-#   read. Two values, and if one is exact the other must not be.
+#   ENTRY 4 and 5 are N = 32 and N = 16, which the layout has never been run at.
+#   The base table is indexed by n/8 and stops early at small N, and 0x3020 now
+#   moves with N, so both could be wrong independently.
 #
-#   ENTRY 4 is the control that must FAIL: no HALFK, so the reference counts the
-#   k the hardware is not fed.
+#     all four exact          the layout, the k parity, the order, the base
+#                             expression and the channel register are all one
+#                             consistent reading across four geometries
+#     N = 64 exact, others not  the tables were memorised at 64 and the
+#                             expression does not generalise
+#     none exact              the driver's 0x3020 is not what the override was
 #
-#   ENTRY 6 is int8, untouched by any of this, and must stay 64 of 64.
+#   ENTRY 6 is the control that must FAIL and ENTRY 7 is int8, unchanged.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 MM=/opt/charsiu/charsiu_matmul
-V=CHARSIU_OVERRIDE=0x3020=111
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -127,25 +120,28 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. new packer, HALFK by parity, v = 111.          ====="
-	log "=====    ch 0 must not be -6753 any more.                          ====="
+	log "===== 2) THE ROUND. K=64 N=64, NO override. Must be 64 of 64.      ====="
 	log ""
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "$V" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 64
 
 	log ""
-	log "===== 3) the intra group order, the one thing still guessed        ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1 CHARSIU_INT4_ORDER=1" "$V" $MM 1 64 64
+	log "===== 3) K = 32. Was 16 of 64. One base expression for both K.     ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 32 64
 
 	log ""
-	log "===== 4) the control that must FAIL. no HALFK.                     ====="
-	c "CHARSIU_W4=1" "$V" $MM 1 64 64
+	log "===== 4) N = 32, never run with this layout                        ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 32
 
 	log ""
-	log "===== 5) K = 32, where a channel needs only one group              ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "$V" $MM 1 32 64
+	log "===== 5) N = 16                                                    ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 16
 
 	log ""
-	log "===== 6) int8 dense. Untouched by any of this. Must be 64 of 64.   ====="
+	log "===== 6) the control that must FAIL. no HALFK.                     ====="
+	c "CHARSIU_W4=1" X=1 $MM 1 64 64
+
+	log ""
+	log "===== 7) int8 dense, unchanged. Must be 64 of 64.                  ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
@@ -153,7 +149,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== did channel 0 move off -6753. Everything follows from that.  ====="
+	log "===== four geometries, no override, or the reading does not hold.  ====="
 	sync
 }
 case "$1" in
