@@ -2,69 +2,67 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 269. Fourteen registers separate a path that computes every
-# channel from one that computes forty. Flip them one at a time.
+# 2026-08-20 round 270. Two defects, two units, one field at a time.
 #
-# ⚠ FIRST, THE HARNESS. Round 268's entry 2 DIED AND NOTHING SAID SO. Its first
-# probe timed out, the iommu raw reset failed 125 times, and 105 of its 108
-# lines reported "wrote 0" on a block that was already gone. The poison gate has
-# been in this script since round 250 and it only ever wrapped the tflite runs;
-# the charsiu runs had none. Same mistake, new place. Every charsiu arm goes
-# through the gate now.
+# THE GATE EARNED ITS PLACE THE ROUND IT WENT IN. Two arms of 269 hung, 0x4038
+# and 0x4050 set to their int8 values, and the gate caught both, ran a health
+# check, saw the block come back and carried on. 268 lost a whole entry to the
+# same thing in silence.
 #
-# Entries 3 to 7 of 268 were clean, 0 timeouts and 0 reset failures, and the
-# closing anchor was 128/128, so what follows stands on those.
+# WHAT 269 SETTLED, and most of it is by elimination. The baseline reproduced
+# exactly, 40 channels and w0 through w7 with 64 onward dark. Nine arms were
+# clean and NOT ONE of them moved either number:
 #
-# WHAT 268 SETTLED. int8 is the oracle and it computes everything it is asked
-# for. Its highest written byte is N-1 at both N = 32 and N = 64, no weight byte
-# anywhere in its buffer is dead, and its law came out whole:
+#   0x1020 0x1028 0x1030 0x103c 0x1044   five CNA size registers, excluded
+#   0x4030 0x4044                        excluded
 #
-#   int8:  channel = 32*(B/2048) + (B/32) mod 32
-#          k       = B mod 32 + 32*((B/1024) mod 2)
-#          64 bytes a channel, 64 k, nothing left over
+# 0x1020 set to int8's 64 and 0x1030 to int8's 128 left the eight byte run
+# exactly where it was, so bytes per kernel is not what bounds the fetch.
 #
-#   int4:  two groups of eight bytes, at B and B+256, 16 nibbles each
-#          32 k a channel against a K of 64, and 8*(N/16 + 1) channels
+# ⚠ THE ONE STRUCTURAL RESULT. Setting 0x100c to int8's 0 left "wrote" at 40
+# and turned every byte in the sweep dark. So the write extent does not depend
+# on the weights being read at all. The two shortfalls are in different units:
 #
-# The two are the SAME SHAPE with int4's runs half as long. int8 reads 32 bytes
-# a channel a pass and takes two passes to cover 64 k. int4 reads 8 and takes
-# two, so it covers 32. To cover 64 it would have to read 16.
+#   k per channel is 32 and not 64   -> CNA. 0x100c is the only CNA register
+#                                       that did anything, and it is CONV_CON1.
+#   channels is 8*(N/16+1) not N/8   -> DPU, since no CNA arm touched it.
 #
-# N/2 + 8 is now five points, and 48 and 128 were derived rather than fitted:
-# 32 channels and 64 live groups at N = 48, 72 and 144 at N = 128, four for
-# four. Written as an iteration it is 8*(N/16 + 1) groups of eight, where N/8
-# would be right, so the count is HALVED AND THEN INCREMENTED.
+# The names come from mesa's registers.xml, which has both, and 0x100c is spelt
+# 0x100C there, which is why a grep for it came back empty the first time.
 #
-# WHAT THIS ROUND DOES. A stream dump went into the tool, so the baseline is in
-# this log rather than recomputed by hand, and CHARSIU_OVERRIDE sets any single
-# register from the environment. Diffing int8's stream against int4's at the
-# same K and N leaves exactly fourteen registers, three of which are the requant
-# and settled, one of which is the precision itself. Ten are left and each gets
-# an arm.
+#   CNA 0x100C CONV_CON1   CONV_MODE 0, IN_PRECISION 2, PROC_PRECISION 2,
+#                          RESERVED_1 48, GROUP_LINE_OFF 1
+#   DPU 0x4050 BS_OW_CFG   the field table round 260 measured
+#   DPU 0x4038 DATA_CUBE_NOTCH_ADDR   NOTCH_ADDR_0 0x53, NOTCH_ADDR_1 0
+#   DPU 0x4058 WDMA_SIZE_0  CHANNEL_WDMA and SIZE_C_WDMA
+#
+# ⚠ RESERVED_1 IS 48, IN A FIELD CALLED RESERVED. That is exactly the shape
+# round 260 found on 0x4050, where four of five fields were load bearing and
+# two of them were in the reserved range. It gets four arms rather than one.
+#
+# ⚠ 0x4058 IS NOT IN THE FOURTEEN. charsiu writes 0x80000000 on BOTH paths and
+# at every N, so CHANNEL_WDMA is 0 and SIZE_C_WDMA is 0 whatever the job asks
+# for, and int8 still writes all of its channels. It cannot be the difference.
+# It is here anyway because it is the register that NAMES the output channel
+# count and it has never been varied, and two arms is cheap.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ TWO NUMBERS PER ARM, and they are independent.
+#   TWO NUMBERS A LINE, independent, same as 269.
 #
-#     wrote      the channel count. 40 at baseline, 64 would be right.
-#     the words  baseline is w0 w1 w2 w3 w4 w5 w6 w7 then eight dark, one group
+#     wrote      40 at baseline. 64 would be right.
+#     the words  w0 w1 w2 w3 w4 w5 w6 w7 then eight dark at baseline, one group
 #                a channel. Two groups a channel reads w0 w0 w1 w1 w2 w2 w3 w3.
 #
-#     an arm that changes wrote        found the channel count
-#     an arm that doubles the groups   found the k shortfall
-#     an arm that does both            they were one bug
-#     an arm that hangs                the gate says so and the round continues
+#   ⚠ A CONV_CON1 ARM THAT GOES ALL DARK IS NOT A FAILURE. 0x100c = 0 did that
+#   and it is how we know the register is load bearing. What separates the
+#   fields is WHICH of them can be changed without going dark, and of those,
+#   whether any changes the run.
 #
-#   ⚠ THE BASELINE MUST REPRODUCE. Entry 3 is the same probe 267 and 268 ran.
-#   40 channels, w0 through w7, bytes 64 to 127 dark. If it does not, the
-#   override plumbing broke the stream and every arm below is void.
+#   ⚠ THE BASELINE MUST REPRODUCE, entry 3, or every arm below is void.
 #
-#   ⚠ 0x101c IS NOT SWEPT and that is deliberate: it is the real size of the
-#   weight buffer, and int8's value is twice what is allocated here.
-#
-#   No prediction on which of the ten. Written predictions have gone 4 of 6 and
-#   then 3 of 6, and both times the misses were extrapolation rather than
-#   reading. Ten arms is cheap enough not to need a guess.
+#   No prediction on which field. 269 ran ten arms and nine were null, which is
+#   the honest prior here.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -96,7 +94,6 @@ w() {
 	return 0
 }
 
-# the charsiu gate, which round 268 did not have
 c() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
 	before=$(nbad)
@@ -123,29 +120,42 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) the int4 baseline stream, so the sweep has a reference    ====="
+	log "===== 2) BASELINE int4 N=64. 40 channels, w0..w7, 64+ dark.        ====="
 	log ""
-	c "X=1" 1 64 64 --stream
-
-	log ""
-	log "===== 3) BASELINE int4 N=64. Must be 40 channels, w0..w7, 64+ dark ====="
-	sleep 1
 	c "X=1" 1 64 64 --map 8 256
 
+	log ""
+	log "##### CNA. CONV_CON1 field by field. The k shortfall lives here.   #####"
 	for a in \
-		"0x100c=0" \
-		"0x1020=0x40" \
-		"0x1028=0x0001003f" \
-		"0x1030=0x00800000" \
-		"0x103c=0x00010000" \
-		"0x1044=0x00010001" \
-		"0x4030=0x003f0710" \
-		"0x4038=0x00120080" \
-		"0x4044=0x00000001" \
-		"0x4050=0x80011111"
+		"0x100c=0x00600120" \
+		"0x100c=0x20000120" \
+		"0x100c=0x20200120" \
+		"0x100c=0x20400120" \
+		"0x100c=0x20c00120" \
+		"0x100c=0x20600100" \
+		"0x100c=0x20600020" \
+		"0x100c=0x20600121"
 	do
 		log ""
-		log "===== ARM $a   (int4 -> its int8 value)"
+		log "===== ARM $a"
+		c "CHARSIU_OVERRIDE=$a" 1 64 64 --map 8 128
+	done
+
+	log ""
+	log "##### DPU. The channel shortfall lives here.                       #####"
+	for a in \
+		"0x4050=0x80023333" \
+		"0x4050=0x00011333" \
+		"0x4050=0x00023133" \
+		"0x4050=0x00023313" \
+		"0x4050=0x00023331" \
+		"0x4038=0x00000080" \
+		"0x4038=0x00120053" \
+		"0x4058=0x8000003f" \
+		"0x4058=0x803f0000"
+	do
+		log ""
+		log "===== ARM $a"
 		c "CHARSIU_OVERRIDE=$a" 1 64 64 --map 8 128
 	done
 
@@ -154,7 +164,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== wrote != 40 found the channels. w0 w0 w1 w1 found the k.     ====="
+	log "===== which CONV_CON1 fields survive, and does any DPU arm move 40 ====="
 	sync
 }
 case "$1" in
