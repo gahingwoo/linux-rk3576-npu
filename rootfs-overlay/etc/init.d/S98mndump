@@ -2,60 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 276. 64 channels get WRITTEN. Do 64 get LIT.
+# 2026-08-20 round 277. Every round so far has been K = 64.
 #
-# THE FORMULA IS A READING NOW, six for six, derived from two points:
+# ⚠ THE CHANNEL HALF IS SOLVED. 0x3020 = 111 at N = 64: 256 groups swept, 128
+# live, 64 distinct words lit, range 0 to 63, and 64 written. Written AND
+# reachable, which is the distinction 266 got wrong and this round checked
+# properly. The derived prediction was 128 live groups and 64 words and that is
+# what came back.
 #
-#   channels = ceil((v+1)/2) + extra(SIZE_E_2)      v = CORE 0x3020
-#   v =  31 -> 24    v =  79 -> 48    v = 111 -> 64
-#   v =  47 -> 32    v =  95 -> 56    v = 127 -> 72
+# WHAT THAT CONFIGURATION IS TODAY, with no other change:
 #
-# So 0x3020 = 111 writes all 64 channels at N = 64, and the channel shortfall is
-# not a wall, it is a value.
+#   64 channels, each fed by 16 weight bytes = 32 nibbles = 32 k
+#   arithmetic is the SHIPPED mode, whose formula is known exactly:
+#     out = ((int16)fp16bits(w) * (int16)abits) >> 16, seven for seven
 #
-# ⚠ AND I NEVER MEASURED WHETHER THEY ARE REACHABLE. Every arm in 275's entry 2
-# ran --map with a 128 byte limit, which is sixteen probes and reaches w0 to w7.
-# "wrote 64" is the extent of the WRITE. Whether 64 distinct channels can be lit
-# by a weight byte is a different question and this project has confused those
-# two before, in round 266, which is why the sentinel exists at all.
+# ⚠ AND HERE IS WHAT NOBODY HAS ASKED. K HAS BEEN 64 IN EVERY ROUND. If bytes
+# per channel is K/4 rather than a fixed 16, then at K = 32 those same 16 bytes
+# are ALL 32 of the k, and that configuration is a complete and correct matmul
+# TODAY, with the exact arithmetic already in hand and no CONV_CON1 change at
+# all. K = 64 would then be two chained jobs rather than a defect.
 #
-# ⚠ MY BUFFER EXPLANATION WAS WRONG. 275 predicted that 111 would not fight the
-# k fix, because 64 channels times 32 bytes is exactly the 2048 the buffer
-# holds. It hung: 235 groups swept and 4 alive. The other route, 127 with
-# SIZE_E_2 = 1, also reaches 64 on its own and drops to 32 under the k fix
-# rather than hanging. So the interaction is not "it does not fit".
+# That is the round. It is also the first path that does not need the k fix.
 #
-# What is measured about the interaction, and it is only three points:
-#
-#   v = 63,  extra 8, k fix  -> 40      unchanged from without the fix
-#   v = 127, extra 0, k fix  -> 32      halved from 64
-#   v = 111, extra 8, k fix  -> hangs
+# THE k FIX INTERACTION, and a pattern worth one entry. Under it, v = 71, 79,
+# 87, 95, 103 and 111 ALL hang, and the only two values that have ever survived
+# it are 63 and 127. Both of those are 2^n - 1 and none of the six is. That is a
+# clean split on eight points and it has never been tested as a rule.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND, and its prediction is derived. At v = 111 with no k
-#   fix a channel takes 16 weight bytes, so 64 channels take 1024 of the 2048,
-#   which is 128 live groups out of 256.
+#   ⚠ ENTRY 2 IS THE ROUND. K = 32, N = 64, v = 111. The weight buffer is 1024
+#   bytes and 64 channels times 16 is exactly 1024.
 #
-#     64 words lit, 128 live groups   the channel half is solved outright. Every
-#                                     channel reachable, 32 k each, and the k
-#                                     fix is the only thing left.
-#     64 written, fewer lit           the write reaches further than the fetch,
-#                                     and the gap in groups says by how much
-#     more than 128 live groups       a channel is taking more than 16 bytes at
-#                                     this v, which would be new
+#     128 live groups of 128, 64 words lit    every byte of the buffer is
+#                                             fetched and every channel reached.
+#                                             With entry 3 confirming k 0..31 it
+#                                             is a complete matmul at K = 32.
+#     64 live groups                          bytes per channel is a fixed 16
+#                                             regardless of K, so half the k is
+#                                             missing at every K and the fix is
+#                                             the only way
+#     fewer channels than 64                  0x3020's meaning depends on K too,
+#                                             which nothing has suggested
 #
-#   ENTRY 3 asks whether the hang is the size registers after all, by raising
-#   0x101c and 0x1020 to say the buffer is twice as big. The bo is allocated
-#   with 4096 spare so 4096 is inside it. One arm each and one with both, so a
-#   hit names which.
+#   ENTRY 3 is the k map at K = 32. Bytes 0 and 8 must give k 0 and k 16 of the
+#   same channel if the 16 bytes really span the whole reduction.
 #
-#   ENTRY 4 walks v upward under the k fix to find the largest that survives. 63
-#   gives 40 and 111 hangs, and nothing in between has been tried.
+#   ENTRY 4 is K = 16 and K = 128 against the same question, so bytes per
+#   channel is read as a function of K on three points rather than assumed from
+#   one.
 #
-#   No prediction on entry 3 or 4. The buffer explanation was a prediction and
-#   it was wrong, and that is the second time this week that an explanation good
-#   enough to write down did not survive the round after it.
+#   ENTRY 5 tests 2^n - 1 as a rule for surviving the k fix: 15, 31, 127 and 255
+#   should live and 119 should hang. Four predictions from an eight point split.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -114,34 +112,26 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. 0x3020 = 111, NO k fix, the WHOLE buffer.      ====="
-	log "=====    derived: 128 live groups of 256, and 64 words lit.        ====="
+	log "===== 2) THE ROUND. K = 32, N = 64, v = 111. 1024 weight bytes.    ====="
+	log "=====    64 channels x 16 bytes is exactly 1024. All of it, or half ====="
 	log ""
-	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 64 64 --map 8
+	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 32 64 --map 8
 
 	log ""
-	log "===== 3) and its k map. 32 k a channel is what 16 bytes means.     ====="
-	c "CHARSIU_OVERRIDE=0x3020=111" CHARSIU_KPAIR_BYTES=0,8,16,256,512,1024 1 64 64 --kpair
+	log "===== 3) the k map at K = 32. byte 8 must be k 16 of the SAME word ====="
+	c "CHARSIU_OVERRIDE=0x3020=111" CHARSIU_KPAIR_BYTES=0,4,8,12,16,512 1 32 64 --kpair
 
 	log ""
-	log "##### 4) is the hang the size registers. one at a time, then both. #####"
-	for a in \
-		"$FIX,0x3020=111,0x101c=0x1000" \
-		"$FIX,0x3020=111,0x1020=0x40" \
-		"$FIX,0x3020=111,0x101c=0x1000,0x1020=0x40" \
-		"$FIX,0x3020=111,0x1030=0x00400000"
+	log "===== 4) K = 16 and K = 128, same question                         ====="
+	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 16 64 --map 8
+	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 128 64 --map 8 512
+
+	log ""
+	log "##### 5) is 2^n - 1 the rule for surviving the k fix.              #####"
+	for v in 15 31 119 127 255
 	do
 		log ""
-		log "===== ARM $a"
-		c "CHARSIU_OVERRIDE=$a" X=1 1 64 64 --map 8 128
-	done
-
-	log ""
-	log "##### 5) how far v goes under the k fix. 63 is 40, 111 hangs.      #####"
-	for v in 71 79 87 95 103
-	do
-		log ""
-		log "===== ARM 0x3020=$v + k fix"
+		log "===== ARM 0x3020=$v + k fix   (15 31 127 255 live, 119 hangs)"
 		c "CHARSIU_OVERRIDE=$FIX,0x3020=$v" X=1 1 64 64 --map 8 128
 	done
 
@@ -150,7 +140,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 64 lit at v=111 and the channel half is done.                ====="
+	log "===== entry 2. 128 live groups is a complete matmul at K = 32.     ====="
 	sync
 }
 case "$1" in
