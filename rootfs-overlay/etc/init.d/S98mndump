@@ -2,70 +2,65 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 278. A real int4 matmul against a CPU reference, or the
-# reason there still is not one.
+# 2026-08-20 round 279. The same reader bug, in a fourth place, and 278 ran the
+# comparison anyway.
 #
-# THIRTEEN ROUNDS OF PROBES AND THIS IS THE FIRST ONE THAT RUNS A MATMUL.
+# ⚠ 278's int4 ARMS ARE VOID AND NOT FOR THE REASON THE SCRIPT LISTED. Two
+# things were wrong at once and neither is about the hardware.
 #
-# WHAT 277 SETTLED. Bytes per channel is K/4, measured at two K:
+#   the output was read as BYTES. The giveaway is in 278's own log: every group
+#   of four reads "X Y 255 255" or "X Y 0 0", which is a little endian int32
+#   pulled apart. 159 229 255 255 is 0xFFFFE59F, which is -6753.
 #
-#   K = 32 -> 8 bytes a channel      K = 64 -> 16 bytes a channel
+#   cpu_reference() returns a REQUANTISED int8 and w4a16 returns a raw
+#   accumulator, since 0x40ac, 0x40b0 and 0x40b4 are 0, 1, 0. The two were never
+#   in the same domain, so entry 3 could not have passed whatever the hardware
+#   did, and its failure says nothing about the fetched half.
 #
-# so half the k is missing at EVERY K and it is not a fixed cap. K = 16 lit
-# nothing at all. And the 2^n - 1 rule is REFUTED: 15 and 31 both hang under the
-# k fix. The predicate that fits all twelve points is (v+1) mod 64 == 0, and
-# under the k fix v stops driving the count at all, since 63, 127 and 255 all
-# give 40 and only SIZE_E_2 moves it. So the k fix pins the channels at 32 plus
-# SIZE_E_2's term, and the two halves cannot be had together.
+# That is the FOURTH place in this repo to read a four byte output as bytes,
+# after --kpair in 265, --map in 267 and now the matmul. Every one of them was
+# correct for int8, which is how each passed its int8 validation and kept the
+# bug. The int8 arm of 278 was 64 of 64 BYTE EXACT, so the instrument was sound
+# for the case it was written against and wrong for the one being asked.
 #
-# ⚠ BUT THE HALF THAT IS FETCHED IS A KNOWN HALF. With 0x3020 = 111 at N = 64,
-# K = 64, every channel is written and reachable and gets 16 bytes in two runs,
-# its own and one 256 bytes later, which --kpair reads as k 0..15 and k 32..47:
+# WHAT THE FIXED HARNESS COMPARES. The arithmetic is measured, seven nibbles for
+# seven, once the activation is read as the raw 16 bit slot:
 #
-#   fetched  <=>  (k mod 32) < 16
+#   out = ((int16)fp16bits(w) * (int16)abits) >> 16      abits = (a-0x80) << 8
 #
-# A weight the hardware never reads is only wrong if it matters. Zero the ones
-# it does not read and the partial sum it computes IS the full sum, so the CPU
-# reference and the hardware are answering the same question. That is a real 32
-# deep int4 matmul on all 64 channels, with the arithmetic already known exact,
-# at the cost of half the weight buffer. No change to the packer, no k fix.
-#
-# CHARSIU_W4_HALFK does the zeroing and prints how many it zeroed, because a
-# knob that cannot be seen working is not a knob and this file has lost five
-# comparisons to exactly that.
+# ⚠ WHERE THE SHIFT GOES HAS NEVER BEEN MEASURED. Every point behind that
+# formula had ONE live nibble, and with one term a shift per element and a shift
+# on the sum are the same number. This is the first round with a dense buffer,
+# so it is the first round that can tell them apart. Both are computed and both
+# counts are printed rather than picking one and reporting its score.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 3 IS THE ROUND. W4 dense, HALFK on, 0x3020 = 111.
+#   ⚠ ENTRY 3 IS THE ROUND. HALFK on, v = 111, and now two references.
 #
-#     it matches cpu_reference      an int4 matmul works on this hardware for
-#                                   the first time. 64 channels, 32 real k,
-#                                   exact arithmetic. Everything after that is
-#                                   about the wasted half, not about whether it
-#                                   computes.
-#     it is wrong on some channels  the ones it is wrong on say what else the
-#                                   fetch is missing. Compare against entry 4.
-#     it is wrong everywhere        the fetched set is not (k mod 32) < 16 and
-#                                   the map that says so was read at N = 64
-#                                   with one live nibble, which is not the same
-#                                   thing as a dense buffer.
+#     64 of 64 exact on ONE of them    an int4 matmul works on this hardware
+#                                      and the shift placement is settled in the
+#                                      same line
+#     64 of 64 on BOTH                 the test shape is too kind: the terms are
+#                                      not mixing signs or magnitudes enough to
+#                                      separate the two, and a harder shape is
+#                                      needed before either is a reading
+#     high on one, not exact           the formula is close and something else,
+#                                      rounding most likely, is missing
+#     neither                          the fetched set is not (k mod 32) < 16.
+#                                      That map was read with ONE live nibble
+#                                      and a dense buffer is not the same thing.
 #
-#   ENTRY 2 is the control that must be WRONG: same thing without HALFK. If the
-#   unfetched weights really are unread, adding them to the reference and not to
-#   the hardware has to break it. A control that passes means HALFK did nothing.
+#   ENTRY 2 is still the control that must FAIL: no HALFK, so the reference
+#   counts weights the hardware does not fetch. If it passes, HALFK did nothing
+#   and entry 3 proves nothing either.
 #
-#   ENTRY 4 is HALFK without 0x3020 = 111, so only 40 channels exist. Channels
-#   0 to 39 should match and 40 to 63 should not, which is the second, separate
-#   confirmation that 111 is what buys the channels.
-#
-#   ENTRY 5 is int8 dense, untouched, as the instrument check. It is byte exact
-#   on this silicon and if it is not right here then nothing else in this log is
-#   worth reading.
+#   ENTRY 5 is int8, untouched, and was 64 of 64 in 278. It has to stay there or
+#   the reader change broke the path it was already right about.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-CH=/opt/charsiu/charsiu_int4
 MM=/opt/charsiu/charsiu_matmul
 ABORT=0
 log() { echo "$@" > "$C"; }
@@ -93,7 +88,6 @@ w() {
 	return 0
 }
 
-# $1 and $2 are environment, $3.. are the binary and its arguments
 c() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
 	before=$(nbad)
@@ -120,34 +114,34 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) the control that must be WRONG. W4 dense, no HALFK, v=111 ====="
+	log "===== 2) the control that must FAIL. W4 dense, no HALFK, v=111     ====="
 	log ""
 	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 64
 
 	log ""
-	log "===== 3) THE ROUND. W4 dense, HALFK on, v = 111.                   ====="
-	log "=====    64 channels, 32 real k, against cpu_reference.            ====="
+	log "===== 3) THE ROUND. HALFK on, v = 111, both shift placements.      ====="
 	log ""
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 64
 
 	log ""
-	log "===== 4) HALFK without v=111. 0..39 should match, 40..63 not.      ====="
+	log "===== 4) HALFK without v=111. 0..39 should be exact, 40..63 not.   ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 64
 
 	log ""
-	log "===== 5) int8 dense, the instrument check                          ====="
+	log "===== 5) int8 dense. Was 64 of 64. Must still be.                  ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
-	log "===== 6) and the same at N = 32, where v=111 is more than enough   ====="
+	log "===== 6) N = 32 and N = 16, the same claim at other shapes         ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 32
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 16
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 3 against entry 2. One must match and one must not.    ====="
+	log "===== one of the two references, or the fetched set is wrong.      ====="
 	sync
 }
 case "$1" in
