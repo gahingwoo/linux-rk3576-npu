@@ -1,0 +1,48 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v7 08/10] accel/rocket: add RK3576 NPU (RKNN) support
+In-Reply-To: <20260819184838.6723-1-royalnet026@gmail.com>
+References: <20260819184838.6723-1-royalnet026@gmail.com>
+
+Hi Igor, and the list,
+
+The single field sweep I owed, and said on the 19th was late. It is run.
+
+Each of the five fields where my 0x4050 differs from upstream's 0x124 was moved
+to upstream's value on its own, with the other four left alone. Two shapes, a
+5x5 convolution at 128 output channels and a pointwise at 88, three baselines
+across the log with no drift between them.
+
+  field, mine to upstream    output                    completion
+  RGP_CNTER   8 to 0         wrong, 0 of 128 and       no hang
+                             14 of 88, maxdiff 255
+  RESERVED_0  34 to 0        matches the baseline      times out
+  SIZE_E_1    0 to 1         matches the baseline      no hang
+  SIZE_E_0    4 to 1         wrong                     times out
+  OW_SRC      1 to 0         wrong                     times out
+  upstream's whole 0x124     wrong                     times out
+
+So four of the five are load bearing on RK3576, and they fail in three different
+ways. RGP_CNTER is purely arithmetic, it computes the wrong answer and finishes.
+RESERVED_0 is purely a completion field, the output is identical to the baseline
+on both shapes and the job still hangs. SIZE_E_0 and OW_SRC do both.
+
+Two things to read carefully rather than take at face value. RESERVED_0's score
+prints after its timeout, so the hang is the result there and the number beside
+it is colour. And every timeout landed inside the entry that set the value, with
+a health check passing after each, so none of it is a hang leaking from the
+entry before.
+
+SIZE_E_1 is the one that does nothing. I have left it at 0 rather than moving it
+to upstream's 1, because two shapes is not every shape, and written into the
+comment that it was measured not to matter. If you would rather I match upstream
+there and shrink the diff by a field, say so and I will.
+
+The merge request now carries this table in the comment above the register.
+
+  https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43804
+
+That was the last thing outstanding from my side that did not need your bench.
+Have a good trip.
+
+Regards,
+Jiaxing
