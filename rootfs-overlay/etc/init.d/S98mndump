@@ -2,54 +2,57 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 261. Where int4's k = 16 and above live.
+# 2026-08-20 round 262. Name int4's weight map, by measuring it rather than
+# fitting it.
 #
-# WHY THIS AND NOT MORE MESA. int4 is the only 2x left and its semantics are
-# settled: the w4a16 output is
+# WHAT 261 SETTLED, all of it with the anchor computing either side.
 #
-#   out = ((int16)fp16bits(w) * (int16)fp16bits(a)) >> 16
+#   k = 16 and above ARE reachable and they live in the FIRST 256 bytes.
+#   byte 8 pairs with k = 16. The map calling those bytes dead was a reading
+#   error: they had never been paired with an input past k = 15.
 #
-# exact at 18 measured points, with a four point prediction written into the
-# board script before the run and no error in it. The wedge that used to leave
-# the NPU unable to start the next job is localised and fixed. What is left
-# between here and an int4 projection is ONE thing, the layout above k = 15.
+#   The byte to (k, channel) map DOES NOT DEPEND ON K. Every byte live at both
+#   K = 64 and K = 128 gave the identical k and the identical channel. K only
+#   sets how far the live region extends, which is about 8K bytes.
 #
-# WHAT IS ACTUALLY MISSING. The layout charsiu has is
+#   Every live byte pairs with EXACTLY ONE k, so nothing is broadcast.
 #
-#   channel n at (n / 32) * 512 + (n % 32) * 8, eight bytes
-#   byte b nibble h is k = 2b + h
+#   ⚠ And both predictions written into round 261 were wrong. Byte 8 is
+#   channel 4 at k = 16, where the two readings on offer said channel 1 at
+#   k = 0 or channel 0 at k = 16. The truth was a third thing.
 #
-# Eight bytes is sixteen nibbles, so that describes k = 0 to 15 and nothing
-# above it. At 64 by 64 the weight buffer is 2048 bytes and the formula accounts
-# for 512, so three quarters of it is unexplained and k = 16 upward is in there.
-# ⚠The map calls those bytes dead. They are not dead, they were never paired
-# with an input past k = 15, which is the only reason nothing lit.
+# WHAT IS LEFT, and why this round is dense rather than clever.
 #
-# THE PROBE ALREADY EXISTS. --kpair puts one live nibble at a byte, walks a one
-# hot input through every k, and prints BOTH the k it pairs with and the first
-# channel that lights. It was only ever pointed at bytes 0 to 8 and 512. This
-# round points it at the unexplained region.
+#   byte    0  1  2  3  4  7    8   16  256  257  264
+#   k       0  2  4  6  8 14   16    0   32   34   48
+#   channel 0  0  0  0  0  0    4    8    0    0    4
 #
-# THE READING RULE, fixed before the run, and two bytes decide it alone.
+# Bytes 248 and 255 are dead, so the live set inside the first 256 is not
+# contiguous either. ⚠ Every reading tried against those points ends with bit 3
+# of the byte contributing to BOTH the k and the channel, which is not how a
+# bitfield splits. That is a sign the points are too sparse, not that the
+# hardware is strange, and fitting through gaps is what this project has had to
+# retract before. So bytes 9 through 15 and 17 through 31 get measured.
 #
-#   byte 8    channel 1 and k = 0   eight bytes per channel, a k block elsewhere
-#             channel 0 and k = 16  sixteen contiguous bytes per channel
+# THE READING RULE, fixed before the run.
 #
-#   byte 256  channel 0 and k = 16  the k block is at +256
-#             nothing, or channel 32 with k = 0
-#                                   the k block is further out and 256 is
-#                                   still channel space
+#   Read 9 through 15 first. If they continue channel 4 with k = 18, 20 ... 30,
+#   then an eight byte block is one channel and one k block, and the only
+#   question left is how the block index maps to (channel, k block).
 #
-#   ⚠ Byte 0 is the baseline and must come back channel 0, k = 0. If it does
-#   not, the shape or the packer moved under me and nothing below counts.
+#   If they do anything else, the block is not the unit and the answer is in
+#   whatever they do instead.
 #
-#   ⚠ A byte that pairs with MORE THAN ONE k is a broadcast, which is the thing
-#   this probe was written to catch. Read the count in brackets, not just the
-#   first number.
+#   ⚠ 17 through 31 are the control on that. Under the block reading they must
+#   be channel 8 with k = 2, 4 ... 14 and then channel 12 with k = 16 upward.
 #
-#   ⚠ Bytes 1024 and up only exist because the buffer is 2048. If they light
-#   nothing at all, the layout does not use the top half at 64 by 64 and that
-#   is a result too.
+#   ⚠ Byte 0 must come back channel 0, k = 0, or the shape moved and nothing
+#   below counts. The conv2d-cal anchor either side says whether a dead byte is
+#   a dead byte or a dead block.
+#
+#   ⚠ Do not write a formula into the tree from this log alone. Whatever it
+#   says, the next round predicts three unmeasured bytes from it and checks
+#   them before it goes anywhere near the packer.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -93,25 +96,19 @@ start() {
 	fi
 
 	log ""
-	log "===== 1) the NPU still computes, so a null result means the probe  ====="
-	log "=====    and not a dead block                                      ====="
+	log "===== 1) the anchor, so a dead byte is not a dead block            ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE LAYOUT PROBE. One live nibble per byte, a one hot     ====="
-	log "=====    input walking k, reading the k AND the channel.           ====="
+	log "===== 2) THE DENSE SWEEP. Bytes 0 to 31 with no gaps, then one     ====="
+	log "=====    per eight byte block out to 72, then the sparse points    ====="
+	log "=====    261 already has so the two logs can be compared directly. ====="
 	log ""
 	sleep 1
 	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
 
 	log ""
-	log "===== 3) the same at a wider k, so a block boundary that is a      ====="
-	log "=====    function of k rather than a constant shows up             ====="
-	sleep 1
-	/opt/charsiu/charsiu_int4 1 128 64 --kpair > "$C" 2>&1
-
-	log ""
-	log "===== 4) the anchor again                                          ====="
+	log "===== 3) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
