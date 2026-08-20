@@ -2,64 +2,68 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 284. The pair stride was only ever measured at N = 64.
+# 2026-08-21 round 285. Stop guessing the stride and sweep an N that is not 64.
 #
-# 283 SPLIT ITS OWN QUESTION CLEANLY. Rounding 0x3020 up to a multiple of 16
-# fixed the WRITE: N of 24, 40 and 56 now report 24 of 24, 40 of 40 and 56 of 56
-# words written where they reported 16, 32 and 48. The write quantum is sixteen
-# channels and that part is settled.
+# ⚠ wbytes/4 IS REFUTED, and not narrowly. It did not fix the three that were
+# wrong and it broke the three that were right:
 #
-# ⚠ AND THE SAME THREE ARE STILL WRONG, WHICH IS NOW A PLACEMENT FAULT. The per
-# group line puts whole groups at 0 of 8 at the top: g2 at N = 24, g3 and g4 at
-# N = 40, g4 to g6 at N = 56. The channels are written and the weights are in
-# the wrong place, which is the opposite of what 282 concluded and is exactly
-# what 283's second branch said it would mean.
+#           8*K (283)      wbytes/4 (284)
+#   N = 16    16/16            0/16
+#   N = 32    32/32            0/32
+#   N = 48    48/48            8/48
+#   N = 64    64/64           64/64      the two forms are equal here by
+#   N = 24    16/24            0/24      construction, so it proves nothing
+#   N = 40    24/40            0/40
+#   N = 56    32/56            0/56
 #
-# WHAT WAS WRONG, and it is a coincidence I did not see for four rounds.
+# So 8*K is right everywhere there is data and the failures at 24, 40 and 56 are
+# something else. Reverted.
 #
-#   the base expression used a pair stride of 8*K
-#   the weight buffer is k*n/2 bytes, so at N = 64 it is k*32
-#   therefore at N = 64, 8*K and wbytes/4 ARE THE SAME NUMBER
+# ⚠ AND THE REASONING THAT PRODUCED wbytes/4 WAS TIDY AND WRONG. It went: the
+# map must scale with the buffer, and at N = 24 the second group of g2 lands at
+# 768 which is exactly that buffer's size, so the stride is a fraction of the
+# buffer. Both premises were fine and the conclusion did not survive one round.
+# Round 284's own reading rule said what to do about that and this is it: the
+# N = 64 table came off a --map sweep, so run the same sweep at an N that is not
+# 64 rather than fitting a third form to the same seven numbers.
 #
-# Both measured tables, K = 64 and K = 32, were swept at N = 64. No data taken
-# in this project can tell the two forms apart, and 283's N sweep is the first
-# thing that could. It says the map has to scale with the buffer: at N = 24 the
-# second group of g2 lands at byte 768, which is exactly the size of that
-# buffer.
+# WHAT IS SETTLED AND MUST NOT MOVE. With 8*K restored:
 #
-# So the stride is wbytes/4 now, and the second group sits half a stride on
-# rather than a fixed 256.
-#
-# ⚠ THIS IS A HYPOTHESIS AND NOT A READING. It agrees with everything measured
-# and disagrees with the failures, which is the most that can be said for it.
-# The odd member offsets, 128 for a middle pair and 64 for the last, are still
-# constants read only at N = 64 and this round does not touch them.
+#   N = 16, 32, 48, 64 at K = 64, and N = 64 at K = 32, are byte exact against
+#   cpu_reference with no override. 0x3020 = 2*(ALIGN_UP(n,16) - 8) - 1, the
+#   write quantum is 16 channels, k is per channel parity, and the intra group
+#   order is byte j holding k = 2j low and k = 2j+1 high.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 2 TO 4 ARE THE ROUND. N of 24, 40 and 56.
+#   ⚠ ENTRIES 2 AND 3 ARE THE ROUND and they are measurements, not tests. A
+#   stride 8 --map sweep of the whole buffer at N = 24 and at N = 40, which is
+#   the instrument that produced the N = 64 table in the first place. Read the
+#   grid, write down the eight group bases, and compare them to what 8*K
+#   predicts:
 #
-#     all three exact, every group 8/8   the stride scales with the buffer and
-#                                        seven N and two K close at M = 1
-#     the top groups move but are not
-#     exact                              the stride is right and the 128 and 64
-#                                        offsets are the part that does not
-#                                        scale, which is the next thing to sweep
-#     unchanged                          wbytes/4 is not it either, and the
-#                                        thing to do is sweep the map at N = 24
-#                                        directly rather than reason about it
+#     N = 24  predicted 0, 128, 512   (g0, g1, g2)
+#     N = 40  predicted 0, 128, 512, 640, 1024
 #
-#   ⚠ ENTRIES 5 TO 8 MUST NOT REGRESS. N of 16, 32, 48 and 64, and K = 32, were
-#   all exact in 283 and the stride change is a no-op at N = 64 by construction.
-#   N = 16, 32 and 48 are NOT at N = 64, so they are a real test of the new
-#   form and not a formality.
+#   The groups that WORK are g0 and g1 at N = 24 and g0 to g2 at N = 40, so the
+#   first divergence should be at g2 and g3 respectively. If the measured bases
+#   agree with the prediction there, the address is not the fault and the k side
+#   is, which entry 4 asks directly.
 #
-#   ENTRY 9 is the control that must FAIL and ENTRY 10 is int8.
+#   ENTRY 4 is --kpair at N = 24 on bytes 0, 8, 128, 512 and 768. It says which
+#   channel and which k each byte reaches, which is the pair the address table
+#   alone cannot give.
+#
+#   ⚠ ENTRIES 5 TO 8 ARE THE REGRESSION CHECK and they matter as much as the
+#   sweep. 284 broke three working geometries with a one line change, so 16, 32,
+#   48 and 64 have to come back exact before anything measured above is worth
+#   reading.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 MM=/opt/charsiu/charsiu_matmul
+CH=/opt/charsiu/charsiu_int4
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -114,41 +118,36 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### the three that were short. wrote must go to 32, 48, 64.      #####"
+	log "===== 2) MEASURE. --map over the whole buffer at N = 24.           ====="
+	log "=====    8*K predicts group bases 0, 128, 512.                     ====="
 	log ""
-	log "===== 3) N = 24. Was 16 of 24.                                     ====="
-	c "$M4" X=1 $MM 1 64 24
-	log ""
-	log "===== 4) N = 40. Was 32 of 40.                                     ====="
-	c "$M4" X=1 $MM 1 64 40
-	log ""
-	log "===== 5) N = 56. Was 48 of 56.                                     ====="
-	c "$M4" X=1 $MM 1 64 56
+	c X=1 X=1 $CH 1 64 24 --map 8
 
 	log ""
-	log "##### the four that already worked. None may regress.              #####"
+	log "===== 3) MEASURE. the same at N = 40. predicted 0 128 512 640 1024 ====="
 	log ""
-	log "===== 6) N = 16                                                    ====="
+	c X=1 X=1 $CH 1 64 40 --map 8
+
+	log ""
+	log "===== 4) and the k at N = 24, which the address alone cannot give  ====="
+	c X=1 CHARSIU_KPAIR_BYTES=0,8,128,136,512,520 $CH 1 64 24 --kpair
+
+	log ""
+	log "##### the regression check. 284 broke three of these in one line.  #####"
+	log ""
+	log "===== 5) N = 16                                                    ====="
 	c "$M4" X=1 $MM 1 64 16
-	log ""
-	log "===== 7) N = 32                                                    ====="
+	log "===== 6) N = 32                                                    ====="
 	c "$M4" X=1 $MM 1 64 32
-	log ""
-	log "===== 8) N = 48                                                    ====="
+	log "===== 7) N = 48                                                    ====="
 	c "$M4" X=1 $MM 1 64 48
-	log ""
-	log "===== 2) N = 64                                                    ====="
+	log "===== 8) N = 64, and K = 32 at N = 64                               ====="
 	c "$M4" X=1 $MM 1 64 64
-	log ""
-	log "=====    and K = 32 at N = 64, the other K                         ====="
 	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "===== 9) the control that must FAIL                                ====="
+	log "===== 9) the control that must FAIL, and int8                      ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
-
-	log ""
-	log "===== 10) int8 dense                                               ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
@@ -156,7 +155,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== seven N and two K exact with no override would close M = 1.  ====="
+	log "===== read the N = 24 grid first. Bases, not counts.               ====="
 	sync
 }
 case "$1" in
