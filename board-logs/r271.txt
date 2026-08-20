@@ -1,0 +1,2239 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.5%, RX DQS Vref:27.8%, TX Vref:19.0%,21.0%
+DQ roc:
+p2 n0, p4 n0, p1 n0, p6 n0, p0 n0, p7 n0, p0 n2, p2 n0, p0 n0, 
+p5 n0, p0 n0, p2 n0, p4 n0, p0 n0, p3 n0, p0 n4, p2 n0, p1 n1, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, l0 l0 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:29.6%, TX Vref:18.0%,21.0%
+DQ roc:
+p6 n0, p4 n0, p6 n0, p4 n0, p7 n0, p4 n0, p1 n3, p3 n0, p7 n0, 
+p2 n0, p7 n0, p6 n0, p4 n1, p5 n0, p4 n0, p1 n0, p0 n2, p4 n0, 
+
+DQ rds:l0 h2 h1 l0 l0 h1 l0 l0, h1 l0 h2 l0 l0 l0 h2 l0 
+DQS roc: p0, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000000] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004810] Console: colour dummy device 80x25
+[    0.005344] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006302] pid_max: default: 32768 minimum: 301
+[    0.007195] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007955] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009157] VFS: Finished mounting rootfs on nullfs
+[    0.012595] rcu: Hierarchical SRCU implementation.
+[    0.013098] rcu:     Max phase no-delay instances is 1000.
+[    0.013894] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021514] EFI services will not be available.
+[    0.022604] smp: Bringing up secondary CPUs ...
+[    0.023776] Detected VIPT I-cache on CPU1
+[    0.023895] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024763] Detected VIPT I-cache on CPU2
+[    0.024845] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025675] Detected VIPT I-cache on CPU3
+[    0.025754] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026648] CPU features: detected: Spectre-v3a
+[    0.026667] CPU features: detected: Spectre-BHB
+[    0.026674] CPU features: detected: ARM erratum 1742098
+[    0.026682] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026688] Detected PIPT I-cache on CPU4
+[    0.026770] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027578] Detected PIPT I-cache on CPU5
+[    0.027642] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028421] Detected PIPT I-cache on CPU6
+[    0.028488] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029273] Detected PIPT I-cache on CPU7
+[    0.029340] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029473] smp: Brought up 1 node, 8 CPUs
+[    0.038655] SMP: Total of 8 processors activated.
+[    0.039113] CPU: All CPU(s) started at EL2
+[    0.039524] CPU features: detected: 32-bit EL0 Support
+[    0.040001] CPU features: detected: 32-bit EL1 Support
+[    0.040482] CPU features: detected: CRC32 instructions
+[    0.040970] CPU features: detected: PMUv3
+[    0.041424] alternatives: applying system-wide alternatives
+[    0.045117] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050502] devtmpfs: initialized
+[    0.067228] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.068002] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069142] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069730] 0 pages in range for non-PLT usage
+[    0.069735] 511152 pages in range for PLT usage
+[    0.076590] DMI: not present or invalid.
+[    0.081031] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.082671] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.083788] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.084576] audit: initializing netlink subsys (disabled)
+[    0.085244] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.090560] thermal_sys: Registered thermal governor 'step_wise'
+[    0.090569] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.091223] cpuidle: using governor menu
+[    0.092484] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.093318] ASID allocator initialised with 32768 entries
+[    0.098525] Serial: AMBA PL011 UART driver
+[    0.107163] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.108575] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.109968] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.111200] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.112425] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.122724] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.123438] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.124486] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.126458] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.182033] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.182667] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.193482] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.194114] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.194694] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.195319] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.195895] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.196534] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.197114] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.197738] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.200990] ACPI: Interpreter disabled.
+[    0.211764] iommu: Default domain type: Translated
+[    0.212214] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.213411] SCSI subsystem initialized
+[    0.214161] usbcore: registered new interface driver usbfs
+[    0.214709] usbcore: registered new interface driver hub
+[    0.215229] usbcore: registered new device driver usb
+[    0.218305] pps_core: LinuxPPS API ver. 1 registered
+[    0.218767] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.219614] PTP clock support registered
+[    0.220256] EDAC MC: Ver: 3.0.0
+[    0.221212] scmi_core: SCMI protocol bus registered
+[    0.224098] FPGA manager framework
+[    0.225643] vgaarb: loaded
+[    0.226443] clocksource: Switched to clocksource arch_sys_counter
+[    0.227323] VFS: Disk quotas dquot_6.6.0
+[    0.227704] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.228620] pnp: PnP ACPI: disabled
+[    0.236291] NET: Registered PF_INET protocol family
+[    0.237209] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.250071] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.251024] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.251752] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.253479] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.256042] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.256765] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.258049] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.259060] RPC: Registered named UNIX socket transport module.
+[    0.259611] RPC: Registered udp transport module.
+[    0.260046] RPC: Registered tcp transport module.
+[    0.260479] RPC: Registered tcp-with-tls transport module.
+[    0.260984] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.261588] PCI: CLS 0 bytes, default 64
+[    0.265808] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.266534] kvm [1]: nv: 710 fine grained trap handlers
+[    0.267457] kvm [1]: IPA Size Limit: 40 bits
+[    0.270543] kvm [1]: vgic interrupt IRQ9
+[    0.270948] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.273492] Initialise system trusted keyrings
+[    0.274162] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.275328] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.276179] NFS: Registering the id_resolver key type
+[    0.276664] Key type id_resolver registered
+[    0.277052] Key type id_legacy registered
+[    0.277443] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.278061] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.279227] Key type asymmetric registered
+[    0.279611] Asymmetric key parser 'x509' registered
+[    0.280112] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.280795] io scheduler mq-deadline registered
+[    0.281215] io scheduler kyber registered
+[    0.281624] io scheduler bfq registered
+[    0.290826] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.292580] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.294467] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.296334] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.297951] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.299591] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.301333] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.302962] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.304585] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.306209] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.307855] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.309483] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.311252] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.312879] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.314644] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.316403] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.353841] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.421862] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.422590] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.425320] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.426022] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.428571] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.429273] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.463937] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.468282] printk: legacy console [ttyS0] disabled
+[    0.469079] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.470034] printk: legacy console [ttyS0] enabled
+[    0.470034] printk: legacy console [ttyS0] enabled
+[    0.470921] printk: legacy bootconsole [uart8250] disabled
+[    0.470921] printk: legacy bootconsole [uart8250] disabled
+[    0.480010] msm_serial: driver initialized
+[    0.481869] SuperH (H)SCI(F) driver initialized
+[    0.483118] STM32 USART driver initialized
+[    0.490478] random: crng init done
+[    0.494057] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.496208] platform 27d00000.vop: Adding to iommu group 1
+[    0.504350] loop: module loaded
+[    0.507356] megasas: 07.734.00.00-rc1
+[    0.523556] tun: Universal TUN/TAP device driver, 1.6
+[    0.524994] VFIO - User Level meta-driver version: 0.3
+[    0.536876] usbcore: registered new interface driver usb-storage
+[    0.547463] i2c_dev: i2c /dev entries driver
+[    0.552736] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.553643] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.554560] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.594097] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.594792] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.595768] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.596712] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.597661] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.604377] scsi host0: ufshcd
+[    1.036831] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.037616] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.038355] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.039066] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.051344] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.051873] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.052959] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.053934] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.054633] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.055391] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.062397] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.066095] usbcore: registered new interface driver usbhid
+[    1.066634] usbhid: USB HID core driver
+[    1.078645] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.080784] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.101919] NET: Registered PF_INET6 protocol family
+[    1.103487] Segment Routing with IPv6
+[    1.103840] In-situ OAM (IOAM) with IPv6
+[    1.104243] NET: Registered PF_PACKET protocol family
+[    1.104752] Key type dns_resolver registered
+[    1.133996] registered taskstats version 1
+[    1.134654] Loading compiled-in X.509 certificates
+[    1.144483] Demotion targets for Node 0: null
+[    1.272270] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.278343] cpu cpu0: EM: created perf domain
+[    1.279727] cpu cpu4: EM: created perf domain
+[    1.287773] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.288460] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.289058] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.289620] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.298424] platform 27700000.npu: Adding to iommu group 2
+[    1.304854] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.306228] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.310805] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.312605] clk: Not disabling unused clocks
+[    1.313018] PM: genpd: Disabling unused power domains
+[    1.313647] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.322744] Waiting for root device /dev/mmcblk0p2...
+[    1.376212] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.491533] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 81
+[    1.492566] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.494117] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.497089]  mmcblk0: p1 p2
+[    1.648206] EXT4-fs (mmcblk0p2): mounted filesystem b90d5760-a513-44bf-8881-43526f6e1743 r/w with ordered data mode. Quota mode: none.
+[    1.649333] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.650222] devtmpfs: mounted
+[    1.650730] VFS: Pivoted into new rootfs
+[    1.656565] Freeing unused kernel memory: 13248K
+[    1.657170] Run /sbin/init as init process
+[    1.734750] EXT4-fs (mmcblk0p2): re-mounted b90d5760-a513-44bf-8881-43526f6e1743.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.510379] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.511251] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.511971] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.512697] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.513606] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.514525] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.515441] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.516349] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.517318] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.518226] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.519144] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.520064] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.521012] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.521936] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+reset_autosuspend = Y
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== 2) THE ROUND. kpair under RESERVED_1=0. byte 8 must be k 16. =====
+
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --kpair: ONE live nibble, a ONE HOT input, sweeping k.
+  Reads the k a nibble pairs with, and the output WORD it
+  lights: w<index>=<value>/b<which of the four bytes>.
+  The word index is the channel candidate, the byte pattern
+  says how wide an element is, and the value says whether it
+  is a signed 32 bit integer. Live nibble 7.
+
+  byte 0     low   pairs with k = 0[w0=00001bbc/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 0     high  pairs with k = 0[w0=000021fc/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 8     low   pairs with k = 8[w0=00001bbc/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 8     high  pairs with k = 8[w0=000021fc/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 16    low   pairs with k = 16[w1=00001bbc/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 16    high  pairs with k = 16[w1=000021fc/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 24    low   pairs with k = 24[w1=00001bbc/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 24    high  pairs with k = 24[w1=000021fc/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 256   low   pairs with k = 0[w8=00001bbc/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 256   high  pairs with k = 0[w8=000021fc/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 264   low   pairs with k = 8[w8=00001bbc/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 264   high  pairs with k = 8[w8=000021fc/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+
+===== 3) the same six under PROC_PRECISION=0. Do they agree.       =====
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --kpair: ONE live nibble, a ONE HOT input, sweeping k.
+  Reads the k a nibble pairs with, and the output WORD it
+  lights: w<index>=<value>/b<which of the four bytes>.
+  The word index is the channel candidate, the byte pattern
+  says how wide an element is, and the value says whether it
+  is a signed 32 bit integer. Live nibble 7.
+
+  byte 0     low   pairs with k = 0[w0=00000379/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 0     high  pairs with k = 1[w0=00000379/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 8     low   pairs with k = 16[w0=00000379/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 8     high  pairs with k = 17[w0=00000379/b1100]   (1 of 64, first word 0, hw wrote 40 words, highest 39)
+  byte 16    low   pairs with k = 0[w1=00000379/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 16    high  pairs with k = 1[w1=00000379/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 24    low   pairs with k = 16[w1=00000379/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 24    high  pairs with k = 17[w1=00000379/b1100]   (1 of 64, first word 1, hw wrote 40 words, highest 39)
+  byte 256   low   pairs with k = 0[w8=00000379/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 256   high  pairs with k = 1[w8=00000379/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 264   low   pairs with k = 16[w8=00000379/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+  byte 264   high  pairs with k = 17[w8=00000379/b1100]   (1 of 64, first word 8, hw wrote 40 words, highest 39)
+
+===== 4) the whole buffer under the fix                            =====
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 2048.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 159
+  byte 0      high  -> w 0    v 87         wrote 40 hi 39 hib 159
+  byte 8      low   -> w 0    v 639        wrote 40 hi 39 hib 159
+  byte 8      high  -> w 0    v 783        wrote 40 hi 39 hib 159
+  byte 16     low   -> w 1    v 1207       wrote 40 hi 39 hib 159
+  byte 16     high  -> w 1    v 1479       wrote 40 hi 39 hib 159
+  byte 24     low   -> w 1    v 1775       wrote 40 hi 39 hib 159
+  byte 24     high  -> w 1    v 2175       wrote 40 hi 39 hib 159
+  byte 32     low   -> w 2    v 71         wrote 40 hi 39 hib 159
+  byte 32     high  -> w 2    v 87         wrote 40 hi 39 hib 159
+  byte 40     low   -> w 2    v 639        wrote 40 hi 39 hib 159
+  byte 40     high  -> w 2    v 783        wrote 40 hi 39 hib 159
+  byte 48     low   -> w 3    v 1207       wrote 40 hi 39 hib 159
+  byte 48     high  -> w 3    v 1479       wrote 40 hi 39 hib 159
+  byte 56     low   -> w 3    v 1775       wrote 40 hi 39 hib 159
+  byte 56     high  -> w 3    v 2175       wrote 40 hi 39 hib 159
+  byte 64     low   -> w 4    v 71         wrote 40 hi 39 hib 159
+  byte 64     high  -> w 4    v 87         wrote 40 hi 39 hib 159
+  byte 72     low   -> w 4    v 639        wrote 40 hi 39 hib 159
+  byte 72     high  -> w 4    v 783        wrote 40 hi 39 hib 159
+  byte 80     low   -> w 5    v 1207       wrote 40 hi 39 hib 159
+  byte 80     high  -> w 5    v 1479       wrote 40 hi 39 hib 159
+  byte 88     low   -> w 5    v 1775       wrote 40 hi 39 hib 159
+  byte 88     high  -> w 5    v 2175       wrote 40 hi 39 hib 159
+  byte 96     low   -> w 6    v 71         wrote 40 hi 39 hib 159
+  byte 96     high  -> w 6    v 87         wrote 40 hi 39 hib 159
+  byte 104    low   -> w 6    v 639        wrote 40 hi 39 hib 159
+  byte 104    high  -> w 6    v 783        wrote 40 hi 39 hib 159
+  byte 112    low   -> w 7    v 1207       wrote 40 hi 39 hib 159
+  byte 112    high  -> w 7    v 1479       wrote 40 hi 39 hib 159
+  byte 120    low   -> w 7    v 1775       wrote 40 hi 39 hib 159
+  byte 120    high  -> w 7    v 2175       wrote 40 hi 39 hib 159
+  byte 128    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 128    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 136    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 136    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 144    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 144    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 152    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 152    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 160    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 160    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 168    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 168    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 176    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 176    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 184    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 184    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 192    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 192    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 200    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 200    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 208    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 208    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 216    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 216    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 224    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 224    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 232    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 232    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 240    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 240    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 248    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 248    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 256    low   -> w 8    v 71         wrote 40 hi 39 hib 159
+  byte 256    high  -> w 8    v 87         wrote 40 hi 39 hib 159
+  byte 264    low   -> w 8    v 639        wrote 40 hi 39 hib 159
+  byte 264    high  -> w 8    v 783        wrote 40 hi 39 hib 159
+  byte 272    low   -> w 9    v 1207       wrote 40 hi 39 hib 159
+  byte 272    high  -> w 9    v 1479       wrote 40 hi 39 hib 159
+  byte 280    low   -> w 9    v 1775       wrote 40 hi 39 hib 159
+  byte 280    high  -> w 9    v 2175       wrote 40 hi 39 hib 159
+  byte 288    low   -> w 10   v 71         wrote 40 hi 39 hib 159
+  byte 288    high  -> w 10   v 87         wrote 40 hi 39 hib 159
+  byte 296    low   -> w 10   v 639        wrote 40 hi 39 hib 159
+  byte 296    high  -> w 10   v 783        wrote 40 hi 39 hib 159
+  byte 304    low   -> w 11   v 1207       wrote 40 hi 39 hib 159
+  byte 304    high  -> w 11   v 1479       wrote 40 hi 39 hib 159
+  byte 312    low   -> w 11   v 1775       wrote 40 hi 39 hib 159
+  byte 312    high  -> w 11   v 2175       wrote 40 hi 39 hib 159
+  byte 320    low   -> w 12   v 71         wrote 40 hi 39 hib 159
+  byte 320    high  -> w 12   v 87         wrote 40 hi 39 hib 159
+  byte 328    low   -> w 12   v 639        wrote 40 hi 39 hib 159
+  byte 328    high  -> w 12   v 783        wrote 40 hi 39 hib 159
+  byte 336    low   -> w 13   v 1207       wrote 40 hi 39 hib 159
+  byte 336    high  -> w 13   v 1479       wrote 40 hi 39 hib 159
+  byte 344    low   -> w 13   v 1775       wrote 40 hi 39 hib 159
+  byte 344    high  -> w 13   v 2175       wrote 40 hi 39 hib 159
+  byte 352    low   -> w 14   v 71         wrote 40 hi 39 hib 159
+  byte 352    high  -> w 14   v 87         wrote 40 hi 39 hib 159
+  byte 360    low   -> w 14   v 639        wrote 40 hi 39 hib 159
+  byte 360    high  -> w 14   v 783        wrote 40 hi 39 hib 159
+  byte 368    low   -> w 15   v 1207       wrote 40 hi 39 hib 159
+  byte 368    high  -> w 15   v 1479       wrote 40 hi 39 hib 159
+  byte 376    low   -> w 15   v 1775       wrote 40 hi 39 hib 159
+  byte 376    high  -> w 15   v 2175       wrote 40 hi 39 hib 159
+  byte 384    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 384    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 392    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 392    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 400    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 400    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 408    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 408    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 416    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 416    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 424    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 424    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 432    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 432    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 440    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 440    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 448    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 448    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 456    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 456    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 464    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 464    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 472    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 472    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 480    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 480    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 488    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 488    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 496    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 496    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 504    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 504    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 512    low   -> w 0    v 2343       wrote 40 hi 39 hib 159
+  byte 512    high  -> w 0    v 2871       wrote 40 hi 39 hib 159
+  byte 520    low   -> w 0    v 2911       wrote 40 hi 39 hib 159
+  byte 520    high  -> w 0    v 3567       wrote 40 hi 39 hib 159
+  byte 528    low   -> w 1    v 3479       wrote 40 hi 39 hib 159
+  byte 528    high  -> w 1    v 4263       wrote 40 hi 39 hib 159
+  byte 536    low   -> w 1    v 4047       wrote 40 hi 39 hib 159
+  byte 536    high  -> w 1    v 4959       wrote 40 hi 39 hib 159
+  byte 544    low   -> w 2    v 2343       wrote 40 hi 39 hib 159
+  byte 544    high  -> w 2    v 2871       wrote 40 hi 39 hib 159
+  byte 552    low   -> w 2    v 2911       wrote 40 hi 39 hib 159
+  byte 552    high  -> w 2    v 3567       wrote 40 hi 39 hib 159
+  byte 560    low   -> w 3    v 3479       wrote 40 hi 39 hib 159
+  byte 560    high  -> w 3    v 4263       wrote 40 hi 39 hib 159
+  byte 568    low   -> w 3    v 4047       wrote 40 hi 39 hib 159
+  byte 568    high  -> w 3    v 4959       wrote 40 hi 39 hib 159
+  byte 576    low   -> w 4    v 2343       wrote 40 hi 39 hib 159
+  byte 576    high  -> w 4    v 2871       wrote 40 hi 39 hib 159
+  byte 584    low   -> w 4    v 2911       wrote 40 hi 39 hib 159
+  byte 584    high  -> w 4    v 3567       wrote 40 hi 39 hib 159
+  byte 592    low   -> w 5    v 3479       wrote 40 hi 39 hib 159
+  byte 592    high  -> w 5    v 4263       wrote 40 hi 39 hib 159
+  byte 600    low   -> w 5    v 4047       wrote 40 hi 39 hib 159
+  byte 600    high  -> w 5    v 4959       wrote 40 hi 39 hib 159
+  byte 608    low   -> w 6    v 2343       wrote 40 hi 39 hib 159
+  byte 608    high  -> w 6    v 2871       wrote 40 hi 39 hib 159
+  byte 616    low   -> w 6    v 2911       wrote 40 hi 39 hib 159
+  byte 616    high  -> w 6    v 3567       wrote 40 hi 39 hib 159
+  byte 624    low   -> w 7    v 3479       wrote 40 hi 39 hib 159
+  byte 624    high  -> w 7    v 4263       wrote 40 hi 39 hib 159
+  byte 632    low   -> w 7    v 4047       wrote 40 hi 39 hib 159
+  byte 632    high  -> w 7    v 4959       wrote 40 hi 39 hib 159
+  byte 640    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 640    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 648    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 648    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 656    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 656    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 664    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 664    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 672    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 672    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 680    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 680    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 688    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 688    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 696    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 696    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 704    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 704    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 712    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 712    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 720    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 720    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 728    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 728    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 736    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 736    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 744    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 744    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 752    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 752    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 760    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 760    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 768    low   -> w 8    v 2343       wrote 40 hi 39 hib 159
+  byte 768    high  -> w 8    v 2871       wrote 40 hi 39 hib 159
+  byte 776    low   -> w 8    v 2911       wrote 40 hi 39 hib 159
+  byte 776    high  -> w 8    v 3567       wrote 40 hi 39 hib 159
+  byte 784    low   -> w 9    v 3479       wrote 40 hi 39 hib 159
+  byte 784    high  -> w 9    v 4263       wrote 40 hi 39 hib 159
+  byte 792    low   -> w 9    v 4047       wrote 40 hi 39 hib 159
+  byte 792    high  -> w 9    v 4959       wrote 40 hi 39 hib 159
+  byte 800    low   -> w 10   v 2343       wrote 40 hi 39 hib 159
+  byte 800    high  -> w 10   v 2871       wrote 40 hi 39 hib 159
+  byte 808    low   -> w 10   v 2911       wrote 40 hi 39 hib 159
+  byte 808    high  -> w 10   v 3567       wrote 40 hi 39 hib 159
+  byte 816    low   -> w 11   v 3479       wrote 40 hi 39 hib 159
+  byte 816    high  -> w 11   v 4263       wrote 40 hi 39 hib 159
+  byte 824    low   -> w 11   v 4047       wrote 40 hi 39 hib 159
+  byte 824    high  -> w 11   v 4959       wrote 40 hi 39 hib 159
+  byte 832    low   -> w 12   v 2343       wrote 40 hi 39 hib 159
+  byte 832    high  -> w 12   v 2871       wrote 40 hi 39 hib 159
+  byte 840    low   -> w 12   v 2911       wrote 40 hi 39 hib 159
+  byte 840    high  -> w 12   v 3567       wrote 40 hi 39 hib 159
+  byte 848    low   -> w 13   v 3479       wrote 40 hi 39 hib 159
+  byte 848    high  -> w 13   v 4263       wrote 40 hi 39 hib 159
+  byte 856    low   -> w 13   v 4047       wrote 40 hi 39 hib 159
+  byte 856    high  -> w 13   v 4959       wrote 40 hi 39 hib 159
+  byte 864    low   -> w 14   v 2343       wrote 40 hi 39 hib 159
+  byte 864    high  -> w 14   v 2871       wrote 40 hi 39 hib 159
+  byte 872    low   -> w 14   v 2911       wrote 40 hi 39 hib 159
+  byte 872    high  -> w 14   v 3567       wrote 40 hi 39 hib 159
+  byte 880    low   -> w 15   v 3479       wrote 40 hi 39 hib 159
+  byte 880    high  -> w 15   v 4263       wrote 40 hi 39 hib 159
+  byte 888    low   -> w 15   v 4047       wrote 40 hi 39 hib 159
+  byte 888    high  -> w 15   v 4959       wrote 40 hi 39 hib 159
+  byte 896    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 896    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 904    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 904    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 912    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 912    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 920    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 920    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 928    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 928    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 936    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 936    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 944    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 944    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 952    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 952    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 960    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 960    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 968    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 968    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 976    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 976    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 984    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 984    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 992    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 992    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1000   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1000   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1008   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1008   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1016   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1016   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1024   low   -> w 16   v 71         wrote 40 hi 39 hib 159
+  byte 1024   high  -> w 16   v 87         wrote 40 hi 39 hib 159
+  byte 1032   low   -> w 16   v 639        wrote 40 hi 39 hib 159
+  byte 1032   high  -> w 16   v 783        wrote 40 hi 39 hib 159
+  byte 1040   low   -> w 17   v 1207       wrote 40 hi 39 hib 159
+  byte 1040   high  -> w 17   v 1479       wrote 40 hi 39 hib 159
+  byte 1048   low   -> w 17   v 1775       wrote 40 hi 39 hib 159
+  byte 1048   high  -> w 17   v 2175       wrote 40 hi 39 hib 159
+  byte 1056   low   -> w 18   v 71         wrote 40 hi 39 hib 159
+  byte 1056   high  -> w 18   v 87         wrote 40 hi 39 hib 159
+  byte 1064   low   -> w 18   v 639        wrote 40 hi 39 hib 159
+  byte 1064   high  -> w 18   v 783        wrote 40 hi 39 hib 159
+  byte 1072   low   -> w 19   v 1207       wrote 40 hi 39 hib 159
+  byte 1072   high  -> w 19   v 1479       wrote 40 hi 39 hib 159
+  byte 1080   low   -> w 19   v 1775       wrote 40 hi 39 hib 159
+  byte 1080   high  -> w 19   v 2175       wrote 40 hi 39 hib 159
+  byte 1088   low   -> w 20   v 71         wrote 40 hi 39 hib 159
+  byte 1088   high  -> w 20   v 87         wrote 40 hi 39 hib 159
+  byte 1096   low   -> w 20   v 639        wrote 40 hi 39 hib 159
+  byte 1096   high  -> w 20   v 783        wrote 40 hi 39 hib 159
+  byte 1104   low   -> w 21   v 1207       wrote 40 hi 39 hib 159
+  byte 1104   high  -> w 21   v 1479       wrote 40 hi 39 hib 159
+  byte 1112   low   -> w 21   v 1775       wrote 40 hi 39 hib 159
+  byte 1112   high  -> w 21   v 2175       wrote 40 hi 39 hib 159
+  byte 1120   low   -> w 22   v 71         wrote 40 hi 39 hib 159
+  byte 1120   high  -> w 22   v 87         wrote 40 hi 39 hib 159
+  byte 1128   low   -> w 22   v 639        wrote 40 hi 39 hib 159
+  byte 1128   high  -> w 22   v 783        wrote 40 hi 39 hib 159
+  byte 1136   low   -> w 23   v 1207       wrote 40 hi 39 hib 159
+  byte 1136   high  -> w 23   v 1479       wrote 40 hi 39 hib 159
+  byte 1144   low   -> w 23   v 1775       wrote 40 hi 39 hib 159
+  byte 1144   high  -> w 23   v 2175       wrote 40 hi 39 hib 159
+  byte 1152   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1152   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1160   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1160   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1168   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1168   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1176   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1176   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1184   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1184   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1192   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1192   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1200   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1200   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1208   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1208   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1216   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1216   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1224   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1224   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1232   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1232   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1240   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1240   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1248   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1248   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1256   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1256   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1264   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1264   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1272   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1272   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1280   low   -> w 24   v 71         wrote 40 hi 39 hib 159
+  byte 1280   high  -> w 24   v 87         wrote 40 hi 39 hib 159
+  byte 1288   low   -> w 24   v 639        wrote 40 hi 39 hib 159
+  byte 1288   high  -> w 24   v 783        wrote 40 hi 39 hib 159
+  byte 1296   low   -> w 25   v 1207       wrote 40 hi 39 hib 159
+  byte 1296   high  -> w 25   v 1479       wrote 40 hi 39 hib 159
+  byte 1304   low   -> w 25   v 1775       wrote 40 hi 39 hib 159
+  byte 1304   high  -> w 25   v 2175       wrote 40 hi 39 hib 159
+  byte 1312   low   -> w 26   v 71         wrote 40 hi 39 hib 159
+  byte 1312   high  -> w 26   v 87         wrote 40 hi 39 hib 159
+  byte 1320   low   -> w 26   v 639        wrote 40 hi 39 hib 159
+  byte 1320   high  -> w 26   v 783        wrote 40 hi 39 hib 159
+  byte 1328   low   -> w 27   v 1207       wrote 40 hi 39 hib 159
+  byte 1328   high  -> w 27   v 1479       wrote 40 hi 39 hib 159
+  byte 1336   low   -> w 27   v 1775       wrote 40 hi 39 hib 159
+  byte 1336   high  -> w 27   v 2175       wrote 40 hi 39 hib 159
+  byte 1344   low   -> w 28   v 71         wrote 40 hi 39 hib 159
+  byte 1344   high  -> w 28   v 87         wrote 40 hi 39 hib 159
+  byte 1352   low   -> w 28   v 639        wrote 40 hi 39 hib 159
+  byte 1352   high  -> w 28   v 783        wrote 40 hi 39 hib 159
+  byte 1360   low   -> w 29   v 1207       wrote 40 hi 39 hib 159
+  byte 1360   high  -> w 29   v 1479       wrote 40 hi 39 hib 159
+  byte 1368   low   -> w 29   v 1775       wrote 40 hi 39 hib 159
+  byte 1368   high  -> w 29   v 2175       wrote 40 hi 39 hib 159
+  byte 1376   low   -> w 30   v 71         wrote 40 hi 39 hib 159
+  byte 1376   high  -> w 30   v 87         wrote 40 hi 39 hib 159
+  byte 1384   low   -> w 30   v 639        wrote 40 hi 39 hib 159
+  byte 1384   high  -> w 30   v 783        wrote 40 hi 39 hib 159
+  byte 1392   low   -> w 31   v 1207       wrote 40 hi 39 hib 159
+  byte 1392   high  -> w 31   v 1479       wrote 40 hi 39 hib 159
+  byte 1400   low   -> w 31   v 1775       wrote 40 hi 39 hib 159
+  byte 1400   high  -> w 31   v 2175       wrote 40 hi 39 hib 159
+  byte 1408   low   -> w 32   v 71         wrote 40 hi 39 hib 159
+  byte 1408   high  -> w 32   v 87         wrote 40 hi 39 hib 159
+  byte 1416   low   -> w 32   v 639        wrote 40 hi 39 hib 159
+  byte 1416   high  -> w 32   v 783        wrote 40 hi 39 hib 159
+  byte 1424   low   -> w 33   v 1207       wrote 40 hi 39 hib 159
+  byte 1424   high  -> w 33   v 1479       wrote 40 hi 39 hib 159
+  byte 1432   low   -> w 33   v 1775       wrote 40 hi 39 hib 159
+  byte 1432   high  -> w 33   v 2175       wrote 40 hi 39 hib 159
+  byte 1440   low   -> w 34   v 71         wrote 40 hi 39 hib 159
+  byte 1440   high  -> w 34   v 87         wrote 40 hi 39 hib 159
+  byte 1448   low   -> w 34   v 639        wrote 40 hi 39 hib 159
+  byte 1448   high  -> w 34   v 783        wrote 40 hi 39 hib 159
+  byte 1456   low   -> w 35   v 1207       wrote 40 hi 39 hib 159
+  byte 1456   high  -> w 35   v 1479       wrote 40 hi 39 hib 159
+  byte 1464   low   -> w 35   v 1775       wrote 40 hi 39 hib 159
+  byte 1464   high  -> w 35   v 2175       wrote 40 hi 39 hib 159
+  byte 1472   low   -> w 36   v 71         wrote 40 hi 39 hib 159
+  byte 1472   high  -> w 36   v 87         wrote 40 hi 39 hib 159
+  byte 1480   low   -> w 36   v 639        wrote 40 hi 39 hib 159
+  byte 1480   high  -> w 36   v 783        wrote 40 hi 39 hib 159
+  byte 1488   low   -> w 37   v 1207       wrote 40 hi 39 hib 159
+  byte 1488   high  -> w 37   v 1479       wrote 40 hi 39 hib 159
+  byte 1496   low   -> w 37   v 1775       wrote 40 hi 39 hib 159
+  byte 1496   high  -> w 37   v 2175       wrote 40 hi 39 hib 159
+  byte 1504   low   -> w 38   v 71         wrote 40 hi 39 hib 159
+  byte 1504   high  -> w 38   v 87         wrote 40 hi 39 hib 159
+  byte 1512   low   -> w 38   v 639        wrote 40 hi 39 hib 159
+  byte 1512   high  -> w 38   v 783        wrote 40 hi 39 hib 159
+  byte 1520   low   -> w 39   v 1207       wrote 40 hi 39 hib 159
+  byte 1520   high  -> w 39   v 1479       wrote 40 hi 39 hib 159
+  byte 1528   low   -> w 39   v 1775       wrote 40 hi 39 hib 159
+  byte 1528   high  -> w 39   v 2175       wrote 40 hi 39 hib 159
+  byte 1536   low   -> w 16   v 2343       wrote 40 hi 39 hib 159
+  byte 1536   high  -> w 16   v 2871       wrote 40 hi 39 hib 159
+  byte 1544   low   -> w 16   v 2911       wrote 40 hi 39 hib 159
+  byte 1544   high  -> w 16   v 3567       wrote 40 hi 39 hib 159
+  byte 1552   low   -> w 17   v 3479       wrote 40 hi 39 hib 159
+  byte 1552   high  -> w 17   v 4263       wrote 40 hi 39 hib 159
+  byte 1560   low   -> w 17   v 4047       wrote 40 hi 39 hib 159
+  byte 1560   high  -> w 17   v 4959       wrote 40 hi 39 hib 159
+  byte 1568   low   -> w 18   v 2343       wrote 40 hi 39 hib 159
+  byte 1568   high  -> w 18   v 2871       wrote 40 hi 39 hib 159
+  byte 1576   low   -> w 18   v 2911       wrote 40 hi 39 hib 159
+  byte 1576   high  -> w 18   v 3567       wrote 40 hi 39 hib 159
+  byte 1584   low   -> w 19   v 3479       wrote 40 hi 39 hib 159
+  byte 1584   high  -> w 19   v 4263       wrote 40 hi 39 hib 159
+  byte 1592   low   -> w 19   v 4047       wrote 40 hi 39 hib 159
+  byte 1592   high  -> w 19   v 4959       wrote 40 hi 39 hib 159
+  byte 1600   low   -> w 20   v 2343       wrote 40 hi 39 hib 159
+  byte 1600   high  -> w 20   v 2871       wrote 40 hi 39 hib 159
+  byte 1608   low   -> w 20   v 2911       wrote 40 hi 39 hib 159
+  byte 1608   high  -> w 20   v 3567       wrote 40 hi 39 hib 159
+  byte 1616   low   -> w 21   v 3479       wrote 40 hi 39 hib 159
+  byte 1616   high  -> w 21   v 4263       wrote 40 hi 39 hib 159
+  byte 1624   low   -> w 21   v 4047       wrote 40 hi 39 hib 159
+  byte 1624   high  -> w 21   v 4959       wrote 40 hi 39 hib 159
+  byte 1632   low   -> w 22   v 2343       wrote 40 hi 39 hib 159
+  byte 1632   high  -> w 22   v 2871       wrote 40 hi 39 hib 159
+  byte 1640   low   -> w 22   v 2911       wrote 40 hi 39 hib 159
+  byte 1640   high  -> w 22   v 3567       wrote 40 hi 39 hib 159
+  byte 1648   low   -> w 23   v 3479       wrote 40 hi 39 hib 159
+  byte 1648   high  -> w 23   v 4263       wrote 40 hi 39 hib 159
+  byte 1656   low   -> w 23   v 4047       wrote 40 hi 39 hib 159
+  byte 1656   high  -> w 23   v 4959       wrote 40 hi 39 hib 159
+  byte 1664   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1664   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1672   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1672   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1680   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1680   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1688   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1688   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1696   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1696   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1704   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1704   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1712   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1712   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1720   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1720   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1728   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1728   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1736   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1736   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1744   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1744   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1752   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1752   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1760   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1760   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1768   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1768   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1776   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1776   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1784   low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1784   high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 1792   low   -> w 24   v 2343       wrote 40 hi 39 hib 159
+  byte 1792   high  -> w 24   v 2871       wrote 40 hi 39 hib 159
+  byte 1800   low   -> w 24   v 2911       wrote 40 hi 39 hib 159
+  byte 1800   high  -> w 24   v 3567       wrote 40 hi 39 hib 159
+  byte 1808   low   -> w 25   v 3479       wrote 40 hi 39 hib 159
+  byte 1808   high  -> w 25   v 4263       wrote 40 hi 39 hib 159
+  byte 1816   low   -> w 25   v 4047       wrote 40 hi 39 hib 159
+  byte 1816   high  -> w 25   v 4959       wrote 40 hi 39 hib 159
+  byte 1824   low   -> w 26   v 2343       wrote 40 hi 39 hib 159
+  byte 1824   high  -> w 26   v 2871       wrote 40 hi 39 hib 159
+  byte 1832   low   -> w 26   v 2911       wrote 40 hi 39 hib 159
+  byte 1832   high  -> w 26   v 3567       wrote 40 hi 39 hib 159
+  byte 1840   low   -> w 27   v 3479       wrote 40 hi 39 hib 159
+  byte 1840   high  -> w 27   v 4263       wrote 40 hi 39 hib 159
+  byte 1848   low   -> w 27   v 4047       wrote 40 hi 39 hib 159
+  byte 1848   high  -> w 27   v 4959       wrote 40 hi 39 hib 159
+  byte 1856   low   -> w 28   v 2343       wrote 40 hi 39 hib 159
+  byte 1856   high  -> w 28   v 2871       wrote 40 hi 39 hib 159
+  byte 1864   low   -> w 28   v 2911       wrote 40 hi 39 hib 159
+  byte 1864   high  -> w 28   v 3567       wrote 40 hi 39 hib 159
+  byte 1872   low   -> w 29   v 3479       wrote 40 hi 39 hib 159
+  byte 1872   high  -> w 29   v 4263       wrote 40 hi 39 hib 159
+  byte 1880   low   -> w 29   v 4047       wrote 40 hi 39 hib 159
+  byte 1880   high  -> w 29   v 4959       wrote 40 hi 39 hib 159
+  byte 1888   low   -> w 30   v 2343       wrote 40 hi 39 hib 159
+  byte 1888   high  -> w 30   v 2871       wrote 40 hi 39 hib 159
+  byte 1896   low   -> w 30   v 2911       wrote 40 hi 39 hib 159
+  byte 1896   high  -> w 30   v 3567       wrote 40 hi 39 hib 159
+  byte 1904   low   -> w 31   v 3479       wrote 40 hi 39 hib 159
+  byte 1904   high  -> w 31   v 4263       wrote 40 hi 39 hib 159
+  byte 1912   low   -> w 31   v 4047       wrote 40 hi 39 hib 159
+  byte 1912   high  -> w 31   v 4959       wrote 40 hi 39 hib 159
+  byte 1920   low   -> w 32   v 2343       wrote 40 hi 39 hib 159
+  byte 1920   high  -> w 32   v 2871       wrote 40 hi 39 hib 159
+  byte 1928   low   -> w 32   v 2911       wrote 40 hi 39 hib 159
+  byte 1928   high  -> w 32   v 3567       wrote 40 hi 39 hib 159
+  byte 1936   low   -> w 33   v 3479       wrote 40 hi 39 hib 159
+  byte 1936   high  -> w 33   v 4263       wrote 40 hi 39 hib 159
+  byte 1944   low   -> w 33   v 4047       wrote 40 hi 39 hib 159
+  byte 1944   high  -> w 33   v 4959       wrote 40 hi 39 hib 159
+  byte 1952   low   -> w 34   v 2343       wrote 40 hi 39 hib 159
+  byte 1952   high  -> w 34   v 2871       wrote 40 hi 39 hib 159
+  byte 1960   low   -> w 34   v 2911       wrote 40 hi 39 hib 159
+  byte 1960   high  -> w 34   v 3567       wrote 40 hi 39 hib 159
+  byte 1968   low   -> w 35   v 3479       wrote 40 hi 39 hib 159
+  byte 1968   high  -> w 35   v 4263       wrote 40 hi 39 hib 159
+  byte 1976   low   -> w 35   v 4047       wrote 40 hi 39 hib 159
+  byte 1976   high  -> w 35   v 4959       wrote 40 hi 39 hib 159
+  byte 1984   low   -> w 36   v 2343       wrote 40 hi 39 hib 159
+  byte 1984   high  -> w 36   v 2871       wrote 40 hi 39 hib 159
+  byte 1992   low   -> w 36   v 2911       wrote 40 hi 39 hib 159
+  byte 1992   high  -> w 36   v 3567       wrote 40 hi 39 hib 159
+  byte 2000   low   -> w 37   v 3479       wrote 40 hi 39 hib 159
+  byte 2000   high  -> w 37   v 4263       wrote 40 hi 39 hib 159
+  byte 2008   low   -> w 37   v 4047       wrote 40 hi 39 hib 159
+  byte 2008   high  -> w 37   v 4959       wrote 40 hi 39 hib 159
+  byte 2016   low   -> w 38   v 2343       wrote 40 hi 39 hib 159
+  byte 2016   high  -> w 38   v 2871       wrote 40 hi 39 hib 159
+  byte 2024   low   -> w 38   v 2911       wrote 40 hi 39 hib 159
+  byte 2024   high  -> w 38   v 3567       wrote 40 hi 39 hib 159
+  byte 2032   low   -> w 39   v 3479       wrote 40 hi 39 hib 159
+  byte 2032   high  -> w 39   v 4263       wrote 40 hi 39 hib 159
+  byte 2040   low   -> w 39   v 4047       wrote 40 hi 39 hib 159
+  byte 2040   high  -> w 39   v 4959       wrote 40 hi 39 hib 159
+
+##### 5) SIZE_E_2 across all eight. 3 gives 40, 1 gives 32.        #####
+
+===== ARM 0x4050=0x00023033
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 32 hi 31 hib 127
+  byte 0      high  -> w 0    v 142        wrote 32 hi 31 hib 127
+  byte 8      low   -> w 1    v 1207       wrote 32 hi 31 hib 127
+  byte 8      high  -> w 1    v 1278       wrote 32 hi 31 hib 127
+  byte 16     low   -> w 2    v 71         wrote 32 hi 31 hib 127
+  byte 16     high  -> w 2    v 142        wrote 32 hi 31 hib 127
+  byte 24     low   -> w 3    v 1207       wrote 32 hi 31 hib 127
+  byte 24     high  -> w 3    v 1278       wrote 32 hi 31 hib 127
+  byte 32     low   -> w 4    v 71         wrote 32 hi 31 hib 127
+  byte 32     high  -> w 4    v 142        wrote 32 hi 31 hib 127
+  byte 40     low   -> w 5    v 1207       wrote 32 hi 31 hib 127
+  byte 40     high  -> w 5    v 1278       wrote 32 hi 31 hib 127
+  byte 48     low   -> w 6    v 71         wrote 32 hi 31 hib 127
+  byte 48     high  -> w 6    v 142        wrote 32 hi 31 hib 127
+  byte 56     low   -> w 7    v 1207       wrote 32 hi 31 hib 127
+  byte 56     high  -> w 7    v 1278       wrote 32 hi 31 hib 127
+  byte 64     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 64     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+
+===== ARM 0x4050=0x00023133
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 32 hi 31 hib 127
+  byte 0      high  -> w 0    v 142        wrote 32 hi 31 hib 127
+  byte 8      low   -> w 1    v 1207       wrote 32 hi 31 hib 127
+  byte 8      high  -> w 1    v 1278       wrote 32 hi 31 hib 127
+  byte 16     low   -> w 2    v 71         wrote 32 hi 31 hib 127
+  byte 16     high  -> w 2    v 142        wrote 32 hi 31 hib 127
+  byte 24     low   -> w 3    v 1207       wrote 32 hi 31 hib 127
+  byte 24     high  -> w 3    v 1278       wrote 32 hi 31 hib 127
+  byte 32     low   -> w 4    v 71         wrote 32 hi 31 hib 127
+  byte 32     high  -> w 4    v 142        wrote 32 hi 31 hib 127
+  byte 40     low   -> w 5    v 1207       wrote 32 hi 31 hib 127
+  byte 40     high  -> w 5    v 1278       wrote 32 hi 31 hib 127
+  byte 48     low   -> w 6    v 71         wrote 32 hi 31 hib 127
+  byte 48     high  -> w 6    v 142        wrote 32 hi 31 hib 127
+  byte 56     low   -> w 7    v 1207       wrote 32 hi 31 hib 127
+  byte 56     high  -> w 7    v 1278       wrote 32 hi 31 hib 127
+  byte 64     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 64     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+
+===== ARM 0x4050=0x00023233
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 36 hi 35 hib 143
+  byte 0      high  -> w 0    v 142        wrote 36 hi 35 hib 143
+  byte 8      low   -> w 1    v 1207       wrote 36 hi 35 hib 143
+  byte 8      high  -> w 1    v 1278       wrote 36 hi 35 hib 143
+  byte 16     low   -> w 2    v 71         wrote 36 hi 35 hib 143
+  byte 16     high  -> w 2    v 142        wrote 36 hi 35 hib 143
+  byte 24     low   -> w 3    v 1207       wrote 36 hi 35 hib 143
+  byte 24     high  -> w 3    v 1278       wrote 36 hi 35 hib 143
+  byte 32     low   -> w 4    v 71         wrote 36 hi 35 hib 143
+  byte 32     high  -> w 4    v 142        wrote 36 hi 35 hib 143
+  byte 40     low   -> w 5    v 1207       wrote 36 hi 35 hib 143
+  byte 40     high  -> w 5    v 1278       wrote 36 hi 35 hib 143
+  byte 48     low   -> w 6    v 71         wrote 36 hi 35 hib 143
+  byte 48     high  -> w 6    v 142        wrote 36 hi 35 hib 143
+  byte 56     low   -> w 7    v 1207       wrote 36 hi 35 hib 143
+  byte 56     high  -> w 7    v 1278       wrote 36 hi 35 hib 143
+  byte 64     low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 64     high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 72     low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 72     high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 80     low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 80     high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 88     low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 88     high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 96     low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 96     high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 104    low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 104    high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 112    low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 112    high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 120    low   -> NOTHING LIT            wrote 36 hi 35 hib 143
+  byte 120    high  -> NOTHING LIT            wrote 36 hi 35 hib 143
+
+===== ARM 0x4050=0x00023333
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 159
+  byte 0      high  -> w 0    v 142        wrote 40 hi 39 hib 159
+  byte 8      low   -> w 1    v 1207       wrote 40 hi 39 hib 159
+  byte 8      high  -> w 1    v 1278       wrote 40 hi 39 hib 159
+  byte 16     low   -> w 2    v 71         wrote 40 hi 39 hib 159
+  byte 16     high  -> w 2    v 142        wrote 40 hi 39 hib 159
+  byte 24     low   -> w 3    v 1207       wrote 40 hi 39 hib 159
+  byte 24     high  -> w 3    v 1278       wrote 40 hi 39 hib 159
+  byte 32     low   -> w 4    v 71         wrote 40 hi 39 hib 159
+  byte 32     high  -> w 4    v 142        wrote 40 hi 39 hib 159
+  byte 40     low   -> w 5    v 1207       wrote 40 hi 39 hib 159
+  byte 40     high  -> w 5    v 1278       wrote 40 hi 39 hib 159
+  byte 48     low   -> w 6    v 71         wrote 40 hi 39 hib 159
+  byte 48     high  -> w 6    v 142        wrote 40 hi 39 hib 159
+  byte 56     low   -> w 7    v 1207       wrote 40 hi 39 hib 159
+  byte 56     high  -> w 7    v 1278       wrote 40 hi 39 hib 159
+  byte 64     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 64     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 72     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 72     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 80     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 80     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 88     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 88     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 96     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 96     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 104    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 104    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 112    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 112    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 120    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 120    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+
+===== ARM 0x4050=0x00023433
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   29.762618] rocket 27700000.npu: NPU job timed out
+[   29.763353] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 15[   29.764279] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+9
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hi[   29.765545] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+b 0
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 [   29.766947] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hib 0
+  byte 8      high  -> NOTHING LIT            wrote 0 hi [   29.768059] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hib 0
+  byte 16     low   -> NOTHING LIT            wrote 0 h[   29.769301] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+i 0 hib 0
+  byte 16     high  -> NOTHING LIT            wrote 0[   29.770582] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hi 0 hib 0
+  byte 24     low   -> NOTHING LIT            wrote[   29.771866] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hi 0 hib 0
+  byte 24     high  -> NOTHING LIT            wro[   29.773081] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+te 0 hi 0 hib 0
+  byte 32     low   -> NOTHING LIT            w[   29.774346] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+rote 0 hi 0 hib 0
+  byte 32     high  -> NOTHING LIT           [   29.775611] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ wrote 0 hi 0 hib 0
+  byte 40     low   -> NOTHING LIT         [   29.776835] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   wrote 0 hi 0 hib 0
+  byte 40     high  -> NOTHING LIT       [   29.778094] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+     wrote 0 hi 0 hib 0
+  byte 48     low   -> NOTHING LIT     [   29.779478] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+       wrote 0 hi 0 hib 0
+  byte 48     high  -> NOTHING LIT   [   29.780725] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+         wrote 0 hi 0 hib 0
+  byte 56     low   -> NOTHING LIT [   29.781988] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+           wrote 0 hi 0 hib 0
+  byte 56     high  -> NOTHING LI[   29.783282] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+T            wrote 0 hi 0 hib 0
+  byte 64     low   -> NOTHING [   29.784430] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+LIT            wrote 0 hi 0 hib 0
+  byte 64     high  -> NOTHIN[   29.785625] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+G LIT            wrote 0 hi 0 hib 0
+  byte 72     low   -> NOTH[   29.786869] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ING LIT            wrote 0 hi 0 hib 0
+  byte 72     high  -> NO[   29.788114] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+THING LIT            wrote 0 hi 0 hib 0
+  byte 80     low   -> [   29.789454] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 80     high  -[   29.790786] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     low  [   29.792016] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     hig[   29.793212] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+h  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     l[   29.794506] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ow   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96    [   29.795707] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104 [   29.796898] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 10[   29.798168] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+4    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte [   29.799525] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byt[   29.800801] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4050=0x00023533
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   32.482697] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 15[   32.483457] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+9
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.484830] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.486118] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.487668] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.488946] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.490329] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.491865] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.493124] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.494554] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.495883] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.497156] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib[   32.498398] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.499771] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.501099] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.502423] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.503786] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.505122] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.506472] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.507821] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib[   32.509136] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.510515] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.511752] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.513096] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib[   32.514408] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.515777] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.517095] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.518512] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.519890] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.521272] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.522672] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   32.523994] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4050=0x00023633
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   35.170616] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 15[   35.171385] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+9
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.172742] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.174071] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.175614] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.176940] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.178257] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.179758] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.180999] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.182386] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.183794] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.185058] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.186395] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.187808] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.189121] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.190465] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.191792] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.193101] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.194474] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.195773] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.197109] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.198459] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.199788] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.201171] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.202585] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.203903] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.205284] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.206652] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.207998] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib[   35.209310] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.210657] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   35.211996] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4050=0x00023733
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   37.890612] rocket 27700000.npu: NPU job timed out
+[   37.891338] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 15[   37.892326] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+9
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hi[   37.893529] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+b 0
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 [   37.894897] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hib 0
+  byte 8      high  -> NOTHING LIT            wrote 0 hi [   37.895968] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hib 0
+  byte 16     low   -> NOTHING LIT            wrote 0 h[   37.897187] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+i 0 hib 0
+  byte 16     high  -> NOTHING LIT            wrote 0[   37.898481] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hi 0 hib 0
+  byte 24     low   -> NOTHING LIT            wrote[   37.899777] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hi 0 hib 0
+  byte 24     high  -> NOTHING LIT            wro[   37.901017] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+te 0 hi 0 hib 0
+  byte 32     low   -> NOTHING LIT            w[   37.902275] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+rote 0 hi 0 hib 0
+  byte 32     high  -> NOTHING LIT           [   37.903599] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ wrote 0 hi 0 hib 0
+  byte 40     low   -> NOTHING LIT         [   37.904833] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   wrote 0 hi 0 hib 0
+  byte 40     high  -> NOTHING LIT       [   37.906106] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+     wrote 0 hi 0 hib 0
+  byte 48     low   -> NOTHING LIT     [   37.907412] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+       wrote 0 hi 0 hib 0
+  byte 48     high  -> NOTHING LIT   [   37.908656] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+         wrote 0 hi 0 hib 0
+  byte 56     low   -> NOTHING LIT [   37.909847] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+           wrote 0 hi 0 hib 0
+  byte 56     high  -> NOTHING LI[   37.911123] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+T            wrote 0 hi 0 hib 0
+  byte 64     low   -> NOTHING [   37.912353] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+LIT            wrote 0 hi 0 hib 0
+  byte 64     high  -> NOTHIN[   37.913628] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+G LIT            wrote 0 hi 0 hib 0
+  byte 72     low   -> NOTH[   37.914936] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ING LIT            wrote 0 hi 0 hib 0
+  byte 72     high  -> NO[   37.916188] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+THING LIT            wrote 0 hi 0 hib 0
+  byte 80     low   -> [   37.917443] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 80     high  -[   37.918768] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     low  [   37.919997] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     hig[   37.921214] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+h  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     l[   37.922415] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ow   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96    [   37.923739] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104 [   37.924976] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 10[   37.926249] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+4    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte [   37.927557] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byt[   37.928794] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+##### 6) OUT_PRECISION on 0x4010. int4 is 5, int8 is 0.            #####
+
+===== ARM 0x4010=0x00000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   40.610607] rocket 27700000.npu: NPU job timed out
+[   40.611333] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      low   -> NOTHING LIT            wrote 4 hi 3 hib 1[   40.612324] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+5
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hi[   40.613523] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+b 0
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 [   40.614875] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hib 0
+  byte 8      high  -> NOTHING LIT            wrote 0 hi [   40.615961] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hib 0
+  byte 16     low   -> NOTHING LIT            wrote 0 h[   40.617183] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+i 0 hib 0
+  byte 16     high  -> NOTHING LIT            wrote 0[   40.618478] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hi 0 hib 0
+  byte 24     low   -> NOTHING LIT            wrote[   40.619752] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hi 0 hib 0
+  byte 24     high  -> NOTHING LIT            wro[   40.621015] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+te 0 hi 0 hib 0
+  byte 32     low   -> NOTHING LIT            w[   40.622271] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+rote 0 hi 0 hib 0
+  byte 32     high  -> NOTHING LIT           [   40.623597] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ wrote 0 hi 0 hib 0
+  byte 40     low   -> NOTHING LIT         [   40.624832] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   wrote 0 hi 0 hib 0
+  byte 40     high  -> NOTHING LIT       [   40.626106] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+     wrote 0 hi 0 hib 0
+  byte 48     low   -> NOTHING LIT     [   40.627412] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+       wrote 0 hi 0 hib 0
+  byte 48     high  -> NOTHING LIT   [   40.628657] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+         wrote 0 hi 0 hib 0
+  byte 56     low   -> NOTHING LIT [   40.629858] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+           wrote 0 hi 0 hib 0
+  byte 56     high  -> NOTHING LI[   40.631123] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+T            wrote 0 hi 0 hib 0
+  byte 64     low   -> NOTHING [   40.632360] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+LIT            wrote 0 hi 0 hib 0
+  byte 64     high  -> NOTHIN[   40.633624] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+G LIT            wrote 0 hi 0 hib 0
+  byte 72     low   -> NOTH[   40.634946] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ING LIT            wrote 0 hi 0 hib 0
+  byte 72     high  -> NO[   40.636185] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+THING LIT            wrote 0 hi 0 hib 0
+  byte 80     low   -> [   40.637455] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 80     high  -[   40.638762] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     low  [   40.640007] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     hig[   40.641210] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+h  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     l[   40.642466] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ow   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96    [   40.643739] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104 [   40.645159] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 10[   40.646259] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+4    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte [   40.647606] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byt[   40.648882] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4010=0x20000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   43.330623] rocket 27700000.npu: NPU job timed out
+[   43.331391] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      low   -> NOTHING LIT            wrote 8 hi 7 hib 3[   43.332379] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+1
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hi[   43.333644] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+b 0
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 [   43.335232] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hib 0
+  byte 8      high  -> NOTHING LIT            wrote 0 hi [   43.336274] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hib 0
+  byte 16     low   -> NOTHING LIT            wrote 0 h[   43.337462] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+i 0 hib 0
+  byte 16     high  -> NOTHING LIT            wrote 0[   43.338806] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hi 0 hib 0
+  byte 24     low   -> NOTHING LIT            wrote[   43.339956] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hi 0 hib 0
+  byte 24     high  -> NOTHING LIT            wro[   43.341219] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+te 0 hi 0 hib 0
+  byte 32     low   -> NOTHING LIT            w[   43.342543] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+rote 0 hi 0 hib 0
+  byte 32     high  -> NOTHING LIT           [   43.343707] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ wrote 0 hi 0 hib 0
+  byte 40     low   -> NOTHING LIT         [   43.344965] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   wrote 0 hi 0 hib 0
+  byte 40     high  -> NOTHING LIT       [   43.346230] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+     wrote 0 hi 0 hib 0
+  byte 48     low   -> NOTHING LIT     [   43.347594] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+       wrote 0 hi 0 hib 0
+  byte 48     high  -> NOTHING LIT   [   43.348792] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+         wrote 0 hi 0 hib 0
+  byte 56     low   -> NOTHING LIT [   43.350012] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+           wrote 0 hi 0 hib 0
+  byte 56     high  -> NOTHING LI[   43.351222] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+T            wrote 0 hi 0 hib 0
+  byte 64     low   -> NOTHING [   43.352502] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+LIT            wrote 0 hi 0 hib 0
+  byte 64     high  -> NOTHIN[   43.353767] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+G LIT            wrote 0 hi 0 hib 0
+  byte 72     low   -> NOTH[   43.355033] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ING LIT            wrote 0 hi 0 hib 0
+  byte 72     high  -> NO[   43.356324] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+THING LIT            wrote 0 hi 0 hib 0
+  byte 80     low   -> [   43.357589] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 80     high  -[   43.358892] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     low  [   43.360074] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     hig[   43.361343] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+h  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     l[   43.362664] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ow   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96    [   43.363829] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104 [   43.365036] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+   low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 10[   43.366243] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+4    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte [   43.367661] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byt[   43.368887] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4010=0x40000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   46.018614] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> w 0    v 71         wrote 8 hi 7 hib 31
+[   46.019356] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.020745] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.022104] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.023563] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.024878] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.026263] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.027850] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.029210] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.030587] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.031934] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.033194] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.034526] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.035811] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.037141] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.038519] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.039823] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.041156] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.042523] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.043835] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.045096] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.046360] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.047733] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.049094] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.050424] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.051785] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.053112] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.054540] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.055723] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.056984] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.058326] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   46.059647] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4010=0x60000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   48.738614] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> w 0    v 71         wrote 8 hi 7 hib 31
+[   48.739358] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.740738] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.742042] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.743492] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.745005] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.746239] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.747613] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.748936] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.750181] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.751657] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.752903] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.754219] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.755531] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.756801] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.758119] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.759511] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.760824] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.762138] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.763550] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.764864] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.766178] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.767584] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.768900] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.770216] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.771629] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.772886] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.774204] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.775618] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.776930] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.778247] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   48.779650] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4010=0x80000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 0      high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 8      low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 8      high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 16     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 16     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 24     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 24     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 32     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 32     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 40     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 40     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 48     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 48     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 56     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 56     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 64     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 64     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 72     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 72     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 80     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 80     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 88     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 88     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 96     low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 96     high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 104    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 104    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 112    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 112    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 120    low   -> NOTHING LIT            wrote 40 hi 39 hib 159
+  byte 120    high  -> NOTHING LIT            wrote 40 hi 39 hib 159
+
+===== ARM 0x4010=0xc0000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   52.482612] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> NOTHING LIT            wrote 4 hi 3 hib 1[   52.483367] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+5
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.484767] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.486126] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.487615] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.488925] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.490311] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.491897] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.493259] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.494790] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.496119] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.497382] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.498802] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.500132] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.501467] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.502956] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.504287] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.505620] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.507036] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.508296] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.509561] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.511052] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.512383] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.513717] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.515188] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.516519] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.517854] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.519345] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.520674] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.522009] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.523479] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   52.524810] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== ARM 0x4010=0xe0000002
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 128.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   55.202566] rocket 27700000.npu: NPU job timed out
+[   55.203293] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 0      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   55.204280] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib[   55.205483] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 h[   55.206896] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ib 0
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0[   55.208034] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hib 0
+  byte 16     low   -> NOTHING LIT            wrote 0 hi[   55.209301] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hib 0
+  byte 16     high  -> NOTHING LIT            wrote 0 [   55.210586] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hi 0 hib 0
+  byte 24     low   -> NOTHING LIT            wrote [   55.211936] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hi 0 hib 0
+  byte 24     high  -> NOTHING LIT            wrot[   55.213015] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 0 hi 0 hib 0
+  byte 32     low   -> NOTHING LIT            wr[   55.214283] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ote 0 hi 0 hib 0
+  byte 32     high  -> NOTHING LIT            [   55.215621] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+wrote 0 hi 0 hib 0
+  byte 40     low   -> NOTHING LIT          [   55.216775] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  wrote 0 hi 0 hib 0
+  byte 40     high  -> NOTHING LIT        [   55.218055] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+    wrote 0 hi 0 hib 0
+  byte 48     low   -> NOTHING LIT      [   55.219379] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+      wrote 0 hi 0 hib 0
+  byte 48     high  -> NOTHING LIT    [   55.220507] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+        wrote 0 hi 0 hib 0
+  byte 56     low   -> NOTHING LIT  [   55.221712] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+          wrote 0 hi 0 hib 0
+  byte 56     high  -> NOTHING LIT[   55.223026] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+            wrote 0 hi 0 hib 0
+  byte 64     low   -> NOTHING L[   55.224187] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+IT            wrote 0 hi 0 hib 0
+  byte 64     high  -> NOTHING[   55.225454] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ LIT            wrote 0 hi 0 hib 0
+  byte 72     low   -> NOTHI[   55.226857] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NG LIT            wrote 0 hi 0 hib 0
+  byte 72     high  -> NOT[   55.228086] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+HING LIT            wrote 0 hi 0 hib 0
+  byte 80     low   -> N[   55.229348] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+OTHING LIT            wrote 0 hi 0 hib 0
+  byte 80     high  ->[   55.230670] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     low   [   55.231899] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+-> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 88     high[   55.233111] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     lo[   55.234315] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+w   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 96     [   55.235566] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104  [   55.236808] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 104[   55.238076] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 1[   55.239469] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+12    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte[   55.240697] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== 7) both fixes at once. Do they compose or fight.             =====
+layout probe M=1 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 256.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+[   57.890604] rocket 27700000.npu: NPU job timed out
+  byte 0      low   -> w 0    v 71         wrote 40 hi 39 hib 15[   57.891364] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+9
+  byte 0      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.892765] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.894078] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 8      high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.895583] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.897040] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 16     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.898268] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.899714] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 24     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.901027] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.902411] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 32     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.903886] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.905275] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 40     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.906700] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.908061] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 48     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.909443] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.910907] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 56     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.912292] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.913676] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 64     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.915106] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.916501] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 72     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.917885] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.919326] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 80     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.920718] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.922117] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 88     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.923461] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.924795] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 96     high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.926180] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.927646] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 104    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.929032] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.930485] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 112    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.931768] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 120    low   -> NOTHING LIT            wrote 0 hi 0 hib[   57.933077] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 120    high  -> NOTHING LIT            wrote 0 hi 0 h[   57.934345] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ib 0
+  byte 128    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.935738] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 128    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.937077] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 136    low   -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.938507] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 136    high  -> NOTHING LIT            wrote 0 hi 0 hib 0[   57.939804] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+
+  byte 144    low   -> NOTHING LIT            wrote 0 hi 0 hib[   57.941114] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0
+  byte 144    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+[   58.466629] rocket 27700000.npu: NPU job timed out
+[   58.467360] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  byte 152    low   -> NOTHING LIT            wrote 40 hi 39 hib[   58.468358] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 159
+  byte 152    high  -> NOTHING LIT            wrote 0 hi 0[   58.469565] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ hib 0
+  byte 160    low   -> NOTHING LIT            wrote 0 hi[   58.470911] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ 0 hib 0
+  byte 160    high  -> NOTHING LIT            wrote 0 [   58.472063] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+hi 0 hib 0
+  byte 168    low   -> NOTHING LIT            wrote [   58.473322] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+0 hi 0 hib 0
+  byte 168    high  -> NOTHING LIT            wrot[   58.474664] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+e 0 hi 0 hib 0
+  byte 176    low   -> NOTHING LIT            wr[   58.475817] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ote 0 hi 0 hib 0
+  byte 176    high  -> NOTHING LIT            [   58.477079] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+wrote 0 hi 0 hib 0
+  byte 184    low   -> NOTHING LIT          [   58.478347] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  wrote 0 hi 0 hib 0
+  byte 184    high  -> NOTHING LIT        [   58.479733] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+    wrote 0 hi 0 hib 0
+  byte 192    low   -> NOTHING LIT      [   58.480981] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+      wrote 0 hi 0 hib 0
+  byte 192    high  -> NOTHING LIT    [   58.482184] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+        wrote 0 hi 0 hib 0
+  byte 200    low   -> NOTHING LIT  [   58.483461] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+          wrote 0 hi 0 hib 0
+  byte 200    high  -> NOTHING LIT[   58.484681] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+            wrote 0 hi 0 hib 0
+  byte 208    low   -> NOTHING L[   58.485946] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+IT            wrote 0 hi 0 hib 0
+  byte 208    high  -> NOTHING[   58.487198] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ LIT            wrote 0 hi 0 hib 0
+  byte 216    low   -> NOTHI[   58.488432] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+NG LIT            wrote 0 hi 0 hib 0
+  byte 216    high  -> NOT[   58.489769] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+HING LIT            wrote 0 hi 0 hib 0
+  byte 224    low   -> N[   58.491044] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+OTHING LIT            wrote 0 hi 0 hib 0
+  byte 224    high  ->[   58.492326] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 232    low   [   58.493589] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+-> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 232    high[   58.494869] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 240    lo[   58.496072] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+w   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 240    [   58.497278] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 248    low   -> NOTHING LIT            wrote 0 hi 0 hib 0
+  byte 248    high  -> NOTHING LIT            wrote 0 hi 0 hib 0
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== the anchor again                                             =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== byte 8's k first. Nothing else in this round matters if 0.   =====
+
+RK3576 NPU bringup
+rock4d login: 

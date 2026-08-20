@@ -2,78 +2,79 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 271. Is the doubled run real k, or two groups aliased.
+# 2026-08-20 round 272. One of 270's two hits is real. Map it, and find out
+# what it costs.
 #
-# 270 HIT, twice, and on the half it was aimed at. Two CONV_CON1 arms turned the
-# run from one group a channel into TWO:
+# ⚠ 270 FOUND TWO FIELDS THAT DOUBLE THE RUN AND THEY ARE NOT THE SAME THING.
+# --map could not tell them apart because it only reports which word lights.
+# --kpair did, in one entry:
 #
-#   0x100c = 0x20000120   RESERVED_1 48 -> 0        0 0 1 1 2 2 3 3 4 4 5 5 ...
-#   0x100c = 0x20600020   PROC_PRECISION 2 -> 0     0 0 1 1 2 2 3 3 4 4 5 5 ...
+#   0x100c RESERVED_1 = 0        byte 0 low k0, byte 0 HIGH ALSO k0 with a
+#                                different value, byte 8 k8, k = byte mod 32
+#                                -> the byte is being read as ONE weight. This
+#                                   does not fix int4, it TURNS IT OFF.
 #
-# Sixteen bytes a channel a pass instead of eight is 32 nibbles, and with the
-# pass at B+256 that is 64 k, which is exactly the half that was missing. Both
-# arms left "wrote" at 40, so the channel count did not move, which is the split
-# from 269 holding up.
+#   0x100c PROC_PRECISION = 0    byte 0 low k0 high k1, byte 8 low k16 high k17,
+#                                byte 16 -> w1 k0
+#                                -> nibble packing intact and the run really is
+#                                   32 k a pass. This one is real.
 #
-# ⚠ AND IT MIGHT BE NOTHING. --map only says which WORD lights. Two groups
-# feeding one channel at the SAME k looks identical to two groups feeding it at
-# k 0-15 and k 16-31. One is the fix and the other is an aliasing bug that
-# happens to look like it. --kpair can tell them apart and nothing else in this
-# tool can, so that is entries 2 and 3 and they come before anything else.
+# The derived prediction was byte 8 at k 16 and that is what the second arm did,
+# four of six points. The other two moved meaning: bytes 256 and 264 used to be
+# the same channel at k+32 and are now channel 8 at k 0 and 16. So where k 32
+# through 63 comes from is no longer known, and entry 2 of this round is that.
 #
-# THE REST OF 270. RESERVED_1 is heavily load bearing: 0 doubles the run, and
-# 16, 32 and 96 all go completely dark, with 48 the shipped value. GROUP_LINE_OFF
-# is inert. IN_PRECISION 2 -> 0 HALVES it again rather than doubling.
+# ⚠ AND ENTRY 4 OF 271 MEASURED THE WRONG ARM. The script fixed $FIX to the
+# RESERVED_1 value before anything knew which of the two was real, so the full
+# sweep that was meant to be the new map is a map of byte mode. Redone here.
 #
-# On the DPU half exactly one field moved the channel count:
+# THE REST OF 271, all null for the halving.
 #
-#   0x4050 SIZE_E_2 3 -> 1     wrote 40 -> 32
+#   SIZE_E_2   0 -> 32   1 -> 32   2 -> 36   3 -> 40   4..7 hang
+#              an additive 0, 0, 4, 8 on top of N/2. NOTHING gives 64.
+#   OUT_PRECISION on 0x4010   4 runs and fetches nothing, everything else
+#              except the shipped 5 hangs. Not the halving either.
 #
-# So the +1 in 8*(N/16 + 1) is SIZE_E_2, which contributes 8 at 3 and 0 at 1.
-# The halving is NOT there: int8 runs SIZE_E_2 = 1 and gets all 64, int4 runs
-# SIZE_E_2 = 1 and gets 32. RGP_CNTER, SIZE_E_1 and OD_BYPASS are all inert,
-# RESERVED_0 hangs. 0x4038's NOTCH_ADDR_0 hangs and NOTCH_ADDR_1 is inert.
-# 0x4058 is inert in both its fields, which settles it: the register that NAMES
-# the output channel count is not what bounds it.
+# So after four rounds NOTHING has moved the N/2. Every clean arm ever run
+# reports wrote = 40 unless SIZE_E_2 changed the additive part.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND. Six bytes under the RESERVED_1 fix. The claim being
-#   tested makes a derived prediction, not a guess:
+#   ⚠ ENTRY 3 IS WHAT DECIDES IF THE FIX IS USABLE. PROC_PRECISION is the
+#   arithmetic mode. Under it the measured value at byte 0 fell from 0x1bbc,
+#   7100, to 0x379, 889, so the multiply is NOT the same operation. The output
+#   formula in the README, ((int16)fp16bits(w) * (int16)fp16bits(a)) >> 16, was
+#   solved at 18 of 18 points under the SHIPPED setting and has no standing
+#   under this one. Sweeping the live nibble over seven values under both says
+#   whether a formula still exists here at all.
 #
-#     byte 0   -> w0 k0     byte 16  -> w1 k0      byte 256 -> w0 k32
-#     byte 8   -> w0 k16    byte 24  -> w1 k16     byte 264 -> w0 k48
+#     the values move monotonically with the nibble    a formula exists and can
+#                                                      be re-derived
+#     they do not move, or move without order          the mode is unusable and
+#                                                      the layout fix costs the
+#                                                      output, which is a trade
+#                                                      not a fix
 #
-#     byte 8 lands at k 16   the run really is 32 k a pass, the second pass at
-#                            +256 takes it to 64, and the k shortfall is FIXED
-#     byte 8 lands at k 0    two groups alias onto one k. The doubling is a bug
-#                            that looks like the fix and 270's hit is worthless
-#     byte 8 lands elsewhere write down where before deciding which it is
+#   ENTRY 2 is the whole buffer under the real arm. It should reach the same 40
+#   channels with twice the k, and it says where k 32 to 63 lives now.
 #
-#   ENTRY 3 asks the same six of the PROC_PRECISION arm. Two different fields
-#   produced the same word pattern in 270 and there is no reason yet to think
-#   they do the same thing underneath. If the two disagree on k, they do not.
+#   ENTRY 4 asks a geometry question nothing has ever asked: M = 2. Every
+#   measurement of the channel count in this project has been at M = 1, and
+#   N/2 + 8 is fitted entirely inside that. If M moves it, the halving is not
+#   about N.
 #
-#   ENTRY 4 is the whole buffer under the fix. If entry 2 says fixed, this is
-#   the new map and it should reach the same 40 channels with twice the bytes.
+#   ENTRY 5 sweeps the DPU's own PROC_PRECISION at 0x4010, which is the same
+#   field name in a different register and has never been varied. 271 swept
+#   OUT_PRECISION there and held this one at 2 throughout.
 #
-#   ENTRY 5 sweeps SIZE_E_2 across all eight values. 3 gives 40 and 1 gives 32,
-#   so the field contributes an additive term and this reads the whole table. If
-#   any value gives 64 the channel count is done; if none does, the halving is
-#   elsewhere and the table still says what SIZE_E_2 means.
-#
-#   ENTRY 6 sweeps OUT_PRECISION on 0x4010 DATA_FORMAT, which is 5 for int4 and
-#   0 for int8 and has never been varied. It is the last unswept difference
-#   between the two paths that is not the requant.
-#
-#   ENTRY 7 combines the CONV_CON1 fix with SIZE_E_2, to see whether two fixes
-#   compose or fight.
+#   ENTRY 6 combines the real fix with SIZE_E_2 = 2, which is the only other
+#   value that runs and changes anything.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 CH=/opt/charsiu/charsiu_int4
-FIX=0x100c=0x20000120
+FIX=0x100c=0x20600020
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -104,7 +105,7 @@ c() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
 	before=$(nbad)
 	sleep 1
-	env $1 $CH $2 $3 $4 $5 $6 $7 > "$C" 2>&1
+	env $1 $2 $CH $3 $4 $5 $6 $7 $8 > "$C" 2>&1
 	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
 	return 0
 }
@@ -126,46 +127,43 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. kpair under RESERVED_1=0. byte 8 must be k 16. ====="
+	log "===== 2) the whole buffer under the REAL fix, PROC_PRECISION=0     ====="
 	log ""
-	c "CHARSIU_OVERRIDE=$FIX CHARSIU_KPAIR_BYTES=0,8,16,24,256,264" 1 64 64 --kpair
+	c "CHARSIU_OVERRIDE=$FIX" X=1 1 64 64 --map 8
 
 	log ""
-	log "===== 3) the same six under PROC_PRECISION=0. Do they agree.       ====="
-	c "CHARSIU_OVERRIDE=0x100c=0x20600020 CHARSIU_KPAIR_BYTES=0,8,16,24,256,264" 1 64 64 --kpair
+	log "===== 3) k 32 to 63. Where does the second half live now.          ====="
+	c "CHARSIU_OVERRIDE=$FIX" CHARSIU_KPAIR_BYTES=0,8,16,128,256,512,1024 1 64 64 --kpair
 
 	log ""
-	log "===== 4) the whole buffer under the fix                            ====="
-	c "CHARSIU_OVERRIDE=$FIX" 1 64 64 --map 8
-
-	log ""
-	log "##### 5) SIZE_E_2 across all eight. 3 gives 40, 1 gives 32.        #####"
-	for v in 0x00023033 0x00023133 0x00023233 0x00023333 0x00023433 0x00023533 0x00023633 0x00023733
+	log "##### 4) DOES A FORMULA STILL EXIST. live nibble 1 2 3 4 5 7 15    #####"
+	for L in 1 2 3 4 5 7 15
 	do
 		log ""
-		log "===== ARM 0x4050=$v"
-		c "CHARSIU_OVERRIDE=0x4050=$v" 1 64 64 --map 8 128
+		log "===== nibble $L   SHIPPED"
+		c "CHARSIU_INT4_LIVE=$L" X=1 1 64 64 --map 8 8
+		log "===== nibble $L   PROC_PRECISION=0"
+		c "CHARSIU_INT4_LIVE=$L" "CHARSIU_OVERRIDE=$FIX" 1 64 64 --map 8 8
 	done
 
 	log ""
-	log "##### 6) OUT_PRECISION on 0x4010. int4 is 5, int8 is 0.            #####"
-	for v in 0x00000002 0x20000002 0x40000002 0x60000002 0x80000002 0xc0000002 0xe0000002
-	do
-		log ""
-		log "===== ARM 0x4010=$v"
-		c "CHARSIU_OVERRIDE=0x4010=$v" 1 64 64 --map 8 128
-	done
+	log "===== 5) M = 2. Nothing has ever varied M. Does wrote move.        ====="
+	c "X=1" X=2 2 64 64 --map 8 128
 
 	log ""
-	log "===== 7) both fixes at once. Do they compose or fight.             ====="
-	c "CHARSIU_OVERRIDE=$FIX,0x4050=0x00023733" 1 64 64 --map 8 256
+	log "===== 6) the DPU's own PROC_PRECISION at 0x4010, 2 -> 0            ====="
+	c "CHARSIU_OVERRIDE=0x4010=0xa0000000" X=1 1 64 64 --map 8 128
+
+	log ""
+	log "===== 7) the real fix plus SIZE_E_2 = 2                            ====="
+	c "CHARSIU_OVERRIDE=$FIX,0x4050=0x00023233" X=1 1 64 64 --map 8 256
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== byte 8's k first. Nothing else in this round matters if 0.   ====="
+	log "===== entry 4 decides whether the fix is a fix or a trade.         ====="
 	sync
 }
 case "$1" in
