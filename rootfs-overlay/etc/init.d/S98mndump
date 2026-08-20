@@ -2,83 +2,87 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 268. Against int8, which is byte exact, at the same shapes.
+# 2026-08-20 round 269. Fourteen registers separate a path that computes every
+# channel from one that computes forty. Flip them one at a time.
 #
-# WHAT 267 SETTLED. The dense sweep closed the discriminator on the clean side:
-# the number of words ever lit EQUALS the number written, at all three
-# geometries. 16 of 16, 24 of 24, 40 of 40. Words 32 to 39 at N = 64 are lit;
-# 266's sparse byte list simply never hit the bytes that reach them. So nothing
-# is writing channels it does not compute, and the whole map is:
+# ⚠ FIRST, THE HARNESS. Round 268's entry 2 DIED AND NOTHING SAID SO. Its first
+# probe timed out, the iommu raw reset failed 125 times, and 105 of its 108
+# lines reported "wrote 0" on a block that was already gone. The poison gate has
+# been in this script since round 250 and it only ever wrapped the tflite runs;
+# the charsiu runs had none. Same mistake, new place. Every charsiu arm goes
+# through the gate now.
 #
-#   N=64            N=32              N=16
-#      0: w0-7         0: w0-7           0: w0-7
-#     64: .           64: .             64: w8-15
-#    128: w8-15      128: w8-15        128: .
-#    192: .          192: w16-23       192: .
-#    256: w0-7'      256: w0-7'        256: w0-7'
-#    320: .          320: .            320: w8-15'
-#    384: w8-15'     384: w8-15'       384: .
-#    448: .          448: w16-23'      448: .
-#    512: w16-23     512+: all dark    (' is the same channel at k + 32)
-#    640: w24-31
-#    704: w32-39
-#    768: w16-23'
-#    896: w24-31'
-#    960: w32-39'
-#   1024+: all dark
+# Entries 3 to 7 of 268 were clean, 0 timeouts and 0 reset failures, and the
+# closing anchor was 128/128, so what follows stands on those.
 #
-# TWO NUMBERS COME OUT OF IT AND THEY ARE DIFFERENT PROBLEMS.
+# WHAT 268 SETTLED. int8 is the oracle and it computes everything it is asked
+# for. Its highest written byte is N-1 at both N = 32 and N = 64, no weight byte
+# anywhere in its buffer is dead, and its law came out whole:
 #
-#   channels reached = N/2 + 8      16, 24, 40 at N = 16, 32, 64
-#   k per channel    = 32           two groups of eight bytes, at B and B+256,
-#                                   sixteen nibbles each, while K is 64
+#   int8:  channel = 32*(B/2048) + (B/32) mod 32
+#          k       = B mod 32 + 32*((B/1024) mod 2)
+#          64 bytes a channel, 64 k, nothing left over
 #
-# The second one is not the first one in disguise. Every channel that exists at
-# all gets exactly half its k, whatever N is.
+#   int4:  two groups of eight bytes, at B and B+256, 16 nibbles each
+#          32 k a channel against a K of 64, and 8*(N/16 + 1) channels
 #
-# WHAT THIS ROUND DOES. Stops reasoning about it and diffs against int8, which
-# is byte exact on this silicon and whose map this project has already validated
-# --map against. Same K, same three N, same probe, same stride, one flag.
+# The two are the SAME SHAPE with int4's runs half as long. int8 reads 32 bytes
+# a channel a pass and takes two passes to cover 64 k. int4 reads 8 and takes
+# two, so it covers 32. To cover 64 it would have to read 16.
 #
-# ⚠ int8 writes ONE BYTE a channel where w4a16 writes four, so the line now
-# carries hib, the highest byte written, as well as the word count. A 64 channel
-# int8 job touches 64 bytes and 16 words; a 40 channel one touches 40 and 10.
-# Read hib for the int8 arm and the word count for the int4 arm.
+# N/2 + 8 is now five points, and 48 and 128 were derived rather than fitted:
+# 32 channels and 64 live groups at N = 48, 72 and 144 at N = 128, four for
+# four. Written as an iteration it is 8*(N/16 + 1) groups of eight, where N/8
+# would be right, so the count is HALVED AND THEN INCREMENTED.
+#
+# WHAT THIS ROUND DOES. A stream dump went into the tool, so the baseline is in
+# this log rather than recomputed by hand, and CHARSIU_OVERRIDE sets any single
+# register from the environment. Diffing int8's stream against int4's at the
+# same K and N leaves exactly fourteen registers, three of which are the requant
+# and settled, one of which is the precision itself. Ten are left and each gets
+# an arm.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ THE ORACLE, entries 2 to 4. int8 at N = 16, 32 and 64.
+#   ⚠ TWO NUMBERS PER ARM, and they are independent.
 #
-#     hib = N-1 every time    int8 computes every channel it is asked for, and
-#                             both of the numbers above are int4 path defects,
-#                             in the registers that differ between the paths
-#     hib = N/2 + 7           the shortfall is not about int4 at all. It follows
-#                             the probe's own geometry, m = 1, and the thing to
-#                             fix is the job, not the precision
-#     no dead region in int8  then the dead half is int4's too, and the k
-#                             shortfall and the channel shortfall are one bug
+#     wrote      the channel count. 40 at baseline, 64 would be right.
+#     the words  baseline is w0 w1 w2 w3 w4 w5 w6 w7 then eight dark, one group
+#                a channel. Two groups a channel reads w0 w0 w1 w1 w2 w2 w3 w3.
 #
-#   ⚠ THE EXTENSION, entries 5 and 6. N = 48 and N = 128, neither a power of
-#   two step from what has been measured. N/2 + 8 says 32 channels and 72, and
-#   two groups a channel says 64 live groups and 144. Four numbers, and they are
-#   derived rather than fitted, since the formula was read off 16, 32 and 64.
+#     an arm that changes wrote        found the channel count
+#     an arm that doubles the groups   found the k shortfall
+#     an arm that does both            they were one bug
+#     an arm that hangs                the gate says so and the round continues
 #
-#     all four land           N/2 + 8 is a law and not three points in a row
-#     N = 48 lands, 128 does not
-#                             there is a ceiling, and 72 against 64 says where
-#     neither                 the formula was three coincidences and the block
-#                             layout above is what to fit instead
+#   ⚠ THE BASELINE MUST REPRODUCE. Entry 3 is the same probe 267 and 268 ran.
+#   40 channels, w0 through w7, bytes 64 to 127 dark. If it does not, the
+#   override plumbing broke the stream and every arm below is void.
 #
-#   ⚠ THE CONTROL THAT MUST NOT MOVE. int8 at N = 16 must reproduce the map
-#   this project already recorded for it, n = byte/32 with no dead region. If it
-#   does not, --map is still broken and the int4 arms this round are void.
+#   ⚠ 0x101c IS NOT SWEPT and that is deliberate: it is the real size of the
+#   weight buffer, and int8's value is twice what is allocated here.
+#
+#   No prediction on which of the ten. Written predictions have gone 4 of 6 and
+#   then 3 of 6, and both times the misses were extrapolation rather than
+#   reading. Ten arms is cheap enough not to need a guess.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
+CH=/opt/charsiu/charsiu_int4
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
+
+health() {
+	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > /tmp/hc.txt 2>&1
+	if grep -q "128/128 channels match" /tmp/hc.txt; then
+		log "  !! health OK, the block recovered, continuing"
+	else
+		log "  !! health FAILED, the block is gone. ABORTING the round."
+		ABORT=1
+	fi
+}
 
 w() {
 	[ "$ABORT" = "1" ] && return 0
@@ -88,18 +92,18 @@ w() {
 	sleep 1
 	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
 		python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1
-	after=$(nbad)
-	if [ "$after" != "$before" ]; then
-		log "  !! POISON in this entry. The block faulted. This result is VOID."
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" \
-			> /tmp/hc.txt 2>&1
-		if grep -q "128/128 channels match" /tmp/hc.txt; then
-			log "  !! health OK, the block recovered, continuing"
-		else
-			log "  !! health FAILED, the block is gone. ABORTING the round."
-			ABORT=1
-		fi
-	fi
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This entry is VOID."; health; }
+	return 0
+}
+
+# the charsiu gate, which round 268 did not have
+c() {
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
+	before=$(nbad)
+	sleep 1
+	env $1 $CH $2 $3 $4 $5 $6 $7 > "$C" 2>&1
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
+	return 0
 }
 
 start() {
@@ -119,37 +123,38 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) INT8 N = 16, the oracle. hib must be 15 if it computes all ====="
+	log "===== 2) the int4 baseline stream, so the sweep has a reference    ====="
 	log ""
-	sleep 1
-	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 16 --map 8 > "$C" 2>&1
+	c "X=1" 1 64 64 --stream
 
 	log ""
-	log "===== 3) INT8 N = 32. hib 31 if it computes all, 23 if it does not ====="
+	log "===== 3) BASELINE int4 N=64. Must be 40 channels, w0..w7, 64+ dark ====="
 	sleep 1
-	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 32 --map 8 > "$C" 2>&1
+	c "X=1" 1 64 64 --map 8 256
+
+	for a in \
+		"0x100c=0" \
+		"0x1020=0x40" \
+		"0x1028=0x0001003f" \
+		"0x1030=0x00800000" \
+		"0x103c=0x00010000" \
+		"0x1044=0x00010001" \
+		"0x4030=0x003f0710" \
+		"0x4038=0x00120080" \
+		"0x4044=0x00000001" \
+		"0x4050=0x80011111"
+	do
+		log ""
+		log "===== ARM $a   (int4 -> its int8 value)"
+		c "CHARSIU_OVERRIDE=$a" 1 64 64 --map 8 128
+	done
 
 	log ""
-	log "===== 4) INT8 N = 64. hib 63 if it computes all, 39 if it does not ====="
-	sleep 1
-	env CHARSIU_MAP_W8=1 /opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
-
-	log ""
-	log "===== 5) int4 N = 48. N/2+8 says 32 channels and 64 live groups.   ====="
-	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 48 --map 8 > "$C" 2>&1
-
-	log ""
-	log "===== 6) int4 N = 128. N/2+8 says 72 channels and 144 live groups. ====="
-	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 128 --map 8 > "$C" 2>&1
-
-	log ""
-	log "===== 7) the anchor again                                          ====="
+	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== int8's hib first. Everything else depends on which way it is ====="
+	log "===== wrote != 40 found the channels. w0 w0 w1 w1 found the k.     ====="
 	sync
 }
 case "$1" in
