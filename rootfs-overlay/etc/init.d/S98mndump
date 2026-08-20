@@ -2,56 +2,54 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-19 round 260. The five fields in 0x4050 nobody can explain.
+# 2026-08-20 round 261. Where int4's k = 16 and above live.
 #
-# WHY THIS ONE. It is the only thing owed on the list that is also late. I told
-# Igor Paunovic that a value nobody can explain is a value nobody should be
-# asked to review, said the sweep would happen before the Mesa series went out,
-# then opened MR 43804 carrying all five, and said so again on-list today.
+# WHY THIS AND NOT MORE MESA. int4 is the only 2x left and its semantics are
+# settled: the w4a16 output is
 #
-# Checked before building, because the last six rounds re-derived something the
-# repository already had. No board log contains RGP_CNTER or OW_SRC, no round
-# has varied them, and neither existing knob can: ROCKET_DPU4050_CONST forces
-# upstream's whole word and ROCKET_DPU4050_MOD32 picks the other rule.
-# ROCKET_DPU4050 replaces the word outright, which is what this needs.
+#   out = ((int16)fp16bits(w) * (int16)fp16bits(a)) >> 16
 #
-# WHAT IS BEING SWEPT. Against registers.xml, this driver's 0x80011111 and
-# upstream's 0x124 differ in five fields. Each entry moves exactly ONE of them
-# to upstream's value and leaves the other four alone. The words are derived
-# from the field positions rather than typed by hand.
+# exact at 18 measured points, with a four point prediction written into the
+# board script before the run and no error in it. The wedge that used to leave
+# the NPU unable to start the next job is localised and fixed. What is left
+# between here and an int4 projection is ONE thing, the layout above k = 15.
 #
-#   field        ours  upstream  word
-#   RGP_CNTER       8         0  0x00011111
-#   RESERVED_0     34         0  0x80000111
-#   SIZE_E_1        0         1  0x80011131
-#   SIZE_E_0        4         1  0x80011105
-#   OW_SRC          1         0  0x80011110
+# WHAT IS ACTUALLY MISSING. The layout charsiu has is
 #
-# SIZE_E_2 is not in the sweep. It is the one field that already has a reason:
-# it is what the two words this driver picks between differ in, and forcing it
-# was measured to time out at 16 output channels.
+#   channel n at (n / 32) * 512 + (n % 32) * 8, eight bytes
+#   byte b nibble h is k = 2b + h
 #
-# THE READING RULE, fixed before the run.
+# Eight bytes is sixteen nibbles, so that describes k = 0 to 15 and nothing
+# above it. At 64 by 64 the weight buffer is 2048 bytes and the formula accounts
+# for 512, so three quarters of it is unexplained and k = 16 upward is in there.
+# ⚠The map calls those bytes dead. They are not dead, they were never paired
+# with an input past k = 15, which is the only reason nothing lit.
 #
-#   Baseline is entry 1 and the same model unchanged. Every sweep entry is read
-#   against it, on the same model, in the same boot.
+# THE PROBE ALREADY EXISTS. --kpair puts one live nibble at a byte, walks a one
+# hot input through every k, and prints BOTH the k it pairs with and the first
+# channel that lights. It was only ever pointed at bytes 0 to 8 and 512. This
+# round points it at the unexplained region.
 #
-#     a field whose entry is identical to the baseline is NOT load bearing.
-#     Say so in the commit that emits it, or drop it and use upstream's value.
+# THE READING RULE, fixed before the run, and two bytes decide it alone.
 #
-#     a field whose entry degrades or hangs IS load bearing, and the answer to
-#     the reviewer is that line of the log.
+#   byte 8    channel 1 and k = 0   eight bytes per channel, a k block elsewhere
+#             channel 0 and k = 16  sixteen contiguous bytes per channel
 #
-#   ⚠ Both outcomes are useful and neither is a failure. The point is that
-#   five values currently sit in an open merge request with nothing behind them.
+#   byte 256  channel 0 and k = 16  the k block is at +256
+#             nothing, or channel 32 with k = 0
+#                                   the k block is further out and 256 is
+#                                   still channel space
 #
-#   ⚠ Two models, because one is not enough to tell "this field does nothing"
-#   from "this field does nothing at this shape". conv2d-cal is 128 output
-#   channels and takes the even word; pw64x88w56 is 88 and takes the same word,
-#   and it is a pointwise, so the datapath differs.
+#   ⚠ Byte 0 is the baseline and must come back channel 0, k = 0. If it does
+#   not, the shape or the packer moved under me and nothing below counts.
 #
-#   ⚠ A hang poisons what follows. The gate is in place and a poisoned entry is
-#   void.
+#   ⚠ A byte that pairs with MORE THAN ONE k is a broadcast, which is the thing
+#   this probe was written to catch. Read the count in brackets, not just the
+#   first number.
+#
+#   ⚠ Bytes 1024 and up only exist because the buffer is 2048. If they light
+#   nothing at all, the layout does not use the top half at 64 by 64 and that
+#   is a result too.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -95,37 +93,25 @@ start() {
 	fi
 
 	log ""
-	log "===== 1) the baseline, our word unchanged                          ====="
+	log "===== 1) the NPU still computes, so a null result means the probe  ====="
+	log "=====    and not a dead block                                      ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2-6) ONE FIELD AT A TIME, moved to upstream's value          ====="
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x00011111"
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x80000111"
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x80011131"
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x80011105"
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x80011110"
+	log "===== 2) THE LAYOUT PROBE. One live nibble per byte, a one hot     ====="
+	log "=====    input walking k, reading the k AND the channel.           ====="
+	log ""
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
 
 	log ""
-	log "===== 7) the baseline again, so drift across the sweep is visible  ====="
-	w conv2d-cal.tflite ""
+	log "===== 3) the same at a wider k, so a block boundary that is a      ====="
+	log "=====    function of k rather than a constant shows up             ====="
+	sleep 1
+	/opt/charsiu/charsiu_int4 1 128 64 --kpair > "$C" 2>&1
 
 	log ""
-	log "===== 8-13) the same five on a pointwise at 88 output channels     ====="
-	w pw64x88w56.tflite ""
-	w pw64x88w56.tflite "ROCKET_DPU4050=0x00011111"
-	w pw64x88w56.tflite "ROCKET_DPU4050=0x80000111"
-	w pw64x88w56.tflite "ROCKET_DPU4050=0x80011131"
-	w pw64x88w56.tflite "ROCKET_DPU4050=0x80011105"
-	w pw64x88w56.tflite "ROCKET_DPU4050=0x80011110"
-
-	log ""
-	log "===== 14) upstream's whole word, which is expected to fail and is  ====="
-	log "=====     here so the knob has a control that must break           ====="
-	w conv2d-cal.tflite "ROCKET_DPU4050=0x00000124"
-
-	log ""
-	log "===== a final anchor                                               ====="
+	log "===== 4) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
