@@ -2,55 +2,57 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 283. The write quantises to sixteen channels.
+# 2026-08-20 round 284. The pair stride was only ever measured at N = 64.
 #
-# 282 SETTLED THE LAST GROUP. Every N whose highest group is ODD came back
-# exact, and the per group line says every group:
+# 283 SPLIT ITS OWN QUESTION CLEANLY. Rounding 0x3020 up to a multiple of 16
+# fixed the WRITE: N of 24, 40 and 56 now report 24 of 24, 40 of 40 and 56 of 56
+# words written where they reported 16, 32 and 48. The write quantum is sixteen
+# channels and that part is settled.
 #
-#   N = 16  16/16      N = 32  32/32      N = 48  48/48      N = 64  64/64
+# ⚠ AND THE SAME THREE ARE STILL WRONG, WHICH IS NOW A PLACEMENT FAULT. The per
+# group line puts whole groups at 0 of 8 at the top: g2 at N = 24, g3 and g4 at
+# N = 40, g4 to g6 at N = 56. The channels are written and the weights are in
+# the wrong place, which is the opposite of what 282 concluded and is exactly
+# what 283's second branch said it would mean.
 #
-# 32 and 16 were 24 and 8 before the fix, and 48 had never been run at all and
-# was exact first time. So the irregular 64 in the base expression belongs to
-# the highest group in use, and that part is now read across four values of N
-# and two values of K rather than fitted to one.
+# WHAT WAS WRONG, and it is a coincidence I did not see for four rounds.
 #
-# ⚠ THE THREE THAT FAILED DID NOT FAIL ON THE PACKING. The per group line, which
-# 281 did not have, shows whole groups at 0 of 8 at the TOP, and the count of
-# words WRITTEN is short by the same amount:
+#   the base expression used a pair stride of 8*K
+#   the weight buffer is k*n/2 bytes, so at N = 64 it is k*32
+#   therefore at N = 64, 8*K and wbytes/4 ARE THE SAME NUMBER
 #
-#   n     16  24  32  40  48  56  64
-#   wrote 16  16  32  32  48  48  64      = floor(n/16) * 16, seven for seven
+# Both measured tables, K = 64 and K = 32, were swept at N = 64. No data taken
+# in this project can tell the two forms apart, and 283's N sweep is the first
+# thing that could. It says the map has to scale with the buffer: at N = 24 the
+# second group of g2 lands at byte 768, which is exactly the size of that
+# buffer.
 #
-# So at n of 24, 40 and 56 the top eight channels were placed correctly and
-# never written. The DPU writes in units of sixteen channels and truncates.
+# So the stride is wbytes/4 now, and the second group sits half a stride on
+# rather than a fixed 256.
 #
-# Asking for the next multiple of sixteen covers the real count and the extra
-# channels are computed and thrown away, so 0x3020 is now
-# 2*(ALIGN_UP(n,16) - 8) - 1, which is 47 at n of 24 and 32, 79 at 40 and 48,
-# and 111 at 56 and 64. glast reads the same rounded number, which changes no
-# base on any case measured so far but stops the register and the table
-# disagreeing about how many channels there are.
+# ⚠ THIS IS A HYPOTHESIS AND NOT A READING. It agrees with everything measured
+# and disagrees with the failures, which is the most that can be said for it.
+# The odd member offsets, 128 for a middle pair and 64 for the last, are still
+# constants read only at N = 64 and this round does not touch them.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 3, 4 AND 5 ARE THE ROUND. n of 24, 40 and 56, which were 16 of
-#   24, 32 of 40 and 48 of 56.
+#   ⚠ ENTRIES 2 TO 4 ARE THE ROUND. N of 24, 40 and 56.
 #
-#     wrote goes to 32, 48 and 64 and all three are exact
-#                        the write quantum is sixteen, the fix is the rounding,
-#                        and seven values of n now hold with no override
-#     wrote goes up but the top group is still 0/8
-#                        the channels are written now and the packing is wrong
-#                        for them, which is the opposite of what 282 said and
-#                        would mean the base for a group depends on the rounded
-#                        n after all
-#     wrote does not move
-#                        floor(n/16)*16 is not a function of what 0x3020 asks
-#                        for, and the quantum is somewhere else entirely
+#     all three exact, every group 8/8   the stride scales with the buffer and
+#                                        seven N and two K close at M = 1
+#     the top groups move but are not
+#     exact                              the stride is right and the 128 and 64
+#                                        offsets are the part that does not
+#                                        scale, which is the next thing to sweep
+#     unchanged                          wbytes/4 is not it either, and the
+#                                        thing to do is sweep the map at N = 24
+#                                        directly rather than reason about it
 #
-#   ⚠ ENTRY 2 AND ENTRIES 6 TO 8 MUST NOT REGRESS. n of 16, 32, 48 and 64 were
-#   all exact and their 0x3020 changed for 16 alone. If any of them moves, the
-#   rounding broke a case that already worked.
+#   ⚠ ENTRIES 5 TO 8 MUST NOT REGRESS. N of 16, 32, 48 and 64, and K = 32, were
+#   all exact in 283 and the stride change is a no-op at N = 64 by construction.
+#   N = 16, 32 and 48 are NOT at N = 64, so they are a real test of the new
+#   form and not a formality.
 #
 #   ENTRY 9 is the control that must FAIL and ENTRY 10 is int8.
 # ---------------------------------------------------------------------------
