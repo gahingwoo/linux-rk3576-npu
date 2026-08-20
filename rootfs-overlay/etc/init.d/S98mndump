@@ -2,67 +2,60 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 275. 111. Both halves at once, or the reason they will not.
+# 2026-08-20 round 276. 64 channels get WRITTEN. Do 64 get LIT.
 #
-# ⚠ THE ARITHMETIC IS SOLVED. PROC_PRECISION = 0 with a one byte activation is
-# a plain integer multiply, exact at five of five:
+# THE FORMULA IS A READING NOW, six for six, derived from two points:
 #
-#   amp    1   2    5    10   100
-#   out    7   14   35   70   700      against a nibble of 7. out = a * w.
+#   channels = ceil((v+1)/2) + extra(SIZE_E_2)      v = CORE 0x3020
+#   v =  31 -> 24    v =  79 -> 48    v = 111 -> 64
+#   v =  47 -> 32    v =  95 -> 56    v = 127 -> 72
 #
-# No fp16 bit pattern, no logarithm. That is the operation an int4 matmul wants.
-# The paired second k still returns 127 * w whatever the amplitude, so it reads
-# something that is not in the activation buffer, and that is a separate defect.
+# So 0x3020 = 111 writes all 64 channels at N = 64, and the channel shortfall is
+# not a wall, it is a value.
 #
-# ⚠ AND THE CHANNEL COUNT HAS A SOURCE. CORE 0x3020 set to 127, claiming 128
-# channels at N = 64, gives wrote = 72. 0x402c and 0x5014 carry the same n-1 and
-# are inert; CONV_CON2 is inert in all five arms; SIZE_E_0 is inert or hangs;
-# CBUF_CON0 turns the fetch dark without moving the count. Five rounds of
-# sweeping and the answer was in a register excluded for being IDENTICAL on both
-# paths.
+# ⚠ AND I NEVER MEASURED WHETHER THEY ARE REACHABLE. Every arm in 275's entry 2
+# ran --map with a 128 byte limit, which is sixteen probes and reaches w0 to w7.
+# "wrote 64" is the extent of the WRITE. Whether 64 distinct channels can be lit
+# by a weight byte is a different question and this project has confused those
+# two before, in round 266, which is why the sentinel exists at all.
 #
-#   channels = ceil((v+1)/2) + extra(SIZE_E_2)      v = 0x3020, extra 0,0,4,8
-#   v = 63  -> 32 + 8 = 40      v = 127 -> 64 + 8 = 72       both measured
+# ⚠ MY BUFFER EXPLANATION WAS WRONG. 275 predicted that 111 would not fight the
+# k fix, because 64 channels times 32 bytes is exactly the 2048 the buffer
+# holds. It hung: 235 groups swept and 4 alive. The other route, 127 with
+# SIZE_E_2 = 1, also reaches 64 on its own and drops to 32 under the k fix
+# rather than hanging. So the interaction is not "it does not fit".
 #
-# ⚠ AND THE TWO FIXES FOUGHT. 0x3020 = 127 together with the k fix came back at
-# 40, not 72. There is a reason to expect that and it is arithmetic: with the k
-# fix a channel eats 32 weight bytes rather than 16, so 72 channels want 2304
-# bytes out of a buffer that holds 2048. 40 is what fits with room over.
+# What is measured about the interaction, and it is only three points:
 #
-# THE ROUND IS ONE NUMBER. 111.
-#
-#   ceil(112/2) + 8 = 64 channels, and 64 channels times 32 bytes is 2048,
-#   which is EXACTLY charsiu_weight_bytes at K = 64, N = 64.
-#
-# So the same value is predicted to give the full channel count AND to be the
-# largest one that fits with the k fix on. If the buffer size is why they fought,
-# 111 does not fight.
+#   v = 63,  extra 8, k fix  -> 40      unchanged from without the fix
+#   v = 127, extra 0, k fix  -> 32      halved from 64
+#   v = 111, extra 8, k fix  -> hangs
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 3 IS THE ROUND. 0x3020 = 111 with the k fix, full sweep.
+#   ⚠ ENTRY 2 IS THE ROUND, and its prediction is derived. At v = 111 with no k
+#   fix a channel takes 16 weight bytes, so 64 channels take 1024 of the 2048,
+#   which is 128 live groups out of 256.
 #
-#     wrote 64 and 64 words lit    both halves are solved. Every channel, every
-#                                  k, and the remaining defect is the 127.
-#     wrote 64, fewer lit          the write reaches 64 and the fetch does not,
-#                                  and the difference says how many bytes short
-#     wrote 40                     the buffer size was not why they fought and
-#                                  the interaction is something else
+#     64 words lit, 128 live groups   the channel half is solved outright. Every
+#                                     channel reachable, 32 k each, and the k
+#                                     fix is the only thing left.
+#     64 written, fewer lit           the write reaches further than the fetch,
+#                                     and the gap in groups says by how much
+#     more than 128 live groups       a channel is taking more than 16 bytes at
+#                                     this v, which would be new
 #
-#   ENTRY 2 tests the formula on six values before combining anything, and they
-#   are derived from two measured points, not fitted to six:
+#   ENTRY 3 asks whether the hang is the size registers after all, by raising
+#   0x101c and 0x1020 to say the buffer is twice as big. The bo is allocated
+#   with 4096 spare so 4096 is inside it. One arm each and one with both, so a
+#   hit names which.
 #
-#     v =  31 -> 24     v =  79 -> 48     v = 111 -> 64
-#     v =  47 -> 32     v =  95 -> 56     v = 127 -> 72   (already measured)
+#   ENTRY 4 walks v upward under the k fix to find the largest that survives. 63
+#   gives 40 and 111 hangs, and nothing in between has been tried.
 #
-#   ENTRY 4 is the other route to 64: v = 127 with SIZE_E_2 = 1, which removes
-#   the +8. If entry 2's formula is right this is 64 as well, from a different
-#   pair of fields, and it wants 2304 bytes so it should fight the k fix where
-#   111 does not.
-#
-#   ENTRY 5 is the whole thing: 111, the k fix, and a one byte activation. If
-#   entry 3 is clean this is a complete int4 matmul geometry and the values in
-#   it are the last thing to check.
+#   No prediction on entry 3 or 4. The buffer explanation was a prediction and
+#   it was wrong, and that is the second time this week that an explanation good
+#   enough to write down did not survive the round after it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -121,36 +114,43 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### 2) the formula. derived from two points, six predictions.    #####"
-	for v in 31 47 79 95 111 127
+	log "===== 2) THE ROUND. 0x3020 = 111, NO k fix, the WHOLE buffer.      ====="
+	log "=====    derived: 128 live groups of 256, and 64 words lit.        ====="
+	log ""
+	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 64 64 --map 8
+
+	log ""
+	log "===== 3) and its k map. 32 k a channel is what 16 bytes means.     ====="
+	c "CHARSIU_OVERRIDE=0x3020=111" CHARSIU_KPAIR_BYTES=0,8,16,256,512,1024 1 64 64 --kpair
+
+	log ""
+	log "##### 4) is the hang the size registers. one at a time, then both. #####"
+	for a in \
+		"$FIX,0x3020=111,0x101c=0x1000" \
+		"$FIX,0x3020=111,0x1020=0x40" \
+		"$FIX,0x3020=111,0x101c=0x1000,0x1020=0x40" \
+		"$FIX,0x3020=111,0x1030=0x00400000"
 	do
 		log ""
-		log "===== 0x3020 = $v"
-		c "CHARSIU_OVERRIDE=0x3020=$v" X=1 1 64 64 --map 8 128
+		log "===== ARM $a"
+		c "CHARSIU_OVERRIDE=$a" X=1 1 64 64 --map 8 128
 	done
 
 	log ""
-	log "===== 3) THE ROUND. 0x3020 = 111 with the k fix, full sweep.       ====="
-	log ""
-	c "CHARSIU_OVERRIDE=$FIX,0x3020=111" X=1 1 64 64 --map 8
-
-	log ""
-	log "===== 4) the other route: 0x3020 = 127 with SIZE_E_2 = 1           ====="
-	c "CHARSIU_OVERRIDE=0x3020=127,0x4050=0x00023133" X=1 1 64 64 --map 8 128
-	log "=====    and the same with the k fix, which should fight           ====="
-	c "CHARSIU_OVERRIDE=$FIX,0x3020=127,0x4050=0x00023133" X=1 1 64 64 --map 8 128
-
-	log ""
-	log "===== 5) everything: 111, the k fix, a one byte activation         ====="
-	c "CHARSIU_OVERRIDE=$FIX,0x3020=111" "CHARSIU_A8_STRIDE1=1 CHARSIU_KPAIR_BYTES=0,8,16,512" 1 64 64 --kpair
-	c "CHARSIU_OVERRIDE=$FIX,0x3020=111" CHARSIU_A8_STRIDE1=1 1 64 64 --map 8
+	log "##### 5) how far v goes under the k fix. 63 is 40, 111 hangs.      #####"
+	for v in 71 79 87 95 103
+	do
+		log ""
+		log "===== ARM 0x3020=$v + k fix"
+		c "CHARSIU_OVERRIDE=$FIX,0x3020=$v" X=1 1 64 64 --map 8 128
+	done
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 64 words written and 64 words lit is both halves solved.     ====="
+	log "===== 64 lit at v=111 and the channel half is done.                ====="
 	sync
 }
 case "$1" in
