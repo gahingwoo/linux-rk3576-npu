@@ -2,56 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 264. Half the channels have no home, and half the bytes are
-# dead. Whether those are the same half.
+# 2026-08-20 round 265. The probe was reading the wrong width, and two of the
+# three anomalies are the read, not the map.
 #
-# WHERE 263 LEFT IT. Six unmeasured bytes came back at exactly the k and the
-# channel the rule predicted, and two predicted dead were dead. The k side is a
-# reading rather than a fit now. The channel side turned out to be TWO
-# consecutive channels per nibble.
+# WHAT WENT WRONG. --kpair cleared and read m*n BYTES and called byte i channel
+# i. The w4a16 path does not write bytes. 0x4010 carries a non zero
+# OUT_PRECISION and 0x40ac, 0x40b0, 0x40b4 are 0, 1, 0, an identity requant, so
+# nothing narrows the accumulator. Every other w4a16 probe in that file reads
+# m*n*4. Only --kpair read m*n, which is the int8 era reading that round 189
+# already removed once from --bmap, and the buffer is ALLOCATED m*n*4 under a
+# comment that says two bytes an element. Three widths in one file.
 #
-#   G = B/128,  b = B%128,  blk = b/8
-#   b >= 64                       dead
-#   channel = 4*blk + 32*(G & 1)  and that channel + 1
-#   k = 16*(blk & 1) + 2*(b % 8) + 32*(G >> 1), high nibble +1
+# WHAT THAT EXPLAINS ON PAPER. Read the reported index R as a byte offset with a
+# four byte element. "Two consecutive channels, only c mod 4 in {0,1}" is the
+# two LOW bytes of one little endian word: a live nibble of 7 measured +5112,
+# which is 000013f8, nonzero at offsets 0 and 1 and zero at 2 and 3. "b >= 64 is
+# dead" is an element that fell outside the window, and at N of 16, 32 and 64
+# the window ends exactly where 264's dead rows begin.
 #
-# That addresses c mod 4 in {0, 1}, which is 32 of 64 channels, and leaves the
-# b >= 64 half of every 128 byte region dead. Two halves missing. Nothing so far
-# says they are the same half.
-#
-# WHAT THIS ROUND DOES. Sweeps the dead half properly, because four points is
-# not a sweep and two of them sat on block boundaries. And sweeps N, because a
-# map that covers half the channels whatever N is differs from one that covers
-# all of a small N and runs out later.
-#
-# ⚠ NO TWO OPTION PREDICTION THIS TIME, and that is deliberate. Three rounds
-# running the answer was outside the two written down. Byte 8 was channel 4 at
-# k = 16 when the choices offered were channel 1 at k = 0 or channel 0 at
-# k = 16. The channel width was two when the choices were one and four. The
-# predeclared rule keeps earning its place because it forces the controls, but
-# picking between my two readings has gone nought for three, so what is written
-# below is what each observation would MEAN, with room for none of them.
+# ⚠ THIS IS NOT A GUESS BETWEEN TWO READINGS. The last three of those went
+# nought for three. This is a consequence of a fact already read off the source
+# and the register stream, so it makes a four point prediction that can be
+# wrong in one line.
 #
 # THE READING RULE, fixed before the run.
 #
-#   At N = 16 the rule addresses channels 0, 1, 4, 5, 8, 9, 12, 13 and nothing
-#   else. Read the channel lists at N = 16 first.
+#   ENTRY 2, N = 16, is the whole round. Bytes 32, 40, 48 and 56 were DEAD at
+#   N = 16 in round 264. The window is now 64 bytes instead of 16, so they have
+#   room, and the rule already says where:
 #
-#     the same eight        the map skips c mod 4 in {2,3} at every N, and the
-#                           other half is somewhere no byte probed so far
-#     all sixteen           the map depends on N, and the rule above is a
-#                           special case of something wider
-#     something else        write down what, and do not force it into either
+#       byte 32 low -> word 4 at k 0     byte 48 low -> word 6 at k 0
+#       byte 40 low -> word 5 at k 16    byte 56 low -> word 7 at k 16
+#       byte 128 low -> word 8 at k 0    byte 136 low -> word 9 at k 16
 #
-#   Then the dead half, bytes 64 to 127. If any of them lights, the b >= 64
-#   reading is wrong and where it lights says what b really indexes. If none
-#   does across nineteen points, the dead half is real and the missing channels
-#   are not in it.
+#     all six land there    the window WAS the story. Anomaly 1 and anomaly 3
+#                           are both gone, the map covers every channel, and
+#                           what is left is only the factor of two in k.
+#     they stay dark        the read width was never the reason. b >= 64 and
+#                           the missing channels are real and a size or stride
+#                           register goes back on the table.
+#     they light elsewhere  write down where. Do not force it into either.
 #
-#   ⚠ Byte 0 must be channel 0 and 1 at k = 0 in every one of the three runs.
-#   It is the same byte at three different N and it must not move.
+#   ENTRY 3, N = 64, carries the byte pattern. Every hit prints w<i>=<value>
+#   and which of the four bytes were nonzero, as /b<b0><b1><b2><b3>.
 #
-#   ⚠ Anchors either side, so a dead sweep is a dead sweep and not a dead block.
+#     /b1100 everywhere     a four byte element holding a small positive
+#                           number, and the word index is the channel
+#     /b1111 or /b0011      the value is not what round 185 read it as, and
+#                           that reading has to be redone before any of this
+#                           arithmetic means anything
+#     two words of similar magnitude, not one number split
+#                           the element really is narrower and all three
+#                           written explanations are wrong
+#
+#   ⚠ BYTE 512 AT N = 64 IS AN IN BAND CONTROL. The rule puts it at k 64, past
+#   the end of a K of 64, so it must stay DARK. If it lights, the window is not
+#   the story and the address function is wrong somewhere else. Bytes 256 and
+#   384 are round 263's two K invariant rows and must not have moved.
+#
+#   ENTRY 4 flips the live nibble to f. A signed 32 bit -4896 lights all four
+#   bytes of its word where +5112 lights two. If entry 4 lights two, the value
+#   is not a signed 32 bit integer. --kpair used to hardcode the nibble and
+#   ignore CHARSIU_INT4_LIVE, which is why this arm has never run.
+#
+#   ⚠ Byte 0 must be word 0 at k = 0 in entries 2, 3 and 4 alike. Same byte,
+#   three different runs, it must not move.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -99,27 +114,28 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) N = 16. The rule says channels 0 1 4 5 8 9 12 13 only.    ====="
+	log "===== 2) N = 16. Bytes 32 40 48 56 128 136 were dead here in 264.  ====="
+	log "=====    Widened read says words 4 5 6 7 8 9. THE ROUND IS THIS.   ====="
 	log ""
 	sleep 1
 	/opt/charsiu/charsiu_int4 1 64 16 --kpair > "$C" 2>&1
 
 	log ""
-	log "===== 3) N = 32                                                    ====="
-	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 32 --kpair > "$C" 2>&1
-
-	log ""
-	log "===== 4) N = 64, the same bytes as 263 so the two logs compare     ====="
+	log "===== 3) N = 64, same bytes as 263 and 264, plus 512 as a control  ====="
 	sleep 1
 	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
+
+	log ""
+	log "===== 4) N = 64 with the live nibble at f. Negative lights four.   ====="
+	sleep 1
+	env CHARSIU_INT4_LIVE=15 /opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
 
 	log ""
 	log "===== 5) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read 1 and 2, then 3 against 4. The bar is the arm beside it ====="
+	log "===== Read 2 first. Six bytes, six named words. Then 3 against 4.  ====="
 	sync
 }
 case "$1" in
