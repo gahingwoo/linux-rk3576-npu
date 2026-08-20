@@ -2,64 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 277. Every round so far has been K = 64.
+# 2026-08-20 round 278. A real int4 matmul against a CPU reference, or the
+# reason there still is not one.
 #
-# ⚠ THE CHANNEL HALF IS SOLVED. 0x3020 = 111 at N = 64: 256 groups swept, 128
-# live, 64 distinct words lit, range 0 to 63, and 64 written. Written AND
-# reachable, which is the distinction 266 got wrong and this round checked
-# properly. The derived prediction was 128 live groups and 64 words and that is
-# what came back.
+# THIRTEEN ROUNDS OF PROBES AND THIS IS THE FIRST ONE THAT RUNS A MATMUL.
 #
-# WHAT THAT CONFIGURATION IS TODAY, with no other change:
+# WHAT 277 SETTLED. Bytes per channel is K/4, measured at two K:
 #
-#   64 channels, each fed by 16 weight bytes = 32 nibbles = 32 k
-#   arithmetic is the SHIPPED mode, whose formula is known exactly:
-#     out = ((int16)fp16bits(w) * (int16)abits) >> 16, seven for seven
+#   K = 32 -> 8 bytes a channel      K = 64 -> 16 bytes a channel
 #
-# ⚠ AND HERE IS WHAT NOBODY HAS ASKED. K HAS BEEN 64 IN EVERY ROUND. If bytes
-# per channel is K/4 rather than a fixed 16, then at K = 32 those same 16 bytes
-# are ALL 32 of the k, and that configuration is a complete and correct matmul
-# TODAY, with the exact arithmetic already in hand and no CONV_CON1 change at
-# all. K = 64 would then be two chained jobs rather than a defect.
+# so half the k is missing at EVERY K and it is not a fixed cap. K = 16 lit
+# nothing at all. And the 2^n - 1 rule is REFUTED: 15 and 31 both hang under the
+# k fix. The predicate that fits all twelve points is (v+1) mod 64 == 0, and
+# under the k fix v stops driving the count at all, since 63, 127 and 255 all
+# give 40 and only SIZE_E_2 moves it. So the k fix pins the channels at 32 plus
+# SIZE_E_2's term, and the two halves cannot be had together.
 #
-# That is the round. It is also the first path that does not need the k fix.
+# ⚠ BUT THE HALF THAT IS FETCHED IS A KNOWN HALF. With 0x3020 = 111 at N = 64,
+# K = 64, every channel is written and reachable and gets 16 bytes in two runs,
+# its own and one 256 bytes later, which --kpair reads as k 0..15 and k 32..47:
 #
-# THE k FIX INTERACTION, and a pattern worth one entry. Under it, v = 71, 79,
-# 87, 95, 103 and 111 ALL hang, and the only two values that have ever survived
-# it are 63 and 127. Both of those are 2^n - 1 and none of the six is. That is a
-# clean split on eight points and it has never been tested as a rule.
+#   fetched  <=>  (k mod 32) < 16
+#
+# A weight the hardware never reads is only wrong if it matters. Zero the ones
+# it does not read and the partial sum it computes IS the full sum, so the CPU
+# reference and the hardware are answering the same question. That is a real 32
+# deep int4 matmul on all 64 channels, with the arithmetic already known exact,
+# at the cost of half the weight buffer. No change to the packer, no k fix.
+#
+# CHARSIU_W4_HALFK does the zeroing and prints how many it zeroed, because a
+# knob that cannot be seen working is not a knob and this file has lost five
+# comparisons to exactly that.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND. K = 32, N = 64, v = 111. The weight buffer is 1024
-#   bytes and 64 channels times 16 is exactly 1024.
+#   ⚠ ENTRY 3 IS THE ROUND. W4 dense, HALFK on, 0x3020 = 111.
 #
-#     128 live groups of 128, 64 words lit    every byte of the buffer is
-#                                             fetched and every channel reached.
-#                                             With entry 3 confirming k 0..31 it
-#                                             is a complete matmul at K = 32.
-#     64 live groups                          bytes per channel is a fixed 16
-#                                             regardless of K, so half the k is
-#                                             missing at every K and the fix is
-#                                             the only way
-#     fewer channels than 64                  0x3020's meaning depends on K too,
-#                                             which nothing has suggested
+#     it matches cpu_reference      an int4 matmul works on this hardware for
+#                                   the first time. 64 channels, 32 real k,
+#                                   exact arithmetic. Everything after that is
+#                                   about the wasted half, not about whether it
+#                                   computes.
+#     it is wrong on some channels  the ones it is wrong on say what else the
+#                                   fetch is missing. Compare against entry 4.
+#     it is wrong everywhere        the fetched set is not (k mod 32) < 16 and
+#                                   the map that says so was read at N = 64
+#                                   with one live nibble, which is not the same
+#                                   thing as a dense buffer.
 #
-#   ENTRY 3 is the k map at K = 32. Bytes 0 and 8 must give k 0 and k 16 of the
-#   same channel if the 16 bytes really span the whole reduction.
+#   ENTRY 2 is the control that must be WRONG: same thing without HALFK. If the
+#   unfetched weights really are unread, adding them to the reference and not to
+#   the hardware has to break it. A control that passes means HALFK did nothing.
 #
-#   ENTRY 4 is K = 16 and K = 128 against the same question, so bytes per
-#   channel is read as a function of K on three points rather than assumed from
-#   one.
+#   ENTRY 4 is HALFK without 0x3020 = 111, so only 40 channels exist. Channels
+#   0 to 39 should match and 40 to 63 should not, which is the second, separate
+#   confirmation that 111 is what buys the channels.
 #
-#   ENTRY 5 tests 2^n - 1 as a rule for surviving the k fix: 15, 31, 127 and 255
-#   should live and 119 should hang. Four predictions from an eight point split.
+#   ENTRY 5 is int8 dense, untouched, as the instrument check. It is byte exact
+#   on this silicon and if it is not right here then nothing else in this log is
+#   worth reading.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 CH=/opt/charsiu/charsiu_int4
-FIX=0x100c=0x20600020
+MM=/opt/charsiu/charsiu_matmul
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -86,11 +93,12 @@ w() {
 	return 0
 }
 
+# $1 and $2 are environment, $3.. are the binary and its arguments
 c() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
 	before=$(nbad)
 	sleep 1
-	env $1 $2 $CH $3 $4 $5 $6 $7 $8 > "$C" 2>&1
+	env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
 	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
 	return 0
 }
@@ -112,35 +120,34 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. K = 32, N = 64, v = 111. 1024 weight bytes.    ====="
-	log "=====    64 channels x 16 bytes is exactly 1024. All of it, or half ====="
+	log "===== 2) the control that must be WRONG. W4 dense, no HALFK, v=111 ====="
 	log ""
-	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 32 64 --map 8
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 64
 
 	log ""
-	log "===== 3) the k map at K = 32. byte 8 must be k 16 of the SAME word ====="
-	c "CHARSIU_OVERRIDE=0x3020=111" CHARSIU_KPAIR_BYTES=0,4,8,12,16,512 1 32 64 --kpair
+	log "===== 3) THE ROUND. W4 dense, HALFK on, v = 111.                   ====="
+	log "=====    64 channels, 32 real k, against cpu_reference.            ====="
+	log ""
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 64
 
 	log ""
-	log "===== 4) K = 16 and K = 128, same question                         ====="
-	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 16 64 --map 8
-	c "CHARSIU_OVERRIDE=0x3020=111" X=1 1 128 64 --map 8 512
+	log "===== 4) HALFK without v=111. 0..39 should match, 40..63 not.      ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" X=1 $MM 1 64 64
 
 	log ""
-	log "##### 5) is 2^n - 1 the rule for surviving the k fix.              #####"
-	for v in 15 31 119 127 255
-	do
-		log ""
-		log "===== ARM 0x3020=$v + k fix   (15 31 127 255 live, 119 hangs)"
-		c "CHARSIU_OVERRIDE=$FIX,0x3020=$v" X=1 1 64 64 --map 8 128
-	done
+	log "===== 5) int8 dense, the instrument check                          ====="
+	c X=1 X=1 $MM 1 64 64
+
+	log ""
+	log "===== 6) and the same at N = 32, where v=111 is more than enough   ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=0x3020=111" $MM 1 64 32
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 2. 128 live groups is a complete matmul at K = 32.     ====="
+	log "===== entry 3 against entry 2. One must match and one must not.    ====="
 	sync
 }
 case "$1" in
