@@ -2,86 +2,79 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-20 round 266. The same hole one level up, and the six G points.
+# 2026-08-20 round 267. The hardware writes N/2 + 8 channels, and a sparse
+# sweep cannot see the shape of what is left.
 #
-# WHAT 265 SETTLED. The output element is a four byte signed little endian
-# integer and the word index is the channel: +7100 came back 00001bbc lighting
-# two bytes, -6800 came back ffffe570 lighting four, and the two arms agreed on
-# every word and every k across 48 points. Every nibble lights exactly ONE word,
-# so 264's "two consecutive channels" was the byte pair artefact and is gone.
-# Both maps closed on their own data, 40 of 40 at N = 16 and 48 of 48 at N = 64:
+# ⚠ THE NUMBER THIS ROUND IS ABOUT. 266's sentinel measured the extent of the
+# write, and it is not N:
 #
-#   N=16, B<128:  word = B/8
-#                 k    = 16*((B/8)&1) + 2*(B%8) + nib
+#     N = 16   ->  16 words written        N = 64   ->  40 words written
+#     N = 32   ->  24 words written        which is N/2 + 8, three for three
 #
-#   N=64:         G = B/128, b = B%128,  b >= 64 dead
-#                 word = b/8 + 8*(G&1) + 16*(G>>2)
-#                 k    = 16*((b/8)&1) + 32*((G>>1)&1) + nib
+# At N = 16 that equals N, which is why every clean closed result this project
+# has is at N = 16. At N = 32 eight declared channels are never written and at
+# N = 64 it is twenty four. That is an OUTPUT configuration fact and it does not
+# depend on any of the weight address arithmetic.
 #
-# THE CONTROL FIRED AND THAT IS WHY IT WAS THERE. Byte 512 was declared dark
-# and came back live at word 16, k 0. The old G term 32*(G>>1) and the right one
-# 32*((G>>1)&1) agree at G of 0 to 3 and first differ at G of 4, which is 512.
+# HOW 266's SIX WENT. Three of six, and the three that missed are all in the
+# second half of the buffer, which came back dark. 640 gave word 24, 768 gave
+# word 16 at k 32 and 896 gave word 24 at k 32, all as predicted. 1024, 1536 and
+# 1920 were predicted at words 32, 48 and 56 and lit nothing. Word 32 is inside
+# the 40 that get written, so that one is a real miss and not an invisible one.
 #
-# ⚠ WHAT 265 GOT WRONG ON ITS OWN TERMS. It read m*n*4, which is words 0 to
-# n-1, out of a buffer allocated m*n*4 + 4096. A byte whose element lands at
-# word n or beyond reads back dead, which is EXACTLY the mistake 264 made, one
-# level up, and eleven bytes came back dead. It also filled with zero, so a word
-# the hardware wrote 0 into is indistinguishable from one it never touched.
-# Fixed both: the whole bo is read, and the fill is 0xa5 like every other probe
-# in that file.
+# ⚠ AND THAT VINDICATES SOMETHING I PUT IN DOUBT. charsiu's README says --bmap
+# found "the entire second half of the buffer is dark". Round 266's script
+# called that in doubt and predicted all six live. --bmap was right and the rule
+# was wrong to keep adding 16 per G past G = 7.
+#
+# Bytes 1 to 7 landed 7 for 7 at N = 64, word 0 throughout with k = 2, 4, 6, 8,
+# 10, 12, 14. Bytes 192 and 320 were dark at N = 64, so the dead half is not a
+# G = 0 hole.
+#
+# WHAT THIS ROUND DOES. Stops sampling. --map holds one live nibble and feeds a
+# full input, so it needs ONE submit per byte instead of the 64 --kpair needs to
+# sweep k, and every nibble has now been shown across more than a hundred points
+# to pair with exactly one k, which retires the summation objection that --map
+# was written under. That buys a sweep of the WHOLE buffer at a stride of 8 at
+# all three geometries for under a thousand submits.
+#
+# ⚠ --map HAD THE SAME BYTE WIDTH DEFECT, the third place in that file to carry
+# it. It is correct as written for int8, where a channel is a byte, which is how
+# it passed its int8 validation and kept the bug on the w4a16 path. Fixed the
+# same way, whole bo against a sentinel.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ EVERY LINE NOW ENDS "hw wrote N words, highest H". That is the extent of
-#   the write, measured against the sentinel, and it does not depend on any of
-#   the address arithmetic.
+#   ⚠ THE DISCRIMINATOR, and it is at N = 64. Forty words get written. The
+#   sweep covers every byte of the buffer at a stride of 8, so if a word is
+#   reachable at all this finds it.
 #
-#     N words = n exactly     the write is one element per channel and the
-#                             element is four bytes. Confirms 265 independently.
-#     more than n             the surface is bigger than the channel count and
-#                             the dead bytes have somewhere to have gone
-#     fewer than n            the hardware is not writing every channel and the
-#                             missing half is a write problem, not a fetch one
+#     words 0..39 all lit     the map was under sampled and nothing is wrong
+#                             with the output side. 24 channels of 64 are simply
+#                             not addressable and the weight side owes the rest.
+#     words 32..39 never lit  the hardware writes eight channels it computes
+#                             NOTHING for. That is an overrun past the real
+#                             channel count and the number to explain becomes
+#                             the 8, not the N/2.
+#     something above 39 lit  the sentinel read is wrong too and the extent
+#                             measurement goes back in the bin with the rest.
 #
-#   THE SIX G POINTS, at b = 0. This is the prediction of the round.
+#   THE INSTRUMENT CHECK, free. 39 bytes were covered by --kpair in 266 and are
+#   covered again here by a different probe with a different input. Every one of
+#   them must report the same word. If any disagrees, this round is about that
+#   and nothing else.
 #
-#     640  G 5  -> word 24 k 0      1024 G 8  -> word 32 k 0
-#     768  G 6  -> word 16 k 32     1536 G 12 -> word 48 k 0
-#     896  G 7  -> word 24 k 32     1920 G 15 -> word 56 k 32
+#   ⚠ N = 16 IS THE CONTROL GEOMETRY. Sixteen words written, sixteen channels,
+#   and 266 lit every one of them. It must come back 16 of 16 lit with no word
+#   above 15, or the new probe is not measuring what the old one measured.
 #
-#     all six land            the G bit assignment is a reading and it holds
-#                             across the whole 2048 byte buffer, not the first
-#                             quarter of it
-#     they land elsewhere     write down where. G bit 1 going to k and the rest
-#                             to word is the part with the least data behind it.
+#   THE LIVE BYTE SET. 266 could only say "these 39 bytes". A stride of 8 across
+#   the whole buffer says what fraction is fetched and whether it is contiguous
+#   runs, an interleave, or one bit. Count it before fitting anything to it.
 #
-#   ⚠ THESE SIX CONTRADICT SOMETHING THIS PROJECT ALREADY WROTE DOWN. --bmap's
-#   reading, still in the README, is "640 bytes light something, 1408 light
-#   nothing, and the entire second half of the buffer is dark". All six of these
-#   are in that second half and the rule says all six are live. One of the two
-#   is wrong and this settles which. --bmap agrees with --kpair on everything
-#   else, including "each slot is fed by 16 bytes, two runs of eight, 256
-#   apart", which is exactly word 0 being fed by bytes 0 to 7 and 256 to 263,
-#   so the disagreement is narrow and worth the six submissions.
-#
-#   b MOD 8 AT N = 64, bytes 1 to 7. 265 has no point for this at all, because
-#   its only b%8 samples were 65 and 66 and those are in the dead half at N=64.
-#   The N=16 rule carried over says word 0 throughout, k = 2, 4, 6, 8, 10, 12,
-#   14. If instead they land in different words, then b%8 is a channel index at
-#   N = 64 and the two N do not share a rule.
-#
-#   THE DEAD HALF AT ANOTHER G, bytes 192 and 320. Every dead point in 265 was
-#   in G = 0. Both dark means bit 6 of the address really is the dead one. Either
-#   one live means G = 0 has a hole and it is not a bit.
-#
-#   N = 32 is the third geometry. Two points cannot separate a rule that scales
-#   with N from one that scales with the block, and the dead bit sat at B bit 7
-#   at N = 16 and B bit 6 at N = 64.
-#
-#   ⚠ Byte 0 must be word 0 at k = 0 in all three runs. Same byte, three
-#   geometries, it must not move.
-#
-#   The negative arm is NOT repeated. It answered its question at 48 points.
+#   No two option prediction on the shape. Predictions written in advance have
+#   gone 4 of 6, then 3 of 6, and both times the misses were where the rule was
+#   extrapolated past its data rather than where it was read off it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -129,27 +122,27 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) N = 16                                                    ====="
+	log "===== 2) N = 16, the control geometry. 16 written, 16 reachable.   ====="
 	log ""
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 16 --kpair > "$C" 2>&1
+	/opt/charsiu/charsiu_int4 1 64 16 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 3) N = 32, the third geometry                                ====="
+	log "===== 3) N = 32. 24 written. How many are reachable.               ====="
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 32 --kpair > "$C" 2>&1
+	/opt/charsiu/charsiu_int4 1 64 32 --map 8 > "$C" 2>&1
 
 	log ""
-	log "===== 4) N = 64. The six G points and bytes 1 to 7 are here.       ====="
+	log "===== 4) N = 64. 40 written. Are words 32 to 39 EVER lit.          ====="
 	sleep 1
-	/opt/charsiu/charsiu_int4 1 64 64 --kpair > "$C" 2>&1
+	/opt/charsiu/charsiu_int4 1 64 64 --map 8 > "$C" 2>&1
 
 	log ""
 	log "===== 5) the anchor again                                          ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== Read the write extent first, then 640 768 896 1024 1536 1920 ====="
+	log "===== Count the lit words per N against wrote. Then the live set.  ====="
 	sync
 }
 case "$1" in
