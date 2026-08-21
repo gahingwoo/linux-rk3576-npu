@@ -2,54 +2,55 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 297. Three arrangements were three points of one axis.
+# 2026-08-21 round 298. K has only ever been 32 or 64, and an LLM wants
+# thousands.
 #
-# ⚠ 296 SHOWED THE PACKING MATTERS AND THAT NEITHER ALTERNATIVE IS RIGHT.
+# ⚠ M > 1 IS CLOSED WITH A NEGATIVE. 297's sweep had its own controls and both
+# held: g = 8 came back 16 of 32 and g = 64 came back 0 of 32, so the rewrite
+# generalised the shipped path rather than changing it. Every other granularity,
+# 1, 2, 4, 16, 32 and 64, is 0 of 32.
 #
-#   layout 0, shipped   M = 1  16/16 and 64/64      M = 2  16 of 32
-#   layout 1            M = 1  16/16                M = 2   0 of 32, M = 4 0/64
-#   layout 2            M = 1  16/16                M = 2   0 of 32, M = 4 0/64
+# So after SIX registers and NINE packings, M > 1 does not work. The hardware
+# computes M rows and feeds every one of them from row 0's activation, and
+# nothing that carries m and no arrangement of the activation buffer moves that.
+# g = 32's row 1 map lights 16 of 16 and still computes wrong, which is the same
+# shape all three register arms had.
 #
-# All three are exact at M = 1, which they must be, since m drops out of every
-# one of them there. At M = 2 the two alternatives light row 1 on the map, 8 of
-# 16 probes, and break row 0 doing it. So the packing is not inert and neither
-# of the two guesses is the answer.
+# ⚠ AND IT DOES NOT BLOCK THE PROJECT. charsiu exists to decode LLM tokens, one
+# at a time, which is M = 1, and int4 at M = 1 is exact across eleven geometries.
+# M > 1 is a chaining problem: run M jobs. Recorded as a negative and left.
 #
-# ⚠ AND THE THREE ARE NOT THREE IDEAS. Layout 0 and layout 1 are the two ENDS of
-# one axis: the granularity at which rows interleave. The shipped one switches
-# rows every atom, 8 elements and 16 bytes; "rows outermost" switches every k,
-# the whole row. Nothing between them has ever been written.
+# ⚠ WHAT DOES BLOCK IT IS K. Every int4 measurement in this project is at K = 32
+# or K = 64. A projection in a small model is K = 2048 by N = 1024. The packer
+# refuses everything else, deliberately, and the bench has no int4 path at all,
+# so "what does int4 buy" cannot be asked yet.
 #
-# 32 elements is the value with a reason behind it. charsiu_entries_per_row is 2
-# at K = 64 and the input bo is allocated surf * 64 * m, so an entry is 64 bytes,
-# which at two bytes an element is 32 of them. Rows interleaving per ENTRY rather
-# than per atom is the natural reading of that allocation and it has never been
-# written down.
+# The skeleton is K independent everywhere it has been checked: the slot table by
+# group count reproduces K = 32 and K = 64 alike, and only the block stride 8*K
+# and the k+ offset 4*K scale with it. So K = 128 and 256 are allowed now as a
+# PREDICTION and refused above that.
 #
-# CHARSIU_A_GRAN is the axis: g elements of row 0, then g of row 1, and so on.
-# g = 8 is the shipped layout and g = 64 is 296's layout 1, so the sweep contains
-# both of the points already measured and they are the control.
+#   K = 128  bases 0 128 1024 1152 2048 2176 3072 3136, k+ at +512
+#   K = 256  bases 0 128 2048 2176 4096 4224 6144 6208, k+ at +1024
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ g = 8 MUST BE 16 of 32 AND g = 64 MUST BE 0 of 32. They are 296's layout 0
-#   and layout 1 written a different way. If either moves, the rewrite changed
-#   the shipped path rather than generalising it, and nothing else in the round
-#   can be read.
+#   ⚠ ENTRIES 4 AND 5 ARE THE ROUND: --map at K = 128 and K = 256, N = 64.
 #
-#   ⚠ THE ROUND IS g = 32, and 16 and 4 either side of the two known points.
+#     the bases land            the block stride really is 8*K and the layout
+#                               scales, which is what an LLM shape needs
+#     the bases land but the
+#     k+ group does not         the stride scales and the half offset does not,
+#                               and the grid says what it is instead
+#     something else            K = 32 and 64 were two points of something that
+#                               is not linear in K, and the grid is the data
 #
-#     a g is 32 of 32         the row interleave granularity was the fault, M > 1
-#                             is done, and the eleven geometries get re-run
-#     a g beats 16 of 32
-#     without reaching it     the granularity is closer and something inside a
-#                             group is still wrong
-#     every g is 16 or 0      rows do not interleave on this axis at all, and
-#                             what is left is that the hardware reads one row a
-#                             job whatever it is told, which makes M > 1 a
-#                             chaining problem rather than a layout one
+#   ENTRIES 6 AND 7 are the matmuls at those K, which is the only thing that
+#   says the k PARITY still holds. The map places bytes; only cpu_reference says
+#   a channel got the right 32 of its k.
 #
-#   ENTRY 2 is M = 1 at the default, which eleven geometries depend on.
+#   ENTRY 2 is K = 64 at M = 1, the eleven geometry path, which must not move.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -116,47 +117,46 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) M = 1 at the default. Eleven geometries depend on it.     ====="
+	log "===== 2) K = 64 at M = 1. The eleven geometry path.                ====="
 	c "$M4" X=1 $MM 1 64 16
 	c "$M4" X=1 $MM 1 64 64
+	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "##### THE ROUND. the row interleave granularity, at M = 2.         #####"
-	log "#####   g = 8 must be 16 of 32 and g = 64 must be 0 of 32.         #####"
-	for G in 1 2 4 8 16 32 64
-	do
-		log ""
-		log "===== M = 2  N = 16  g = $G"
-		c "$M4 CHARSIU_A_GRAN=$G" X=1 $MM 2 64 16
-	done
+	log "##### THE ROUND. K = 128 and 256, which nothing has ever swept.    #####"
+	log ""
+	log "===== 4) --map  K = 128  N = 64                                    ====="
+	log "=====    predicted 0 128 1024 1152 2048 2176 3072 3136, k+ at +512 ====="
+	c X=1 X=1 $CH 1 128 64 --map 8
+	log ""
+	log "===== 5) --map  K = 256  N = 64                                    ====="
+	log "=====    predicted 0 128 2048 2176 4096 4224 6144 6208             ====="
+	c X=1 X=1 $CH 1 256 64 --map 8 2304
 
 	log ""
-	log "##### g = 32 at other shapes, if it is the one                     #####"
+	log "##### and the matmuls, which are the only test of the k parity     #####"
 	log ""
-	log "===== M = 2  N = 64  g = 32                                        ====="
-	c "$M4 CHARSIU_A_GRAN=32" X=1 $MM 2 64 64
+	log "===== 6) M = 1  K = 128  N = 64                                    ====="
+	c "$M4" X=1 $MM 1 128 64
 	log ""
-	log "===== M = 4  N = 16  g = 32                                        ====="
-	c "$M4 CHARSIU_A_GRAN=32" X=1 $MM 4 64 16
+	log "===== 7) M = 1  K = 256  N = 64                                    ====="
+	c "$M4" X=1 $MM 1 256 64
 	log ""
-	log "===== M = 4  N = 16  g = 16                                        ====="
-	c "$M4 CHARSIU_A_GRAN=16" X=1 $MM 4 64 16
+	log "===== 8) M = 1  K = 128  N = 32 and N = 24, other group counts     ====="
+	c "$M4" X=1 $MM 1 128 32
+	c "$M4" X=1 $MM 1 128 24
 
 	log ""
-	log "===== and the row 1 map at g = 32                                  ====="
-	c "CHARSIU_MAP_ROW=1 CHARSIU_A_GRAN=32" X=1 $CH 2 64 16 --map 8 64
-
-	log ""
-	log "===== the control that must FAIL, and int8 at M = 4                ====="
+	log "===== the control that must FAIL, and int8 at K = 128              ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
-	c X=1 X=1 $MM 4 64 64
+	c X=1 X=1 $MM 1 128 64
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== g = 8 at 16 and g = 64 at 0 first, then look for 32 of 32.   ====="
+	log "===== the bases at entry 4 first, then whether entry 6 is exact.   ====="
 	sync
 }
 case "$1" in
