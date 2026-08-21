@@ -2,50 +2,50 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 299. K = 128's addresses were right and its group COUNT was
-# another K = 64 coincidence.
+# 2026-08-21 round 300. The layout scales in K. The CHANNEL COUNT does not.
 #
-# ⚠ THE BLOCK STRIDE SCALES. --map at K = 128, N = 64 gave group bases
-# 0, 128, 1024, 1152, 2048, 2176, 3072, 3136, which is 8*K exactly as predicted,
-# and int8 at K = 128 is 64 of 64 byte exact so the job setup is fine there.
+# ⚠⚠ K = 128 IS EXACT AT THREE N. 64 of 64, 32 of 32 and 24 of 24, with the
+# eleven K = 64 geometries untouched beside it. Both halves of that layout were
+# measured rather than predicted, so the address rule and the K/32 run count both
+# hold at a K nothing had ever been run at.
 #
-# ⚠ AND THE MATMUL WAS 0 of 64 ANYWAY, because of the OTHER half of the layout.
-# Channel 0 at K = 128 is fed by FOUR eight byte runs, at 0, 256, 512 and 768,
-# where K = 64 has two at 0 and 256. The packer wrote two, at an offset of
-# half * 4 * K.
+# ⚠ K = 256 IS EXACTLY HALF, AND NOT FOR A LAYOUT REASON. 32 of 64 and 16 of 32,
+# and the reason is in the line above the score:
 #
-# 4*K is 256 exactly when K is 64. That is the same trap as 8*K against wbytes/4
-# in round 284: an expression fitted at the one K everything had been measured
-# at, agreeing with the data for exactly that reason. The spacing is a CONSTANT
-# 256 at both K and it is the COUNT that scales, K/32, which is 1, 2 and 4 at K
-# of 32, 64 and 128 and matches the K/2 k a channel already known.
+#   K = 256  N = 64    wrote 40 of 64    g0..g3 8/8, g4..g7 0/8
+#   K = 256  N = 32    wrote 24 of 32    g0, g1 8/8, g2, g3 0/8
 #
-#   K= 32  channel 0 <- 0                       measured
-#   K= 64  channel 0 <- 0, 256                  measured
-#   K=128  channel 0 <- 0, 256, 512, 768        measured
-#   K=256  channel 0 <- 0, 256, ... , 1792      PREDICTED
-#
-# ⚠ AND K = 256's BASES DID NOT MATCH. The sweep was capped at 2304 bytes of an
-# 8192 byte buffer, so it is truncated and its group leaders cannot be trusted;
-# it is re-swept in full here rather than argued about.
+# 40 and 24 are N/2 + 8. That is the channel count from BEFORE round 283 fixed
+# 0x3020, which now emits 2*(ALIGN_UP(n,16) - 8) - 1, or 111 at N = 64, and
+# 111 gives 64 channels at K = 64 and at K = 128. At K = 256 it gives 40, which
+# is what v = 63 gives. The register stops being honoured somewhere between
+# K = 128 and K = 256, and the failing channels are exactly the ones never
+# written.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 3 IS THE ROUND. K = 128 at N = 64, 32 and 24. Its addresses and its
-#   group count are both measured now, so nothing about it is a prediction.
+#   ⚠ ENTRY 3 IS THE ROUND: 0x3020 swept higher at K = 256. If the count is
+#   still ceil((v+1)/2) + 8 and something merely shifted it, a larger v buys the
+#   channels back.
 #
-#     exact          the layout scales in K, and what is left before an LLM
-#                    shape is only how far
-#     not exact      the k the four runs carry is not 16*(n&1) + 32*half + j,
-#                    and that expression was also only ever checked at two runs
+#     a value gives 64      the register still works and the mapping from v to
+#                           channels depends on K. Read the new mapping.
+#     none does, and wrote
+#     stays at 40           there is a CAP that is not 0x3020, and 40 at K = 256
+#                           against 64 at K = 128 says it scales with K. That is
+#                           the thing an LLM shape hits, so measure the cap.
+#     wrote moves but not to 64
+#                           write down what it moves to. Two points on a cap are
+#                           worth more than one value that works.
 #
-#   ENTRY 4 IS THE PREDICTION. K = 256, eight runs a channel. If K = 128 is
-#   exact and 256 is not, the count is not K/32 above some bound.
+#   ENTRY 4 IS K = 192, between the last K that works and the first that does
+#   not. Nothing has ever run there and it is one arm.
 #
-#   ENTRY 5 sweeps K = 256's map in FULL, so a miss in entry 4 is readable in
-#   the same boot. That is what has saved three rounds already.
+#   ENTRY 5 sweeps SIZE_E_2, which is the additive term in that same count and
+#   was measured at K = 64 only.
 #
-#   ENTRY 2 is K = 64 and K = 32, the eleven geometry path, which must not move.
+#   ENTRY 2 is K = 64 and K = 128, which must not move.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -114,35 +114,38 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) K = 64 and K = 32. The eleven geometry path.              ====="
-	c "$M4" X=1 $MM 1 64 16
+	log "===== 2) K = 64 and K = 128, which must not move                   ====="
 	c "$M4" X=1 $MM 1 64 64
 	c "$M4" X=1 $MM 1 64 88
-	c "$M4" X=1 $MM 1 32 64
-
-	log ""
-	log "##### THE ROUND. K = 128, whose count and addresses are measured.  #####"
-	log ""
-	log "===== 3) M = 1  K = 128  N = 64, 32, 24                            ====="
 	c "$M4" X=1 $MM 1 128 64
-	c "$M4" X=1 $MM 1 128 32
 	c "$M4" X=1 $MM 1 128 24
 
 	log ""
-	log "##### THE PREDICTION. K = 256, eight runs a channel.               #####"
-	log ""
-	log "===== 4) M = 1  K = 256  N = 64 and N = 32                         ====="
-	c "$M4" X=1 $MM 1 256 64
-	c "$M4" X=1 $MM 1 256 32
+	log "##### THE ROUND. 0x3020 higher at K = 256. wrote is 40 of 64.      #####"
+	for v in 111 127 143 175 207 255
+	do
+		log ""
+		log "===== K = 256  N = 64   0x3020 = $v"
+		c "$M4" "CHARSIU_OVERRIDE=0x3020=$v" $MM 1 256 64
+	done
 
 	log ""
-	log "===== 5) --map K = 256 N = 64 in FULL, so a miss is readable here  ====="
-	c X=1 X=1 $CH 1 256 64 --map 8
+	log "===== 4) K = 192, between the last that works and the first not    ====="
+	c "$M4" X=1 $MM 1 192 64
+	c "$M4" X=1 $MM 1 192 32
 
 	log ""
-	log "===== the control that must FAIL, and int8 at K = 128 and 256      ====="
+	log "##### 5) SIZE_E_2 at K = 256, measured at K = 64 only              #####"
+	for v in 0x00023133 0x00023233 0x00023333
+	do
+		log ""
+		log "===== K = 256  N = 64   0x4050 = $v"
+		c "$M4" "CHARSIU_OVERRIDE=0x4050=$v" $MM 1 256 64
+	done
+
+	log ""
+	log "===== the control that must FAIL, and int8 at K = 256              ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 128 64
-	c X=1 X=1 $MM 1 128 64
 	c X=1 X=1 $MM 1 256 64
 
 	log ""
@@ -150,7 +153,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 3 first. K = 128 has no prediction left in it.         ====="
+	log "===== read wrote, not the score. 40 of 64 is the whole story.      ====="
 	sync
 }
 case "$1" in
