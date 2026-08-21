@@ -91,6 +91,36 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
+## Round 307 refuted a prediction, and the reason was my own kernel (2026-08-21)
+
+The decode loop runs on the RK3576 and is correct there: the text matches the host byte
+for byte on both quantisations, the scalar control produces the same text 2.1x slower, and
+the tokenizer emits exactly the expected six ids. The NPU anchors pass on both sides of
+the round with no poison.
+
+Round 307 also predicted **q4_0 would beat q8_0 on the board**, and it did not — 2.68
+against 2.86 tok/s at four threads, 2.86 against 2.99 at eight. Half the bytes, slower.
+
+That is not a statement about the RK3576's memory system. charsiu converted every
+**weight** to a float in order to multiply it by a float activation, so the unpacking
+arithmetic dominated and reading half the bytes bought nothing; the q8_0/q4_0 ratio barely
+moved between the host (1.12) and the board (1.05–1.07), which is what a second order
+effect looks like. The question the round was built to ask could not be answered through a
+kernel that was ALU bound.
+
+charsiu now quantises the activation to int8 once per matvec and does integer dot
+products. On the host that is 17.99 → 36.85 tok/s at q4_0, and **the order flips**: q4_0
+beats q8_0. Round 308 asks the same question again through that kernel.
+
+Two other things worth carrying forward from 307:
+
+- **Prompt tok/s in that log is I/O, not compute.** The first read of the q8_0 file took
+  21.4 s for six tokens — 1.3 GB off an SD card at 62 MB/s. Only the generation column is
+  a measurement, and 308 warms both files first.
+- **Eight threads beat four by ~10%**, against the prediction. Six was *below* four, which
+  is the four A72 plus two A53 case with the A53s straggling; the four A53s together net
+  about a tenth of what the four A72s do.
+
 ## The image carries a model now, and the rootfs is 3 GiB (2026-08-21)
 
 charsiu grew a decode loop that runs on the CPU with no NPU in it, and the only question

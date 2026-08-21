@@ -2,89 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 307. THE FIRST ROUND THAT IS NOT ABOUT THE NPU.
+# 2026-08-21 round 308. THE SAME QUESTION 307 COULD NOT ANSWER, THROUGH A
+# KERNEL THAT CAN ANSWER IT.
 #
-# int4 is parked. What replaces it is the thing charsiu never had: a decode
-# loop. Until today the repo was device.c, job.c, regcmd.c and four probes --
-# it could compute a matmul and could not run a model, and the 11.8 tok/s in
-# the README was a division, not a measurement.
+# 307 predicted q4_0 would beat q8_0 on this board and it did not: 2.68 against
+# 2.86 at four threads, 2.86 against 2.99 at eight. Half the bytes, slower.
 #
-# There is now a whole CPU decode path: a gguf reader, byte level BPE, RMSNorm,
-# RoPE, GQA attention with a KV cache, SwiGLU, and argmax. On the host it is
-# verified two ways:
+# ⚠ THE REASON WAS NOT THE BOARD, IT WAS MY KERNEL. charsiu converted every
+# WEIGHT to a float in order to multiply it by a float activation, so the
+# unpacking arithmetic dominated and reading half the bytes bought nothing.
+# The q8_0/q4_0 ratio barely moved between the host (1.12) and the board
+# (1.05-1.07), which says bandwidth was only a second order effect at that ALU
+# cost. **307's prediction B is refuted, but so is any reading of 307 as a
+# statement about the RK3576's memory system.**
 #
-#   tokenizer   3094 cases against huggingface's own implementation, 0 diffs
-#   forward     10 prompts against llama.cpp on an f32 model: 480 greedy
-#               tokens identical, worst logit delta 0.01027 near 16
+# WHAT CHANGED. There are N*K weights and only K activations, so the activation
+# is now quantised to int8 once per matvec and the dot product is INTEGER, with
+# one float multiply per 32 element block. On the host, four threads:
 #
-# THIS ROUND ASKS THE ONE QUESTION THE HOST CANNOT ANSWER: what does it do on
-# the RK3576, and what is the CPU number the NPU has to beat. That is step 3 of
-# PLAN.md, and it is the denominator for everything after it.
+#   q4_0   exact f32 activation  17.99  ->  quantised  36.85 tok/s
+#   q8_0   exact f32 activation  17.10  ->  quantised  34.80 tok/s
+#
+# and the order flipped: **q4_0 now beats q8_0 on the host**, where it lost
+# before. Host thread scaling flattened too, 1 -> 18.4, 2 -> 30.2, 4 -> 33.4,
+# 6 -> 30.8, which is what a kernel that has stopped being ALU bound looks like.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) READ THE TEXT FIRST, NOT THE TOKENS PER SECOND. Entry 2 must print, byte
-#    for byte, what the host printed:
+# 1) TEXT FIRST, AND THERE ARE NOW TWO CORRECT ANSWERS, one per path.
 #
+#    q4_0, either path, 32 tokens, greedy, --ignore-eos:
 #      Paris. The capital of Germany is Berlin. The capital of Italy is Rome.
 #      The capital of Spain is Madrid. The capital of Portugal is Lisbon. The
 #      capital
 #
-#    (one line, greedy, --ignore-eos, q4_0). Different text means the loop is
-#    wrong on this silicon and EVERY TIMING BELOW IT IS A TIMING OF A WRONG
-#    ANSWER. Do not read them.
+#    q8_0 EXACT path (CHARSIU_NO_QACT=1) ends: ...Claude Monet painted many
+#      landscapes            <- and this is byte for byte what 307 printed
+#    q8_0 QUANTISED path ends: ...Claude Monet painted the water
 #
-# 2) THEN THE CONTROL. Entry 3 is the same code with the NEON kernels compiled
-#    out. It must print the SAME text and be SLOWER. Same text and slower means
-#    the vector kernels are right on an ARMv8.0 core. Different text means the
-#    NEON path is wrong on a Cortex-A72 and nothing above it counts -- and this
-#    is a control that can fail, because a wrong vector kernel still produces
-#    fluent English.
+#    The q8_0 pair differing is EXPECTED and is the approximation showing. The
+#    q4_0 pair NOT differing is also expected: its own weight noise is larger.
+#    Anything else in either and the numbers below are timings of a wrong
+#    answer.
 #
-# 3) THE TOKENIZER, entry 1, must be exactly six ids:
+# 2) THE CONTROL. Entry 3 is CHARSIU_NO_QACT=1, the exact f32 activation. It
+#    must be SLOWER and it must reproduce 307's q4_0 line exactly. If the exact
+#    path has moved since 307, this commit broke something it had no business
+#    touching, and the fast path cannot be read.
 #
-#      128000 791 6864 315 9822 374
-#
-#    Anything else and the file reader or the byte tables are broken on this
-#    ABI, and the text above is not evidence of anything.
-#
-# 4) ONLY THEN the numbers. Host, for scale (6 fast cores, not this board):
-#
-#      q4_0  18.70 tok/s     q8_0  20.96 tok/s
-#      q4_0 by threads: 1 -> 7.93, 2 -> 14.41, 4 -> 21.22, 6 -> 18.80
+# 3) THE SCALAR CONTROL is still there, entry 4: no NEON at all, same text.
 #
 # ---------------------------------------------------------------------------
-# WHAT I EXPECT, SO THAT BEING WRONG COSTS SOMETHING
+# WHAT I EXPECT, AND 307 SHOWED THAT WRITING IT DOWN COSTS SOMETHING
 # ---------------------------------------------------------------------------
 #
-# A) FOUR THREADS WILL BE THE BEST AND EIGHT WILL NOT BEAT IT. The RK3576 is
-#    four Cortex-A72 and four Cortex-A53, and the pool splits the rows of a
-#    matmul EVENLY. An A53 handed a quarter of the rows finishes last and the
-#    A72s wait for it, so eight threads should be no better than four and may
-#    be worse. If eight clearly wins, the even split is not the limiter and the
-#    pool does not need to know about big.LITTLE -- which would be good news
-#    and is the reason to ask.
+# A) **q4_0 BEATS q8_0 THIS TIME.** It does on the host now. If it does here,
+#    decode on this board is bandwidth bound, and what the NPU buys is bytes.
+#    If q8_0 STILL wins with an integer kernel, then bytes are not the limit on
+#    the RK3576 and the NPU's advantage would have to be arithmetic -- which
+#    would change what step 2 is for. This is the whole round.
 #
-# B) Q4_0 WILL BEAT Q8_0 ON THIS BOARD, and it does not on the host. The host
-#    is compute bound, so the cheaper unpacking of q8_0 wins there. If a board
-#    with much less memory bandwidth STILL prefers q8_0, then this decode step
-#    is not bandwidth bound on the RK3576 either -- and that would say the NPU's
-#    advantage here is arithmetic and not bytes, which changes what step 2 is
-#    for. This is the discriminating entry of the round.
+# B) FOUR AND EIGHT THREADS WILL BE CLOSER THAN IN 307. 307 got 2.68 at four
+#    and 2.95 at eight, a 10% gain from four A53 cores. A kernel that is
+#    bandwidth bound should get LESS from them, not more. If eight still gains
+#    10% or more, the board is not bandwidth bound even now, and A) is probably
+#    also going to fail.
 #
-# C) The NPU anchors still pass. Nothing this round touches the NPU, but the
-#    image is a full rebuild with a 3072 MiB rootfs and a new partition size,
-#    so the anchors are there to catch a rebuild that broke something unrelated.
+# C) I do NOT predict the absolute number. The host gained 2.05x from this
+#    change. If the board gains much less, the A72's own integer throughput is
+#    the limit and that is worth knowing on its own.
 #
-# ---------------------------------------------------------------------------
-# WHAT IS NEW IN THE IMAGE
-# ---------------------------------------------------------------------------
-#   /opt/charsiu/charsiu_run          the decode loop, NEON
-#   /opt/charsiu/charsiu_run_scalar   the same source, CHARSIU_NO_NEON
-#   /opt/charsiu/models/*.gguf        Llama-3.2-1B-Instruct q4_0 and q8_0
-#   rootfs is 3072 MiB now, not 512, because the models live in it
+# ⚠ PROMPT TOK/S IN THIS LOG IS I/O, NOT COMPUTE. In 307 the first read of the
+# q8_0 file took 21.4 s for six tokens, which is 1.3 GB off an SD card at
+# 62 MB/s. Entry 1 warms both files first so the later numbers are compute.
+# Read the GEN column only.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -120,12 +113,16 @@ w() {
 	return 0
 }
 
-# One decode run. $1 binary, $2 model, $3 tokens, $4 threads.
+# $1 binary, $2 model, $3 tokens, $4 threads, $5 env (or "-")
 gen() {
 	log ""
-	log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4"
-	sleep 1
-	"$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
+	if [ "$5" = "-" ]; then
+		log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4"
+		"$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
+	else
+		log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4  [$5]"
+		env "$5" "$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
+	fi
 	return 0
 }
 
@@ -142,45 +139,50 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### THE ROUND: the CPU decode loop on the RK3576.                #####"
+	log "##### ROUND 308: an integer kernel, and the question 307 could not #####"
+	log "#####            answer through a kernel that was ALU bound.       #####"
 
 	log ""
-	log "===== 1) the tokenizer. must be 128000 791 6864 315 9822 374       ====="
-	log ""
-	"$RUN" "$M4" --tokens -p "$PROMPT" > "$C" 2>&1
+	log "===== 1) warm both files off the SD card. TIMINGS HERE ARE I/O.    ====="
+	cat "$M4" > /dev/null 2>&1
+	cat "$M8" > /dev/null 2>&1
+	log "  -- both models read into the page cache"
+	log "  -- $(free -m 2>/dev/null | head -2 | tail -1)"
 
 	log ""
-	log "===== 2) THE TEXT. q4_0, 32 tokens, greedy. must match the host.   ====="
-	gen "$RUN" "$M4" 32 4
+	log "===== 2) THE TEXT, quantised activation, q4_0 and q8_0             ====="
+	gen "$RUN" "$M4" 32 4 -
+	gen "$RUN" "$M8" 32 4 -
 
 	log ""
-	log "===== 3) THE CONTROL. same source, no NEON. same text, slower.     ====="
-	gen "$RUNS" "$M4" 32 4
+	log "===== 3) THE CONTROL. exact f32 activation. slower, and q4_0 must  ====="
+	log "=====    reproduce round 307's line byte for byte.                 ====="
+	gen "$RUN" "$M4" 32 4 CHARSIU_NO_QACT=1
+	gen "$RUN" "$M8" 32 4 CHARSIU_NO_QACT=1
 
 	log ""
-	log "===== 4) threads. I say 4 wins and 8 does not beat it.             ====="
+	log "===== 4) the scalar control, no NEON at all                        ====="
+	gen "$RUNS" "$M4" 24 4 -
+
+	log ""
+	log "===== 5) THE ROUND. q4_0 against q8_0. I say q4_0 wins this time.  ====="
 	for T in 1 2 4 6 8
 	do
-		gen "$RUN" "$M4" 24 "$T"
+		gen "$RUN" "$M4" 24 "$T" -
+		gen "$RUN" "$M8" 24 "$T" -
 	done
 
 	log ""
-	log "===== 5) THE DISCRIMINATING ONE. q4_0 against q8_0, 4 threads.     ====="
-	log "=====    host prefers q8_0. a bandwidth bound board should not.    ====="
-	gen "$RUN" "$M4" 24 4
-	gen "$RUN" "$M8" 24 4
-
-	log ""
-	log "===== 6) and at 8 threads, in case the winner moves with them      ====="
-	gen "$RUN" "$M4" 24 8
-	gen "$RUN" "$M8" 24 8
+	log "===== 6) the same pair once more at the best two, for a repeat     ====="
+	gen "$RUN" "$M4" 24 4 -
+	gen "$RUN" "$M4" 24 8 -
 
 	log ""
 	log "===== the NPU anchor again                                         ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== text first, then the control, then the numbers.              ====="
+	log "===== text, then the control, then q4_0 against q8_0.              ====="
 	sync
 }
 case "$1" in
