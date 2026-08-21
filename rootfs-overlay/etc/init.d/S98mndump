@@ -2,54 +2,51 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 298. K has only ever been 32 or 64, and an LLM wants
-# thousands.
+# 2026-08-21 round 299. K = 128's addresses were right and its group COUNT was
+# another K = 64 coincidence.
 #
-# ⚠ M > 1 IS CLOSED WITH A NEGATIVE. 297's sweep had its own controls and both
-# held: g = 8 came back 16 of 32 and g = 64 came back 0 of 32, so the rewrite
-# generalised the shipped path rather than changing it. Every other granularity,
-# 1, 2, 4, 16, 32 and 64, is 0 of 32.
+# ⚠ THE BLOCK STRIDE SCALES. --map at K = 128, N = 64 gave group bases
+# 0, 128, 1024, 1152, 2048, 2176, 3072, 3136, which is 8*K exactly as predicted,
+# and int8 at K = 128 is 64 of 64 byte exact so the job setup is fine there.
 #
-# So after SIX registers and NINE packings, M > 1 does not work. The hardware
-# computes M rows and feeds every one of them from row 0's activation, and
-# nothing that carries m and no arrangement of the activation buffer moves that.
-# g = 32's row 1 map lights 16 of 16 and still computes wrong, which is the same
-# shape all three register arms had.
+# ⚠ AND THE MATMUL WAS 0 of 64 ANYWAY, because of the OTHER half of the layout.
+# Channel 0 at K = 128 is fed by FOUR eight byte runs, at 0, 256, 512 and 768,
+# where K = 64 has two at 0 and 256. The packer wrote two, at an offset of
+# half * 4 * K.
 #
-# ⚠ AND IT DOES NOT BLOCK THE PROJECT. charsiu exists to decode LLM tokens, one
-# at a time, which is M = 1, and int4 at M = 1 is exact across eleven geometries.
-# M > 1 is a chaining problem: run M jobs. Recorded as a negative and left.
+# 4*K is 256 exactly when K is 64. That is the same trap as 8*K against wbytes/4
+# in round 284: an expression fitted at the one K everything had been measured
+# at, agreeing with the data for exactly that reason. The spacing is a CONSTANT
+# 256 at both K and it is the COUNT that scales, K/32, which is 1, 2 and 4 at K
+# of 32, 64 and 128 and matches the K/2 k a channel already known.
 #
-# ⚠ WHAT DOES BLOCK IT IS K. Every int4 measurement in this project is at K = 32
-# or K = 64. A projection in a small model is K = 2048 by N = 1024. The packer
-# refuses everything else, deliberately, and the bench has no int4 path at all,
-# so "what does int4 buy" cannot be asked yet.
+#   K= 32  channel 0 <- 0                       measured
+#   K= 64  channel 0 <- 0, 256                  measured
+#   K=128  channel 0 <- 0, 256, 512, 768        measured
+#   K=256  channel 0 <- 0, 256, ... , 1792      PREDICTED
 #
-# The skeleton is K independent everywhere it has been checked: the slot table by
-# group count reproduces K = 32 and K = 64 alike, and only the block stride 8*K
-# and the k+ offset 4*K scale with it. So K = 128 and 256 are allowed now as a
-# PREDICTION and refused above that.
-#
-#   K = 128  bases 0 128 1024 1152 2048 2176 3072 3136, k+ at +512
-#   K = 256  bases 0 128 2048 2176 4096 4224 6144 6208, k+ at +1024
+# ⚠ AND K = 256's BASES DID NOT MATCH. The sweep was capped at 2304 bytes of an
+# 8192 byte buffer, so it is truncated and its group leaders cannot be trusted;
+# it is re-swept in full here rather than argued about.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 4 AND 5 ARE THE ROUND: --map at K = 128 and K = 256, N = 64.
+#   ⚠ ENTRY 3 IS THE ROUND. K = 128 at N = 64, 32 and 24. Its addresses and its
+#   group count are both measured now, so nothing about it is a prediction.
 #
-#     the bases land            the block stride really is 8*K and the layout
-#                               scales, which is what an LLM shape needs
-#     the bases land but the
-#     k+ group does not         the stride scales and the half offset does not,
-#                               and the grid says what it is instead
-#     something else            K = 32 and 64 were two points of something that
-#                               is not linear in K, and the grid is the data
+#     exact          the layout scales in K, and what is left before an LLM
+#                    shape is only how far
+#     not exact      the k the four runs carry is not 16*(n&1) + 32*half + j,
+#                    and that expression was also only ever checked at two runs
 #
-#   ENTRIES 6 AND 7 are the matmuls at those K, which is the only thing that
-#   says the k PARITY still holds. The map places bytes; only cpu_reference says
-#   a channel got the right 32 of its k.
+#   ENTRY 4 IS THE PREDICTION. K = 256, eight runs a channel. If K = 128 is
+#   exact and 256 is not, the count is not K/32 above some bound.
 #
-#   ENTRY 2 is K = 64 at M = 1, the eleven geometry path, which must not move.
+#   ENTRY 5 sweeps K = 256's map in FULL, so a miss in entry 4 is readable in
+#   the same boot. That is what has saved three rounds already.
+#
+#   ENTRY 2 is K = 64 and K = 32, the eleven geometry path, which must not move.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -117,46 +114,43 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) K = 64 at M = 1. The eleven geometry path.                ====="
+	log "===== 2) K = 64 and K = 32. The eleven geometry path.              ====="
 	c "$M4" X=1 $MM 1 64 16
 	c "$M4" X=1 $MM 1 64 64
+	c "$M4" X=1 $MM 1 64 88
 	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "##### THE ROUND. K = 128 and 256, which nothing has ever swept.    #####"
+	log "##### THE ROUND. K = 128, whose count and addresses are measured.  #####"
 	log ""
-	log "===== 4) --map  K = 128  N = 64                                    ====="
-	log "=====    predicted 0 128 1024 1152 2048 2176 3072 3136, k+ at +512 ====="
-	c X=1 X=1 $CH 1 128 64 --map 8
-	log ""
-	log "===== 5) --map  K = 256  N = 64                                    ====="
-	log "=====    predicted 0 128 2048 2176 4096 4224 6144 6208             ====="
-	c X=1 X=1 $CH 1 256 64 --map 8 2304
-
-	log ""
-	log "##### and the matmuls, which are the only test of the k parity     #####"
-	log ""
-	log "===== 6) M = 1  K = 128  N = 64                                    ====="
+	log "===== 3) M = 1  K = 128  N = 64, 32, 24                            ====="
 	c "$M4" X=1 $MM 1 128 64
-	log ""
-	log "===== 7) M = 1  K = 256  N = 64                                    ====="
-	c "$M4" X=1 $MM 1 256 64
-	log ""
-	log "===== 8) M = 1  K = 128  N = 32 and N = 24, other group counts     ====="
 	c "$M4" X=1 $MM 1 128 32
 	c "$M4" X=1 $MM 1 128 24
 
 	log ""
-	log "===== the control that must FAIL, and int8 at K = 128              ====="
-	c "CHARSIU_W4=1" X=1 $MM 1 64 64
+	log "##### THE PREDICTION. K = 256, eight runs a channel.               #####"
+	log ""
+	log "===== 4) M = 1  K = 256  N = 64 and N = 32                         ====="
+	c "$M4" X=1 $MM 1 256 64
+	c "$M4" X=1 $MM 1 256 32
+
+	log ""
+	log "===== 5) --map K = 256 N = 64 in FULL, so a miss is readable here  ====="
+	c X=1 X=1 $CH 1 256 64 --map 8
+
+	log ""
+	log "===== the control that must FAIL, and int8 at K = 128 and 256      ====="
+	c "CHARSIU_W4=1" X=1 $MM 1 128 64
 	c X=1 X=1 $MM 1 128 64
+	c X=1 X=1 $MM 1 256 64
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== the bases at entry 4 first, then whether entry 6 is exact.   ====="
+	log "===== entry 3 first. K = 128 has no prediction left in it.         ====="
 	sync
 }
 case "$1" in
