@@ -2,52 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 295. Three registers wake row 1 up. Only a matmul says which
-# one wakes it up CORRECTLY.
+# 2026-08-21 round 296. Six registers ruled out. The row term in the input
+# packing has never been tested.
 #
-# ⚠ 294 FOUND THEM, and the baseline pair reproduced first, which is what made
-# the rest readable. Of eight arms, three light row 1 and five leave it dark:
+# ⚠ 295 CLOSED THE REGISTER LINE. All three arms that light row 1 on --map come
+# back 16 of 32 as a matmul, which is row 0 exact and everything else wrong,
+# identical to changing nothing:
 #
-#   0x1044 = 0x00010004   DATA_ENTRIES = surf*m instead of surf
-#   0x103c = 0x00040000   surf*m << 16 instead of surf << 16
-#   0x1078 = 0x00000000   charsiu emits rows-1 here, into a field mesa calls
-#                         DATA_BURST_LEN, and 0 is the M = 1 value
+#   0x1044 = surf*m       16 of 32      0x1078 = 0            16 of 32
+#   0x103c = surf*m << 16 16 of 32      the two combinations  16 of 32
+#   the same three at M = 4             16 of 64 each
+#   0x1094 = 1            0 of 32, and it breaks row 0 as well
+#   0x118c = 0            16 of 32, the baseline
 #
-# and all three light the RIGHT words: byte 8j lights w(4j'+...) for row 1's
-# channel j and nothing else, so the address is right in every one of them.
+# So they move data around and none of them is a row count. That was branch four
+# of 295's reading rule.
 #
-# ⚠ THE VALUES ARE ALL DIFFERENT AND NONE IS RIGHT. Byte 0 low comes back 284,
-# 7739 and 7739. The probe's ramp gives row 1 the same k = 0 activation as row 0,
-# so the correct answer is row 0's own 71. Three arms make row 1 read SOMETHING;
-# nothing yet says any of them makes it read its own data.
+# ⚠ WHAT WAS NEVER TESTED IS THE PACKING ITSELF. charsiu writes the activation
+# as [k/atom][m][atom] and every matmul in this project ran M = 1 until round
+# 289, where m drops out of that expression entirely and ANY arrangement of the
+# rows is correct. The layout has one measurement behind it, round 179's, and
+# that was at M = 1 too.
 #
-# ⚠ AND ONE THING I SAID LAST ROUND NEEDS TIGHTENING. "Row 1's activation is
-# never read" is right; "row 1 is never computed" is not. In the row 0 only
-# baseline, byte 0 lights w0 at 71 AND w4 at 1207, and w4 is row 1's channel 0
-# with row 1's activation held at the zero point. Row 1's output is computed and
-# nonzero. Both output rows are computed from ROW 0's activation slot.
+# CHARSIU_A_LAYOUT picks it now:
+#   0  [k/atom][m][atom]   rows inside a k group, what has always been written
+#   1  [m][k/atom][atom]   rows outermost
+#   2  [k/atom][atom][m]   rows innermost, element interleaved
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ A MATMUL, NOT A MAP. --map says a byte reaches a word; only
-#   cpu_reference says the number is right. Three candidates, at M = 2 and then
-#   at M = 4 where surf*m is 8 rather than 4.
+#   ⚠ THE TEST IS THE MATMUL AND THE MAP TOGETHER. A layout that lights row 1
+#   and gets it wrong is what all six registers already did; a layout that is
+#   right will be 32 of 32.
 #
-#     one arm is exact               that register is the input row count and
-#                                    M > 1 is done. Bake it in and re-run the
-#                                    eleven geometries.
-#     an arm is exact at M = 2 and not at M = 4
-#                                    it is not the count, it is something that
-#                                    happens to be right at one M
-#     row 1 exact, row 0 broken      the register trades one row for the other,
-#                                    which the map could not have shown
-#     none exact                     all three only move data around, and the
-#                                    next place is 0x1094 and 0x118c, which
-#                                    carry rows and rows-1 and were dark in 294
+#     a layout is 32 of 32        the row term was the fault all along, and the
+#                                 register sweep was looking in the wrong half
+#     a layout lights row 1 but
+#     is not exact                the arrangement is closer and the atom or the
+#                                 element size inside it is still wrong
+#     all three are 16 of 32      the packing is not it either, and what is left
+#                                 is that the hardware reads one row per job
+#                                 whatever it is told, which would make M > 1 a
+#                                 chaining problem and not a layout one
 #
-#   ⚠ ENTRIES 2 AND 3 ARE M = 1, unmodified. Nothing in the packer changed this
-#   round, so they must be exact, and the overrides below only apply to their
-#   own arms.
+#   ⚠ LAYOUT 0 AT M = 1 MUST STAY EXACT in every arm. It is the shipped layout
+#   and eleven geometries depend on it; if entry 2 moves, the knob broke the
+#   default path rather than adding a branch.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -112,40 +113,42 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) M = 1 N = 16 and N = 64, unmodified                       ====="
+	log "===== 2) layout 0 at M = 1. The shipped path. Must not move.       ====="
 	c "$M4" X=1 $MM 1 64 16
 	c "$M4" X=1 $MM 1 64 64
 
 	log ""
-	log "##### THE ROUND. M = 2, surf*m = 4. A matmul, not a map.           #####"
-	for a in \
-		"0x1044=0x00010004" \
-		"0x103c=0x00040000" \
-		"0x1078=0x00000000" \
-		"0x1044=0x00010004,0x1078=0x00000000" \
-		"0x103c=0x00040000,0x1078=0x00000000"
+	log "##### THE ROUND. three arrangements of the row term, at M = 2.     #####"
+	for L in 0 1 2
 	do
 		log ""
-		log "===== M=2 N=16   $a"
-		c "$M4 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=$a" $MM 2 64 16
+		log "===== M = 2  N = 16  layout $L"
+		c "$M4 CHARSIU_A_LAYOUT=$L" X=1 $MM 2 64 16
 	done
 
 	log ""
-	log "##### and at M = 4, where surf*m is 8. Same three.                 #####"
-	for a in \
-		"0x1044=0x00010008" \
-		"0x103c=0x00080000" \
-		"0x1078=0x00000000"
+	log "##### and the map beside them, row 1 held live                     #####"
+	for L in 1 2
 	do
 		log ""
-		log "===== M=4 N=16   $a"
-		c "$M4 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=$a" $MM 4 64 16
+		log "===== --map M=2 N=16 row 1, layout $L"
+		c "CHARSIU_MAP_ROW=1 CHARSIU_A_LAYOUT=$L" X=1 $CH 2 64 16 --map 8 64
 	done
 
 	log ""
-	log "===== the two that were dark in 294, as matmuls anyway             ====="
-	c "$M4" "CHARSIU_OVERRIDE=0x1094=0x00000001" $MM 2 64 16
-	c "$M4" "CHARSIU_OVERRIDE=0x118c=0x00000000" $MM 2 64 16
+	log "##### whichever lights, at M = 4 too                               #####"
+	for L in 1 2
+	do
+		log ""
+		log "===== M = 4  N = 16  layout $L"
+		c "$M4 CHARSIU_A_LAYOUT=$L" X=1 $MM 4 64 16
+	done
+
+	log ""
+	log "===== layout 1 and 2 at M = 1, which must also be exact if the     ====="
+	log "=====   arrangement is right, since m = 1 makes all three equal    ====="
+	c "$M4 CHARSIU_A_LAYOUT=1" X=1 $MM 1 64 16
+	c "$M4 CHARSIU_A_LAYOUT=2" X=1 $MM 1 64 16
 
 	log ""
 	log "===== the control that must FAIL, and int8 at M = 4                ====="
@@ -157,7 +160,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== an arm at 32 of 32 is the answer. 16 of 32 is still row 0.   ====="
+	log "===== 32 of 32 is the answer. 16 of 32 is row 0 and nothing more.  ====="
 	sync
 }
 case "$1" in
