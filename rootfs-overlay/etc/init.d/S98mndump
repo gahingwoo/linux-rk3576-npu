@@ -2,83 +2,98 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 306. The last int4 round. One number decides whether it is
-# worth anything, and then this line is parked.
+# 2026-08-21 round 307. THE FIRST ROUND THAT IS NOT ABOUT THE NPU.
 #
-# ⚠⚠ 305 SHOWED THE CEILING WAS MINE. The layout works at every K tried up to
-# 2048:
+# int4 is parked. What replaces it is the thing charsiu never had: a decode
+# loop. Until today the repo was device.c, job.c, regcmd.c and four probes --
+# it could compute a matmul and could not run a model, and the 11.8 tok/s in
+# the README was a division, not a measurement.
 #
-#   K = 288, 384, 512, 1024, 2048 at N = 64    wrote 40 of 64, exact 32, all
-#   K = 512 at N = 16                          16 of 16 EXACT
-#   bench K = 512 N = 64                       int8 24.6 us, int4 16.7 us, -32%
+# There is now a whole CPU decode path: a gguf reader, byte level BPE, RMSNorm,
+# RoPE, GQA attention with a KV cache, SwiGLU, and argmax. On the host it is
+# verified two ways:
 #
-# exact is N/2 at every one of them, independent of K. That is a WORKING HALF
-# WIDTH JOB, not a failure, which is the distinction the reading rule was
-# written to keep and the reason it said to read wrote rather than exact.
+#   tokenizer   3094 cases against huggingface's own implementation, 0 diffs
+#   forward     10 prompts against llama.cpp on an f32 model: 480 greedy
+#               tokens identical, worst logit delta 0.01027 near 16
 #
-# ⚠ SO THE TWELVE TIMES FROM 304 IS WRONG AND THE ARITHMETIC HAS TO BE REDONE.
-# An int4 job at a declared K and N gives K/2 real k a channel and N/2 usable
-# channels:
+# THIS ROUND ASKS THE ONE QUESTION THE HOST CANNOT ANSWER: what does it do on
+# the RK3576, and what is the CPU number the NPU has to beat. That is step 3 of
+# PLAN.md, and it is the denominator for everything after it.
 #
-#   int4   NK/4 MACs for NK/8 weight bytes fetched   2 MACs a byte
-#   int8   NK   MACs for NK   bytes                  1 MAC a byte
+# ---------------------------------------------------------------------------
+# HOW TO READ THIS, WRITTEN BEFORE THE RUN
+# ---------------------------------------------------------------------------
 #
-# int4 really is twice the work per byte, which is what a 4 bit weight should
-# buy. It pays for it in JOBS: four times as many for the same total work, each
-# with a fixed cost. Whether the 2x survives that depends on one thing only, HOW
-# BIG A JOB CAN BE, and that is the largest N at a large K.
+# 1) READ THE TEXT FIRST, NOT THE TOKENS PER SECOND. Entry 2 must print, byte
+#    for byte, what the host printed:
 #
-#   N = 1024 works at K = 2048   4 int4 jobs of 262 kB against one int8 job of
-#                                2 MB and 201.5 us. At 10 GB/s and a 15 us fixed
-#                                cost that is 164 us against 201, int4 by 19%.
-#   N caps at 64                 32 usable channels a job, and a projection needs
-#                                64 jobs. Slower by an order of magnitude and
-#                                int4 is not worth it on this hardware.
+#      Paris. The capital of Germany is Berlin. The capital of Italy is Rome.
+#      The capital of Spain is Madrid. The capital of Portugal is Lisbon. The
+#      capital
 #
-# THE READING RULE, fixed before the run.
+#    (one line, greedy, --ignore-eos, q4_0). Different text means the loop is
+#    wrong on this silicon and EVERY TIMING BELOW IT IS A TIMING OF A WRONG
+#    ANSWER. Do not read them.
 #
-#   ⚠ THE ROUND IS ONE COLUMN: wrote, at K = 2048, as N grows. Every N so far at
-#   a large K has been 16 or 64.
+# 2) THEN THE CONTROL. Entry 3 is the same code with the NEON kernels compiled
+#    out. It must print the SAME text and be SLOWER. Same text and slower means
+#    the vector kernels are right on an ARMv8.0 core. Different text means the
+#    NEON path is wrong on a Cortex-A72 and nothing above it counts -- and this
+#    is a control that can fail, because a wrong vector kernel still produces
+#    fluent English.
 #
-#     wrote keeps up with N/2 + 8 to N = 1024
-#                         jobs can be big, int4 is worth about 19% on a
-#                         projection, and it is worth coming back to
-#     wrote stops at some N
-#                         that N is the job size, and the projection arithmetic
-#                         above says whether it is worth anything
-#     wrote stays at 40 whatever N is
-#                         the count is a fixed 40 rather than N/2 + 8, and int4
-#                         tops out at 32 usable channels a job forever
+# 3) THE TOKENIZER, entry 1, must be exactly six ids:
 #
-#   ENTRY 4 benches the largest shape that works, against int8 at the same
-#   shape, which is the only number that matters for the decision.
+#      128000 791 6864 315 9822 374
 #
-#   ⚠ AFTER THIS ROUND THE int4 LINE IS PARKED whichever way it goes. charsiu
-#   has no softmax, no rmsnorm, no RoPE, no KV cache, no sampling and no
-#   tokeniser, and 11.8 tok/s has never been measured. Those are precision
-#   independent and they are what stands between this project and a token.
+#    Anything else and the file reader or the byte tables are broken on this
+#    ABI, and the text above is not evidence of anything.
+#
+# 4) ONLY THEN the numbers. Host, for scale (6 fast cores, not this board):
+#
+#      q4_0  18.70 tok/s     q8_0  20.96 tok/s
+#      q4_0 by threads: 1 -> 7.93, 2 -> 14.41, 4 -> 21.22, 6 -> 18.80
+#
 # ---------------------------------------------------------------------------
+# WHAT I EXPECT, SO THAT BEING WRONG COSTS SOMETHING
 # ---------------------------------------------------------------------------
+#
+# A) FOUR THREADS WILL BE THE BEST AND EIGHT WILL NOT BEAT IT. The RK3576 is
+#    four Cortex-A72 and four Cortex-A53, and the pool splits the rows of a
+#    matmul EVENLY. An A53 handed a quarter of the rows finishes last and the
+#    A72s wait for it, so eight threads should be no better than four and may
+#    be worse. If eight clearly wins, the even split is not the limiter and the
+#    pool does not need to know about big.LITTLE -- which would be good news
+#    and is the reason to ask.
+#
+# B) Q4_0 WILL BEAT Q8_0 ON THIS BOARD, and it does not on the host. The host
+#    is compute bound, so the cheaper unpacking of q8_0 wins there. If a board
+#    with much less memory bandwidth STILL prefers q8_0, then this decode step
+#    is not bandwidth bound on the RK3576 either -- and that would say the NPU's
+#    advantage here is arithmetic and not bytes, which changes what step 2 is
+#    for. This is the discriminating entry of the round.
+#
+# C) The NPU anchors still pass. Nothing this round touches the NPU, but the
+#    image is a full rebuild with a 3072 MiB rootfs and a new partition size,
+#    so the anchors are there to catch a rebuild that broke something unrelated.
+#
 # ---------------------------------------------------------------------------
+# WHAT IS NEW IN THE IMAGE
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
+#   /opt/charsiu/charsiu_run          the decode loop, NEON
+#   /opt/charsiu/charsiu_run_scalar   the same source, CHARSIU_NO_NEON
+#   /opt/charsiu/models/*.gguf        Llama-3.2-1B-Instruct q4_0 and q8_0
+#   rootfs is 3072 MiB now, not 512, because the models live in it
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-MM=/opt/charsiu/charsiu_matmul
-BE=/opt/charsiu/charsiu_bench
-CH=/opt/charsiu/charsiu_int4
+RUN=/opt/charsiu/charsiu_run
+RUNS=/opt/charsiu/charsiu_run_scalar
+M4=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0.gguf
+M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
+PROMPT="The capital of France is"
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -105,69 +120,67 @@ w() {
 	return 0
 }
 
-c() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
-	before=$(nbad)
+# One decode run. $1 binary, $2 model, $3 tokens, $4 threads.
+gen() {
+	log ""
+	log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4"
 	sleep 1
-	env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
+	"$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
 	return 0
 }
-
-M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
+	[ -c /dev/accel/accel0 ] || log "no accel device (the charsiu entries do not need it)"
 	dmesg -n 4 2>/dev/null
-	if [ -w /sys/module/rocket/parameters/reset_autosuspend ]; then
+	[ -w /sys/module/rocket/parameters/reset_autosuspend ] && \
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
-		log "reset_autosuspend = $(cat /sys/module/rocket/parameters/reset_autosuspend)"
-	else
-		log "!! reset_autosuspend NOT WRITABLE. A timeout will kill the round."
-	fi
 
 	log ""
-	log "===== 1) the anchor                                                ====="
+	log "===== 0) the NPU anchor, before anything                           ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### THE ROUND. how big can a job be. wrote, at K = 2048.         #####"
-	for NN in 64 128 160 256 512 1024
+	log "##### THE ROUND: the CPU decode loop on the RK3576.                #####"
+
+	log ""
+	log "===== 1) the tokenizer. must be 128000 791 6864 315 9822 374       ====="
+	log ""
+	"$RUN" "$M4" --tokens -p "$PROMPT" > "$C" 2>&1
+
+	log ""
+	log "===== 2) THE TEXT. q4_0, 32 tokens, greedy. must match the host.   ====="
+	gen "$RUN" "$M4" 32 4
+
+	log ""
+	log "===== 3) THE CONTROL. same source, no NEON. same text, slower.     ====="
+	gen "$RUNS" "$M4" 32 4
+
+	log ""
+	log "===== 4) threads. I say 4 wins and 8 does not beat it.             ====="
+	for T in 1 2 4 6 8
 	do
-		log ""
-		log "===== K = 2048  N = $NN     N/2 + 8 would be $((NN / 2 + 8))"
-		c "$M4" X=1 $MM 1 2048 $NN
+		gen "$RUN" "$M4" 24 "$T"
 	done
 
 	log ""
-	log "===== 3) and at K = 512, in case the N limit moves with K          ====="
-	c "$M4" X=1 $MM 1 512 256
-	c "$M4" X=1 $MM 1 512 512
+	log "===== 5) THE DISCRIMINATING ONE. q4_0 against q8_0, 4 threads.     ====="
+	log "=====    host prefers q8_0. a bandwidth bound board should not.    ====="
+	gen "$RUN" "$M4" 24 4
+	gen "$RUN" "$M8" 24 4
 
 	log ""
-	log "##### 4) the bench that decides it, at the biggest shapes          #####"
-	log ""
-	log "===== K = 2048  N = 256   int8 then int4                           ====="
-	c X=1 X=1 $BE 1 2048 256 50
-	c "CHARSIU_W4=1" X=1 $BE 1 2048 256 50
-	log ""
-	log "===== K = 2048  N = 1024  int8 then int4                           ====="
-	c X=1 X=1 $BE 1 2048 1024 50
-	c "CHARSIU_W4=1" X=1 $BE 1 2048 1024 50
+	log "===== 6) and at 8 threads, in case the winner moves with them      ====="
+	gen "$RUN" "$M4" 24 8
+	gen "$RUN" "$M8" 24 8
 
 	log ""
-	log "===== 5) the regression, so the numbers above are of a right answer ====="
-	c "$M4" X=1 $MM 1 224 160
-	c "CHARSIU_W4=1" X=1 $MM 1 224 160
-
-	log ""
-	log "===== the anchor again                                             ====="
+	log "===== the NPU anchor again                                         ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== wrote against N/2 + 8, then the two benches. Then park it.   ====="
+	log "===== text first, then the control, then the numbers.              ====="
 	sync
 }
 case "$1" in

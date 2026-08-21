@@ -9,10 +9,16 @@ UBOOT_IMG="${UBOOT_IMG:-${ROCKCHIP_BIN}/rock4d-sd-uboot.img}"
 # Partition layout (MiB):
 #   0 –  16 : rock4d-sd-uboot.img  (idbloader + U-Boot)
 #  16 – 144 : FAT32 /boot  (128 MiB)
-# 144 – 656 : ext4 rootfs  (512 MiB, /dev/mmcblk0p2)
+# 144 – end : ext4 rootfs  (ROOTFS_MB, /dev/mmcblk0p2)
+#
+# ROOTFS_MB has to match BR2_TARGET_ROOTFS_EXT2_SIZE in the defconfig. It grew
+# past 512 to carry a gguf: charsiu's decode loop needs a real model on the
+# board, and a tiny one would answer whether the loop runs without answering
+# the only question worth a board round, which is tokens per second.
 UBOOT_MB=16
 BOOT_MB=128
-TOTAL_MB=$(( UBOOT_MB + BOOT_MB + 512 ))
+ROOTFS_MB=${ROOTFS_MB:-3072}
+TOTAL_MB=$(( UBOOT_MB + BOOT_MB + ROOTFS_MB ))
 
 echo "==> post-image: building ${OUT}  (${TOTAL_MB} MiB)"
 
@@ -32,7 +38,7 @@ label: dos
 unit: sectors
 
 start=32768,  size=262144, type=c
-start=294912, size=1048576, type=83
+start=294912, size=$(( ROOTFS_MB * 2048 )), type=83
 SFDISK
 
 # Build FAT32 /boot in a temp file (mtools avoids needing root mount).

@@ -7,7 +7,8 @@ test image it picks class 754, the class the CPU reference picks, with the CPU's
 top five in the same order. Every one of its layers, run on its own, is **99.93
 to 99.99 percent of pixels identical to exact integer arithmetic**, which is
 closer than the tflite interpreter most of the numbers here are scored against. An open LLM runtime computes a signed int8 matmul through this driver
-**byte exact**, at 11.9 GB/s of weight bandwidth. Details below.
+**byte exact**, at 11.9 GB/s of weight bandwidth, and now also **runs a whole model on
+the CPU** so that the NPU version has something to be diffed against. Details below.
 
 ## Companion projects
 
@@ -89,6 +90,27 @@ Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
+
+## The image carries a model now, and the rootfs is 3 GiB (2026-08-21)
+
+charsiu grew a decode loop that runs on the CPU with no NPU in it, and the only question
+worth a board round about it is tokens per second on this silicon. That needs a real
+model on the board, so the image layout changed:
+
+| | before | now |
+|---|---|---|
+| rootfs | 512 MiB | 3072 MiB |
+| sdcard.img | 656 MiB | 3216 MiB |
+| new in it | | `/opt/charsiu/charsiu_run`, `charsiu_run_scalar`, and Llama-3.2-1B-Instruct in q4_0 and q8_0 |
+
+`ROOTFS_MB` in `buildroot/board/rock4d/post-image.sh` and `BR2_TARGET_ROOTFS_EXT2_SIZE`
+in the defconfig have to agree; the partition size is computed from the first.
+
+Both quantisations are in the image on purpose. On the development host, which is
+compute bound, q8_0 is **faster** than q4_0 despite reading twice the bytes. A board with
+much less memory bandwidth should invert that. If it does not, this decode step is not
+bandwidth bound on the RK3576 either, and what the NPU would be buying here is arithmetic
+rather than bytes.
 
 ## The reference is the inaccurate one, measured on the board this time (2026-08-19)
 
@@ -767,6 +789,10 @@ buildroot/
   configs/rock4d_npu_defconfig
   board/rock4d/post-image.sh assembles sdcard.img
 rootfs-overlay/
+  opt/charsiu/
+    charsiu_run              the CPU decode loop, NEON
+    charsiu_run_scalar       the same source with CHARSIU_NO_NEON: the control
+    models/*.gguf            not tracked in git; staged by hand from charsiu
   opt/npu-test/
     bringup-check.sh         probe + inference verification (run as root on board)
     infer.py                 Teflon MobileNetV1 UINT8 inference driver
