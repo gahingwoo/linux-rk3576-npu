@@ -2,61 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 286. Blocks and slots, and N = 56 is the only case not
-# behind it.
+# 2026-08-21 round 287. Stop deriving it. The table is the measurement.
 #
-# ⚠ 285 MEASURED THE MAP AWAY FROM N = 64 FOR THE FIRST TIME and both sweeps
-# disagreed with 8*K:
+# 286 FIXED TWO AND MISSED ONE, AND THE MISS IS INSTRUCTIVE. N = 24 went to
+# 24 of 24 and N = 40 to 40 of 40, both from the block and slot rule, and every
+# other geometry held. N = 56 came back 48 of 56 with exactly ONE group wrong:
 #
-#   N = 24  measured 0, 128, 192          8*K said 0, 128, 512
-#   N = 40  measured 0, 128, 512, 576, 704   8*K said ... 640, 1024
+#   g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 0/8  g5 8/8  g6 8/8
 #
-# Laid beside the five geometries that already worked, the shape is regular and
-# it is not a stride at all. Groups of eight channels sit two to a BLOCK of 8*K
-# bytes at SLOTS of 64 bytes, and only the last block differs:
+# The rule put g4 at 1024 and --map, swept in the same boot so the miss cost no
+# round, found it at 704. Slots 1 and 3 of that last block were right and slot 0
+# was not, which is not a thing a wrong stride does.
 #
-#   block stride S = 8*K            slot 64          k+ half at S/2, K > 32
-#   a full block            slots 0 and 2
-#   last block, 2 left      slots 0, 1
-#   last block, 3 left      slots 0, 2, 3 if it is ALSO the first block,
-#                           otherwise slots 0, 1, 3
+# ⚠ TWO CLOSED FORMS HAVE NOW BEEN FITTED TO THIS AND BOTH DIED IN ONE ROUND.
+# wbytes/4 in 284, which also broke three working geometries. "The last block
+# takes the odd slots" in 286. Written as (block, slot) the skeleton is regular
+# and K independent, and WHICH slots is not:
 #
-# That reproduces every table measured, forty bases across seven geometries:
+#   G=2  (0,0)(0,1)                    G=6  (0,0)(0,2)(1,0)(1,2)(2,0)(2,1)
+#   G=3  (0,0)(0,2)(0,3)               G=7  (0,0)(0,2)(1,0)(1,2)(1,3)(2,1)(2,3)
+#   G=4  (0,0)(0,2)(1,0)(1,1)          G=8  (0,0)(0,2)(1,0)(1,2)(2,0)(2,2)(3,0)(3,1)
+#   G=5  (0,0)(0,2)(1,0)(1,1)(1,3)
 #
-#   N=16 0 64                     N=48 0 128 512 640 1024 1088
-#   N=24 0 128 192                N=64 0 128 512 640 1024 1152 1536 1600
-#   N=32 0 128 512 576            N=64 K=32  0 128 256 384 512 640 768 832
-#   N=40 0 128 512 576 704
+# G=5's three group block is {0,1,3} and G=7's is {0,2,3}. G=7's last block is
+# {1,3} where every other last block of two is {0,1}. Any rule covering both is
+# a rule fitted to one point each, which is what 284 and 286 were.
 #
-# ⚠ N = 56 IS THE ONE GEOMETRY NOT BEHIND IT. It is the only case whose last
-# block holds three groups and is not also the first, so the "0, 1, 3
-# otherwise" arm rests on N = 40 alone. The rule predicts its bases:
-#
-#   1024, 1088, 1216   for g4, g5, g6, with g0..g3 at 0, 128, 512, 640
-#
-# 285 ALSO ANSWERED IGOR. SIZE_E_1 = 0 against the traced 1 came back IDENTICAL
-# at all seven N, per group and per count. Inert on the int4 path as well as on
-# the int8 one, which is where round 260 left it.
+# So the packer holds the measurement and refuses outside it. --map has now
+# swept the whole buffer at every N that is a multiple of 8 up to 64, and the
+# table reproduces all eight tables including K = 32, where only the block
+# stride 8*K changes and the slot pattern does not.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 2 IS THE ROUND. N = 56, which has never been exact.
+#   ⚠ THIS ROUND IS ALL REGRESSION AND THAT IS THE POINT. Eight geometries, and
+#   the packer's addressing was replaced rather than adjusted. Every one has been
+#   exact at some point in the last three rounds but never all at once.
 #
-#     56 of 56, every group 8/8   the block and slot rule is read rather than
-#                                 fitted, across eight geometries and two K,
-#                                 and every N that is a multiple of 8 works
-#     g4 to g6 still 0/8          the "otherwise" arm is wrong and N = 40 is
-#                                 the special case, not N = 24. Sweep N = 56
-#                                 with --map and read its bases directly.
-#     a DIFFERENT group breaks    the rule is wrong somewhere it currently
-#                                 agrees with a measurement, which would mean
-#                                 one of the seven tables was misread
+#     all eight exact       int4 is closed for every N that is a multiple of 8
+#                           up to 64, at K of 32 and 64, M = 1, with no override
+#     any one short         the table was transcribed wrong, and the per group
+#                           line says which G to re-read off its --map grid
 #
-#   ⚠ ENTRIES 3 TO 9 ARE THE REGRESSION and they carry as much weight. Seven
-#   geometries were exact before this change and the packer was rewritten, not
-#   patched. 284 broke three working cases with one line; this is a bigger edit.
+#   ENTRIES 10 AND 11 EXTEND IT rather than test it. --map at N = 72 and N = 8,
+#   which are G = 9 and G = 1 and have never been swept. The packer refuses both,
+#   so these produce a grid and nothing else; they are what the next round would
+#   need to widen the table.
 #
-#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8.
+#   ⚠ N = 72 IS ALSO PAST WHERE 0x3020 HAS BEEN CHECKED. It emits 143 there and
+#   the largest ever measured is 111. If the grid comes back empty or short that
+#   is the first thing to suspect, not the layout.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -117,37 +112,37 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) THE ROUND. N = 56. Predicted bases 1024, 1088, 1216.      ====="
-	log ""
-	c "$M4" X=1 $MM 1 64 56
-
-	log ""
-	log "##### the regression. seven geometries, and the packer was rewritten ####"
-	for nn in 16 24 32 40 48 64
+	log "##### eight geometries. all of them, at once, for the first time.  #####"
+	for nn in 16 24 32 40 48 56 64
 	do
 		log ""
-		log "===== N = $nn"
+		log "===== N = $nn  K = 64"
 		c "$M4" X=1 $MM 1 64 $nn
 	done
 	log ""
-	log "===== K = 32 at N = 64                                             ====="
+	log "===== N = 64  K = 32                                               ====="
 	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "===== 10) the control that must FAIL, and int8                     ====="
+	log "===== 9) the control that must FAIL, and int8                      ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
-	log "===== 11) and the map at N = 56, so a miss is readable in one boot ====="
-	c X=1 X=1 $CH 1 64 56 --map 8
+	log "##### widen the table: two G that have never been swept            #####"
+	log ""
+	log "===== 10) --map at N = 72, G = 9.  0x3020 emits 143 here.          ====="
+	c X=1 X=1 $CH 1 64 72 --map 8
+	log ""
+	log "===== 11) --map at N = 8, G = 1                                    ====="
+	c X=1 X=1 $CH 1 64 8 --map 8
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== N = 56 exact would close every N that is a multiple of 8.    ====="
+	log "===== eight exact closes int4 at M = 1 for N a multiple of 8.      ====="
 	sync
 }
 case "$1" in
