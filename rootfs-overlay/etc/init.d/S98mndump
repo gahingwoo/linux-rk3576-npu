@@ -2,58 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 289. M has been 1 in every matmul this project has ever run.
+# 2026-08-21 round 290. M > 1 is int4 only, and the output surface has never
+# been measured.
 #
-# ⚠⚠ 288 CLOSED THE LAYOUT. Eleven geometries exact in one boot, no override:
+# 289 SEPARATED THE TWO THINGS IT WAS BUILT TO SEPARATE.
 #
-#   N = 16 24 32 40 48 56 64 72 80 88 at K = 64,  and N = 64 at K = 32
-#   control 0 of 64, int8 64 of 64
+#   M = 1 at N of 16, 64 and 88   all exact. No reader regression.
+#   int8 at M = 4                 256 of 256 BYTE EXACT
 #
-# N = 80 and N = 88 are the ones that matter. They are G = 10 and G = 11,
-# neither swept, both PREDICTED outright by the slot form, and both came back
-# exact. Their --map grids, taken in the same boot, reproduce all 21 predicted
-# bases to the byte.
+# So M > 1 works on the int8 path, which shares the job setup, the register
+# stream's row fields and the surface reading. The failure is int4 only:
 #
-# That is the difference between this form and the two before it. wbytes/4 in
-# 284 and "the last block takes the odd slots" in 286 were each fitted to one
-# point and each died in the round after they were written. This one was written
-# from eight tables and then predicted two more before they were measured.
+#   M = 2  N = 64    28 of 128    row 0: g0..g6 4/8, g7 0/8
+#   M = 4  N = 64    16 of 256    row 0: g0 4/8, g1 0/8, g2 4/8, g3 0/8, ...
+#   M = 8  N = 64    16 of 512    row 0: the same alternation
 #
-# ⚠ AND M HAS ALWAYS BEEN 1. Every matmul in this project, int4 and int8 alike,
-# has run one row. The only M that was ever varied is the write extent probe in
-# 272 and 273, which read wrote = M * (N/2 + 8) at M of 1, 2 and 4 and never
-# checked a single value.
+# In every one of them EVERY correct value is in row 0. Rows 1 and up are wrong
+# outright.
 #
-# THAT ALSO MEANS THE int4 READER HAS NEVER BEEN RIGHT ABOUT M. The output
-# surface is [n/atom][m][n%atom], which at M = 1 collapses to n, so a row major
-# read is accidentally correct there and wrong everywhere else. The int8 path has
-# read the surface since round 199. Fixed, which is a change to how the result is
-# READ and touches no register, no packing and no buffer.
+# ⚠ ONE CAUSE IS IDENTIFIED AND IT IS THE READER. The surface is
+# [n/atom][m][n%atom] and this reader hardcoded atom 16, which is int8's feature
+# atom. w4a16 packs its activation as a 2 byte element whose atom is 8. At M = 1
+# both collapse to n, which is why eleven geometries passed without it ever
+# mattering. At M = 4 the two readings disagree on exactly the odd numbered
+# groups, and the odd numbered groups are exactly what came back 0 of 8.
+#
+# ⚠ AND IT IS NOT THE WHOLE STORY, WHICH IS WHY THIS ROUND DUMPS RATHER THAN
+# GUESSES. The even groups came back 4 of 8 where both readings agree, and M = 2
+# gave every group 4 of 8 with only g7 at zero, a different shape again. Two
+# closed forms for the weight layout were guessed and refuted before --map was
+# pointed at it. The same mistake is available here, so the matmul now prints the
+# raw surface and both rows' references at M > 1 and the mapping gets read.
+#
+# 289 ALSO FOUND THE PARTIAL GROUP. An N that is not a multiple of 8 has never
+# been run, and both are close but not exact at M = 1, where the reader is not in
+# question:
+#
+#   N = 20  16 of 20   g0 8/8  g1 4/8  g2 4/4
+#   N = 36  32 of 36   g0 8/8  g1 8/8  g2 4/8  g3 8/8  g4 4/4
+#
+# The last group is short and correct; a FULL group in the middle loses four
+# each time. That is a placement question and --map answers it.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 5 TO 7 ARE THE ROUND. M = 2, 4 and 8 at N = 64.
+#   ⚠ ENTRIES 2 TO 4 FIRST, M = 1 again, because the reader changed again.
 #
-#     exact                the layout, the arithmetic and the surface reading all
-#                          generalise in M, and int4 is a matmul rather than a
-#                          matrix vector product
-#     row 0 exact, the rest not
-#                          the reading or the input packing is wrong in M and the
-#                          weights are fine, since row 0 does not depend on either
-#     nothing exact        the surface reading change broke M = 1 too, which
-#                          entries 2 to 4 will say first
+#   ENTRY 5 IS THE ROUND. M = 2 at N = 64, with the raw surface printed.
 #
-#   ⚠ ENTRIES 2 TO 4 COME FIRST FOR THAT REASON. M = 1 at three N, to separate a
-#   reader regression from an M result before reading anything below it.
+#     exact                      the atom was the whole story after all
+#     row 0 exact, rows 1+ not    the surface's M term is not m*atom, and the
+#                                 dump says what it is: find where row 1's
+#                                 reference values actually landed
+#     row 0 still 4 of 8          the atom was not even the row 0 story and the
+#                                 int4 output surface is not this shape at all
 #
-#   ENTRIES 8 AND 9 ask a different question that has also never been asked: an N
-#   that is NOT a multiple of 8. Every N ever run here is, so the group count has
-#   always been exact and a partial last group has never existed. N = 20 and
-#   N = 36. The packer places by n/8 and n%8 and does not special case a short
-#   group, so if these fail the interesting part is WHICH channels.
+#   ENTRIES 8 AND 9 sweep --map at N = 20 and N = 36, which is the instrument
+#   that settled the layout, pointed at the partial group case.
 #
-#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8, which also gets
-#   an M = 4 arm since it has read the surface all along and should not care.
+#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8 at M = 4, which
+#   was exact and must stay so.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -114,7 +122,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### M = 1 first, so a reader regression cannot be read as an M    ####"
+	log "##### M = 1 again. The reader changed again.                       #####"
 	for nn in 16 64 88
 	do
 		log ""
@@ -123,28 +131,28 @@ start() {
 	done
 
 	log ""
-	log "##### THE ROUND. M has never been anything but 1.                  #####"
-	for mm in 2 4 8
-	do
-		log ""
-		log "===== M = $mm  N = 64"
-		c "$M4" X=1 $MM $mm 64 64
-	done
+	log "##### THE ROUND. M > 1, with the raw surface printed.              #####"
 	log ""
-	log "===== M = 4  N = 24, a second shape                                ====="
-	c "$M4" X=1 $MM 4 64 24
+	log "===== 5) M = 2  N = 64                                             ====="
+	c "$M4" X=1 $MM 2 64 64
+	log ""
+	log "===== 6) M = 4  N = 64                                             ====="
+	c "$M4" X=1 $MM 4 64 64
+	log ""
+	log "===== 7) M = 2  N = 16, a small one so the dump is the whole thing ====="
+	c "$M4" X=1 $MM 2 64 16
 
 	log ""
-	log "##### an N that is not a multiple of 8. Never tried.               #####"
+	log "##### the partial group. --map is what settled the layout.         #####"
 	log ""
-	log "===== N = 20                                                       ====="
-	c "$M4" X=1 $MM 1 64 20
+	log "===== 8) --map at N = 20                                           ====="
+	c X=1 X=1 $CH 1 64 20 --map 8
 	log ""
-	log "===== N = 36                                                       ====="
-	c "$M4" X=1 $MM 1 64 36
+	log "===== 9) --map at N = 36                                           ====="
+	c X=1 X=1 $CH 1 64 36 --map 8
 
 	log ""
-	log "===== the control that must FAIL, and int8 at M = 1 and M = 4      ====="
+	log "===== 10) the control that must FAIL, and int8 at M = 1 and M = 4  ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 1 64 64
 	c X=1 X=1 $MM 4 64 64
@@ -154,7 +162,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== M = 1 must hold before any M > 1 line is worth reading.      ====="
+	log "===== read the raw surface at entry 7 first. It is only 32 words.  ====="
 	sync
 }
 case "$1" in
