@@ -2,55 +2,62 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 305. The K ceiling is mine, not the hardware's.
+# 2026-08-21 round 306. The last int4 round. One number decides whether it is
+# worth anything, and then this line is parked.
 #
-# ⚠⚠ 304 ANSWERED THE QUESTION THE WHOLE int4 LINE WAS FOR, and the answer is a
-# negative worth more than the forty rounds that produced it.
+# ⚠⚠ 305 SHOWED THE CEILING WAS MINE. The layout works at every K tried up to
+# 2048:
 #
-#             int8 us/task    int4 us/task
-#   K=224 N=160   22.7           18.4      -19%
-#   K=128 N=160   16.0           14.9      - 7%
-#   K=224 N= 64   14.7           13.3      -10%
-#   K=2048 N=1024 201.5        cannot run this shape
+#   K = 288, 384, 512, 1024, 2048 at N = 64    wrote 40 of 64, exact 32, all
+#   K = 512 at N = 16                          16 of 16 EXACT
+#   bench K = 512 N = 64                       int8 24.6 us, int4 16.7 us, -32%
 #
-# NOT 2x, and the reason is measurable. At 0.04 MB of weights the achieved
-# bandwidth is 1.58 GB/s where at 2.10 MB it is 10.41. These shapes are LATENCY
-# bound, not bytes bound, so halving the weight traffic buys almost nothing.
+# exact is N/2 at every one of them, independent of K. That is a WORKING HALF
+# WIDTH JOB, not a failure, which is the distinction the reading rule was
+# written to keep and the reason it said to read wrote rather than exact.
 #
-# ⚠ AND THE TILING IS THE REAL NUMBER. A K = 2048 by N = 1024 projection is ONE
-# int8 job at 201.5 us. int4 caps K at 224 with K/2 real k a job, so 2048 needs
-# 19 K tiles, and N caps at 160, so 1024 needs 7. That is 133 jobs at 18.4 us,
-# 2447 us, TWELVE TIMES SLOWER than int8.
+# ⚠ SO THE TWELVE TIMES FROM 304 IS WRONG AND THE ARITHMETIC HAS TO BE REDONE.
+# An int4 job at a declared K and N gives K/2 real k a channel and N/2 usable
+# channels:
 #
-# The memory this project carries says "int4, 2x, and the road is half open".
-# Measured, the road as it stands leads somewhere twelve times worse.
+#   int4   NK/4 MACs for NK/8 weight bytes fetched   2 MACs a byte
+#   int8   NK   MACs for NK   bytes                  1 MAC a byte
 #
-# ⚠ BUT THE CEILING THAT FORCES THAT IS MINE. The packer refused K above 256
-# because 256 was the largest anything had been run at, and K = 256 fails on the
-# CHANNEL COUNT, not the layout: K/32 is whole there and exact is N/2 exactly.
-# Nothing has ever said the LAYOUT stops. The guard now goes to 2048.
+# int4 really is twice the work per byte, which is what a 4 bit weight should
+# buy. It pays for it in JOBS: four times as many for the same total work, each
+# with a fixed cost. Whether the 2x survives that depends on one thing only, HOW
+# BIG A JOB CAN BE, and that is the largest N at a large K.
+#
+#   N = 1024 works at K = 2048   4 int4 jobs of 262 kB against one int8 job of
+#                                2 MB and 201.5 us. At 10 GB/s and a 15 us fixed
+#                                cost that is 164 us against 201, int4 by 19%.
+#   N caps at 64                 32 usable channels a job, and a projection needs
+#                                64 jobs. Slower by an order of magnitude and
+#                                int4 is not worth it on this hardware.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 3 TO 7 ARE THE ROUND: K of 288, 384, 512, 1024 and 2048 at N = 64,
-#   all multiples of 32, none ever run.
+#   ⚠ THE ROUND IS ONE COLUMN: wrote, at K = 2048, as N grows. Every N so far at
+#   a large K has been 16 or 64.
 #
-#     the layout holds and only the count falls back
-#                         then the ceiling is the count, and a job at K = 2048
-#                         with N/2 channels is still one job, not nineteen. That
-#                         changes the whole arithmetic above.
-#     the layout stops somewhere
-#                         the round says where, and that K is the real tile size
-#     everything above 256 is wrong
-#                         224 is the envelope and int4 is not usable for a
-#                         projection on this hardware, which is a result and
-#                         should be written as one
+#     wrote keeps up with N/2 + 8 to N = 1024
+#                         jobs can be big, int4 is worth about 19% on a
+#                         projection, and it is worth coming back to
+#     wrote stops at some N
+#                         that N is the job size, and the projection arithmetic
+#                         above says whether it is worth anything
+#     wrote stays at 40 whatever N is
+#                         the count is a fixed 40 rather than N/2 + 8, and int4
+#                         tops out at 32 usable channels a job forever
 #
-#   ⚠ READ wrote, NOT exact. At K = 256 exact is N/2 and wrote is N/2 + 8; if
-#   that pattern continues, exact of N/2 at K = 2048 is a WORKING half width
-#   job, not a failure, and the two are only told apart by which channels.
+#   ENTRY 4 benches the largest shape that works, against int8 at the same
+#   shape, which is the only number that matters for the decision.
 #
-#   ENTRY 2 is the regression at K = 64, 128 and 224.
+#   ⚠ AFTER THIS ROUND THE int4 LINE IS PARKED whichever way it goes. charsiu
+#   has no softmax, no rmsnorm, no RoPE, no KV cache, no sampling and no
+#   tokeniser, and 11.8 tok/s has never been measured. Those are precision
+#   independent and they are what stands between this project and a token.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -126,40 +133,41 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) the regression at K = 64, 128 and 224                     ====="
-	c "$M4" X=1 $MM 1 64 64
-	c "$M4" X=1 $MM 1 128 160
-	c "$M4" X=1 $MM 1 224 160
-
-	log ""
-	log "##### THE ROUND. K above 256, which only my own guard forbade.     #####"
-	for KK in 288 384 512 1024 2048
+	log "##### THE ROUND. how big can a job be. wrote, at K = 2048.         #####"
+	for NN in 64 128 160 256 512 1024
 	do
 		log ""
-		log "===== K = $KK  N = 64      read wrote, not exact"
-		c "$M4" X=1 $MM 1 $KK 64
+		log "===== K = 2048  N = $NN     N/2 + 8 would be $((NN / 2 + 8))"
+		c "$M4" X=1 $MM 1 2048 $NN
 	done
 
 	log ""
-	log "===== 8) and K = 512 at N = 16, where N/2 + 8 would cover N        ====="
-	c "$M4" X=1 $MM 1 512 16
+	log "===== 3) and at K = 512, in case the N limit moves with K          ====="
+	c "$M4" X=1 $MM 1 512 256
+	c "$M4" X=1 $MM 1 512 512
 
 	log ""
-	log "===== 9) if any large K works, what it costs                       ====="
-	c "CHARSIU_W4=1" X=1 $BE 1 512 64 50
-	c X=1 X=1 $BE 1 512 64 50
+	log "##### 4) the bench that decides it, at the biggest shapes          #####"
+	log ""
+	log "===== K = 2048  N = 256   int8 then int4                           ====="
+	c X=1 X=1 $BE 1 2048 256 50
+	c "CHARSIU_W4=1" X=1 $BE 1 2048 256 50
+	log ""
+	log "===== K = 2048  N = 1024  int8 then int4                           ====="
+	c X=1 X=1 $BE 1 2048 1024 50
+	c "CHARSIU_W4=1" X=1 $BE 1 2048 1024 50
 
 	log ""
-	log "===== the control that must FAIL, and int8 at K = 512              ====="
-	c "CHARSIU_W4=1" X=1 $MM 1 224 64
-	c X=1 X=1 $MM 1 512 64
+	log "===== 5) the regression, so the numbers above are of a right answer ====="
+	c "$M4" X=1 $MM 1 224 160
+	c "CHARSIU_W4=1" X=1 $MM 1 224 160
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== one job at a large K would undo the twelve times.            ====="
+	log "===== wrote against N/2 + 8, then the two benches. Then park it.   ====="
 	sync
 }
 case "$1" in
