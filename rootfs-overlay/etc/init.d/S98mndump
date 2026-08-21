@@ -58,6 +58,21 @@
 #   sweep. 284 broke three working geometries with a one line change, so 16, 32,
 #   48 and 64 have to come back exact before anything measured above is worth
 #   reading.
+#
+#   ⚠ ENTRY 9 IS OWED TO IGOR AND IT IS A GAP I DID NOT SEE. He asked whether
+#   different output channel counts exercise different SIZE_E fields, which
+#   would mean two shapes cannot rule out a shape leaning on SIZE_E_1. Every
+#   0x4050 sweep in this project ran at N = 64, and every channel count sweep
+#   ran with 0x4050 at its traced value. The two have never been crossed. This
+#   runs SIZE_E_1 = 0 at all seven N.
+#
+#     no change at any N        SIZE_E_1 is inert across the whole channel range
+#                               that can be reached, which is the strongest
+#                               thing that can be said for keeping the traced 0
+#     some N changes            his question was the right one and that N is the
+#                               shape two shapes could not rule out
+#     the failing three change  even a change in HOW 24, 40 and 56 fail is
+#                               information about which register bounds them
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -146,7 +161,18 @@ start() {
 	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "===== 9) the control that must FAIL, and int8                      ====="
+	log "##### 9) SIZE_E_1 crossed with the channel count. Owed to Igor.    #####"
+	log "#####    Every N so far ran with 0x4050 at its traced value, and   #####"
+	log "#####    every 0x4050 sweep ran at N = 64. The two have never met. #####"
+	log ""
+	for NN in 16 24 32 40 48 56 64
+	do
+		log "===== N = $NN with SIZE_E_1 = 0  (traced value is 1)"
+		c "$M4" "CHARSIU_OVERRIDE=0x4050=0x00023313" $MM 1 64 $NN
+	done
+
+	log ""
+	log "===== 10) the control that must FAIL, and int8                     ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 1 64 64
 
