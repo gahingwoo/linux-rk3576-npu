@@ -1,0 +1,1612 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.5%, RX DQS Vref:27.8%, TX Vref:19.0%,21.0%
+DQ roc:
+p3 n0, p4 n0, p5 n4, p7 n0, p1 n0, p5 n0, p0 n2, p1 n0, p3 n2, 
+p4 n0, p2 n4, p4 n0, p3 n0, p3 n2, p2 n0, p0 n5, p2 n0, p1 n3, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, l0 l0 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.2%, RX DQS Vref:29.6%, TX Vref:20.0%,21.0%
+DQ roc:
+p3 n0, p4 n0, p6 n0, p2 n0, p4 n0, p7 n0, p1 n6, p1 n0, p7 n0, 
+p6 n2, p6 n0, p5 n0, p3 n1, p3 n0, p7 n0, p0 n0, p0 n5, p6 n0, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, l0 l0 h1 l0 l0 l0 h1 l0 
+DQS roc: p0, n0, p3, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004831] Console: colour dummy device 80x25
+[    0.005366] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006326] pid_max: default: 32768 minimum: 301
+[    0.007219] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007977] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009179] VFS: Finished mounting rootfs on nullfs
+[    0.012613] rcu: Hierarchical SRCU implementation.
+[    0.013115] rcu:     Max phase no-delay instances is 1000.
+[    0.013911] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021523] EFI services will not be available.
+[    0.022615] smp: Bringing up secondary CPUs ...
+[    0.023764] Detected VIPT I-cache on CPU1
+[    0.023883] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024767] Detected VIPT I-cache on CPU2
+[    0.024851] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025684] Detected VIPT I-cache on CPU3
+[    0.025766] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026666] CPU features: detected: Spectre-v3a
+[    0.026685] CPU features: detected: Spectre-BHB
+[    0.026691] CPU features: detected: ARM erratum 1742098
+[    0.026700] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026705] Detected PIPT I-cache on CPU4
+[    0.026787] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027607] Detected PIPT I-cache on CPU5
+[    0.027671] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028449] Detected PIPT I-cache on CPU6
+[    0.028514] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029296] Detected PIPT I-cache on CPU7
+[    0.029363] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029494] smp: Brought up 1 node, 8 CPUs
+[    0.038684] SMP: Total of 8 processors activated.
+[    0.039140] CPU: All CPU(s) started at EL2
+[    0.039552] CPU features: detected: 32-bit EL0 Support
+[    0.040030] CPU features: detected: 32-bit EL1 Support
+[    0.040512] CPU features: detected: CRC32 instructions
+[    0.041001] CPU features: detected: PMUv3
+[    0.041455] alternatives: applying system-wide alternatives
+[    0.045156] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050578] devtmpfs: initialized
+[    0.067446] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.068217] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069357] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069947] 0 pages in range for non-PLT usage
+[    0.069952] 511152 pages in range for PLT usage
+[    0.075840] DMI: not present or invalid.
+[    0.080147] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.081793] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.082907] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.083681] audit: initializing netlink subsys (disabled)
+[    0.084351] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.089029] thermal_sys: Registered thermal governor 'step_wise'
+[    0.089039] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.089712] cpuidle: using governor menu
+[    0.090954] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.091791] ASID allocator initialised with 32768 entries
+[    0.097019] Serial: AMBA PL011 UART driver
+[    0.105880] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.107200] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.108565] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.109945] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.111182] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.121529] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.122241] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.123290] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.125266] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.181033] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.181699] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.192637] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.193273] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.193881] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.194507] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.195085] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.195709] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.196288] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.196912] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.200269] ACPI: Interpreter disabled.
+[    0.211581] iommu: Default domain type: Translated
+[    0.212053] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.213218] SCSI subsystem initialized
+[    0.213956] usbcore: registered new interface driver usbfs
+[    0.214504] usbcore: registered new interface driver hub
+[    0.215025] usbcore: registered new device driver usb
+[    0.218330] pps_core: LinuxPPS API ver. 1 registered
+[    0.218792] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.219641] PTP clock support registered
+[    0.220321] EDAC MC: Ver: 3.0.0
+[    0.221276] scmi_core: SCMI protocol bus registered
+[    0.224316] FPGA manager framework
+[    0.225815] vgaarb: loaded
+[    0.226625] clocksource: Switched to clocksource arch_sys_counter
+[    0.227503] VFS: Disk quotas dquot_6.6.0
+[    0.227883] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.228810] pnp: PnP ACPI: disabled
+[    0.236502] NET: Registered PF_INET protocol family
+[    0.237417] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.250353] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.251303] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.252034] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.253761] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.256323] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.257054] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.258344] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.259345] RPC: Registered named UNIX socket transport module.
+[    0.259896] RPC: Registered udp transport module.
+[    0.260331] RPC: Registered tcp transport module.
+[    0.260763] RPC: Registered tcp-with-tls transport module.
+[    0.261269] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.261871] PCI: CLS 0 bytes, default 64
+[    0.265935] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.266690] kvm [1]: nv: 710 fine grained trap handlers
+[    0.267601] kvm [1]: IPA Size Limit: 40 bits
+[    0.270731] kvm [1]: vgic interrupt IRQ9
+[    0.271136] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.273777] Initialise system trusted keyrings
+[    0.274412] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.275608] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.276469] NFS: Registering the id_resolver key type
+[    0.277003] Key type id_resolver registered
+[    0.277392] Key type id_legacy registered
+[    0.277782] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.278401] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.279604] Key type asymmetric registered
+[    0.279989] Asymmetric key parser 'x509' registered
+[    0.280487] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.281171] io scheduler mq-deadline registered
+[    0.281590] io scheduler kyber registered
+[    0.282002] io scheduler bfq registered
+[    0.290841] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.292596] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.294467] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.296351] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.297965] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.299605] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.301348] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.302976] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.304602] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.306226] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.307866] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.309493] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.311263] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.312887] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.314654] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.316412] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.352227] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.420498] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.421206] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.423947] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.424651] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.427280] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.427982] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.462668] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.466993] printk: legacy console [ttyS0] disabled
+[    0.467785] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.468741] printk: legacy console [ttyS0] enabled
+[    0.468741] printk: legacy console [ttyS0] enabled
+[    0.469603] printk: legacy bootconsole [uart8250] disabled
+[    0.469603] printk: legacy bootconsole [uart8250] disabled
+[    0.492270] msm_serial: driver initialized
+[    0.494138] SuperH (H)SCI(F) driver initialized
+[    0.495387] STM32 USART driver initialized
+[    0.502652] random: crng init done
+[    0.506077] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.508206] platform 27d00000.vop: Adding to iommu group 1
+[    0.516155] loop: module loaded
+[    0.519079] megasas: 07.734.00.00-rc1
+[    0.534551] tun: Universal TUN/TAP device driver, 1.6
+[    0.536006] VFIO - User Level meta-driver version: 0.3
+[    0.547450] usbcore: registered new interface driver usb-storage
+[    0.557646] i2c_dev: i2c /dev entries driver
+[    0.562658] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.563568] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.564466] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.605736] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.606398] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.607413] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.608359] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.609309] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.615046] scsi host0: ufshcd
+[    1.046778] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.047557] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.048296] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.048955] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.055780] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.056307] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.057377] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.058349] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.059010] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.059766] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.066833] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.070379] usbcore: registered new interface driver usbhid
+[    1.070899] usbhid: USB HID core driver
+[    1.082749] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.084875] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.106359] NET: Registered PF_INET6 protocol family
+[    1.107896] Segment Routing with IPv6
+[    1.108256] In-situ OAM (IOAM) with IPv6
+[    1.108657] NET: Registered PF_PACKET protocol family
+[    1.109166] Key type dns_resolver registered
+[    1.138558] registered taskstats version 1
+[    1.139197] Loading compiled-in X.509 certificates
+[    1.148942] Demotion targets for Node 0: null
+[    1.309632] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.315749] cpu cpu0: EM: created perf domain
+[    1.318013] cpu cpu4: EM: created perf domain
+[    1.325309] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.325991] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.326578] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.327131] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.334825] platform 27700000.npu: Adding to iommu group 2
+[    1.343426] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.344854] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.349240] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.351417] clk: Not disabling unused clocks
+[    1.351797] PM: genpd: Disabling unused power domains
+[    1.352406] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.362854] Waiting for root device /dev/mmcblk0p2...
+[    1.417871] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.535789] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 82
+[    1.537251] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.538738] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.542196]  mmcblk0: p1 p2
+[    1.699669] EXT4-fs (mmcblk0p2): mounted filesystem bbabdc9a-d839-4cad-b569-adf75977c550 r/w with ordered data mode. Quota mode: none.
+[    1.700790] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.701741] devtmpfs: mounted
+[    1.702118] VFS: Pivoted into new rootfs
+[    1.708023] Freeing unused kernel memory: 13248K
+[    1.708625] Run /sbin/init as init process
+[    1.782861] EXT4-fs (mmcblk0p2): re-mounted bbabdc9a-d839-4cad-b569-adf75977c550.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.510130] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.511012] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.511732] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.512460] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.513368] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.514276] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.515211] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.516121] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.517090] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.517999] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.518926] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.519845] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.520793] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.521716] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+reset_autosuspend = Y
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+##### the M = 1 regression. The probe changed, not the packer.     #####
+
+===== M = 1  N = 16
+matmul M=1 K=64 N=16 w4 a8, feature atom 16, 2 entries per row
+HALFK: zeroed 512 of 1024 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 16 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    -1887   shift/elem    -1887   shift/sum    -1887
+    ch  1  npu     2330   shift/elem     2330   shift/sum     2330
+    ch  2  npu    -7904   shift/elem    -7904   shift/sum    -7904
+    ch  3  npu     2249   shift/elem     2249   shift/sum     2249
+    ch  4  npu    -7603   shift/elem    -7603   shift/sum    -7603
+    ch  5  npu    -5524   shift/elem    -5524   shift/sum    -5524
+    ch  6  npu    -9626   shift/elem    -9626   shift/sum    -9626
+    ch  7  npu    -5262   shift/elem    -5262   shift/sum    -5262
+int4 output: 16 of 16 words written, 16 EXACT with the shift per element, 16 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8
+  row 0 mismatches: none
+
+===== M = 1  N = 64
+matmul M=1 K=64 N=64 w4 a8, feature atom 16, 2 entries per row
+HALFK: zeroed 2048 of 4096 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 64 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    -1887   shift/elem    -1887   shift/sum    -1887
+    ch  1  npu     2330   shift/elem     2330   shift/sum     2330
+    ch  2  npu    -7904   shift/elem    -7904   shift/sum    -7904
+    ch  3  npu     2249   shift/elem     2249   shift/sum     2249
+    ch  4  npu    -7603   shift/elem    -7603   shift/sum    -7603
+    ch  5  npu    -5524   shift/elem    -5524   shift/sum    -5524
+    ch  6  npu    -9626   shift/elem    -9626   shift/sum    -9626
+    ch  7  npu    -5262   shift/elem    -5262   shift/sum    -5262
+int4 output: 64 of 64 words written, 64 EXACT with the shift per element, 64 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8
+  row 0 mismatches: none
+
+===== --map M = 1 N = 16, which must be the table it always was    =====
+layout probe M=1 K=64 N=16  w4  wt_zp 0  512 weight bytes  live nibble 7  activation plain ramp
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 512.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> w 0    v 71         wrote 16 hi 15 hib 63
+  byte 0      high  -> w 0    v 142        wrote 16 hi 15 hib 63
+  byte 8      low   -> w 1    v 1207       wrote 16 hi 15 hib 63
+  byte 8      high  -> w 1    v 1278       wrote 16 hi 15 hib 63
+  byte 16     low   -> w 2    v 71         wrote 16 hi 15 hib 63
+  byte 16     high  -> w 2    v 142        wrote 16 hi 15 hib 63
+  byte 24     low   -> w 3    v 1207       wrote 16 hi 15 hib 63
+  byte 24     high  -> w 3    v 1278       wrote 16 hi 15 hib 63
+  byte 32     low   -> w 4    v 71         wrote 16 hi 15 hib 63
+  byte 32     high  -> w 4    v 142        wrote 16 hi 15 hib 63
+  byte 40     low   -> w 5    v 1207       wrote 16 hi 15 hib 63
+  byte 40     high  -> w 5    v 1278       wrote 16 hi 15 hib 63
+  byte 48     low   -> w 6    v 71         wrote 16 hi 15 hib 63
+  byte 48     high  -> w 6    v 142        wrote 16 hi 15 hib 63
+  byte 56     low   -> w 7    v 1207       wrote 16 hi 15 hib 63
+  byte 56     high  -> w 7    v 1278       wrote 16 hi 15 hib 63
+  byte 64     low   -> w 8    v 71         wrote 16 hi 15 hib 63
+  byte 64     high  -> w 8    v 142        wrote 16 hi 15 hib 63
+  byte 72     low   -> w 9    v 1207       wrote 16 hi 15 hib 63
+  byte 72     high  -> w 9    v 1278       wrote 16 hi 15 hib 63
+  byte 80     low   -> w 10   v 71         wrote 16 hi 15 hib 63
+  byte 80     high  -> w 10   v 142        wrote 16 hi 15 hib 63
+  byte 88     low   -> w 11   v 1207       wrote 16 hi 15 hib 63
+  byte 88     high  -> w 11   v 1278       wrote 16 hi 15 hib 63
+  byte 96     low   -> w 12   v 71         wrote 16 hi 15 hib 63
+  byte 96     high  -> w 12   v 142        wrote 16 hi 15 hib 63
+  byte 104    low   -> w 13   v 1207       wrote 16 hi 15 hib 63
+  byte 104    high  -> w 13   v 1278       wrote 16 hi 15 hib 63
+  byte 112    low   -> w 14   v 71         wrote 16 hi 15 hib 63
+  byte 112    high  -> w 14   v 142        wrote 16 hi 15 hib 63
+  byte 120    low   -> w 15   v 1207       wrote 16 hi 15 hib 63
+  byte 120    high  -> w 15   v 1278       wrote 16 hi 15 hib 63
+  byte 128    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 128    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 136    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 136    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 144    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 144    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 152    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 152    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 160    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 160    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 168    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 168    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 176    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 176    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 184    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 184    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 192    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 192    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 200    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 200    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 208    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 208    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 216    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 216    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 224    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 224    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 232    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 232    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 240    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 240    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 248    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 248    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 256    low   -> w 0    v 2343       wrote 16 hi 15 hib 63
+  byte 256    high  -> w 0    v 2414       wrote 16 hi 15 hib 63
+  byte 264    low   -> w 1    v 3479       wrote 16 hi 15 hib 63
+  byte 264    high  -> w 1    v 3550       wrote 16 hi 15 hib 63
+  byte 272    low   -> w 2    v 2343       wrote 16 hi 15 hib 63
+  byte 272    high  -> w 2    v 2414       wrote 16 hi 15 hib 63
+  byte 280    low   -> w 3    v 3479       wrote 16 hi 15 hib 63
+  byte 280    high  -> w 3    v 3550       wrote 16 hi 15 hib 63
+  byte 288    low   -> w 4    v 2343       wrote 16 hi 15 hib 63
+  byte 288    high  -> w 4    v 2414       wrote 16 hi 15 hib 63
+  byte 296    low   -> w 5    v 3479       wrote 16 hi 15 hib 63
+  byte 296    high  -> w 5    v 3550       wrote 16 hi 15 hib 63
+  byte 304    low   -> w 6    v 2343       wrote 16 hi 15 hib 63
+  byte 304    high  -> w 6    v 2414       wrote 16 hi 15 hib 63
+  byte 312    low   -> w 7    v 3479       wrote 16 hi 15 hib 63
+  byte 312    high  -> w 7    v 3550       wrote 16 hi 15 hib 63
+  byte 320    low   -> w 8    v 2343       wrote 16 hi 15 hib 63
+  byte 320    high  -> w 8    v 2414       wrote 16 hi 15 hib 63
+  byte 328    low   -> w 9    v 3479       wrote 16 hi 15 hib 63
+  byte 328    high  -> w 9    v 3550       wrote 16 hi 15 hib 63
+  byte 336    low   -> w 10   v 2343       wrote 16 hi 15 hib 63
+  byte 336    high  -> w 10   v 2414       wrote 16 hi 15 hib 63
+  byte 344    low   -> w 11   v 3479       wrote 16 hi 15 hib 63
+  byte 344    high  -> w 11   v 3550       wrote 16 hi 15 hib 63
+  byte 352    low   -> w 12   v 2343       wrote 16 hi 15 hib 63
+  byte 352    high  -> w 12   v 2414       wrote 16 hi 15 hib 63
+  byte 360    low   -> w 13   v 3479       wrote 16 hi 15 hib 63
+  byte 360    high  -> w 13   v 3550       wrote 16 hi 15 hib 63
+  byte 368    low   -> w 14   v 2343       wrote 16 hi 15 hib 63
+  byte 368    high  -> w 14   v 2414       wrote 16 hi 15 hib 63
+  byte 376    low   -> w 15   v 3479       wrote 16 hi 15 hib 63
+  byte 376    high  -> w 15   v 3550       wrote 16 hi 15 hib 63
+  byte 384    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 384    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 392    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 392    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 400    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 400    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 408    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 408    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 416    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 416    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 424    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 424    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 432    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 432    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 440    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 440    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 448    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 448    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 456    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 456    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 464    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 464    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 472    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 472    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 480    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 480    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 488    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 488    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 496    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 496    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 504    low   -> NOTHING LIT            wrote 16 hi 15 hib 63
+  byte 504    high  -> NOTHING LIT            wrote 16 hi 15 hib 63
+
+##### THE ROUND. one row at a time, all lit words printed.         #####
+
+===== 5) --map  M = 2  N = 16  row 0 only                          =====
+layout probe M=2 K=64 N=16  w4  wt_zp 0  512 weight bytes  live nibble 7  activation plain ramp
+activation: row 0 only, the rest at the zero point
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 512.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> 2 words lit: w0=71 w4=1207   wrote 32 hi 31 hib 127
+  byte 0      high  -> 2 words lit: w0=142 w4=1278   wrote 32 hi 31 hib 127
+  byte 8      low   -> 2 words lit: w1=1207 w5=2343   wrote 32 hi 31 hib 127
+  byte 8      high  -> 2 words lit: w1=1278 w5=2414   wrote 32 hi 31 hib 127
+  byte 16     low   -> 2 words lit: w2=71 w6=1207   wrote 32 hi 31 hib 127
+  byte 16     high  -> 2 words lit: w2=142 w6=1278   wrote 32 hi 31 hib 127
+  byte 24     low   -> 2 words lit: w3=1207 w7=2343   wrote 32 hi 31 hib 127
+  byte 24     high  -> 2 words lit: w3=1278 w7=2414   wrote 32 hi 31 hib 127
+  byte 32     low   -> 2 words lit: w8=71 w12=1207   wrote 32 hi 31 hib 127
+  byte 32     high  -> 2 words lit: w8=142 w12=1278   wrote 32 hi 31 hib 127
+  byte 40     low   -> 2 words lit: w9=1207 w13=2343   wrote 32 hi 31 hib 127
+  byte 40     high  -> 2 words lit: w9=1278 w13=2414   wrote 32 hi 31 hib 127
+  byte 48     low   -> 2 words lit: w10=71 w14=1207   wrote 32 hi 31 hib 127
+  byte 48     high  -> 2 words lit: w10=142 w14=1278   wrote 32 hi 31 hib 127
+  byte 56     low   -> 2 words lit: w11=1207 w15=2343   wrote 32 hi 31 hib 127
+  byte 56     high  -> 2 words lit: w11=1278 w15=2414   wrote 32 hi 31 hib 127
+  byte 64     low   -> 2 words lit: w16=71 w20=1207   wrote 32 hi 31 hib 127
+  byte 64     high  -> 2 words lit: w16=142 w20=1278   wrote 32 hi 31 hib 127
+  byte 72     low   -> 2 words lit: w17=1207 w21=2343   wrote 32 hi 31 hib 127
+  byte 72     high  -> 2 words lit: w17=1278 w21=2414   wrote 32 hi 31 hib 127
+  byte 80     low   -> 2 words lit: w18=71 w22=1207   wrote 32 hi 31 hib 127
+  byte 80     high  -> 2 words lit: w18=142 w22=1278   wrote 32 hi 31 hib 127
+  byte 88     low   -> 2 words lit: w19=1207 w23=2343   wrote 32 hi 31 hib 127
+  byte 88     high  -> 2 words lit: w19=1278 w23=2414   wrote 32 hi 31 hib 127
+  byte 96     low   -> 2 words lit: w24=71 w28=1207   wrote 32 hi 31 hib 127
+  byte 96     high  -> 2 words lit: w24=142 w28=1278   wrote 32 hi 31 hib 127
+  byte 104    low   -> 2 words lit: w25=1207 w29=2343   wrote 32 hi 31 hib 127
+  byte 104    high  -> 2 words lit: w25=1278 w29=2414   wrote 32 hi 31 hib 127
+  byte 112    low   -> 2 words lit: w26=71 w30=1207   wrote 32 hi 31 hib 127
+  byte 112    high  -> 2 words lit: w26=142 w30=1278   wrote 32 hi 31 hib 127
+  byte 120    low   -> 2 words lit: w27=1207 w31=2343   wrote 32 hi 31 hib 127
+  byte 120    high  -> 2 words lit: w27=1278 w31=2414   wrote 32 hi 31 hib 127
+  byte 128    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 128    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 136    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 136    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 144    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 144    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 152    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 152    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 160    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 160    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 168    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 168    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 176    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 176    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 184    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 184    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 192    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 192    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 200    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 200    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 208    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 208    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 216    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 216    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 224    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 224    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 232    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 232    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 240    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 240    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 248    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 248    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 256    low   -> 2 words lit: w0=2343 w4=3479   wrote 32 hi 31 hib 127
+  byte 256    high  -> 2 words lit: w0=2414 w4=3550   wrote 32 hi 31 hib 127
+  byte 264    low   -> w 1    v 3479       wrote 32 hi 31 hib 127
+  byte 264    high  -> w 1    v 3550       wrote 32 hi 31 hib 127
+  byte 272    low   -> 2 words lit: w2=2343 w6=3479   wrote 32 hi 31 hib 127
+  byte 272    high  -> 2 words lit: w2=2414 w6=3550   wrote 32 hi 31 hib 127
+  byte 280    low   -> w 3    v 3479       wrote 32 hi 31 hib 127
+  byte 280    high  -> w 3    v 3550       wrote 32 hi 31 hib 127
+  byte 288    low   -> 2 words lit: w8=2343 w12=3479   wrote 32 hi 31 hib 127
+  byte 288    high  -> 2 words lit: w8=2414 w12=3550   wrote 32 hi 31 hib 127
+  byte 296    low   -> w 9    v 3479       wrote 32 hi 31 hib 127
+  byte 296    high  -> w 9    v 3550       wrote 32 hi 31 hib 127
+  byte 304    low   -> 2 words lit: w10=2343 w14=3479   wrote 32 hi 31 hib 127
+  byte 304    high  -> 2 words lit: w10=2414 w14=3550   wrote 32 hi 31 hib 127
+  byte 312    low   -> w 11   v 3479       wrote 32 hi 31 hib 127
+  byte 312    high  -> w 11   v 3550       wrote 32 hi 31 hib 127
+  byte 320    low   -> 2 words lit: w16=2343 w20=3479   wrote 32 hi 31 hib 127
+  byte 320    high  -> 2 words lit: w16=2414 w20=3550   wrote 32 hi 31 hib 127
+  byte 328    low   -> w 17   v 3479       wrote 32 hi 31 hib 127
+  byte 328    high  -> w 17   v 3550       wrote 32 hi 31 hib 127
+  byte 336    low   -> 2 words lit: w18=2343 w22=3479   wrote 32 hi 31 hib 127
+  byte 336    high  -> 2 words lit: w18=2414 w22=3550   wrote 32 hi 31 hib 127
+  byte 344    low   -> w 19   v 3479       wrote 32 hi 31 hib 127
+  byte 344    high  -> w 19   v 3550       wrote 32 hi 31 hib 127
+  byte 352    low   -> 2 words lit: w24=2343 w28=3479   wrote 32 hi 31 hib 127
+  byte 352    high  -> 2 words lit: w24=2414 w28=3550   wrote 32 hi 31 hib 127
+  byte 360    low   -> w 25   v 3479       wrote 32 hi 31 hib 127
+  byte 360    high  -> w 25   v 3550       wrote 32 hi 31 hib 127
+  byte 368    low   -> 2 words lit: w26=2343 w30=3479   wrote 32 hi 31 hib 127
+  byte 368    high  -> 2 words lit: w26=2414 w30=3550   wrote 32 hi 31 hib 127
+  byte 376    low   -> w 27   v 3479       wrote 32 hi 31 hib 127
+  byte 376    high  -> w 27   v 3550       wrote 32 hi 31 hib 127
+  byte 384    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 384    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 392    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 392    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 400    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 400    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 408    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 408    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 416    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 416    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 424    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 424    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 432    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 432    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 440    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 440    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 448    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 448    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 456    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 456    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 464    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 464    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 472    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 472    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 480    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 480    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 488    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 488    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 496    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 496    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 504    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 504    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+
+===== 6) --map  M = 2  N = 16  row 1 only                          =====
+layout probe M=2 K=64 N=16  w4  wt_zp 0  512 weight bytes  live nibble 7  activation plain ramp
+activation: row 1 only, the rest at the zero point
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 512.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 0      high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 8      low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 8      high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 16     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 16     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 24     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 24     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 32     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 32     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 40     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 40     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 48     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 48     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 56     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 56     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 64     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 64     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 72     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 80     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 88     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 96     high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 104    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 112    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 120    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 128    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 128    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 136    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 136    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 144    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 144    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 152    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 152    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 160    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 160    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 168    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 168    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 176    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 176    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 184    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 184    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 192    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 192    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 200    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 200    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 208    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 208    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 216    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 216    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 224    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 224    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 232    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 232    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 240    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 240    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 248    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 248    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 256    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 256    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 264    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 264    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 272    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 272    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 280    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 280    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 288    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 288    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 296    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 296    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 304    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 304    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 312    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 312    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 320    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 320    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 328    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 328    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 336    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 336    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 344    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 344    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 352    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 352    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 360    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 360    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 368    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 368    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 376    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 376    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 384    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 384    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 392    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 392    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 400    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 400    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 408    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 408    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 416    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 416    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 424    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 424    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 432    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 432    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 440    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 440    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 448    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 448    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 456    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 456    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 464    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 464    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 472    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 472    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 480    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 480    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 488    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 488    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 496    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 496    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 504    low   -> NOTHING LIT            wrote 32 hi 31 hib 127
+  byte 504    high  -> NOTHING LIT            wrote 32 hi 31 hib 127
+
+===== 7) --map  M = 2  N = 64  row 0 only                          =====
+layout probe M=2 K=64 N=64  w4  wt_zp 0  2048 weight bytes  live nibble 7  activation plain ramp
+activation: row 0 only, the rest at the zero point
+register stream: 143 entries
+
+  pattern probes SKIPPED for a sub command: no job has run
+  on this device yet
+
+
+  --map: ONE live nibble at a time, every 8 bytes of 2048.
+  n is the channel that lights; the value is printed raw
+  because round 171's k calibration was wrong and a nibble
+  reaches more than one input.
+
+  byte 0      low   -> 2 words lit: w0=71 w16=1207   wrote 128 hi 127 hib 511
+  byte 0      high  -> 2 words lit: w0=142 w16=1278   wrote 128 hi 127 hib 511
+  byte 8      low   -> 2 words lit: w1=1207 w17=2343   wrote 128 hi 127 hib 511
+  byte 8      high  -> 2 words lit: w1=1278 w17=2414   wrote 128 hi 127 hib 511
+  byte 16     low   -> 2 words lit: w2=71 w18=1207   wrote 128 hi 127 hib 511
+  byte 16     high  -> 2 words lit: w2=142 w18=1278   wrote 128 hi 127 hib 511
+  byte 24     low   -> 2 words lit: w3=1207 w19=2343   wrote 128 hi 127 hib 511
+  byte 24     high  -> 2 words lit: w3=1278 w19=2414   wrote 128 hi 127 hib 511
+  byte 32     low   -> 2 words lit: w8=71 w24=1207   wrote 128 hi 127 hib 511
+  byte 32     high  -> 2 words lit: w8=142 w24=1278   wrote 128 hi 127 hib 511
+  byte 40     low   -> 2 words lit: w9=1207 w25=2343   wrote 128 hi 127 hib 511
+  byte 40     high  -> 2 words lit: w9=1278 w25=2414   wrote 128 hi 127 hib 511
+  byte 48     low   -> 2 words lit: w10=71 w26=1207   wrote 128 hi 127 hib 511
+  byte 48     high  -> 2 words lit: w10=142 w26=1278   wrote 128 hi 127 hib 511
+  byte 56     low   -> 2 words lit: w11=1207 w27=2343   wrote 128 hi 127 hib 511
+  byte 56     high  -> 2 words lit: w11=1278 w27=2414   wrote 128 hi 127 hib 511
+  byte 64     low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 64     high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 72     low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 72     high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 80     low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 80     high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 88     low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 88     high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 96     low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 96     high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 104    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 104    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 112    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 112    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 120    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 120    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 128    low   -> 2 words lit: w4=71 w20=1207   wrote 128 hi 127 hib 511
+  byte 128    high  -> 2 words lit: w4=142 w20=1278   wrote 128 hi 127 hib 511
+  byte 136    low   -> 2 words lit: w5=1207 w21=2343   wrote 128 hi 127 hib 511
+  byte 136    high  -> 2 words lit: w5=1278 w21=2414   wrote 128 hi 127 hib 511
+  byte 144    low   -> 2 words lit: w6=71 w22=1207   wrote 128 hi 127 hib 511
+  byte 144    high  -> 2 words lit: w6=142 w22=1278   wrote 128 hi 127 hib 511
+  byte 152    low   -> 2 words lit: w7=1207 w23=2343   wrote 128 hi 127 hib 511
+  byte 152    high  -> 2 words lit: w7=1278 w23=2414   wrote 128 hi 127 hib 511
+  byte 160    low   -> 2 words lit: w12=71 w28=1207   wrote 128 hi 127 hib 511
+  byte 160    high  -> 2 words lit: w12=142 w28=1278   wrote 128 hi 127 hib 511
+  byte 168    low   -> 2 words lit: w13=1207 w29=2343   wrote 128 hi 127 hib 511
+  byte 168    high  -> 2 words lit: w13=1278 w29=2414   wrote 128 hi 127 hib 511
+  byte 176    low   -> 2 words lit: w14=71 w30=1207   wrote 128 hi 127 hib 511
+  byte 176    high  -> 2 words lit: w14=142 w30=1278   wrote 128 hi 127 hib 511
+  byte 184    low   -> 2 words lit: w15=1207 w31=2343   wrote 128 hi 127 hib 511
+  byte 184    high  -> 2 words lit: w15=1278 w31=2414   wrote 128 hi 127 hib 511
+  byte 192    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 192    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 200    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 200    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 208    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 208    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 216    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 216    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 224    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 224    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 232    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 232    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 240    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 240    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 248    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 248    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 256    low   -> 2 words lit: w0=2343 w16=3479   wrote 128 hi 127 hib 511
+  byte 256    high  -> 2 words lit: w0=2414 w16=3550   wrote 128 hi 127 hib 511
+  byte 264    low   -> w 1    v 3479       wrote 128 hi 127 hib 511
+  byte 264    high  -> w 1    v 3550       wrote 128 hi 127 hib 511
+  byte 272    low   -> 2 words lit: w2=2343 w18=3479   wrote 128 hi 127 hib 511
+  byte 272    high  -> 2 words lit: w2=2414 w18=3550   wrote 128 hi 127 hib 511
+  byte 280    low   -> w 3    v 3479       wrote 128 hi 127 hib 511
+  byte 280    high  -> w 3    v 3550       wrote 128 hi 127 hib 511
+  byte 288    low   -> 2 words lit: w8=2343 w24=3479   wrote 128 hi 127 hib 511
+  byte 288    high  -> 2 words lit: w8=2414 w24=3550   wrote 128 hi 127 hib 511
+  byte 296    low   -> w 9    v 3479       wrote 128 hi 127 hib 511
+  byte 296    high  -> w 9    v 3550       wrote 128 hi 127 hib 511
+  byte 304    low   -> 2 words lit: w10=2343 w26=3479   wrote 128 hi 127 hib 511
+  byte 304    high  -> 2 words lit: w10=2414 w26=3550   wrote 128 hi 127 hib 511
+  byte 312    low   -> w 11   v 3479       wrote 128 hi 127 hib 511
+  byte 312    high  -> w 11   v 3550       wrote 128 hi 127 hib 511
+  byte 320    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 320    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 328    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 328    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 336    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 336    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 344    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 344    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 352    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 352    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 360    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 360    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 368    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 368    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 376    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 376    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 384    low   -> 2 words lit: w4=2343 w20=3479   wrote 128 hi 127 hib 511
+  byte 384    high  -> 2 words lit: w4=2414 w20=3550   wrote 128 hi 127 hib 511
+  byte 392    low   -> w 5    v 3479       wrote 128 hi 127 hib 511
+  byte 392    high  -> w 5    v 3550       wrote 128 hi 127 hib 511
+  byte 400    low   -> 2 words lit: w6=2343 w22=3479   wrote 128 hi 127 hib 511
+  byte 400    high  -> 2 words lit: w6=2414 w22=3550   wrote 128 hi 127 hib 511
+  byte 408    low   -> w 7    v 3479       wrote 128 hi 127 hib 511
+  byte 408    high  -> w 7    v 3550       wrote 128 hi 127 hib 511
+  byte 416    low   -> 2 words lit: w12=2343 w28=3479   wrote 128 hi 127 hib 511
+  byte 416    high  -> 2 words lit: w12=2414 w28=3550   wrote 128 hi 127 hib 511
+  byte 424    low   -> w 13   v 3479       wrote 128 hi 127 hib 511
+  byte 424    high  -> w 13   v 3550       wrote 128 hi 127 hib 511
+  byte 432    low   -> 2 words lit: w14=2343 w30=3479   wrote 128 hi 127 hib 511
+  byte 432    high  -> 2 words lit: w14=2414 w30=3550   wrote 128 hi 127 hib 511
+  byte 440    low   -> w 15   v 3479       wrote 128 hi 127 hib 511
+  byte 440    high  -> w 15   v 3550       wrote 128 hi 127 hib 511
+  byte 448    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 448    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 456    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 456    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 464    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 464    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 472    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 472    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 480    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 480    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 488    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 488    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 496    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 496    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 504    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 504    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 512    low   -> 2 words lit: w32=71 w48=1207   wrote 128 hi 127 hib 511
+  byte 512    high  -> 2 words lit: w32=142 w48=1278   wrote 128 hi 127 hib 511
+  byte 520    low   -> 2 words lit: w33=1207 w49=2343   wrote 128 hi 127 hib 511
+  byte 520    high  -> 2 words lit: w33=1278 w49=2414   wrote 128 hi 127 hib 511
+  byte 528    low   -> 2 words lit: w34=71 w50=1207   wrote 128 hi 127 hib 511
+  byte 528    high  -> 2 words lit: w34=142 w50=1278   wrote 128 hi 127 hib 511
+  byte 536    low   -> 2 words lit: w35=1207 w51=2343   wrote 128 hi 127 hib 511
+  byte 536    high  -> 2 words lit: w35=1278 w51=2414   wrote 128 hi 127 hib 511
+  byte 544    low   -> 2 words lit: w40=71 w56=1207   wrote 128 hi 127 hib 511
+  byte 544    high  -> 2 words lit: w40=142 w56=1278   wrote 128 hi 127 hib 511
+  byte 552    low   -> 2 words lit: w41=1207 w57=2343   wrote 128 hi 127 hib 511
+  byte 552    high  -> 2 words lit: w41=1278 w57=2414   wrote 128 hi 127 hib 511
+  byte 560    low   -> 2 words lit: w42=71 w58=1207   wrote 128 hi 127 hib 511
+  byte 560    high  -> 2 words lit: w42=142 w58=1278   wrote 128 hi 127 hib 511
+  byte 568    low   -> 2 words lit: w43=1207 w59=2343   wrote 128 hi 127 hib 511
+  byte 568    high  -> 2 words lit: w43=1278 w59=2414   wrote 128 hi 127 hib 511
+  byte 576    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 576    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 584    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 584    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 592    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 592    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 600    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 600    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 608    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 608    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 616    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 616    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 624    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 624    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 632    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 632    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 640    low   -> 2 words lit: w36=71 w52=1207   wrote 128 hi 127 hib 511
+  byte 640    high  -> 2 words lit: w36=142 w52=1278   wrote 128 hi 127 hib 511
+  byte 648    low   -> 2 words lit: w37=1207 w53=2343   wrote 128 hi 127 hib 511
+  byte 648    high  -> 2 words lit: w37=1278 w53=2414   wrote 128 hi 127 hib 511
+  byte 656    low   -> 2 words lit: w38=71 w54=1207   wrote 128 hi 127 hib 511
+  byte 656    high  -> 2 words lit: w38=142 w54=1278   wrote 128 hi 127 hib 511
+  byte 664    low   -> 2 words lit: w39=1207 w55=2343   wrote 128 hi 127 hib 511
+  byte 664    high  -> 2 words lit: w39=1278 w55=2414   wrote 128 hi 127 hib 511
+  byte 672    low   -> 2 words lit: w44=71 w60=1207   wrote 128 hi 127 hib 511
+  byte 672    high  -> 2 words lit: w44=142 w60=1278   wrote 128 hi 127 hib 511
+  byte 680    low   -> 2 words lit: w45=1207 w61=2343   wrote 128 hi 127 hib 511
+  byte 680    high  -> 2 words lit: w45=1278 w61=2414   wrote 128 hi 127 hib 511
+  byte 688    low   -> 2 words lit: w46=71 w62=1207   wrote 128 hi 127 hib 511
+  byte 688    high  -> 2 words lit: w46=142 w62=1278   wrote 128 hi 127 hib 511
+  byte 696    low   -> 2 words lit: w47=1207 w63=2343   wrote 128 hi 127 hib 511
+  byte 696    high  -> 2 words lit: w47=1278 w63=2414   wrote 128 hi 127 hib 511
+  byte 704    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 704    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 712    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 712    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 720    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 720    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 728    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 728    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 736    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 736    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 744    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 744    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 752    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 752    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 760    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 760    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 768    low   -> 2 words lit: w32=2343 w48=3479   wrote 128 hi 127 hib 511
+  byte 768    high  -> 2 words lit: w32=2414 w48=3550   wrote 128 hi 127 hib 511
+  byte 776    low   -> w 33   v 3479       wrote 128 hi 127 hib 511
+  byte 776    high  -> w 33   v 3550       wrote 128 hi 127 hib 511
+  byte 784    low   -> 2 words lit: w34=2343 w50=3479   wrote 128 hi 127 hib 511
+  byte 784    high  -> 2 words lit: w34=2414 w50=3550   wrote 128 hi 127 hib 511
+  byte 792    low   -> w 35   v 3479       wrote 128 hi 127 hib 511
+  byte 792    high  -> w 35   v 3550       wrote 128 hi 127 hib 511
+  byte 800    low   -> 2 words lit: w40=2343 w56=3479   wrote 128 hi 127 hib 511
+  byte 800    high  -> 2 words lit: w40=2414 w56=3550   wrote 128 hi 127 hib 511
+  byte 808    low   -> w 41   v 3479       wrote 128 hi 127 hib 511
+  byte 808    high  -> w 41   v 3550       wrote 128 hi 127 hib 511
+  byte 816    low   -> 2 words lit: w42=2343 w58=3479   wrote 128 hi 127 hib 511
+  byte 816    high  -> 2 words lit: w42=2414 w58=3550   wrote 128 hi 127 hib 511
+  byte 824    low   -> w 43   v 3479       wrote 128 hi 127 hib 511
+  byte 824    high  -> w 43   v 3550       wrote 128 hi 127 hib 511
+  byte 832    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 832    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 840    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 840    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 848    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 848    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 856    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 856    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 864    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 864    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 872    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 872    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 880    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 880    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 888    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 888    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 896    low   -> 2 words lit: w36=2343 w52=3479   wrote 128 hi 127 hib 511
+  byte 896    high  -> 2 words lit: w36=2414 w52=3550   wrote 128 hi 127 hib 511
+  byte 904    low   -> w 37   v 3479       wrote 128 hi 127 hib 511
+  byte 904    high  -> w 37   v 3550       wrote 128 hi 127 hib 511
+  byte 912    low   -> 2 words lit: w38=2343 w54=3479   wrote 128 hi 127 hib 511
+  byte 912    high  -> 2 words lit: w38=2414 w54=3550   wrote 128 hi 127 hib 511
+  byte 920    low   -> w 39   v 3479       wrote 128 hi 127 hib 511
+  byte 920    high  -> w 39   v 3550       wrote 128 hi 127 hib 511
+  byte 928    low   -> 2 words lit: w44=2343 w60=3479   wrote 128 hi 127 hib 511
+  byte 928    high  -> 2 words lit: w44=2414 w60=3550   wrote 128 hi 127 hib 511
+  byte 936    low   -> w 45   v 3479       wrote 128 hi 127 hib 511
+  byte 936    high  -> w 45   v 3550       wrote 128 hi 127 hib 511
+  byte 944    low   -> 2 words lit: w46=2343 w62=3479   wrote 128 hi 127 hib 511
+  byte 944    high  -> 2 words lit: w46=2414 w62=3550   wrote 128 hi 127 hib 511
+  byte 952    low   -> w 47   v 3479       wrote 128 hi 127 hib 511
+  byte 952    high  -> w 47   v 3550       wrote 128 hi 127 hib 511
+  byte 960    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 960    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 968    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 968    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 976    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 976    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 984    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 984    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 992    low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 992    high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1000   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1000   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1008   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1008   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1016   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1016   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1024   low   -> 2 words lit: w64=71 w80=1207   wrote 128 hi 127 hib 511
+  byte 1024   high  -> 2 words lit: w64=142 w80=1278   wrote 128 hi 127 hib 511
+  byte 1032   low   -> 2 words lit: w65=1207 w81=2343   wrote 128 hi 127 hib 511
+  byte 1032   high  -> 2 words lit: w65=1278 w81=2414   wrote 128 hi 127 hib 511
+  byte 1040   low   -> 2 words lit: w66=71 w82=1207   wrote 128 hi 127 hib 511
+  byte 1040   high  -> 2 words lit: w66=142 w82=1278   wrote 128 hi 127 hib 511
+  byte 1048   low   -> 2 words lit: w67=1207 w83=2343   wrote 128 hi 127 hib 511
+  byte 1048   high  -> 2 words lit: w67=1278 w83=2414   wrote 128 hi 127 hib 511
+  byte 1056   low   -> 2 words lit: w72=71 w88=1207   wrote 128 hi 127 hib 511
+  byte 1056   high  -> 2 words lit: w72=142 w88=1278   wrote 128 hi 127 hib 511
+  byte 1064   low   -> 2 words lit: w73=1207 w89=2343   wrote 128 hi 127 hib 511
+  byte 1064   high  -> 2 words lit: w73=1278 w89=2414   wrote 128 hi 127 hib 511
+  byte 1072   low   -> 2 words lit: w74=71 w90=1207   wrote 128 hi 127 hib 511
+  byte 1072   high  -> 2 words lit: w74=142 w90=1278   wrote 128 hi 127 hib 511
+  byte 1080   low   -> 2 words lit: w75=1207 w91=2343   wrote 128 hi 127 hib 511
+  byte 1080   high  -> 2 words lit: w75=1278 w91=2414   wrote 128 hi 127 hib 511
+  byte 1088   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1088   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1096   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1096   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1104   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1104   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1112   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1112   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1120   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1120   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1128   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1128   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1136   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1136   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1144   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1144   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1152   low   -> 2 words lit: w68=71 w84=1207   wrote 128 hi 127 hib 511
+  byte 1152   high  -> 2 words lit: w68=142 w84=1278   wrote 128 hi 127 hib 511
+  byte 1160   low   -> 2 words lit: w69=1207 w85=2343   wrote 128 hi 127 hib 511
+  byte 1160   high  -> 2 words lit: w69=1278 w85=2414   wrote 128 hi 127 hib 511
+  byte 1168   low   -> 2 words lit: w70=71 w86=1207   wrote 128 hi 127 hib 511
+  byte 1168   high  -> 2 words lit: w70=142 w86=1278   wrote 128 hi 127 hib 511
+  byte 1176   low   -> 2 words lit: w71=1207 w87=2343   wrote 128 hi 127 hib 511
+  byte 1176   high  -> 2 words lit: w71=1278 w87=2414   wrote 128 hi 127 hib 511
+  byte 1184   low   -> 2 words lit: w76=71 w92=1207   wrote 128 hi 127 hib 511
+  byte 1184   high  -> 2 words lit: w76=142 w92=1278   wrote 128 hi 127 hib 511
+  byte 1192   low   -> 2 words lit: w77=1207 w93=2343   wrote 128 hi 127 hib 511
+  byte 1192   high  -> 2 words lit: w77=1278 w93=2414   wrote 128 hi 127 hib 511
+  byte 1200   low   -> 2 words lit: w78=71 w94=1207   wrote 128 hi 127 hib 511
+  byte 1200   high  -> 2 words lit: w78=142 w94=1278   wrote 128 hi 127 hib 511
+  byte 1208   low   -> 2 words lit: w79=1207 w95=2343   wrote 128 hi 127 hib 511
+  byte 1208   high  -> 2 words lit: w79=1278 w95=2414   wrote 128 hi 127 hib 511
+  byte 1216   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1216   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1224   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1224   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1232   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1232   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1240   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1240   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1248   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1248   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1256   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1256   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1264   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1264   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1272   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1272   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1280   low   -> 2 words lit: w64=2343 w80=3479   wrote 128 hi 127 hib 511
+  byte 1280   high  -> 2 words lit: w64=2414 w80=3550   wrote 128 hi 127 hib 511
+  byte 1288   low   -> w 65   v 3479       wrote 128 hi 127 hib 511
+  byte 1288   high  -> w 65   v 3550       wrote 128 hi 127 hib 511
+  byte 1296   low   -> 2 words lit: w66=2343 w82=3479   wrote 128 hi 127 hib 511
+  byte 1296   high  -> 2 words lit: w66=2414 w82=3550   wrote 128 hi 127 hib 511
+  byte 1304   low   -> w 67   v 3479       wrote 128 hi 127 hib 511
+  byte 1304   high  -> w 67   v 3550       wrote 128 hi 127 hib 511
+  byte 1312   low   -> 2 words lit: w72=2343 w88=3479   wrote 128 hi 127 hib 511
+  byte 1312   high  -> 2 words lit: w72=2414 w88=3550   wrote 128 hi 127 hib 511
+  byte 1320   low   -> w 73   v 3479       wrote 128 hi 127 hib 511
+  byte 1320   high  -> w 73   v 3550       wrote 128 hi 127 hib 511
+  byte 1328   low   -> 2 words lit: w74=2343 w90=3479   wrote 128 hi 127 hib 511
+  byte 1328   high  -> 2 words lit: w74=2414 w90=3550   wrote 128 hi 127 hib 511
+  byte 1336   low   -> w 75   v 3479       wrote 128 hi 127 hib 511
+  byte 1336   high  -> w 75   v 3550       wrote 128 hi 127 hib 511
+  byte 1344   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1344   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1352   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1352   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1360   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1360   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1368   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1368   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1376   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1376   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1384   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1384   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1392   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1392   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1400   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1400   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1408   low   -> 2 words lit: w68=2343 w84=3479   wrote 128 hi 127 hib 511
+  byte 1408   high  -> 2 words lit: w68=2414 w84=3550   wrote 128 hi 127 hib 511
+  byte 1416   low   -> w 69   v 3479       wrote 128 hi 127 hib 511
+  byte 1416   high  -> w 69   v 3550       wrote 128 hi 127 hib 511
+  byte 1424   low   -> 2 words lit: w70=2343 w86=3479   wrote 128 hi 127 hib 511
+  byte 1424   high  -> 2 words lit: w70=2414 w86=3550   wrote 128 hi 127 hib 511
+  byte 1432   low   -> w 71   v 3479       wrote 128 hi 127 hib 511
+  byte 1432   high  -> w 71   v 3550       wrote 128 hi 127 hib 511
+  byte 1440   low   -> 2 words lit: w76=2343 w92=3479   wrote 128 hi 127 hib 511
+  byte 1440   high  -> 2 words lit: w76=2414 w92=3550   wrote 128 hi 127 hib 511
+  byte 1448   low   -> w 77   v 3479       wrote 128 hi 127 hib 511
+  byte 1448   high  -> w 77   v 3550       wrote 128 hi 127 hib 511
+  byte 1456   low   -> 2 words lit: w78=2343 w94=3479   wrote 128 hi 127 hib 511
+  byte 1456   high  -> 2 words lit: w78=2414 w94=3550   wrote 128 hi 127 hib 511
+  byte 1464   low   -> w 79   v 3479       wrote 128 hi 127 hib 511
+  byte 1464   high  -> w 79   v 3550       wrote 128 hi 127 hib 511
+  byte 1472   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1472   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1480   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1480   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1488   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1488   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1496   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1496   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1504   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1504   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1512   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1512   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1520   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1520   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1528   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1528   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1536   low   -> 2 words lit: w96=71 w100=1207   wrote 128 hi 127 hib 511
+  byte 1536   high  -> 2 words lit: w96=142 w100=1278   wrote 128 hi 127 hib 511
+  byte 1544   low   -> 2 words lit: w97=1207 w101=2343   wrote 128 hi 127 hib 511
+  byte 1544   high  -> 2 words lit: w97=1278 w101=2414   wrote 128 hi 127 hib 511
+  byte 1552   low   -> 2 words lit: w98=71 w102=1207   wrote 128 hi 127 hib 511
+  byte 1552   high  -> 2 words lit: w98=142 w102=1278   wrote 128 hi 127 hib 511
+  byte 1560   low   -> 2 words lit: w99=1207 w103=2343   wrote 128 hi 127 hib 511
+  byte 1560   high  -> 2 words lit: w99=1278 w103=2414   wrote 128 hi 127 hib 511
+  byte 1568   low   -> 2 words lit: w104=71 w108=1207   wrote 128 hi 127 hib 511
+  byte 1568   high  -> 2 words lit: w104=142 w108=1278   wrote 128 hi 127 hib 511
+  byte 1576   low   -> 2 words lit: w105=1207 w109=2343   wrote 128 hi 127 hib 511
+  byte 1576   high  -> 2 words lit: w105=1278 w109=2414   wrote 128 hi 127 hib 511
+  byte 1584   low   -> 2 words lit: w106=71 w110=1207   wrote 128 hi 127 hib 511
+  byte 1584   high  -> 2 words lit: w106=142 w110=1278   wrote 128 hi 127 hib 511
+  byte 1592   low   -> 2 words lit: w107=1207 w111=2343   wrote 128 hi 127 hib 511
+  byte 1592   high  -> 2 words lit: w107=1278 w111=2414   wrote 128 hi 127 hib 511
+  byte 1600   low   -> 2 words lit: w112=71 w116=1207   wrote 128 hi 127 hib 511
+  byte 1600   high  -> 2 words lit: w112=142 w116=1278   wrote 128 hi 127 hib 511
+  byte 1608   low   -> 2 words lit: w113=1207 w117=2343   wrote 128 hi 127 hib 511
+  byte 1608   high  -> 2 words lit: w113=1278 w117=2414   wrote 128 hi 127 hib 511
+  byte 1616   low   -> 2 words lit: w114=71 w118=1207   wrote 128 hi 127 hib 511
+  byte 1616   high  -> 2 words lit: w114=142 w118=1278   wrote 128 hi 127 hib 511
+  byte 1624   low   -> 2 words lit: w115=1207 w119=2343   wrote 128 hi 127 hib 511
+  byte 1624   high  -> 2 words lit: w115=1278 w119=2414   wrote 128 hi 127 hib 511
+  byte 1632   low   -> 2 words lit: w120=71 w124=1207   wrote 128 hi 127 hib 511
+  byte 1632   high  -> 2 words lit: w120=142 w124=1278   wrote 128 hi 127 hib 511
+  byte 1640   low   -> 2 words lit: w121=1207 w125=2343   wrote 128 hi 127 hib 511
+  byte 1640   high  -> 2 words lit: w121=1278 w125=2414   wrote 128 hi 127 hib 511
+  byte 1648   low   -> 2 words lit: w122=71 w126=1207   wrote 128 hi 127 hib 511
+  byte 1648   high  -> 2 words lit: w122=142 w126=1278   wrote 128 hi 127 hib 511
+  byte 1656   low   -> 2 words lit: w123=1207 w127=2343   wrote 128 hi 127 hib 511
+  byte 1656   high  -> 2 words lit: w123=1278 w127=2414   wrote 128 hi 127 hib 511
+  byte 1664   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1664   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1672   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1672   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1680   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1680   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1688   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1688   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1696   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1696   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1704   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1704   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1712   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1712   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1720   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1720   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1728   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1728   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1736   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1736   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1744   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1744   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1752   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1752   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1760   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1760   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1768   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1768   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1776   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1776   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1784   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1784   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1792   low   -> 2 words lit: w96=2343 w100=3479   wrote 128 hi 127 hib 511
+  byte 1792   high  -> 2 words lit: w96=2414 w100=3550   wrote 128 hi 127 hib 511
+  byte 1800   low   -> w 97   v 3479       wrote 128 hi 127 hib 511
+  byte 1800   high  -> w 97   v 3550       wrote 128 hi 127 hib 511
+  byte 1808   low   -> 2 words lit: w98=2343 w102=3479   wrote 128 hi 127 hib 511
+  byte 1808   high  -> 2 words lit: w98=2414 w102=3550   wrote 128 hi 127 hib 511
+  byte 1816   low   -> w 99   v 3479       wrote 128 hi 127 hib 511
+  byte 1816   high  -> w 99   v 3550       wrote 128 hi 127 hib 511
+  byte 1824   low   -> 2 words lit: w104=2343 w108=3479   wrote 128 hi 127 hib 511
+  byte 1824   high  -> 2 words lit: w104=2414 w108=3550   wrote 128 hi 127 hib 511
+  byte 1832   low   -> w 105  v 3479       wrote 128 hi 127 hib 511
+  byte 1832   high  -> w 105  v 3550       wrote 128 hi 127 hib 511
+  byte 1840   low   -> 2 words lit: w106=2343 w110=3479   wrote 128 hi 127 hib 511
+  byte 1840   high  -> 2 words lit: w106=2414 w110=3550   wrote 128 hi 127 hib 511
+  byte 1848   low   -> w 107  v 3479       wrote 128 hi 127 hib 511
+  byte 1848   high  -> w 107  v 3550       wrote 128 hi 127 hib 511
+  byte 1856   low   -> 2 words lit: w112=2343 w116=3479   wrote 128 hi 127 hib 511
+  byte 1856   high  -> 2 words lit: w112=2414 w116=3550   wrote 128 hi 127 hib 511
+  byte 1864   low   -> w 113  v 3479       wrote 128 hi 127 hib 511
+  byte 1864   high  -> w 113  v 3550       wrote 128 hi 127 hib 511
+  byte 1872   low   -> 2 words lit: w114=2343 w118=3479   wrote 128 hi 127 hib 511
+  byte 1872   high  -> 2 words lit: w114=2414 w118=3550   wrote 128 hi 127 hib 511
+  byte 1880   low   -> w 115  v 3479       wrote 128 hi 127 hib 511
+  byte 1880   high  -> w 115  v 3550       wrote 128 hi 127 hib 511
+  byte 1888   low   -> 2 words lit: w120=2343 w124=3479   wrote 128 hi 127 hib 511
+  byte 1888   high  -> 2 words lit: w120=2414 w124=3550   wrote 128 hi 127 hib 511
+  byte 1896   low   -> w 121  v 3479       wrote 128 hi 127 hib 511
+  byte 1896   high  -> w 121  v 3550       wrote 128 hi 127 hib 511
+  byte 1904   low   -> 2 words lit: w122=2343 w126=3479   wrote 128 hi 127 hib 511
+  byte 1904   high  -> 2 words lit: w122=2414 w126=3550   wrote 128 hi 127 hib 511
+  byte 1912   low   -> w 123  v 3479       wrote 128 hi 127 hib 511
+  byte 1912   high  -> w 123  v 3550       wrote 128 hi 127 hib 511
+  byte 1920   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1920   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1928   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1928   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1936   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1936   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1944   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1944   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1952   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1952   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1960   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1960   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1968   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1968   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1976   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1976   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1984   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1984   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1992   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 1992   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2000   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2000   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2008   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2008   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2016   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2016   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2024   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2024   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2032   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2032   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2040   low   -> NOTHING LIT            wrote 128 hi 127 hib 511
+  byte 2040   high  -> NOTHING LIT            wrote 128 hi 127 hib 511
+
+===== 8) and the matmuls, for the mismatch lists                   =====
+matmul M=2 K=64 N=16 w4 a8, feature atom 16, 2 entries per row
+HALFK: zeroed 512 of 1024 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 32 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    -1887   shift/elem    -1887   shift/sum    -1887
+    ch  1  npu     2330   shift/elem     2330   shift/sum     2330
+    ch  2  npu    -7904   shift/elem    -7904   shift/sum    -7904
+    ch  3  npu     2249   shift/elem     2249   shift/sum     2249
+    ch  4  npu    -7603   shift/elem    -7603   shift/sum    -7603
+    ch  5  npu    -5524   shift/elem    -5524   shift/sum    -5524
+    ch  6  npu    -9626   shift/elem    -9626   shift/sum    -9626
+    ch  7  npu    -5262   shift/elem    -5262   shift/sum    -5262
+  raw surface, first 64 words:
+    -1887 2330 -7904 2249 -4932 -11334 -4401 -7148
+    -7603 -5524 -9626 -5262 -4314 -2071 -2322 1904
+    -8926 -5194 -2808 -4932 2221 6770 5196 10423
+    -1774 -4401 1304 -4314 6088 10728 4916 10106
+    -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811
+    -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811
+    -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811
+    -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811 -1515870811
+   
+  reference by row, first 8 channels:
+    row 0: -1887 2330 -7904 2249 -7603 -5524 -9626 -5262
+    row 1: 2586 -77 -846 88 -852 2853 985 2993
+int4 output: 32 of 32 words written, 16 EXACT with the shift per element, 16 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8
+  row 0 mismatches: none
+matmul M=2 K=64 N=64 w4 a8, feature atom 16, 2 entries per row
+HALFK: zeroed 2048 of 4096 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 128 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    -1887   shift/elem    -1887   shift/sum    -1887
+    ch  1  npu     2330   shift/elem     2330   shift/sum     2330
+    ch  2  npu    -7904   shift/elem    -7904   shift/sum    -7904
+    ch  3  npu     2249   shift/elem     2249   shift/sum     2249
+    ch  4  npu    -7603   shift/elem    -7603   shift/sum    -7603
+    ch  5  npu    -5524   shift/elem    -5524   shift/sum    -5524
+    ch  6  npu    -9626   shift/elem    -9626   shift/sum    -9626
+    ch  7  npu    -5262   shift/elem    -5262   shift/sum    -5262
+  raw surface, first 256 words:
+    -1887 2330 -7904 2249 -8926 -5194 -2808 -4932
+    -7603 -5524 -9626 -5262 -1774 -4401 1304 -4314
+    -4932 -11334 -4401 -7148 2221 6770 5196 10423
+    -4314 -2071 -2322 1904 6088 10728 4916 10106
+    4981 -2322 7020 2221 6183 4916 1870 5635
+    8864 5196 8691 6088 -1905 4074 -1887 2330
+    5635 9009 4074 4866 -5524 -8920 -5262 -12170
+    2330 -234 2249 -4049 -5194 -8720 -4932 -11334
+    -7904 2249 -7603 -5524 -2808 -4932 -1774 -4401
+    -9626 -5262 -8926 -5194 1304 -4314 4981 -2322
+    -4401 -7148 -4314 -2071 5196 10423 6088 10728
+    -2322 1904 2221 6770 4916 10106 5635 9009
+    7020 2221 8864 5196 4074 4866 2330 -234
+    8691 6088 6183 4916 2249 -4049 -5524 -8920
+    1870 5635 -1905 4074 -5262 -12170 -5194 -8720
+    -1887 2330 -7904 2249 -4932 -11334 -4401 -7148
+   
+  reference by row, first 8 channels:
+    row 0: -1887 2330 -7904 2249 -7603 -5524 -9626 -5262
+    row 1: 2586 -77 -846 88 -852 2853 985 2993
+int4 output: 128 of 128 words written, 40 EXACT with the shift per element, 40 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 0/8  g2 8/8  g3 0/8  g4 8/8  g5 0/8  g6 8/8  g7 8/8
+  row 0 mismatches: 8 9 10 11 12 13 14 15 24 25 26 27 28 29 30 31 40 41 42 43 44 45 46 47
+
+===== 9) the control that must FAIL, and int8 at M = 1 and M = 4   =====
+matmul M=1 K=64 N=64 w4 a8, feature atom 16, 2 entries per row
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 64 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    -1887   shift/elem    -6201   shift/sum    -6201
+    ch  1  npu     2330   shift/elem     7311   shift/sum     7311
+    ch  2  npu    -7904   shift/elem   -10226   shift/sum   -10226
+    ch  3  npu     2249   shift/elem     9269   shift/sum     9269
+    ch  4  npu    -7603   shift/elem    -5382   shift/sum    -5382
+    ch  5  npu    -5524   shift/elem     3340   shift/sum     3340
+    ch  6  npu    -9626   shift/elem    -4430   shift/sum    -4430
+    ch  7  npu    -5262   shift/elem     3429   shift/sum     3429
+int4 output: 64 of 64 words written, 0 EXACT with the shift per element, 0 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 0/8  g1 0/8  g2 0/8  g3 0/8  g4 0/8  g5 0/8  g6 0/8  g7 0/8
+  row 0 mismatches: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 ... 64 total
+matmul M=1 K=64 N=64 w8 a8, feature atom 16, 1 entries per row
+  scales in 0.0200 wt 0.0100 out 0.2500  zp in 128 wt 128 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  reading the output as [n/atom][m][n%atom], the mirror of the input surface
+output: 64 of 64 bytes written, 64 BYTE EXACT, 0 differ by more than 1
+  reference spread: 5 distinct, 0..255   TOO FLAT TO JUDGE A MATCH
+  npu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  cpu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  npu range 0..255, 5 distinct
+  npu all:
+          255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+            0 255   1 255 254   1   2   0   0   1 255   0   2   0 255   0
+            1   0 255   0 255 255   0   1   0   0   1   0 255   1   0 255
+            1   2 255 255   1   0 255   0   1   0 255   1 255 254   1   2
+  cpu all:
+          255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+            0 255   1 255 254   1   2   0   0   1 255   0   2   0 255   0
+            1   0 255   0 255 255   0   1   0   0   1   0 255   1   0 255
+            1   2 255 255   1   0 255   0   1   0 255   1 255 254   1   2
+  npu signed:
+           -1   1   0  -1   1   0  -1   1   2  -1  -1   1   0  -1   0   1
+            0  -1   1  -1  -2   1   2   0   0   1  -1   0   2   0  -1   0
+            1   0  -1   0  -1  -1   0   1   0   0   1   0  -1   1   0  -1
+            1   2  -1  -1   1   0  -1   0   1   0  -1   1  -1  -2   1   2
+  cpu signed:
+           -1   1   0  -1   1   0  -1   1   2  -1  -1   1   0  -1   0   1
+            0  -1   1  -1  -2   1   2   0   0   1  -1   0   2   0  -1   0
+            1   0  -1   0  -1  -1   0   1   0   0   1   0  -1   1   0  -1
+            1   2  -1  -1   1   0  -1   0   1   0  -1   1  -1  -2   1   2
+  fit cpu = 1.0000 * npu + 0.00
+matmul M=4 K=64 N=64 w8 a8, feature atom 16, 1 entries per row
+  scales in 0.0200 wt 0.0100 out 0.2500  zp in 128 wt 128 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  reading the output as [n/atom][m][n%atom], the mirror of the input surface
+output: 256 of 256 bytes written, 256 BYTE EXACT, 0 differ by more than 1
+  reference spread: 5 distinct, 0..255   TOO FLAT TO JUDGE A MATCH
+  npu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  cpu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  npu range 0..255, 5 distinct
+  fit cpu = 0.2212 * npu + 49.11
+
+===== the anchor again                                             =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== entry 5 against the M = 1 map above it. That is the round.   =====
+
+RK3576 NPU bringup
+rock4d login: 
