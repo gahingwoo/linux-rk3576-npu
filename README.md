@@ -91,6 +91,44 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
+## The CPU baseline, characterised: 5.53 tok/s, and it is still ALU bound (2026-08-22)
+
+Round 309 put a `--pure` q4_0 file on the board — one whose output head is q4_0 like the
+rest of it — and asked whether the crossover in 308 was the q6_K head or the RK3576.
+
+**Both, in different places.** Pure q4_0 against q8_0, generation tok/s:
+
+| threads | pure q4_0 | q8_0 |
+|---|---|---|
+| 1 | 2.62 | **2.95** |
+| 2 | **4.02** | 3.71 |
+| 4 | **5.51** | 3.74 |
+| 6 | **5.42** | 4.10 |
+| 8 | **5.10** | 4.68 |
+
+The head explained 308's crossover at **two** threads and not the one at **one**. On a
+single A72, 4 bit unpacking costs more than the 47% of bytes it saves. The head's own
+cost on this board is +22% at one thread, +10% at four, +7% at eight — an ALU cost, so it
+hurts most where there is least ALU.
+
+**The "at four threads the board is byte bound" reading from 308 does not survive
+arithmetic.** Achieved weight bandwidth:
+
+| | tok/s | MB/token | GB/s |
+|---|---|---|---|
+| pure q4_0, 4 threads | 5.51 | 703 | 3.87 |
+| q8_0, 8 threads | 4.68 | 1321 | **6.18** |
+
+Pure q4_0 never approaches the 6.18 GB/s that q8_0 demonstrably reaches. If DRAM were the
+wall there, it would run at 8.8 tok/s; it runs at 5.5. So it is still the nibble unpacking
+that limits it, on a core with no SDOT to unpack into.
+
+**The honest CPU denominator is 5.53 tok/s** — charsiu, pure q4_0, four threads, up from
+2.68 two rounds ago. charsiu is about 76% of llama.cpp on the development host, so
+llama.cpp here would be roughly 7. The highest weight bandwidth the CPU has demonstrated
+is 6.18 GB/s; the NPU path measures 11.4 to 11.9 **and does the unpacking in hardware**,
+so what it would buy is more than the 1.9x bandwidth ratio on its own.
+
 ## An integer kernel doubled the board, and then found a confound (2026-08-21)
 
 Round 308 put the integer kernel on the board. It works: **q4_0 went 2.65 to 4.94 tok/s at
@@ -821,6 +859,7 @@ Requires meson, ninja, and aarch64 cross toolchain (buildroot fetches its own).
 # Confirm /dev/sdX is a real block device before writing:
 file /dev/sdX   # must say "block special"
 
+sudo bash flash.sh /dev/sdX     # or, by hand:
 sudo dd if=buildroot/br-out/images/sdcard.img of=/dev/sdX \
     bs=4M conv=fsync oflag=direct status=progress
 # SDR50 card writes at ~17 MB/s; if you see > 100 MB/s the write is going to

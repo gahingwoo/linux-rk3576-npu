@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Flash dirty/sdcard.img to an SD card.
+# Flash buildroot's sdcard.img to an SD card.
 # Must run as root: sudo bash flash.sh [/dev/sdX]
 #
-# Build the image first:  bash make-sdimage.sh
+# Build the image first:  make -C buildroot/br-out
+#
+# It reads buildroot's own output directly. There used to be a copy in dirty/,
+# which is a second 3.7 GiB of a disk that is 90% full and one more thing to
+# forget to refresh.
 set -euo pipefail
 
 [[ "$(id -u)" -eq 0 ]] || { echo "ERROR: run as root: sudo bash $0"; exit 1; }
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-IMG="${REPO}/dirty/sdcard.img"
+IMG="${IMG:-${REPO}/buildroot/br-out/images/sdcard.img}"
 DEV="${1:-/dev/sdb}"
 
 # ── Safety ────────────────────────────────────────────────────────────────────
@@ -18,7 +22,7 @@ if [[ "$BASENAME" == "sda" || "$BASENAME" == "nvme0n1" || "$BASENAME" == "mmcblk
     exit 1
 fi
 [[ -b "$DEV" ]]  || { echo "ERROR: ${DEV} is not a block device"; exit 1; }
-[[ -f "$IMG" ]]  || { echo "ERROR: ${IMG} not found — run:  bash make-sdimage.sh"; exit 1; }
+[[ -f "$IMG" ]]  || { echo "ERROR: ${IMG} not found — run:  make -C buildroot/br-out"; exit 1; }
 
 IMG_MB=$(( $(stat -c%s "$IMG") / 1024 / 1024 ))
 DEV_MB=$(( $(blockdev --getsize64 "$DEV") / 1024 / 1024 ))
