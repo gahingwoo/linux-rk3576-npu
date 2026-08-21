@@ -91,6 +91,40 @@ next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
 `b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
 stall").
 
+## An integer kernel doubled the board, and then found a confound (2026-08-21)
+
+Round 308 put the integer kernel on the board. It works: **q4_0 went 2.65 to 4.94 tok/s at
+four threads, and the board's best number went 2.68 to 5.08**. Both controls held — the
+`CHARSIU_NO_QACT` line reproduced round 307's byte for byte, so the exact path is
+untouched, and the scalar build still matched.
+
+Its prediction — q4_0 beats q8_0 — held at four and six threads and failed at one and two:
+
+| threads | q4_0 | q8_0 |
+|---|---|---|
+| 1 | 2.14 | **2.96** |
+| 2 | 3.40 | **3.71** |
+| 4 | **5.08** | 3.73 |
+| 6 | **4.78** | 4.23 |
+| 8 | 4.78 | 4.80 |
+
+Eight threads is now *worse* than four, where in 307 it was 10% better. That part is the
+signature of bytes starting to bind: four A53 cores add memory traffic and contention
+without adding throughput.
+
+The crossover at one and two threads read as "few cores are ALU bound, four cores are byte
+bound" — **and that reading has a confound.** The two files do not differ only in their
+projections: llama.cpp quantises `token_embd` to q6_K in a q4_0 file and to q8_0 in a q8_0
+file, Llama 3.2 ties the output head to it, and at a 128256 vocabulary that tensor is a
+fifth of the weights. On the host, a `--pure` q4_0 file whose head is also q4_0 runs 15%
+faster than the mixed one and leads q8_0 at **every** thread count. Round 309 asks whether
+the board agrees.
+
+One number worth keeping: at eight threads q8_0 reads 1317 MB of weights per token at
+4.80 tok/s, which is **6.3 GB/s** of achieved weight bandwidth. charsiu's NPU path measures
+11.4 to 11.9 GB/s. So the CPU is at a bit over half of what the NPU fetches, and that ratio
+is the real size of the prize.
+
 ## Round 307 refuted a prediction, and the reason was my own kernel (2026-08-21)
 
 The decode loop runs on the RK3576 and is correct there: the text matches the host byte

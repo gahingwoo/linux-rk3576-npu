@@ -2,82 +2,89 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 308. THE SAME QUESTION 307 COULD NOT ANSWER, THROUGH A
-# KERNEL THAT CAN ANSWER IT.
+# 2026-08-21 round 309. THE CONFOUND 308 COULD NOT SEPARATE.
 #
-# 307 predicted q4_0 would beat q8_0 on this board and it did not: 2.68 against
-# 2.86 at four threads, 2.86 against 2.99 at eight. Half the bytes, slower.
+# 308 answered its own question and then showed the answer was not clean.
 #
-# ⚠ THE REASON WAS NOT THE BOARD, IT WAS MY KERNEL. charsiu converted every
-# WEIGHT to a float in order to multiply it by a float activation, so the
-# unpacking arithmetic dominated and reading half the bytes bought nothing.
-# The q8_0/q4_0 ratio barely moved between the host (1.12) and the board
-# (1.05-1.07), which says bandwidth was only a second order effect at that ALU
-# cost. **307's prediction B is refuted, but so is any reading of 307 as a
-# statement about the RK3576's memory system.**
+# The integer kernel worked: q4_0 went 2.65 -> 4.94 tok/s on this board at four
+# threads, and the best number moved 2.68 -> 5.08. Both controls held: the
+# CHARSIU_NO_QACT line reproduced 307's byte for byte, and the scalar build
+# still matched. So the arithmetic is right and the speedup is real.
 #
-# WHAT CHANGED. There are N*K weights and only K activations, so the activation
-# is now quantised to int8 once per matvec and the dot product is INTEGER, with
-# one float multiply per 32 element block. On the host, four threads:
+# Its prediction, q4_0 beats q8_0, held at four and six threads and FAILED at
+# one and two:
 #
-#   q4_0   exact f32 activation  17.99  ->  quantised  36.85 tok/s
-#   q8_0   exact f32 activation  17.10  ->  quantised  34.80 tok/s
+#     t=1   q4_0 2.14   q8_0 2.96        t=4   q4_0 5.08   q8_0 3.73
+#     t=2   q4_0 3.40   q8_0 3.71        t=8   q4_0 4.78   q8_0 4.80
 #
-# and the order flipped: **q4_0 now beats q8_0 on the host**, where it lost
-# before. Host thread scaling flattened too, 1 -> 18.4, 2 -> 30.2, 4 -> 33.4,
-# 6 -> 30.8, which is what a kernel that has stopped being ALU bound looks like.
+# ⚠ I read that crossover as "few cores are ALU bound, four cores are byte
+# bound". THAT READING HAS A CONFOUND AND IT IS MINE: the two files do not
+# differ only in the projections. **llama.cpp quantises token_embd to q6_K in a
+# q4_0 file and to q8_0 in a q8_0 file**, Llama 3.2 ties the output head to it,
+# and at a 128256 vocabulary that tensor is a fifth of the weights. q6_K costs
+# far more ALU per byte than q8_0 does. So "q4_0 versus q8_0" was never a
+# bytes-against-bytes comparison.
+#
+# WHAT IS NEW. A third file, built with llama-quantize --pure, whose token_embd
+# is q4_0 like everything else in it. On the host, four threads:
+#
+#     q4_0 (q6_K head)  35.29        q4_0 --pure  40.70        q8_0  34.43
+#
+# so the head alone was worth 15%, and with it gone the host crossover
+# DISAPPEARS -- pure q4_0 is ahead at every thread count, by more as threads are
+# added:
+#
+#     t=1  21.67 / 21.45     t=2  34.26 / 32.92
+#     t=4  40.70 / 34.74     t=8  31.73 / 30.41       (pure q4_0 / q8_0)
+#
+# ⚠ THE PURE FILE IS AN INSTRUMENT, NOT A GOOD MODEL. It was requantised from
+# the q8_0 file, so it is quantised twice, and its output head is 4 bit. It says
+# true sentences about grammar and false ones about the world. It exists to hold
+# ONE format constant across a whole model, and its text is only ever compared
+# against ITSELF on the host.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) TEXT FIRST, AND THERE ARE NOW TWO CORRECT ANSWERS, one per path.
+# 1) TEXT FIRST. Six lines, and here is every one of them.
 #
-#    q4_0, either path, 32 tokens, greedy, --ignore-eos:
-#      Paris. The capital of Germany is Berlin. The capital of Italy is Rome.
-#      The capital of Spain is Madrid. The capital of Portugal is Lisbon. The
-#      capital
+#    q4_0, both paths, and q4_0-pure, both paths, are each internally identical:
+#      q4_0       ...is Rome. The capital of Spain is Madrid. The capital of
+#                 Portugal is Lisbon. The capital
+#      q4_0-pure  Paris. Paris is the most populous city in the world, with a
+#                 population of over 2 million people. The city is known for
+#                 its rich history, art
 #
-#    q8_0 EXACT path (CHARSIU_NO_QACT=1) ends: ...Claude Monet painted many
-#      landscapes            <- and this is byte for byte what 307 printed
-#    q8_0 QUANTISED path ends: ...Claude Monet painted the water
+#    q8_0 is the one whose two paths legitimately differ:
+#      quantised  ...Claude Monet painted the water
+#      exact      ...Claude Monet painted many landscapes
 #
-#    The q8_0 pair differing is EXPECTED and is the approximation showing. The
-#    q4_0 pair NOT differing is also expected: its own weight noise is larger.
-#    Anything else in either and the numbers below are timings of a wrong
-#    answer.
+#    The q4_0 exact line must also still match ROUND 307's. Anything else and
+#    the timings below are timings of a wrong answer.
 #
-# 2) THE CONTROL. Entry 3 is CHARSIU_NO_QACT=1, the exact f32 activation. It
-#    must be SLOWER and it must reproduce 307's q4_0 line exactly. If the exact
-#    path has moved since 307, this commit broke something it had no business
-#    touching, and the fast path cannot be read.
-#
-# 3) THE SCALAR CONTROL is still there, entry 4: no NEON at all, same text.
+# 2) THEN THE ROUND, entry 4. Read q4_0-pure against q8_0 at every thread count.
 #
 # ---------------------------------------------------------------------------
-# WHAT I EXPECT, AND 307 SHOWED THAT WRITING IT DOWN COSTS SOMETHING
+# WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) **q4_0 BEATS q8_0 THIS TIME.** It does on the host now. If it does here,
-#    decode on this board is bandwidth bound, and what the NPU buys is bytes.
-#    If q8_0 STILL wins with an integer kernel, then bytes are not the limit on
-#    the RK3576 and the NPU's advantage would have to be arithmetic -- which
-#    would change what step 2 is for. This is the whole round.
+# A) **q4_0-pure IS AHEAD OF q8_0 AT EVERY THREAD COUNT, INCLUDING ONE AND
+#    TWO.** That is what the host does once the head is the same format. If the
+#    board still crosses over at low thread counts, then something about the
+#    RK3576 and not the file makes 4 bit unpacking expensive there, and 308's
+#    ALU-versus-bytes reading survives after all.
 #
-# B) FOUR AND EIGHT THREADS WILL BE CLOSER THAN IN 307. 307 got 2.68 at four
-#    and 2.95 at eight, a 10% gain from four A53 cores. A kernel that is
-#    bandwidth bound should get LESS from them, not more. If eight still gains
-#    10% or more, the board is not bandwidth bound even now, and A) is probably
-#    also going to fail.
+# B) **THE BOARD'S BEST NUMBER GOES FROM 5.08 TO ABOUT 6 tok/s.** The host
+#    gained 15% from the pure head; the board should gain at least that, since
+#    it is the more bandwidth starved of the two and the pure file is 9%
+#    smaller as well.
 #
-# C) I do NOT predict the absolute number. The host gained 2.05x from this
-#    change. If the board gains much less, the A72's own integer throughput is
-#    the limit and that is worth knowing on its own.
+# C) q4_0-pure at 8 threads will still be no better than at 4, as in 308. Four
+#    A53 cores added contention and not throughput there and nothing here
+#    changes that.
 #
-# ⚠ PROMPT TOK/S IN THIS LOG IS I/O, NOT COMPUTE. In 307 the first read of the
-# q8_0 file took 21.4 s for six tokens, which is 1.3 GB off an SD card at
-# 62 MB/s. Entry 1 warms both files first so the later numbers are compute.
-# Read the GEN column only.
+# ⚠ Entry 0 warms all three files. PROMPT TOK/S IS I/O; READ THE GEN COLUMN.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -85,6 +92,7 @@ WORK=/usr/lib/libteflon-working.so
 RUN=/opt/charsiu/charsiu_run
 RUNS=/opt/charsiu/charsiu_run_scalar
 M4=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0.gguf
+MP=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0-pure.gguf
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
 ABORT=0
@@ -135,54 +143,61 @@ start() {
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
 
 	log ""
-	log "===== 0) the NPU anchor, before anything                           ====="
-	w conv2d-cal.tflite ""
-
-	log ""
-	log "##### ROUND 308: an integer kernel, and the question 307 could not #####"
-	log "#####            answer through a kernel that was ALU bound.       #####"
-
-	log ""
-	log "===== 1) warm both files off the SD card. TIMINGS HERE ARE I/O.    ====="
+	log "===== 0) warm all three files. TIMINGS IN THIS ENTRY ARE I/O.      ====="
 	cat "$M4" > /dev/null 2>&1
+	cat "$MP" > /dev/null 2>&1
 	cat "$M8" > /dev/null 2>&1
-	log "  -- both models read into the page cache"
+	log "  -- three models in the page cache"
 	log "  -- $(free -m 2>/dev/null | head -2 | tail -1)"
 
 	log ""
-	log "===== 2) THE TEXT, quantised activation, q4_0 and q8_0             ====="
+	log "===== 1) the NPU anchor                                            ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "##### ROUND 309: the same format all the way through a file.       #####"
+
+	log ""
+	log "===== 2) THE TEXT. three files, quantised activation.              ====="
 	gen "$RUN" "$M4" 32 4 -
+	gen "$RUN" "$MP" 32 4 -
 	gen "$RUN" "$M8" 32 4 -
 
 	log ""
-	log "===== 3) THE CONTROL. exact f32 activation. slower, and q4_0 must  ====="
-	log "=====    reproduce round 307's line byte for byte.                 ====="
+	log "===== 3) THE CONTROL. exact f32 activation, same three.            ====="
+	log "=====    q4_0 must still be round 307's line, byte for byte.       ====="
 	gen "$RUN" "$M4" 32 4 CHARSIU_NO_QACT=1
+	gen "$RUN" "$MP" 32 4 CHARSIU_NO_QACT=1
 	gen "$RUN" "$M8" 32 4 CHARSIU_NO_QACT=1
 
 	log ""
-	log "===== 4) the scalar control, no NEON at all                        ====="
-	gen "$RUNS" "$M4" 24 4 -
-
-	log ""
-	log "===== 5) THE ROUND. q4_0 against q8_0. I say q4_0 wins this time.  ====="
+	log "===== 4) THE ROUND. pure q4_0 against q8_0, every thread count.    ====="
+	log "=====    I say pure is ahead at ALL of them, including 1 and 2.    ====="
 	for T in 1 2 4 6 8
 	do
-		gen "$RUN" "$M4" 24 "$T" -
+		gen "$RUN" "$MP" 24 "$T" -
 		gen "$RUN" "$M8" 24 "$T" -
 	done
 
 	log ""
-	log "===== 6) the same pair once more at the best two, for a repeat     ====="
-	gen "$RUN" "$M4" 24 4 -
-	gen "$RUN" "$M4" 24 8 -
+	log "===== 5) and the q6_K head's own cost, on this board               ====="
+	log "=====    same projections, only the output head differs            ====="
+	for T in 1 4 8
+	do
+		gen "$RUN" "$M4" 24 "$T" -
+		gen "$RUN" "$MP" 24 "$T" -
+	done
+
+	log ""
+	log "===== 6) the scalar control, no NEON at all                        ====="
+	gen "$RUNS" "$MP" 24 4 -
 
 	log ""
 	log "===== the NPU anchor again                                         ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== text, then the control, then q4_0 against q8_0.              ====="
+	log "===== text, then pure against q8_0, then what the q6_K head cost.  ====="
 	sync
 }
 case "$1" in

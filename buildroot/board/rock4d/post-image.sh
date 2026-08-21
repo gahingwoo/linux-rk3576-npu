@@ -17,7 +17,7 @@ UBOOT_IMG="${UBOOT_IMG:-${ROCKCHIP_BIN}/rock4d-sd-uboot.img}"
 # the only question worth a board round, which is tokens per second.
 UBOOT_MB=16
 BOOT_MB=128
-ROOTFS_MB=${ROOTFS_MB:-3072}
+ROOTFS_MB=${ROOTFS_MB:-3584}
 TOTAL_MB=$(( UBOOT_MB + BOOT_MB + ROOTFS_MB ))
 
 echo "==> post-image: building ${OUT}  (${TOTAL_MB} MiB)"
