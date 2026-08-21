@@ -2,60 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 292. Slot 2 is wrong at M > 1, and the weight map has never
-# been swept at M > 1.
+# 2026-08-21 round 293. The weight layout has an M term and the packer has none.
 #
-# ⚠ THE ATOM FIX LANDED. Sixteen bytes was right: at M = 2, N = 16 row 0 came
-# back with NO mismatches at all, where it had been 4 of 8 a group. Every M = 1
-# geometry still exact, three rounds of reader changes and no regression.
+# ⚠ 292 ANSWERED ITS OWN QUESTION: THE BASES MOVE. --map at M = 2, N = 16, on a
+# 512 byte buffer where M = 1 lights 32 groups, lights EIGHT:
 #
-# ⚠ AND THE MISMATCH LIST NAMED THE REST. At M = 2 and M = 4, N = 64, row 0
-# fails on channels 8-15, 24-31 and 40-47, which are groups g1, g3 and g5.
-# Against the packer's own (block, slot) placement:
+#   264 -> w1   280 -> w3   296 -> w5   312 -> w7
+#   328 -> w9   344 -> w11  360 -> w13  376 -> w15
 #
-#   fails   g1 (0,2)   g3 (1,2)   g5 (2,2)          every slot 2 group
-#   passes  g0 (0,0)   g2 (1,0)   g4 (2,0)   g6 (3,0)   g7 (3,1)
+# which is channel 2j+1 at byte 264 + 16j. At M = 1 the same shape is channel c
+# at byte 8c starting from 0. Nothing about that is a small correction, and the
+# packer has no M term at all.
 #
-# and N = 16 has no slot 2 group at all, which is why its row 0 was perfect.
-# SLOT 2 IS WRONG AT M > 1 and the other slots are not.
+# ⚠ AND IT IS NOT "SLOT 2". 292's entry 7 ran M = 2 at N = 24, which is G = 3
+# with slots 0, 2 and 3, and BOTH the slot 2 group and the slot 3 group failed:
+# mismatches 8 through 23, with only g0 clean. So at M > 1 only slots 0 and 1
+# work, which at M = 2, N = 16 is the whole of G = 2 and is why that one shape
+# has a clean row 0.
 #
-# ⚠ THE WEIGHT MAP HAS ONLY EVER BEEN SWEPT AT M = 1. Every base in the table,
-# all eleven geometries of it, was read with one row. So this round sweeps
-# --map at M = 2 rather than reasoning about why one slot moved. That is the
-# instrument that settled the layout, twice, after two closed forms guessed at
-# it and were refuted.
+# ⚠ THE GRID IS NOT READABLE YET AND THAT IS THE INSTRUMENT'S FAULT. --map
+# reports only the FIRST lit word, which was the whole answer for eleven
+# geometries because at M = 1 a live nibble lights exactly one. At M > 1 a byte
+# can light a word in more than one row and everything after the lowest index
+# was dropped. And the probe drives a ramp over all m*k activations, so every
+# row contributes and the result is a sum.
 #
-# ⚠ THE PARTIAL GROUP IS SOLVED AND IT IS NOT A PLACEMENT FAULT EITHER. Pulling
-# the per CHANNEL map out of 290's sweeps rather than just the group leaders:
-#
-#   N = 20  the hardware's live channels are 0-11 and 16-23. Bytes 160-191 are
-#           dead, and the packer puts logical channels 12-15 in them.
-#   N = 36  live channels are 0-19 and 24-39. Bytes 544-575 are dead and
-#           logical 20-23 go there.
-#
-# Both match the mismatch lists exactly, 12 13 14 15 and 20 21 22 23. When N is
-# not a multiple of 8 the hardware does not put the short group LAST, it puts it
-# in the middle, and its channel numbering runs on past the gap. Two points, no
-# rule written.
+# Both fixed. All lit words are printed, up to eight, and CHARSIU_MAP_ROW zeroes
+# every row but one so the row dimension can be held still.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 5 IS THE ROUND. --map at M = 2, N = 64, the whole buffer.
+#   ⚠ ENTRIES 5 AND 6 ARE THE ROUND. --map at M = 2, N = 16, once with row 0
+#   alone and once with row 1 alone. N = 16 because M = 1 fills its buffer with
+#   32 groups and M = 2 lit 8, so whatever the M term is, it is large here.
 #
-#     the bases move          the weight layout depends on M and the table needs
-#                             an M term. Read the new bases off the grid.
-#     the bases are identical  the weights are placed right and slot 2's failure
-#                             is on the read or the output side, and entry 6's
-#                             M = 2 N = 16 grid says which since that shape
-#                             works
-#     slot 2's group is dead   the hardware stops fetching it at M > 1, which is
-#                             a fetch bound and not an address
+#     row 0 alone gives the M = 1 map      the layout does not move and 292's
+#                                          grid was the ramp summing rows
+#     row 0 alone gives a different map    the layout has an M term. Read the
+#                                          bases off it; the row 1 grid beside
+#                                          it says whether rows interleave in
+#                                          the WEIGHTS, which would be new
+#     row 0 alone lights nothing           row 0's weights are not fetched at
+#                                          M = 2 at all, and every correct row 0
+#                                          value so far is an accident
 #
-#   ENTRIES 2 TO 4 are the M = 1 regression, unchanged.
+#   ENTRY 7 is the same pair at N = 64, where the M = 1 table is the one all
+#   eleven geometries were built on.
 #
-#   ENTRY 7 runs M = 2 at N = 24, which is G = 3 with slots (0,0)(0,2)(0,3), so
-#   it has a slot 2 AND a slot 3. If slot 3 also fails the fault is "not slot 0
-#   or 1"; if only slot 2 does, it is slot 2 alone.
+#   ENTRIES 2 TO 4 are the M = 1 regression. The probe changed, not the packer,
+#   so nothing should move, and if it does the change broke the instrument.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
@@ -117,37 +113,37 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### the M = 1 regression                                         #####"
-	for nn in 16 64 88
+	log "##### the M = 1 regression. The probe changed, not the packer.     #####"
+	for nn in 16 64
 	do
 		log ""
 		log "===== M = 1  N = $nn"
 		c "$M4" X=1 $MM 1 64 $nn
 	done
+	log ""
+	log "===== --map M = 1 N = 16, which must be the table it always was    ====="
+	c X=1 X=1 $CH 1 64 16 --map 8
 
 	log ""
-	log "##### THE ROUND. the weight map at M = 2. Never swept above M = 1. #####"
+	log "##### THE ROUND. one row at a time, all lit words printed.         #####"
 	log ""
-	log "===== 5) --map  M = 2  N = 64                                      ====="
-	c X=1 X=1 $CH 2 64 64 --map 8
+	log "===== 5) --map  M = 2  N = 16  row 0 only                          ====="
+	c CHARSIU_MAP_ROW=0 X=1 $CH 2 64 16 --map 8
 	log ""
-	log "===== 6) --map  M = 2  N = 16, the shape whose row 0 is perfect     ====="
-	c X=1 X=1 $CH 2 64 16 --map 8
+	log "===== 6) --map  M = 2  N = 16  row 1 only                          ====="
+	c CHARSIU_MAP_ROW=1 X=1 $CH 2 64 16 --map 8
 
 	log ""
-	log "##### and the matmuls beside them, for the mismatch lists          #####"
+	log "===== 7) --map  M = 2  N = 64  row 0 only                          ====="
+	c CHARSIU_MAP_ROW=0 X=1 $CH 2 64 64 --map 8
+
 	log ""
-	log "===== 7) M = 2  N = 24, which has a slot 2 AND a slot 3            ====="
-	c "$M4" X=1 $MM 2 64 24
-	log ""
-	log "===== 8) M = 2  N = 64                                             ====="
-	c "$M4" X=1 $MM 2 64 64
-	log ""
-	log "===== 9) M = 2  N = 16                                             ====="
+	log "===== 8) and the matmuls, for the mismatch lists                   ====="
 	c "$M4" X=1 $MM 2 64 16
+	c "$M4" X=1 $MM 2 64 64
 
 	log ""
-	log "===== 10) the control that must FAIL, and int8 at M = 1 and M = 4  ====="
+	log "===== 9) the control that must FAIL, and int8 at M = 1 and M = 4   ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 1 64 64
 	c X=1 X=1 $MM 4 64 64
@@ -157,7 +153,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 5's bases against the M = 1 table. That is the round.  ====="
+	log "===== entry 5 against the M = 1 map above it. That is the round.   ====="
 	sync
 }
 case "$1" in
