@@ -2,67 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 288. Eight geometries at once, and the third closed form.
+# 2026-08-21 round 289. M has been 1 in every matmul this project has ever run.
 #
-# ⚠⚠ 287 CLOSED int4 AT M = 1. All eight exact in one boot, no override, no
-# CHARSIU_OVERRIDE anywhere in the script:
+# ⚠⚠ 288 CLOSED THE LAYOUT. Eleven geometries exact in one boot, no override:
 #
-#   N = 16 16/16   N = 24 24/24   N = 32 32/32   N = 40 40/40
-#   N = 48 48/48   N = 56 56/56   N = 64 64/64   N = 64 K=32 64/64
+#   N = 16 24 32 40 48 56 64 72 80 88 at K = 64,  and N = 64 at K = 32
 #   control 0 of 64, int8 64 of 64
 #
-# Every one of those had been exact at some point in the previous three rounds
-# and never all at once, which is what the round was for.
+# N = 80 and N = 88 are the ones that matter. They are G = 10 and G = 11,
+# neither swept, both PREDICTED outright by the slot form, and both came back
+# exact. Their --map grids, taken in the same boot, reproduce all 21 predicted
+# bases to the byte.
 #
-# ⚠ AND G = 9 MADE THE IRREGULAR PART FALL OUT. N = 72 swept clean, 72 channels
-# written with 0x3020 at 143, and with a ninth table the slot patterns stop
-# being a list. Written as flat slot indices, block times 8 plus slot:
+# That is the difference between this form and the two before it. wbytes/4 in
+# 284 and "the last block takes the odd slots" in 286 were each fitted to one
+# point and each died in the round after they were written. This one was written
+# from eight tables and then predicted two more before they were measured.
 #
-#   G=2  0 1              G=3  0 2 3
-#   G=4  0 2 8 9          G=5  0 2 8 9 11
-#   G=6  0 2 8 10 16 17   G=7  0 2 8 10 11 17 19
-#   G=8  0 2 8 10 16 18 24 25
-#   G=9  0 2 8 10 16 17 19 25 27
+# ⚠ AND M HAS ALWAYS BEEN 1. Every matmul in this project, int4 and int8 alike,
+# has run one row. The only M that was ever varied is the write extent probe in
+# 272 and 273, which read wrote = M * (N/2 + 8) at M of 1, 2 and 4 and never
+# checked a single value.
 #
-#   EVEN G  pairs at slots 0 and 2 in every block but the last, which takes 0
-#           and 1. Four points and no exceptions.
-#   ODD G   one block of three at b3 = (G-1)/4, slots 0 and 2 before it, 1 and
-#           3 after it, and the three itself {0,2,3} when G mod 4 is 3 and
-#           {0,1,3} when it is 1.
-#
-# ⚠ THIS IS THE THIRD CLOSED FORM WRITTEN FOR THIS LAYOUT. The first two died
-# in the round after they were written: wbytes/4 in 284, which also broke three
-# working geometries, and "the last block takes the odd slots" in 286, which put
-# g4 of N = 56 at 1024 where --map found it at 704. Both were fitted to a single
-# point. This one has eight tables behind it, with four points on the even arm,
-# four on b3, and two on each arm of the mod 4. That is better and it is not
-# proof, and the way to find out is the two G it predicts outright.
+# THAT ALSO MEANS THE int4 READER HAS NEVER BEEN RIGHT ABOUT M. The output
+# surface is [n/atom][m][n%atom], which at M = 1 collapses to n, so a row major
+# read is accidentally correct there and wrong everywhere else. The int8 path has
+# read the surface since round 199. Fixed, which is a change to how the result is
+# READ and touches no register, no packing and no buffer.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 9 AND 10 ARE THE ROUND. N = 80 and N = 88, G = 10 and G = 11,
-#   neither swept and both predicted:
+#   ⚠ ENTRIES 5 TO 7 ARE THE ROUND. M = 2, 4 and 8 at N = 64.
 #
-#     G=10  0 2 8 10 16 18 24 26 32 33   bases 0 128 512 640 1024 1152 1536
-#                                              1664 2048 2112
-#     G=11  0 2 8 10 16 18 19 25 27 33 35
+#     exact                the layout, the arithmetic and the surface reading all
+#                          generalise in M, and int4 is a matmul rather than a
+#                          matrix vector product
+#     row 0 exact, the rest not
+#                          the reading or the input packing is wrong in M and the
+#                          weights are fine, since row 0 does not depend on either
+#     nothing exact        the surface reading change broke M = 1 too, which
+#                          entries 2 to 4 will say first
 #
-#     both exact          the form is read across ten geometries and int4 is
-#                         closed for any N that is a multiple of 8
-#     one exact           the arm that failed is the one still fitted, and the
-#                         --map grid beside it says what it should have been
-#     neither             back to the table, which is measured and refuses
-#                         outside itself
+#   ⚠ ENTRIES 2 TO 4 COME FIRST FOR THAT REASON. M = 1 at three N, to separate a
+#   reader regression from an M result before reading anything below it.
 #
-#   ENTRY 8 is N = 72 as a matmul rather than a sweep, which the table could not
-#   do before and the form can.
+#   ENTRIES 8 AND 9 ask a different question that has also never been asked: an N
+#   that is NOT a multiple of 8. Every N ever run here is, so the group count has
+#   always been exact and a partial last group has never existed. N = 20 and
+#   N = 36. The packer places by n/8 and n%8 and does not special case a short
+#   group, so if these fail the interesting part is WHICH channels.
 #
-#   ⚠ ENTRIES 2 TO 7 ARE THE REGRESSION. The addressing was replaced again, for
-#   the third time in five rounds, and 284 broke three working geometries with
-#   one line.
-#
-#   ENTRIES 11 AND 12 sweep --map at N = 80 and 88 in the same boot, so a miss
-#   is diagnosable without spending another round on it. That is what saved 286.
+#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8, which also gets
+#   an M = 4 arm since it has read the surface all along and should not care.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -123,49 +114,47 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### the regression. addressing replaced for the third time.      #####"
-	for nn in 16 24 32 40 48 56 64
+	log "##### M = 1 first, so a reader regression cannot be read as an M    ####"
+	for nn in 16 64 88
 	do
 		log ""
-		log "===== N = $nn  K = 64"
+		log "===== M = 1  N = $nn"
 		c "$M4" X=1 $MM 1 64 $nn
 	done
-	log ""
-	log "===== N = 64  K = 32                                               ====="
-	c "$M4" X=1 $MM 1 32 64
 
 	log ""
-	log "##### the new ones. 72 was swept, 80 and 88 are predicted.         #####"
+	log "##### THE ROUND. M has never been anything but 1.                  #####"
+	for mm in 2 4 8
+	do
+		log ""
+		log "===== M = $mm  N = 64"
+		c "$M4" X=1 $MM $mm 64 64
+	done
 	log ""
-	log "===== 8) N = 72, G = 9. Swept in 287, never run as a matmul.       ====="
-	c "$M4" X=1 $MM 1 64 72
-	log ""
-	log "===== 9) N = 80, G = 10. PREDICTED, never swept.                   ====="
-	c "$M4" X=1 $MM 1 64 80
-	log ""
-	log "===== 10) N = 88, G = 11. PREDICTED, never swept.                  ====="
-	c "$M4" X=1 $MM 1 64 88
+	log "===== M = 4  N = 24, a second shape                                ====="
+	c "$M4" X=1 $MM 4 64 24
 
 	log ""
-	log "===== the control that must FAIL, and int8                         ====="
+	log "##### an N that is not a multiple of 8. Never tried.               #####"
+	log ""
+	log "===== N = 20                                                       ====="
+	c "$M4" X=1 $MM 1 64 20
+	log ""
+	log "===== N = 36                                                       ====="
+	c "$M4" X=1 $MM 1 64 36
+
+	log ""
+	log "===== the control that must FAIL, and int8 at M = 1 and M = 4      ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 1 64 64
-
-	log ""
-	log "##### and the grids, so a miss above is readable in this boot      #####"
-	log ""
-	log "===== 11) --map at N = 80                                          ====="
-	c X=1 X=1 $CH 1 64 80 --map 8
-	log ""
-	log "===== 12) --map at N = 88                                          ====="
-	c X=1 X=1 $CH 1 64 88 --map 8
+	c X=1 X=1 $MM 4 64 64
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 80 and 88 exact would make it any N that is a multiple of 8. ====="
+	log "===== M = 1 must hold before any M > 1 line is worth reading.      ====="
 	sync
 }
 case "$1" in
