@@ -2,46 +2,55 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 302. Where between 128 and 192 does it stop.
+# 2026-08-21 round 303. K is a multiple of 32, and where the CHANNEL count
+# stops.
 #
-# ⚠ THE BYTE BUDGET IS REFUTED and the four predictions split two and two, which
-# is what makes it settled rather than dented:
+# ⚠ 302 GAVE THE RULE, and it is the second branch of its own reading rule:
 #
-#   K =  64  N = 128   4096 exactly, predicted exact    128 of 128   landed
-#   K =  64  N = 160   5120, predicted to cap at 128    160 of 160   did not cap
-#   K = 128  N =  96   6144, predicted to cap at  64     96 of  96   did not cap
-#   K = 256  N =  32   4096 exactly, predicted exact    wrote 24 of 32
+#   K = 144, K/32 = 4.5     8 of 64 exact
+#   K = 160, K/32 = 5      64 of 64
+#   K = 176, K/32 = 5.5     8 of 64 exact
+#   K = 192, K/32 = 6      64 of 64
 #
-# There is no byte budget. K up to 128 works at EVERY N that has been tried and
-# 192 and 256 fail in two different ways: 192 writes every channel and computes
-# none of them, 256 falls back to the N/2 + 8 count from before 0x3020 was fixed.
+# K must be a MULTIPLE OF 32, which is the run count K/32 being whole. Not the
+# size of K, and not a power of two.
 #
-# ⚠ AND N = 160 IS G = 20, well past the G = 11 the slot form was read at, so
-# that half of the layout generalises much further than it was measured. int4 now
-# holds at K of 32, 64 and 128 across thirteen values of N.
+# ⚠ AND I HAVE A CORRECTION TO MAKE. Rounds 300 and 301 recorded K = 192 as
+# "writes every channel and computes none, a layout fault, the first non power of
+# two K tried". That was wrong and it was not the hardware: the packer's K
+# whitelist held 32, 64, 128 and 256, so at 192 it returned without writing a
+# byte, and --map lit anyway because it writes raw bytes and never goes through
+# the packer. With the guard widened, K = 192 is 64 of 64. A refusal I wrote
+# myself was read as a hardware result for two rounds.
+#
+# ⚠ WHAT IS ACTUALLY LEFT IS K = 256, and it is a COUNT fault, not a layout one.
+# K/32 is 8 there, whole, so the layout should hold. What fails is the channel
+# count: N = 64 writes 40 and N = 32 writes 24, which is N/2 + 8, the value from
+# before 0x3020 was fixed. K = 192 writes all 64. So the count stops somewhere
+# between 192 and 256.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 3 TO 6 ARE THE ROUND: K of 144, 160, 176 and 192, which is every
-#   multiple of 16 between the last K that works and the first that does not.
-#   None has ever been run. K/32 is 4.5, 5, 5.5 and 6, so two of them are not
-#   whole numbers of runs and the packer will round them.
+#   ⚠ ENTRIES 3 TO 5 ARE THE ROUND: K = 224, and K = 256 at three N.
 #
-#     they work up to some K and stop
-#                          the bound is a K and the round says which. Then the
-#                          question is whether an LLM tiles to it.
-#     144 and 176 fail where 160 works
-#                          it is K/32 being a whole number, not the size of K,
-#                          and 192 failing needs another reason
-#     all four fail        the bound is 128 and everything above it is the same
-#                          fault K = 192 shows
+#   K = 224 is K/32 = 7, whole, and between the last K whose count is right and
+#   the first whose is not.
 #
-#   ⚠ ENTRY 7 IS K = 192's GRID, which 301 captured and this reads properly. It
-#   writes every channel and computes none, which is a placement fault, and the
-#   grid is the only thing that can say where the bytes went.
+#     224 writes all 64      the count stops at 256 exactly and the usable range
+#                            is 32 to 224 in steps of 32
+#     224 writes 40          it stops between 192 and 224, and N/2 + 8 is what
+#                            it falls back to in both
+#     224 writes something else
+#                            write it down. Two points on the fallback are worth
+#                            more than one.
 #
-#   ENTRY 2 is K = 64 at N = 160 and K = 128 at N = 96, the two shapes that just
-#   refuted the budget, plus the small ones.
+#   ⚠ K = 256 AT N = 16 IS THE SHARP ONE. If the fallback is N/2 + 8 then at
+#   N = 16 that is 16, the whole thing, so N = 16 should be EXACT at K = 256
+#   even though N = 32 and N = 64 are not. A fallback that cannot be seen at
+#   small N is a very different thing from a layout that breaks.
+#
+#   ENTRY 2 is the regression: K of 32, 64, 128, 160 and 192.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -113,36 +122,48 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) the shapes that refuted the budget, and the small ones    ====="
-	c "$M4" X=1 $MM 1 64 160
-	c "$M4" X=1 $MM 1 128 96
-	c "$M4" X=1 $MM 1 64 64
-	c "$M4" X=1 $MM 1 128 64
-
-	log ""
-	log "##### THE ROUND. every multiple of 16 between 128 and 192.         #####"
-	for KK in 144 160 176 192
+	log "##### the regression. every K that is a multiple of 32 up to 192.  #####"
+	for KK in 32 64 128 160 192
 	do
 		log ""
-		log "===== K = $KK  N = 64      (K/32 = $((KK / 32)) point $((KK % 32)))"
+		log "===== K = $KK  N = 64"
 		c "$M4" X=1 $MM 1 $KK 64
 	done
+	log ""
+	log "===== and K = 64 at N = 160, the widest N that works               ====="
+	c "$M4" X=1 $MM 1 64 160
 
 	log ""
-	log "===== 7) K = 192's grid, which is a placement fault                ====="
-	c X=1 X=1 $CH 1 192 64 --map 8
+	log "##### THE ROUND. K = 224, and K = 256 at three N.                  #####"
+	log ""
+	log "===== 3) K = 224  N = 64.  K/32 = 7, whole.                        ====="
+	c "$M4" X=1 $MM 1 224 64
+	log ""
+	log "===== 4) K = 224  N = 32                                           ====="
+	c "$M4" X=1 $MM 1 224 32
+	log ""
+	log "===== 5) K = 256 at N = 16, 32, 64.  N/2+8 is 16, 24, 40.          ====="
+	log "=====    N = 16 should be EXACT if the fallback is all it is.      ====="
+	c "$M4" X=1 $MM 1 256 16
+	c "$M4" X=1 $MM 1 256 32
+	c "$M4" X=1 $MM 1 256 64
 
 	log ""
-	log "===== 8) and K = 160's grid if it is the last that works           ====="
-	c X=1 X=1 $CH 1 160 64 --map 8
+	log "===== 6) and K = 192 at N = 16 and 160, the last K that is whole   ====="
+	c "$M4" X=1 $MM 1 192 16
+	c "$M4" X=1 $MM 1 192 160
 
 	log ""
-	log "===== the control that must FAIL, and int8 at K = 192              ====="
-	c "CHARSIU_W4=1" X=1 $MM 1 128 64
-	c X=1 X=1 $MM 1 192 64
+	log "===== the control that must FAIL, and int8 at K = 224              ====="
+	c "CHARSIU_W4=1" X=1 $MM 1 192 64
+	c X=1 X=1 $MM 1 224 64
 
 	log ""
-	log "===== which K is the last one. Then whether K/32 whole is the rule ====="
+	log "===== the anchor again                                             ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== read wrote at K = 224 first, then N = 16 at K = 256.         ====="
 	sync
 }
 case "$1" in
