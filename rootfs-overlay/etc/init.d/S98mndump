@@ -2,55 +2,53 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 294. Row 1's activation is never read, and that is the whole
-# of what is left.
+# 2026-08-21 round 295. Three registers wake row 1 up. Only a matmul says which
+# one wakes it up CORRECTLY.
 #
-# ⚠ 293 COLLAPSED IT TO ONE FAULT. Holding one row live at a time:
+# ⚠ 294 FOUND THEM, and the baseline pair reproduced first, which is what made
+# the rest readable. Of eight arms, three light row 1 and five leave it dark:
 #
-#   --map M = 2 N = 16, ROW 0 only    byte 0 lights w0 AND w4, byte 8 lights
-#                                     w1 and w5, byte 16 lights w2 and w6 ...
-#   --map M = 2 N = 16, ROW 1 only    NOTHING LIT, 0 of 64 groups
+#   0x1044 = 0x00010004   DATA_ENTRIES = surf*m instead of surf
+#   0x103c = 0x00040000   surf*m << 16 instead of surf << 16
+#   0x1078 = 0x00000000   charsiu emits rows-1 here, into a field mesa calls
+#                         DATA_BURST_LEN, and 0 is the M = 1 value
 #
-# Under the surface [ni/4][mi][ni%4], w0 is row 0 channel 0 and w4 is row 1
-# channel 0, so byte 8j feeds channel j in BOTH rows and its address is the same
-# byte 8j that M = 1 uses.
+# and all three light the RIGHT words: byte 8j lights w(4j'+...) for row 1's
+# channel j and nothing else, so the address is right in every one of them.
 #
-# ⚠ SO THE WEIGHT LAYOUT HAS NO M TERM AFTER ALL, and 292's sparse grid was the
-# instrument: a ramp driving every row at once, reported as the first lit word
-# only. That was branch one of 293's reading rule and this is what it looks like.
+# ⚠ THE VALUES ARE ALL DIFFERENT AND NONE IS RIGHT. Byte 0 low comes back 284,
+# 7739 and 7739. The probe's ramp gives row 1 the same k = 0 activation as row 0,
+# so the correct answer is row 0's own 71. Three arms make row 1 read SOMETHING;
+# nothing yet says any of them makes it read its own data.
 #
-# What is left is one thing: THE HARDWARE ONLY EVER READS ROW 0's ACTIVATION.
-# Not reads it from the wrong place, which would light garbage. Row 1's bytes go
-# in and are never fetched, so with row 0 held at the zero point nothing lights.
-#
-# ⚠ AND THE STREAM HAS A HARDCODED 1 IN IT. Twelve registers change between
-# M = 1 and M = 2, so M is propagated widely, but CNA 0x1044 is not one of them.
-# mesa's registers.xml calls it CBUF_CON1 and its only field is
-# DATA_ENTRIES[13:0], which is how many entries of input data the CBUF holds.
-# charsiu emits (1 << 16) | surf, where surf is entries per ROW, and never
-# multiplies by m. 0x103c, which has no name in that file, carries surf << 16
-# and likewise does not move.
+# ⚠ AND ONE THING I SAID LAST ROUND NEEDS TIGHTENING. "Row 1's activation is
+# never read" is right; "row 1 is never computed" is not. In the row 0 only
+# baseline, byte 0 lights w0 at 71 AND w4 at 1207, and w4 is row 1's channel 0
+# with row 1's activation held at the zero point. Row 1's output is computed and
+# nonzero. Both output rows are computed from ROW 0's activation slot.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ THE TEST IS ONE BIT: does --map with CHARSIU_MAP_ROW=1 light anything.
-#   Every arm below is that same question with one register changed.
+#   ⚠ A MATMUL, NOT A MAP. --map says a byte reaches a word; only
+#   cpu_reference says the number is right. Three candidates, at M = 2 and then
+#   at M = 4 where surf*m is 8 rather than 4.
 #
-#     an arm lights row 1     that register is the input row count and the M
-#                             failure is one value. Run the matmul beside it.
-#     none of them do         DATA_ENTRIES is not it, and the next place to look
-#                             is 0x1078, 0x1094 and 0x118c, which DO move with M
-#                             and have no names in mesa's file
-#     an arm lights row 1 AND changes row 0
-#                             it is a stride rather than a count, and row 0's
-#                             map beside it says by how much
+#     one arm is exact               that register is the input row count and
+#                                    M > 1 is done. Bake it in and re-run the
+#                                    eleven geometries.
+#     an arm is exact at M = 2 and not at M = 4
+#                                    it is not the count, it is something that
+#                                    happens to be right at one M
+#     row 1 exact, row 0 broken      the register trades one row for the other,
+#                                    which the map could not have shown
+#     none exact                     all three only move data around, and the
+#                                    next place is 0x1094 and 0x118c, which
+#                                    carry rows and rows-1 and were dark in 294
 #
-#   ⚠ ENTRIES 2 AND 3 ARE THE BASELINE PAIR and they are not a formality. Row 0
-#   lit and row 1 dark is the fault; if the unmodified pair does not reproduce
-#   that, nothing below it can be read.
-#
-#   ENTRIES 12 AND 13 are the M = 1 regression. No packer change this round, so
-#   they must not move.
+#   ⚠ ENTRIES 2 AND 3 ARE M = 1, unmodified. Nothing in the packer changed this
+#   round, so they must be exact, and the overrides below only apply to their
+#   own arms.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -114,37 +112,43 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### the baseline pair. row 0 lit, row 1 dark, or stop reading.   #####"
-	log ""
-	log "===== 2) --map M=2 N=16 row 0, unmodified                          ====="
-	c CHARSIU_MAP_ROW=0 X=1 $CH 2 64 16 --map 8
-	log ""
-	log "===== 3) --map M=2 N=16 row 1, unmodified. Must be dark.           ====="
-	c CHARSIU_MAP_ROW=1 X=1 $CH 2 64 16 --map 8
+	log "===== 2) M = 1 N = 16 and N = 64, unmodified                       ====="
+	c "$M4" X=1 $MM 1 64 16
+	c "$M4" X=1 $MM 1 64 64
 
 	log ""
-	log "##### THE ROUND. one bit: does row 1 light.                        #####"
+	log "##### THE ROUND. M = 2, surf*m = 4. A matmul, not a map.           #####"
 	for a in \
 		"0x1044=0x00010004" \
-		"0x1044=0x00020004" \
-		"0x1044=0x00020002" \
 		"0x103c=0x00040000" \
-		"0x103c=0x00040000,0x1044=0x00010004" \
 		"0x1078=0x00000000" \
-		"0x1094=0x00000001" \
-		"0x118c=0x00000000"
+		"0x1044=0x00010004,0x1078=0x00000000" \
+		"0x103c=0x00040000,0x1078=0x00000000"
 	do
 		log ""
-		log "===== ARM $a   row 1"
-		c "CHARSIU_OVERRIDE=$a" CHARSIU_MAP_ROW=1 $CH 2 64 16 --map 8 64
+		log "===== M=2 N=16   $a"
+		c "$M4 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=$a" $MM 2 64 16
 	done
 
 	log ""
-	log "===== 12) the M = 1 regression. No packer change this round.       ====="
-	c "$M4" X=1 $MM 1 64 16
-	c "$M4" X=1 $MM 1 64 64
+	log "##### and at M = 4, where surf*m is 8. Same three.                 #####"
+	for a in \
+		"0x1044=0x00010008" \
+		"0x103c=0x00080000" \
+		"0x1078=0x00000000"
+	do
+		log ""
+		log "===== M=4 N=16   $a"
+		c "$M4 CHARSIU_W4_HALFK=1" "CHARSIU_OVERRIDE=$a" $MM 4 64 16
+	done
+
 	log ""
-	log "===== 13) the control that must FAIL, and int8 at M = 4            ====="
+	log "===== the two that were dark in 294, as matmuls anyway             ====="
+	c "$M4" "CHARSIU_OVERRIDE=0x1094=0x00000001" $MM 2 64 16
+	c "$M4" "CHARSIU_OVERRIDE=0x118c=0x00000000" $MM 2 64 16
+
+	log ""
+	log "===== the control that must FAIL, and int8 at M = 4                ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 64 64
 	c X=1 X=1 $MM 4 64 64
 
@@ -153,7 +157,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== any arm that is not NOTHING LIT is the answer.               ====="
+	log "===== an arm at 32 of 32 is the answer. 16 of 32 is still row 0.   ====="
 	sync
 }
 case "$1" in
