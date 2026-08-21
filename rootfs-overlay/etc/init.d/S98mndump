@@ -2,52 +2,55 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 296. Six registers ruled out. The row term in the input
-# packing has never been tested.
+# 2026-08-21 round 297. Three arrangements were three points of one axis.
 #
-# ⚠ 295 CLOSED THE REGISTER LINE. All three arms that light row 1 on --map come
-# back 16 of 32 as a matmul, which is row 0 exact and everything else wrong,
-# identical to changing nothing:
+# ⚠ 296 SHOWED THE PACKING MATTERS AND THAT NEITHER ALTERNATIVE IS RIGHT.
 #
-#   0x1044 = surf*m       16 of 32      0x1078 = 0            16 of 32
-#   0x103c = surf*m << 16 16 of 32      the two combinations  16 of 32
-#   the same three at M = 4             16 of 64 each
-#   0x1094 = 1            0 of 32, and it breaks row 0 as well
-#   0x118c = 0            16 of 32, the baseline
+#   layout 0, shipped   M = 1  16/16 and 64/64      M = 2  16 of 32
+#   layout 1            M = 1  16/16                M = 2   0 of 32, M = 4 0/64
+#   layout 2            M = 1  16/16                M = 2   0 of 32, M = 4 0/64
 #
-# So they move data around and none of them is a row count. That was branch four
-# of 295's reading rule.
+# All three are exact at M = 1, which they must be, since m drops out of every
+# one of them there. At M = 2 the two alternatives light row 1 on the map, 8 of
+# 16 probes, and break row 0 doing it. So the packing is not inert and neither
+# of the two guesses is the answer.
 #
-# ⚠ WHAT WAS NEVER TESTED IS THE PACKING ITSELF. charsiu writes the activation
-# as [k/atom][m][atom] and every matmul in this project ran M = 1 until round
-# 289, where m drops out of that expression entirely and ANY arrangement of the
-# rows is correct. The layout has one measurement behind it, round 179's, and
-# that was at M = 1 too.
+# ⚠ AND THE THREE ARE NOT THREE IDEAS. Layout 0 and layout 1 are the two ENDS of
+# one axis: the granularity at which rows interleave. The shipped one switches
+# rows every atom, 8 elements and 16 bytes; "rows outermost" switches every k,
+# the whole row. Nothing between them has ever been written.
 #
-# CHARSIU_A_LAYOUT picks it now:
-#   0  [k/atom][m][atom]   rows inside a k group, what has always been written
-#   1  [m][k/atom][atom]   rows outermost
-#   2  [k/atom][atom][m]   rows innermost, element interleaved
+# 32 elements is the value with a reason behind it. charsiu_entries_per_row is 2
+# at K = 64 and the input bo is allocated surf * 64 * m, so an entry is 64 bytes,
+# which at two bytes an element is 32 of them. Rows interleaving per ENTRY rather
+# than per atom is the natural reading of that allocation and it has never been
+# written down.
+#
+# CHARSIU_A_GRAN is the axis: g elements of row 0, then g of row 1, and so on.
+# g = 8 is the shipped layout and g = 64 is 296's layout 1, so the sweep contains
+# both of the points already measured and they are the control.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ THE TEST IS THE MATMUL AND THE MAP TOGETHER. A layout that lights row 1
-#   and gets it wrong is what all six registers already did; a layout that is
-#   right will be 32 of 32.
+#   ⚠ g = 8 MUST BE 16 of 32 AND g = 64 MUST BE 0 of 32. They are 296's layout 0
+#   and layout 1 written a different way. If either moves, the rewrite changed
+#   the shipped path rather than generalising it, and nothing else in the round
+#   can be read.
 #
-#     a layout is 32 of 32        the row term was the fault all along, and the
-#                                 register sweep was looking in the wrong half
-#     a layout lights row 1 but
-#     is not exact                the arrangement is closer and the atom or the
-#                                 element size inside it is still wrong
-#     all three are 16 of 32      the packing is not it either, and what is left
-#                                 is that the hardware reads one row per job
-#                                 whatever it is told, which would make M > 1 a
-#                                 chaining problem and not a layout one
+#   ⚠ THE ROUND IS g = 32, and 16 and 4 either side of the two known points.
 #
-#   ⚠ LAYOUT 0 AT M = 1 MUST STAY EXACT in every arm. It is the shipped layout
-#   and eleven geometries depend on it; if entry 2 moves, the knob broke the
-#   default path rather than adding a branch.
+#     a g is 32 of 32         the row interleave granularity was the fault, M > 1
+#                             is done, and the eleven geometries get re-run
+#     a g beats 16 of 32
+#     without reaching it     the granularity is closer and something inside a
+#                             group is still wrong
+#     every g is 16 or 0      rows do not interleave on this axis at all, and
+#                             what is left is that the hardware reads one row a
+#                             job whatever it is told, which makes M > 1 a
+#                             chaining problem rather than a layout one
+#
+#   ENTRY 2 is M = 1 at the default, which eleven geometries depend on.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -113,42 +116,35 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) layout 0 at M = 1. The shipped path. Must not move.       ====="
+	log "===== 2) M = 1 at the default. Eleven geometries depend on it.     ====="
 	c "$M4" X=1 $MM 1 64 16
 	c "$M4" X=1 $MM 1 64 64
 
 	log ""
-	log "##### THE ROUND. three arrangements of the row term, at M = 2.     #####"
-	for L in 0 1 2
+	log "##### THE ROUND. the row interleave granularity, at M = 2.         #####"
+	log "#####   g = 8 must be 16 of 32 and g = 64 must be 0 of 32.         #####"
+	for G in 1 2 4 8 16 32 64
 	do
 		log ""
-		log "===== M = 2  N = 16  layout $L"
-		c "$M4 CHARSIU_A_LAYOUT=$L" X=1 $MM 2 64 16
+		log "===== M = 2  N = 16  g = $G"
+		c "$M4 CHARSIU_A_GRAN=$G" X=1 $MM 2 64 16
 	done
 
 	log ""
-	log "##### and the map beside them, row 1 held live                     #####"
-	for L in 1 2
-	do
-		log ""
-		log "===== --map M=2 N=16 row 1, layout $L"
-		c "CHARSIU_MAP_ROW=1 CHARSIU_A_LAYOUT=$L" X=1 $CH 2 64 16 --map 8 64
-	done
+	log "##### g = 32 at other shapes, if it is the one                     #####"
+	log ""
+	log "===== M = 2  N = 64  g = 32                                        ====="
+	c "$M4 CHARSIU_A_GRAN=32" X=1 $MM 2 64 64
+	log ""
+	log "===== M = 4  N = 16  g = 32                                        ====="
+	c "$M4 CHARSIU_A_GRAN=32" X=1 $MM 4 64 16
+	log ""
+	log "===== M = 4  N = 16  g = 16                                        ====="
+	c "$M4 CHARSIU_A_GRAN=16" X=1 $MM 4 64 16
 
 	log ""
-	log "##### whichever lights, at M = 4 too                               #####"
-	for L in 1 2
-	do
-		log ""
-		log "===== M = 4  N = 16  layout $L"
-		c "$M4 CHARSIU_A_LAYOUT=$L" X=1 $MM 4 64 16
-	done
-
-	log ""
-	log "===== layout 1 and 2 at M = 1, which must also be exact if the     ====="
-	log "=====   arrangement is right, since m = 1 makes all three equal    ====="
-	c "$M4 CHARSIU_A_LAYOUT=1" X=1 $MM 1 64 16
-	c "$M4 CHARSIU_A_LAYOUT=2" X=1 $MM 1 64 16
+	log "===== and the row 1 map at g = 32                                  ====="
+	c "CHARSIU_MAP_ROW=1 CHARSIU_A_GRAN=32" X=1 $CH 2 64 16 --map 8 64
 
 	log ""
 	log "===== the control that must FAIL, and int8 at M = 4                ====="
@@ -160,7 +156,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 32 of 32 is the answer. 16 of 32 is row 0 and nothing more.  ====="
+	log "===== g = 8 at 16 and g = 64 at 0 first, then look for 32 of 32.   ====="
 	sync
 }
 case "$1" in
