@@ -2,77 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 285. Stop guessing the stride and sweep an N that is not 64.
+# 2026-08-21 round 286. Blocks and slots, and N = 56 is the only case not
+# behind it.
 #
-# ⚠ wbytes/4 IS REFUTED, and not narrowly. It did not fix the three that were
-# wrong and it broke the three that were right:
+# ⚠ 285 MEASURED THE MAP AWAY FROM N = 64 FOR THE FIRST TIME and both sweeps
+# disagreed with 8*K:
 #
-#           8*K (283)      wbytes/4 (284)
-#   N = 16    16/16            0/16
-#   N = 32    32/32            0/32
-#   N = 48    48/48            8/48
-#   N = 64    64/64           64/64      the two forms are equal here by
-#   N = 24    16/24            0/24      construction, so it proves nothing
-#   N = 40    24/40            0/40
-#   N = 56    32/56            0/56
+#   N = 24  measured 0, 128, 192          8*K said 0, 128, 512
+#   N = 40  measured 0, 128, 512, 576, 704   8*K said ... 640, 1024
 #
-# So 8*K is right everywhere there is data and the failures at 24, 40 and 56 are
-# something else. Reverted.
+# Laid beside the five geometries that already worked, the shape is regular and
+# it is not a stride at all. Groups of eight channels sit two to a BLOCK of 8*K
+# bytes at SLOTS of 64 bytes, and only the last block differs:
 #
-# ⚠ AND THE REASONING THAT PRODUCED wbytes/4 WAS TIDY AND WRONG. It went: the
-# map must scale with the buffer, and at N = 24 the second group of g2 lands at
-# 768 which is exactly that buffer's size, so the stride is a fraction of the
-# buffer. Both premises were fine and the conclusion did not survive one round.
-# Round 284's own reading rule said what to do about that and this is it: the
-# N = 64 table came off a --map sweep, so run the same sweep at an N that is not
-# 64 rather than fitting a third form to the same seven numbers.
+#   block stride S = 8*K            slot 64          k+ half at S/2, K > 32
+#   a full block            slots 0 and 2
+#   last block, 2 left      slots 0, 1
+#   last block, 3 left      slots 0, 2, 3 if it is ALSO the first block,
+#                           otherwise slots 0, 1, 3
 #
-# WHAT IS SETTLED AND MUST NOT MOVE. With 8*K restored:
+# That reproduces every table measured, forty bases across seven geometries:
 #
-#   N = 16, 32, 48, 64 at K = 64, and N = 64 at K = 32, are byte exact against
-#   cpu_reference with no override. 0x3020 = 2*(ALIGN_UP(n,16) - 8) - 1, the
-#   write quantum is 16 channels, k is per channel parity, and the intra group
-#   order is byte j holding k = 2j low and k = 2j+1 high.
+#   N=16 0 64                     N=48 0 128 512 640 1024 1088
+#   N=24 0 128 192                N=64 0 128 512 640 1024 1152 1536 1600
+#   N=32 0 128 512 576            N=64 K=32  0 128 256 384 512 640 768 832
+#   N=40 0 128 512 576 704
+#
+# ⚠ N = 56 IS THE ONE GEOMETRY NOT BEHIND IT. It is the only case whose last
+# block holds three groups and is not also the first, so the "0, 1, 3
+# otherwise" arm rests on N = 40 alone. The rule predicts its bases:
+#
+#   1024, 1088, 1216   for g4, g5, g6, with g0..g3 at 0, 128, 512, 640
+#
+# 285 ALSO ANSWERED IGOR. SIZE_E_1 = 0 against the traced 1 came back IDENTICAL
+# at all seven N, per group and per count. Inert on the int4 path as well as on
+# the int8 one, which is where round 260 left it.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 2 AND 3 ARE THE ROUND and they are measurements, not tests. A
-#   stride 8 --map sweep of the whole buffer at N = 24 and at N = 40, which is
-#   the instrument that produced the N = 64 table in the first place. Read the
-#   grid, write down the eight group bases, and compare them to what 8*K
-#   predicts:
+#   ⚠ ENTRY 2 IS THE ROUND. N = 56, which has never been exact.
 #
-#     N = 24  predicted 0, 128, 512   (g0, g1, g2)
-#     N = 40  predicted 0, 128, 512, 640, 1024
+#     56 of 56, every group 8/8   the block and slot rule is read rather than
+#                                 fitted, across eight geometries and two K,
+#                                 and every N that is a multiple of 8 works
+#     g4 to g6 still 0/8          the "otherwise" arm is wrong and N = 40 is
+#                                 the special case, not N = 24. Sweep N = 56
+#                                 with --map and read its bases directly.
+#     a DIFFERENT group breaks    the rule is wrong somewhere it currently
+#                                 agrees with a measurement, which would mean
+#                                 one of the seven tables was misread
 #
-#   The groups that WORK are g0 and g1 at N = 24 and g0 to g2 at N = 40, so the
-#   first divergence should be at g2 and g3 respectively. If the measured bases
-#   agree with the prediction there, the address is not the fault and the k side
-#   is, which entry 4 asks directly.
+#   ⚠ ENTRIES 3 TO 9 ARE THE REGRESSION and they carry as much weight. Seven
+#   geometries were exact before this change and the packer was rewritten, not
+#   patched. 284 broke three working cases with one line; this is a bigger edit.
 #
-#   ENTRY 4 is --kpair at N = 24 on bytes 0, 8, 128, 512 and 768. It says which
-#   channel and which k each byte reaches, which is the pair the address table
-#   alone cannot give.
-#
-#   ⚠ ENTRIES 5 TO 8 ARE THE REGRESSION CHECK and they matter as much as the
-#   sweep. 284 broke three working geometries with a one line change, so 16, 32,
-#   48 and 64 have to come back exact before anything measured above is worth
-#   reading.
-#
-#   ⚠ ENTRY 9 IS OWED TO IGOR AND IT IS A GAP I DID NOT SEE. He asked whether
-#   different output channel counts exercise different SIZE_E fields, which
-#   would mean two shapes cannot rule out a shape leaning on SIZE_E_1. Every
-#   0x4050 sweep in this project ran at N = 64, and every channel count sweep
-#   ran with 0x4050 at its traced value. The two have never been crossed. This
-#   runs SIZE_E_1 = 0 at all seven N.
-#
-#     no change at any N        SIZE_E_1 is inert across the whole channel range
-#                               that can be reached, which is the strongest
-#                               thing that can be said for keeping the traced 0
-#     some N changes            his question was the right one and that N is the
-#                               shape two shapes could not rule out
-#     the failing three change  even a change in HOW 24, 40 and 56 fail is
-#                               information about which register bounds them
+#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -133,43 +117,21 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) MEASURE. --map over the whole buffer at N = 24.           ====="
-	log "=====    8*K predicts group bases 0, 128, 512.                     ====="
+	log "===== 2) THE ROUND. N = 56. Predicted bases 1024, 1088, 1216.      ====="
 	log ""
-	c X=1 X=1 $CH 1 64 24 --map 8
+	c "$M4" X=1 $MM 1 64 56
 
 	log ""
-	log "===== 3) MEASURE. the same at N = 40. predicted 0 128 512 640 1024 ====="
-	log ""
-	c X=1 X=1 $CH 1 64 40 --map 8
-
-	log ""
-	log "===== 4) and the k at N = 24, which the address alone cannot give  ====="
-	c X=1 CHARSIU_KPAIR_BYTES=0,8,128,136,512,520 $CH 1 64 24 --kpair
-
-	log ""
-	log "##### the regression check. 284 broke three of these in one line.  #####"
-	log ""
-	log "===== 5) N = 16                                                    ====="
-	c "$M4" X=1 $MM 1 64 16
-	log "===== 6) N = 32                                                    ====="
-	c "$M4" X=1 $MM 1 64 32
-	log "===== 7) N = 48                                                    ====="
-	c "$M4" X=1 $MM 1 64 48
-	log "===== 8) N = 64, and K = 32 at N = 64                               ====="
-	c "$M4" X=1 $MM 1 64 64
-	c "$M4" X=1 $MM 1 32 64
-
-	log ""
-	log "##### 9) SIZE_E_1 crossed with the channel count. Owed to Igor.    #####"
-	log "#####    Every N so far ran with 0x4050 at its traced value, and   #####"
-	log "#####    every 0x4050 sweep ran at N = 64. The two have never met. #####"
-	log ""
-	for NN in 16 24 32 40 48 56 64
+	log "##### the regression. seven geometries, and the packer was rewritten ####"
+	for nn in 16 24 32 40 48 64
 	do
-		log "===== N = $NN with SIZE_E_1 = 0  (traced value is 1)"
-		c "$M4" "CHARSIU_OVERRIDE=0x4050=0x00023313" $MM 1 64 $NN
+		log ""
+		log "===== N = $nn"
+		c "$M4" X=1 $MM 1 64 $nn
 	done
+	log ""
+	log "===== K = 32 at N = 64                                             ====="
+	c "$M4" X=1 $MM 1 32 64
 
 	log ""
 	log "===== 10) the control that must FAIL, and int8                     ====="
@@ -177,11 +139,15 @@ start() {
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
+	log "===== 11) and the map at N = 56, so a miss is readable in one boot ====="
+	c X=1 X=1 $CH 1 64 56 --map 8
+
+	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== read the N = 24 grid first. Bases, not counts.               ====="
+	log "===== N = 56 exact would close every N that is a multiple of 8.    ====="
 	sync
 }
 case "$1" in
