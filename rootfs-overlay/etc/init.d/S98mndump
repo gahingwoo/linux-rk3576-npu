@@ -2,57 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 291. Sixteen BYTES, not sixteen elements.
+# 2026-08-21 round 292. Slot 2 is wrong at M > 1, and the weight map has never
+# been swept at M > 1.
 #
-# ⚠ 290's DUMP ANSWERED IT WITHOUT A GUESS, which is what it was for. At M = 2,
-# N = 16 the raw surface reads:
+# ⚠ THE ATOM FIX LANDED. Sixteen bytes was right: at M = 2, N = 16 row 0 came
+# back with NO mismatches at all, where it had been 4 of 8 a group. Every M = 1
+# geometry still exact, three rounds of reader changes and no regression.
 #
-#   w0..w3    -1887  2330  -7904  2249      row 0, channels 0 to 3
-#   w8..w11   -7603  -5524  -9626  -5262    row 0, channels 4 to 7
+# ⚠ AND THE MISMATCH LIST NAMED THE REST. At M = 2 and M = 4, N = 64, row 0
+# fails on channels 8-15, 24-31 and 40-47, which are groups g1, g3 and g5.
+# Against the packer's own (block, slot) placement:
 #
-# so an atom group is FOUR elements and the stride between groups is 4*m. The
-# surface groups by SIXTEEN BYTES. int8 writes one byte an element and its atom
-# is 16 elements; w4a16 writes four and its atom is 4. One statement for both
-# paths, where "atom 16" and "the feature atom" were two guesses that each
-# covered one path and neither was read.
+#   fails   g1 (0,2)   g3 (1,2)   g5 (2,2)          every slot 2 group
+#   passes  g0 (0,0)   g2 (1,0)   g4 (2,0)   g6 (3,0)   g7 (3,1)
 #
-# At M = 1 every atom collapses to n, which is why eleven geometries passed
-# without this ever mattering.
+# and N = 16 has no slot 2 group at all, which is why its row 0 was perfect.
+# SLOT 2 IS WRONG AT M > 1 and the other slots are not.
 #
-# ⚠ AND ROW 1 IS A SECOND, SEPARATE FAULT. The row 1 reference values, 2586,
-# -77, -846 and 88, appear NOWHERE in the surface. The hardware is not computing
-# row 1 wrong in the sense of putting it somewhere else; it is not producing
-# those numbers at all, which points at the input packing rather than the read.
+# ⚠ THE WEIGHT MAP HAS ONLY EVER BEEN SWEPT AT M = 1. Every base in the table,
+# all eleven geometries of it, was read with one row. So this round sweeps
+# --map at M = 2 rather than reasoning about why one slot moved. That is the
+# instrument that settled the layout, twice, after two closed forms guessed at
+# it and were refuted.
 #
-# ⚠ THE PARTIAL GROUP IS NOT AN ADDRESS PROBLEM. --map at N = 20 and N = 36
-# gives bases 0, 128, 192 and 0, 128, 512, 576, 704, and the packer places at
-# exactly those. So the four channels each loses are placed correctly and come
-# back wrong anyway, and at M = 1 the reader is not in question either.
+# ⚠ THE PARTIAL GROUP IS SOLVED AND IT IS NOT A PLACEMENT FAULT EITHER. Pulling
+# the per CHANNEL map out of 290's sweeps rather than just the group leaders:
 #
-# ⚠ AND "g1 4/8" NEVER SAID WHICH FOUR. It is as consistent with the even
-# channels failing as the odd, and both open questions turn on that. The matmul
-# names them now.
+#   N = 20  the hardware's live channels are 0-11 and 16-23. Bytes 160-191 are
+#           dead, and the packer puts logical channels 12-15 in them.
+#   N = 36  live channels are 0-19 and 24-39. Bytes 544-575 are dead and
+#           logical 20-23 go there.
+#
+# Both match the mismatch lists exactly, 12 13 14 15 and 20 21 22 23. When N is
+# not a multiple of 8 the hardware does not put the short group LAST, it puts it
+# in the middle, and its channel numbering runs on past the gap. Two points, no
+# rule written.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 2 TO 4 FIRST. M = 1, because the reader changed for the third
-#   round running. Eleven geometries have passed and none may drop.
+#   ⚠ ENTRY 5 IS THE ROUND. --map at M = 2, N = 64, the whole buffer.
 #
-#   ENTRY 5 IS THE ROUND. M = 2 at N = 64.
+#     the bases move          the weight layout depends on M and the table needs
+#                             an M term. Read the new bases off the grid.
+#     the bases are identical  the weights are placed right and slot 2's failure
+#                             is on the read or the output side, and entry 6's
+#                             M = 2 N = 16 grid says which since that shape
+#                             works
+#     slot 2's group is dead   the hardware stops fetching it at M > 1, which is
+#                             a fetch bound and not an address
 #
-#     row 0 exact, rows 1+ not   the surface is settled and what is left is the
-#                                input packing for M > 1, alone
-#     row 0 still short          sixteen bytes is not the atom either, and the
-#                                dump beside it says what is
-#     everything exact           the atom was both faults at once
+#   ENTRIES 2 TO 4 are the M = 1 regression, unchanged.
 #
-#   ENTRY 8 IS N = 20 AND IT IS THE OTHER HALF OF THE ROUND. The bases are
-#   right and four channels of g1 are wrong. The mismatch list says which four,
-#   and even-or-odd is the k parity, which is the one part of the layout that
-#   was read at N = 64 and never re-read at a partial group.
-#
-#   ENTRY 10 is the control that must FAIL and ENTRY 11 is int8 at M = 1 and
-#   M = 4, both of which were exact.
+#   ENTRY 7 runs M = 2 at N = 24, which is G = 3 with slots (0,0)(0,2)(0,3), so
+#   it has a slot 2 AND a slot 3. If slot 3 also fails the fault is "not slot 0
+#   or 1"; if only slot 2 does, it is slot 2 alone.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -113,7 +117,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### M = 1. The reader changed for the third round running.       #####"
+	log "##### the M = 1 regression                                         #####"
 	for nn in 16 64 88
 	do
 		log ""
@@ -122,25 +126,25 @@ start() {
 	done
 
 	log ""
-	log "##### THE ROUND. atom is four elements, sixteen bytes.             #####"
+	log "##### THE ROUND. the weight map at M = 2. Never swept above M = 1. #####"
 	log ""
-	log "===== 5) M = 2  N = 16, the shape the surface was read from        ====="
-	c "$M4" X=1 $MM 2 64 16
+	log "===== 5) --map  M = 2  N = 64                                      ====="
+	c X=1 X=1 $CH 2 64 64 --map 8
 	log ""
-	log "===== 6) M = 2  N = 64                                             ====="
-	c "$M4" X=1 $MM 2 64 64
-	log ""
-	log "===== 7) M = 4  N = 64                                             ====="
-	c "$M4" X=1 $MM 4 64 64
+	log "===== 6) --map  M = 2  N = 16, the shape whose row 0 is perfect     ====="
+	c X=1 X=1 $CH 2 64 16 --map 8
 
 	log ""
-	log "##### the partial group. The bases are right; which four fail.     #####"
+	log "##### and the matmuls beside them, for the mismatch lists          #####"
 	log ""
-	log "===== 8) N = 20                                                    ====="
-	c "$M4" X=1 $MM 1 64 20
+	log "===== 7) M = 2  N = 24, which has a slot 2 AND a slot 3            ====="
+	c "$M4" X=1 $MM 2 64 24
 	log ""
-	log "===== 9) N = 36                                                    ====="
-	c "$M4" X=1 $MM 1 64 36
+	log "===== 8) M = 2  N = 64                                             ====="
+	c "$M4" X=1 $MM 2 64 64
+	log ""
+	log "===== 9) M = 2  N = 16                                             ====="
+	c "$M4" X=1 $MM 2 64 16
 
 	log ""
 	log "===== 10) the control that must FAIL, and int8 at M = 1 and M = 4  ====="
@@ -153,7 +157,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== row 0 at entry 5, then the mismatch list at entry 8.         ====="
+	log "===== entry 5's bases against the M = 1 table. That is the round.  ====="
 	sync
 }
 case "$1" in
