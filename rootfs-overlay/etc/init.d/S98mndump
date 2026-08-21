@@ -2,49 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 300. The layout scales in K. The CHANNEL COUNT does not.
+# 2026-08-21 round 301. A 4096 byte weight fetch budget, or the reason there is
+# not one.
 #
-# ⚠⚠ K = 128 IS EXACT AT THREE N. 64 of 64, 32 of 32 and 24 of 24, with the
-# eleven K = 64 geometries untouched beside it. Both halves of that layout were
-# measured rather than predicted, so the address rule and the K/32 run count both
-# hold at a K nothing had ever been run at.
+# 300 GAVE THREE DIFFERENT ANSWERS AND THEY ARE NOT THE SAME PROBLEM.
 #
-# ⚠ K = 256 IS EXACTLY HALF, AND NOT FOR A LAYOUT REASON. 32 of 64 and 16 of 32,
-# and the reason is in the line above the score:
+#   0x3020 at K = 256   111 -> 40, 127 -> 40, 143 -> 56, 175 -> 56, 207 -> 40,
+#                       255 -> 40. Non monotonic, and exact is wrote - 8 in
+#                       every one of them.
+#   SIZE_E_2 at K = 256 1, 2, 3 give 32, 36 and 40 written, the same additive
+#                       0, 4, 8 as K = 64, and exact stays 32 throughout.
+#   K = 192             wrote 64 of 64 and 32 of 32, EVERYTHING written, and
+#                       exact 0. That is a layout fault, not a count one.
 #
-#   K = 256  N = 64    wrote 40 of 64    g0..g3 8/8, g4..g7 0/8
-#   K = 256  N = 32    wrote 24 of 32    g0, g1 8/8, g2, g3 0/8
+# ⚠ SO AT K = 256 THIRTY TWO CHANNELS ARE CORRECT WHATEVER IS WRITTEN. Put that
+# beside the K where everything works, in bytes of weight actually fetched, which
+# is K/2 a channel:
 #
-# 40 and 24 are N/2 + 8. That is the channel count from BEFORE round 283 fixed
-# 0x3020, which now emits 2*(ALIGN_UP(n,16) - 8) - 1, or 111 at N = 64, and
-# 111 gives 64 channels at K = 64 and at K = 128. At K = 256 it gives 40, which
-# is what v = 63 gives. The register stops being honoured somewhere between
-# K = 128 and K = 256, and the failing channels are exactly the ones never
-# written.
+#   K =  64  N = 88 correct    88 x 32  = 2816
+#   K = 128  N = 64 correct    64 x 64  = 4096
+#   K = 256  N = 32 correct    32 x 128 = 4096
+#
+# Two of them land on 4096 exactly and the third is under it. A 4096 byte weight
+# fetch budget a job explains all three, and it is the shape of thing an LLM
+# projection at K = 2048 has to be tiled against, which makes it a bound to
+# measure rather than a mystery.
+#
+# ⚠ IT DOES NOT EXPLAIN K = 192, where 64 channels want 6144 bytes and all 64
+# are written. That is the other fault and it gets its own entry.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRY 3 IS THE ROUND: 0x3020 swept higher at K = 256. If the count is
-#   still ceil((v+1)/2) + 8 and something merely shifted it, a larger v buys the
-#   channels back.
+#   ⚠ ENTRIES 3 TO 6 ARE THE BUDGET, and every one is a derived prediction:
 #
-#     a value gives 64      the register still works and the mapping from v to
-#                           channels depends on K. Read the new mapping.
-#     none does, and wrote
-#     stays at 40           there is a CAP that is not 0x3020, and 40 at K = 256
-#                           against 64 at K = 128 says it scales with K. That is
-#                           the thing an LLM shape hits, so measure the cap.
-#     wrote moves but not to 64
-#                           write down what it moves to. Two points on a cap are
-#                           worth more than one value that works.
+#     K =  64  N = 128   4096 exactly      predict all 128 correct
+#     K =  64  N = 160   5120, over        predict 128 correct, 32 not
+#     K = 128  N =  96   6144, over        predict 64 correct
+#     K = 256  N =  32   4096 exactly      predict all 32 correct
 #
-#   ENTRY 4 IS K = 192, between the last K that works and the first that does
-#   not. Nothing has ever run there and it is one arm.
+#     all four land       the budget is 4096 bytes and int4 tiles against a
+#                         known bound
+#     the over ones cap
+#     somewhere else      the budget is a different number and these say what
+#     N = 128 at K = 64
+#     is not exact        it is not a byte budget at all, since that shape sits
+#                         exactly on the line that K = 128 N = 64 already passes
 #
-#   ENTRY 5 sweeps SIZE_E_2, which is the additive term in that same count and
-#   was measured at K = 64 only.
+#   ⚠ ENTRY 7 IS K = 192, which is a different fault. Everything is written and
+#   nothing is right, so its --map grid is what to read, not its score. 192 is
+#   the first K tried that is not a power of two.
 #
-#   ENTRY 2 is K = 64 and K = 128, which must not move.
+#   ENTRY 2 is K = 64 and K = 128, the fourteen geometry path.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -114,46 +123,43 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2) K = 64 and K = 128, which must not move                   ====="
+	log "===== 2) K = 64 and K = 128, the fourteen geometry path            ====="
 	c "$M4" X=1 $MM 1 64 64
 	c "$M4" X=1 $MM 1 64 88
 	c "$M4" X=1 $MM 1 128 64
 	c "$M4" X=1 $MM 1 128 24
 
 	log ""
-	log "##### THE ROUND. 0x3020 higher at K = 256. wrote is 40 of 64.      #####"
-	for v in 111 127 143 175 207 255
-	do
-		log ""
-		log "===== K = 256  N = 64   0x3020 = $v"
-		c "$M4" "CHARSIU_OVERRIDE=0x3020=$v" $MM 1 256 64
-	done
+	log "##### THE ROUND. a 4096 byte weight fetch budget, four predictions. #####"
+	log ""
+	log "===== 3) K = 64  N = 128.  4096 exactly. Predict all 128 correct.  ====="
+	c "$M4" X=1 $MM 1 64 128
+	log ""
+	log "===== 4) K = 64  N = 160.  5120, over. Predict 128 correct.        ====="
+	c "$M4" X=1 $MM 1 64 160
+	log ""
+	log "===== 5) K = 128 N = 96.   6144, over. Predict 64 correct.         ====="
+	c "$M4" X=1 $MM 1 128 96
+	log ""
+	log "===== 6) K = 256 N = 32.   4096 exactly. Predict all 32 correct.   ====="
+	c "$M4" X=1 $MM 1 256 32
 
 	log ""
-	log "===== 4) K = 192, between the last that works and the first not    ====="
+	log "===== 7) K = 192, the other fault. Read the grid, not the score.   ====="
 	c "$M4" X=1 $MM 1 192 64
-	c "$M4" X=1 $MM 1 192 32
+	c X=1 X=1 $CH 1 192 64 --map 8
 
 	log ""
-	log "##### 5) SIZE_E_2 at K = 256, measured at K = 64 only              #####"
-	for v in 0x00023133 0x00023233 0x00023333
-	do
-		log ""
-		log "===== K = 256  N = 64   0x4050 = $v"
-		c "$M4" "CHARSIU_OVERRIDE=0x4050=$v" $MM 1 256 64
-	done
-
-	log ""
-	log "===== the control that must FAIL, and int8 at K = 256              ====="
+	log "===== the control that must FAIL, and int8 at K = 64 N = 128       ====="
 	c "CHARSIU_W4=1" X=1 $MM 1 128 64
-	c X=1 X=1 $MM 1 256 64
+	c X=1 X=1 $MM 1 64 128
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== read wrote, not the score. 40 of 64 is the whole story.      ====="
+	log "===== four predictions, and K = 192's grid.                        ====="
 	sync
 }
 case "$1" in
