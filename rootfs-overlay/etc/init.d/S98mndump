@@ -2,54 +2,58 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 303. K is a multiple of 32, and where the CHANNEL count
-# stops.
+# 2026-08-21 round 304. What does int4 actually buy.
 #
-# ⚠ 302 GAVE THE RULE, and it is the second branch of its own reading rule:
+# ⚠⚠ THE ENVELOPE IS MEASURED. 303 closed the K line:
 #
-#   K = 144, K/32 = 4.5     8 of 64 exact
-#   K = 160, K/32 = 5      64 of 64
-#   K = 176, K/32 = 5.5     8 of 64 exact
-#   K = 192, K/32 = 6      64 of 64
+#   K = 224  N = 64 and 32     64 of 64 and 32 of 32, full
+#   K = 256  N = 16            16 of 16 EXACT
+#   K = 256  N = 32            wrote 24, exact 16
+#   K = 256  N = 64            wrote 40, exact 32
 #
-# K must be a MULTIPLE OF 32, which is the run count K/32 being whole. Not the
-# size of K, and not a power of two.
+# and the sharp prediction landed. At K = 256 the channel count is N/2 and
+# SIZE_E_2's additive 8 writes garbage on top, so exact is N/2 and wrote is
+# N/2 + 8 exactly. At N = 16 those coincide with N, which is why N = 16 alone is
+# clean there, and that is what asking a small N was for.
 #
-# ⚠ AND I HAVE A CORRECTION TO MAKE. Rounds 300 and 301 recorded K = 192 as
-# "writes every channel and computes none, a layout fault, the first non power of
-# two K tried". That was wrong and it was not the hardware: the packer's K
-# whitelist held 32, 64, 128 and 256, so at 192 it returned without writing a
-# byte, and --map lit anyway because it writes raw bytes and never goes through
-# the packer. With the guard widened, K = 192 is 64 of 64. A refusal I wrote
-# myself was read as a hardware result for two rounds.
+#   K a multiple of 32, 32 through 224      every N tried, 16 through 160
+#   K = 144 and 176, K/32 not whole         8 of 64
+#   K = 256                                 N/2 channels
+#   M = 1,  K/2 real k a channel a job
 #
-# ⚠ WHAT IS ACTUALLY LEFT IS K = 256, and it is a COUNT fault, not a layout one.
-# K/32 is 8 there, whole, so the layout should hold. What fails is the channel
-# count: N = 64 writes 40 and N = 32 writes 24, which is N/2 + 8, the value from
-# before 0x3020 was fixed. K = 192 writes all 64. So the count stops somewhere
-# between 192 and 256.
+# ⚠ AND THE WHOLE int4 LINE, ROUNDS 265 TO 303, EXISTS TO ANSWER ONE QUESTION
+# THAT COULD NOT BE ASKED. charsiu_bench had no int4 path at all, so "what does
+# int4 buy" had no instrument. It has one now, and the GB/s column counts the
+# weight bytes a shape really moves, k*n/2 for int4 against k*n for int8, since
+# a GB/s that means different things on the two paths is worse than none.
 #
 # THE READING RULE, fixed before the run.
 #
-#   ⚠ ENTRIES 3 TO 5 ARE THE ROUND: K = 224, and K = 256 at three N.
+#   ⚠ THE PRIOR IS EXPLICIT AND IT IS NOT "int4 IS TWICE AS FAST". The bench
+#   header in this repo already says this workload tracks WEIGHT BYTES at about
+#   10 GB/s and is bound by them rather than by arithmetic. int4 halves the
+#   bytes at the same shape, so a bytes bound predicts about half the time and a
+#   fixed per submit cost eats into that.
 #
-#   K = 224 is K/32 = 7, whole, and between the last K whose count is right and
-#   the first whose is not.
+#     int4 is near half the us of int8 at the same K and N
+#                        the bound is bytes, int4 is worth what it claims, and
+#                        the tiling to K <= 224 is the only cost
+#     int4 is the same us as int8
+#                        the bound is not bytes at these shapes, and the 180 to
+#                        195 us fixed submit cost this repo already measured is
+#                        what is being timed
+#     int4 is slower     something in the w4a16 path costs more than the bytes
+#                        save, and the per task column says whether it is fixed
+#                        or per byte
 #
-#     224 writes all 64      the count stops at 256 exactly and the usable range
-#                            is 32 to 224 in steps of 32
-#     224 writes 40          it stops between 192 and 224, and N/2 + 8 is what
-#                            it falls back to in both
-#     224 writes something else
-#                            write it down. Two points on the fallback are worth
-#                            more than one.
+#   ⚠ THE SHAPES ARE INSIDE THE ENVELOPE. K = 224 N = 160 is the largest legal
+#   one and is 17920 weight bytes against int8's 35840. A projection is K = 2048
+#   by N = 1024 and cannot be run whole, which is itself the headline number:
+#   int4 needs about 19 jobs where int8 needs 1.
 #
-#   ⚠ K = 256 AT N = 16 IS THE SHARP ONE. If the fallback is N/2 + 8 then at
-#   N = 16 that is 16, the whole thing, so N = 16 should be EXACT at K = 256
-#   even though N = 32 and N = 64 are not. A fallback that cannot be seen at
-#   small N is a very different thing from a layout that breaks.
-#
-#   ENTRY 2 is the regression: K of 32, 64, 128, 160 and 192.
+#   ENTRY 2 is the matmul regression, because a bench that times a wrong answer
+#   is worth nothing.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -67,6 +71,7 @@ NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 MM=/opt/charsiu/charsiu_matmul
+BE=/opt/charsiu/charsiu_bench
 CH=/opt/charsiu/charsiu_int4
 ABORT=0
 log() { echo "$@" > "$C"; }
@@ -122,48 +127,40 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### the regression. every K that is a multiple of 32 up to 192.  #####"
-	for KK in 32 64 128 160 192
+	log "##### 2) the matmul regression. A bench of a wrong answer is worth #####"
+	log "#####    nothing, so the shapes benched below are checked first.   #####"
+	for KK in 64 128 224
 	do
 		log ""
-		log "===== K = $KK  N = 64"
-		c "$M4" X=1 $MM 1 $KK 64
+		log "===== K = $KK  N = 160"
+		c "$M4" X=1 $MM 1 $KK 160
 	done
-	log ""
-	log "===== and K = 64 at N = 160, the widest N that works               ====="
-	c "$M4" X=1 $MM 1 64 160
 
 	log ""
-	log "##### THE ROUND. K = 224, and K = 256 at three N.                  #####"
+	log "##### THE ROUND. int4 against int8 at the same shape.              #####"
 	log ""
-	log "===== 3) K = 224  N = 64.  K/32 = 7, whole.                        ====="
-	c "$M4" X=1 $MM 1 224 64
+	log "===== 3) K = 224  N = 160   int8 then int4                         ====="
+	c X=1 X=1 $BE 1 224 160 100
+	c "CHARSIU_W4=1" X=1 $BE 1 224 160 100
 	log ""
-	log "===== 4) K = 224  N = 32                                           ====="
-	c "$M4" X=1 $MM 1 224 32
+	log "===== 4) K = 128  N = 160   int8 then int4                         ====="
+	c X=1 X=1 $BE 1 128 160 100
+	c "CHARSIU_W4=1" X=1 $BE 1 128 160 100
 	log ""
-	log "===== 5) K = 256 at N = 16, 32, 64.  N/2+8 is 16, 24, 40.          ====="
-	log "=====    N = 16 should be EXACT if the fallback is all it is.      ====="
-	c "$M4" X=1 $MM 1 256 16
-	c "$M4" X=1 $MM 1 256 32
-	c "$M4" X=1 $MM 1 256 64
+	log "===== 5) K = 224  N = 64    int8 then int4                         ====="
+	c X=1 X=1 $BE 1 224 64 100
+	c "CHARSIU_W4=1" X=1 $BE 1 224 64 100
 
 	log ""
-	log "===== 6) and K = 192 at N = 16 and 160, the last K that is whole   ====="
-	c "$M4" X=1 $MM 1 192 16
-	c "$M4" X=1 $MM 1 192 160
-
-	log ""
-	log "===== the control that must FAIL, and int8 at K = 224              ====="
-	c "CHARSIU_W4=1" X=1 $MM 1 192 64
-	c X=1 X=1 $MM 1 224 64
+	log "===== 6) and int8 at a real projection, for the scale of the tile  ====="
+	c X=1 X=1 $BE 1 2048 1024 50
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== read wrote at K = 224 first, then N = 16 at K = 256.         ====="
+	log "===== us/matmul, int4 against int8 at the same K and N.            ====="
 	sync
 }
 case "$1" in
