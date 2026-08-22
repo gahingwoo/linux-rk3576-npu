@@ -60,6 +60,30 @@
 #    quantise, which is a much easier thing to fix.
 #
 # ---------------------------------------------------------------------------
+# ⚠ AND THE VENDOR'S OWN FILE SAYS THE 512 KiB CEILING IS MINE
+# ---------------------------------------------------------------------------
+#
+# The .rkllm in ~/Documents/kiln is Llama-3.2-1B-Instruct-rk3576-w4a16 -- THE
+# SAME MODEL charsiu runs. Reading its register streams offline (no board):
+#
+#   its int4 ops are ic=2048 oc=1024, weight_bytes 0x00100000 = 1 MiB
+#   and ic=4096 oc=1024, which is 2 MiB
+#
+# **That is exactly the size where charsiu collapses, and four times it.** So
+# the 512 KiB ceiling is charsiu's, not the silicon's.
+#
+# Diffing that stream against charsiu's at the SAME shape: 46 registers, and
+# once the two address placeholders are set aside they agree on 44 of 44 except
+#
+#   0x100c   vendor 00600120   charsiu 20600120   bit 29 = 16 bit activations
+#   0x1098   vendor 00000001   charsiu 00000004   already known from the int8
+#                                                 comparison, never board tested
+#
+# **The vendor runs its int4 projections with EIGHT bit activations and charsiu
+# forces sixteen.** Entry 4 tries both, timing only -- the input packing is not
+# changed, so those arms measure the fetch and nothing else.
+#
+# ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
@@ -200,13 +224,25 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 4) int4's LAST arm: does the live map fetch any faster?      ====="
-	log "=====    1.5 GB/s closes it, 9 reopens it, between is not a result ====="
-	c "CHARSIU_W4=1" "$CE" $BE --nsweep 512 20
-	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 512 20
+	log "===== 4) int4: the live map, and the TWO registers the vendor       ====="
+	log "=====    writes differently AT THE SHAPE WHERE WE COLLAPSE.         ====="
+	log "=====    timing only -- the input packing is not changed, so read   ====="
+	log "=====    the microseconds and ignore any correctness these print.   ====="
+	log "===== 4a today"
+	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 20
+	log "===== 4b the live map, 0x40b8 = 3"
 	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 2048 20
-	log "=====    int8 at K=512 again, the denominator                      ====="
+	log "===== 4c the vendor's 0x100c: int4 weights with 8 BIT activations"
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "$CE" $BE --nsweep 2048 20
+	log "===== 4d the vendor's 0x1098 = 1"
+	c "CHARSIU_W4=1" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 2048 20
+	log "===== 4e both, which is the vendor's stream exactly"
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 2048 20
+	log "===== 4f and at K=512, where there is no cliff to hide the slope"
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 512 20
+	log "=====    int8 at K=512 and K=2048, the denominators                 ====="
 	c "$CE" $BE --nsweep 512 20
+	c "$CE" $BE --nsweep 2048 20
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
