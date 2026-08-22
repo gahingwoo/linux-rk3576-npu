@@ -33,37 +33,37 @@ than "no effect" and it is the size of what I actually read. SIZE_E_0 is inert a
 0 and hangs at 2 and at 6. RGP_CNTER and OD_BYPASS are inert, RESERVED_0 hangs.
 
 Now the part your question actually asks. I said I would cross the two and I
-have, at seven channel counts, 16 through 64 in steps of 8, with SIZE_E_1 forced
-to 0 against its traced 1:
+have, at seven channel counts, with the control alongside each one in the same
+boot rather than borrowed from an earlier round:
 
-    N               16   24   32   40   48   56   64
-    words written   16   24   32   40   48   56   64
-    correct         16   16   32   24   48   32   64
+    N                     16   24   32   40   48   56   64
+    SIZE_E_1 = 1  wrote   16   24   32   40   48   56   64
+                  correct 16   24   32   40   48   56   64
+    SIZE_E_1 = 0  wrote    8   24   32   40   48   56   64
+                  correct  8   24   32   40   48   56   64
 
-Read the four that are multiples of sixteen: 16, 32, 48 and 64 come back
-identical to the traced value, so SIZE_E_1 is inert there and your conservative
-choice costs nothing at those shapes.
+Six of the seven are identical, so SIZE_E_1 is inert at 24, 32, 40, 48, 56 and
+64 and I can say that with a control under it now rather than as an impression.
 
-The other three I cannot attribute, and that is my fault rather than a result:
-the round ran 24, 40 and 56 only with SIZE_E_1 at 0 and never at 1, so there is
-no same-round control for them. The shortfall at those N looks like the same
-sixteen-channel quantum below, which would make it nothing to do with SIZE_E_1,
-but I am not going to hand you a reading with no control under it. If it matters
-to you I will run the missing half.
+At N = 16 it is not inert. Asking for sixteen channels with the field at
+upstream's 0 delivers eight, and both the words written and the count that comes
+out correct halve. One shape in seven, the smallest one, and it is exactly the
+kind of thing two shapes could not have found. So your conservative choice is
+not just tidier, it is right, and I would not have known that without the sweep
+you asked for.
 
-So your conservative choice and the honest one are still the same choice: inert
-where I can prove it, unproven where I cannot.
+I also owe you a correction on the way to this. The first version of this reply
+said I had not run the cross sweep and I had; the round is titled after you. And
+it was half a round, because it swept SIZE_E_1 = 0 at all seven N and never ran
+the traced value beside them, so four of the seven only had a control by accident
+elsewhere in the log. The table above is the round that fixes that.
 
-And there is a loose end in that table which I would rather hand you than tidy
-away. An earlier round, with 0x4050 at its traced value, measured that when the
-channel register asks for exactly n the block writes floor(n/16)*16 of them --
-24 asks and 16 arrive. The table above, at SIZE_E_1 = 0, writes all 24. Those
-are two different rounds and I will not put weight on a cross-round comparison,
-but if it survives a same-round control then SIZE_E_1 is not inert at the N that
-are not multiples of sixteen, and it is the write count that it moves. That is
-the opposite of what I have been telling you, so it goes on the board before it
-goes in a mail: the missing half is N of 24, 40 and 56 at the traced value, and
-it is one entry.
+And the loose end I was going to hand you is closed by the same run. I had an
+earlier measurement that asking for n channels writes floor(n/16)*16 of them,
+and I was about to tell you that SIZE_E_1 = 0 might be what lifts it. It is not:
+in this round the traced value writes all 24 at N = 24 too. That earlier
+shortfall belongs to a different setting of the channel count register, not to
+this field, and comparing across two rounds is what made it look otherwise.
 
 The re-run offer is noted and I will take it when v9 goes. Glad the trip was
 fine, and I hope the countryside is treating the board well.
