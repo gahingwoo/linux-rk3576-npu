@@ -1,0 +1,736 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:27.0%, RX DQS Vref:27.8%, TX Vref:19.0%,21.0%
+DQ roc:
+p4 n0, p5 n0, p3 n1, p3 n0, p4 n2, p5 n0, p0 n1, p1 n0, p2 n0, 
+p5 n0, p3 n5, p3 n0, p2 n0, p5 n2, p5 n0, p0 n2, p3 n0, p1 n0, 
+
+DQ rds:l0 h1 l0 h1 l0 h1 l0 l0, l0 h1 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:29.6%, TX Vref:19.0%,22.0%
+DQ roc:
+p4 n0, p7 n0, p7 n0, p7 n0, p4 n0, p7 n0, p0 n0, p2 n0, p4 n0, 
+p7 n0, p5 n0, p3 n0, p5 n1, p5 n0, p7 n0, p7 n3, p0 n1, p5 n0, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, h1 l0 h2 l0 l0 l0 h2 l0 
+DQS roc: p0, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004813] Console: colour dummy device 80x25
+[    0.005347] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006303] pid_max: default: 32768 minimum: 301
+[    0.007197] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007956] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009153] VFS: Finished mounting rootfs on nullfs
+[    0.012590] rcu: Hierarchical SRCU implementation.
+[    0.013093] rcu:     Max phase no-delay instances is 1000.
+[    0.013885] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021493] EFI services will not be available.
+[    0.022588] smp: Bringing up secondary CPUs ...
+[    0.023753] Detected VIPT I-cache on CPU1
+[    0.023872] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024736] Detected VIPT I-cache on CPU2
+[    0.024820] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025648] Detected VIPT I-cache on CPU3
+[    0.025727] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026629] CPU features: detected: Spectre-v3a
+[    0.026647] CPU features: detected: Spectre-BHB
+[    0.026654] CPU features: detected: ARM erratum 1742098
+[    0.026662] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026668] Detected PIPT I-cache on CPU4
+[    0.026750] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027557] Detected PIPT I-cache on CPU5
+[    0.027621] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028398] Detected PIPT I-cache on CPU6
+[    0.028464] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029253] Detected PIPT I-cache on CPU7
+[    0.029321] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029454] smp: Brought up 1 node, 8 CPUs
+[    0.038604] SMP: Total of 8 processors activated.
+[    0.039061] CPU: All CPU(s) started at EL2
+[    0.039473] CPU features: detected: 32-bit EL0 Support
+[    0.039949] CPU features: detected: 32-bit EL1 Support
+[    0.040427] CPU features: detected: CRC32 instructions
+[    0.040912] CPU features: detected: PMUv3
+[    0.041365] alternatives: applying system-wide alternatives
+[    0.045063] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050433] devtmpfs: initialized
+[    0.067114] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.067886] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069025] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069614] 0 pages in range for non-PLT usage
+[    0.069619] 511152 pages in range for PLT usage
+[    0.075272] DMI: not present or invalid.
+[    0.079707] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.081360] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.082478] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.083252] audit: initializing netlink subsys (disabled)
+[    0.083918] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.088700] thermal_sys: Registered thermal governor 'step_wise'
+[    0.088711] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.089363] cpuidle: using governor menu
+[    0.090667] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.091501] ASID allocator initialised with 32768 entries
+[    0.096747] Serial: AMBA PL011 UART driver
+[    0.105628] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.106955] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.108270] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.109578] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.110947] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.121307] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.122032] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.123082] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.125037] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.181106] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.181740] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.192684] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.193317] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.193895] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.194519] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.195098] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.195723] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.196317] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.196939] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.200264] ACPI: Interpreter disabled.
+[    0.211567] iommu: Default domain type: Translated
+[    0.212040] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.213251] SCSI subsystem initialized
+[    0.214022] usbcore: registered new interface driver usbfs
+[    0.214571] usbcore: registered new interface driver hub
+[    0.215091] usbcore: registered new device driver usb
+[    0.218174] pps_core: LinuxPPS API ver. 1 registered
+[    0.218636] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.219483] PTP clock support registered
+[    0.220128] EDAC MC: Ver: 3.0.0
+[    0.221073] scmi_core: SCMI protocol bus registered
+[    0.223938] FPGA manager framework
+[    0.225476] vgaarb: loaded
+[    0.226276] clocksource: Switched to clocksource arch_sys_counter
+[    0.227168] VFS: Disk quotas dquot_6.6.0
+[    0.227549] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.228431] pnp: PnP ACPI: disabled
+[    0.236132] NET: Registered PF_INET protocol family
+[    0.237042] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.250002] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.250958] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.251690] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.253415] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.255981] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.256700] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.257985] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.259019] RPC: Registered named UNIX socket transport module.
+[    0.259568] RPC: Registered udp transport module.
+[    0.260002] RPC: Registered tcp transport module.
+[    0.260436] RPC: Registered tcp-with-tls transport module.
+[    0.260940] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.261542] PCI: CLS 0 bytes, default 64
+[    0.265648] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.266403] kvm [1]: nv: 710 fine grained trap handlers
+[    0.267318] kvm [1]: IPA Size Limit: 40 bits
+[    0.270404] kvm [1]: vgic interrupt IRQ9
+[    0.270812] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.273346] Initialise system trusted keyrings
+[    0.273968] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.275165] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.276006] NFS: Registering the id_resolver key type
+[    0.276489] Key type id_resolver registered
+[    0.276878] Key type id_legacy registered
+[    0.277266] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.277886] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.279092] Key type asymmetric registered
+[    0.279476] Asymmetric key parser 'x509' registered
+[    0.279973] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.280660] io scheduler mq-deadline registered
+[    0.281080] io scheduler kyber registered
+[    0.281489] io scheduler bfq registered
+[    0.290385] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.292138] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.294007] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.295888] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.297507] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.299142] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.300882] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.302506] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.304132] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.305755] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.307399] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.309023] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.310789] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.312414] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.314159] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.315934] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.353619] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.421668] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.422395] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.425094] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.425797] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.428366] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.429067] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.463785] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.468184] printk: legacy console [ttyS0] disabled
+[    0.468977] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.469913] printk: legacy console [ttyS0] enabled
+[    0.469913] printk: legacy console [ttyS0] enabled
+[    0.470799] printk: legacy bootconsole [uart8250] disabled
+[    0.470799] printk: legacy bootconsole [uart8250] disabled
+[    0.477379] msm_serial: driver initialized
+[    0.479276] SuperH (H)SCI(F) driver initialized
+[    0.480477] STM32 USART driver initialized
+[    0.487822] random: crng init done
+[    0.491282] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.493376] platform 27d00000.vop: Adding to iommu group 1
+[    0.501535] loop: module loaded
+[    0.504474] megasas: 07.734.00.00-rc1
+[    0.520578] tun: Universal TUN/TAP device driver, 1.6
+[    0.522019] VFIO - User Level meta-driver version: 0.3
+[    0.533930] usbcore: registered new interface driver usb-storage
+[    0.544535] i2c_dev: i2c /dev entries driver
+[    0.549737] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.550678] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.551579] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.590817] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.591480] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.592456] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.593399] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.594392] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.601337] scsi host0: ufshcd
+[    1.033507] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.034388] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.035130] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.035789] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.043269] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.043798] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.044874] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.045844] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.046515] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.047270] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.054294] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.057813] usbcore: registered new interface driver usbhid
+[    1.058332] usbhid: USB HID core driver
+[    1.070043] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.072216] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.092852] NET: Registered PF_INET6 protocol family
+[    1.094362] Segment Routing with IPv6
+[    1.094718] In-situ OAM (IOAM) with IPv6
+[    1.095120] NET: Registered PF_PACKET protocol family
+[    1.095631] Key type dns_resolver registered
+[    1.124886] registered taskstats version 1
+[    1.125518] Loading compiled-in X.509 certificates
+[    1.135324] Demotion targets for Node 0: null
+[    1.296178] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.302538] cpu cpu0: EM: created perf domain
+[    1.304901] cpu cpu4: EM: created perf domain
+[    1.311940] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.312623] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.313211] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.313750] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.324619] platform 27700000.npu: Adding to iommu group 2
+[    1.331782] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.333270] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.336251] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.339157] clk: Not disabling unused clocks
+[    1.339535] PM: genpd: Disabling unused power domains
+[    1.340118] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.349842] Waiting for root device /dev/mmcblk0p2...
+[    1.405370] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.539346] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 80
+[    1.540787] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.542236] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.545619]  mmcblk0: p1 p2
+[    1.748506] EXT4-fs (mmcblk0p2): mounted filesystem 680860a1-62d8-4bfd-bfcd-8e2981db87af r/w with ordered data mode. Quota mode: none.
+[    1.749665] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.750712] devtmpfs: mounted
+[    1.751194] VFS: Pivoted into new rootfs
+[    1.757320] Freeing unused kernel memory: 13248K
+[    1.757921] Run /sbin/init as init process
+[    1.850482] EXT4-fs (mmcblk0p2): re-mounted 680860a1-62d8-4bfd-bfcd-8e2981db87af.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.509382] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.510240] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.510986] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.511714] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.512623] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.513530] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.514457] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.515365] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.516334] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.517242] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.518152] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.519093] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.520042] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.520967] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+reset_autosuspend = Y
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+##### ROUND 310: a marginal for int4, from single task runs.       #####
+
+===== 2) THE CONTROL. int8 --nsweep. must give ~97 us/MB, ~170 us. =====
+  single task, K = 2048, 50 reps, M = 1   [int8]
+
+  N      weight MB   us           GB/s       
+  128    0.262       175.5        1.49       
+  256    0.524       177.0        2.96       
+  512    1.049       213.1        4.92       
+  1024   2.097       369.7        5.67       
+  2048   4.194       554.6        7.56       
+
+  fit over 5 points:  101.9 us/MB  (9.81 GB/s)   +  132.3 us that does not scale with the bytes
+
+===== 3) THE ROUND. int4 --nsweep. slope against int8's.           =====
+  single task, K = 2048, 50 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       136.8        0.96       
+  256    0.262       161.1        1.63       
+  512    0.524       1345.2       0.39       
+  1024   1.049       12047.6      0.09       
+  2048   2.097       18942.6      0.11       
+
+  fit over 5 points:  10407.1 us/MB  (0.10 GB/s)   +  -1930.7 us that does not scale with the bytes
+
+===== 4) correctness where the guard used to refuse. read wrote.   =====
+
+===== int4  K = 2048  N = 256     N/2 would be 128
+matmul M=1 K=2048 N=256 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 262144 of 524288 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x45000  coef 0x47000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 256 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 136 of 256 words written, 128 EXACT with the shift per element, 128 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8  g8 8/8  g9 8/8  g10 8/8  g11 8/8  g12 8/8  g13 8/8  g14 8/8  g15 8/8  g16 0/8  g17 0/8  g18 0/8  g19 0/8  g20 0/8  g21 0/8  g22 0/8  g23 0/8  g24 0/8  g25 0/8  g26 0/8  g27 0/8  g28 0/8  g29 0/8  g30 0/8  g31 0/8
+  row 0 mismatches: 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 ... 128 total
+
+===== int4  K = 2048  N = 512     N/2 would be 256
+matmul M=1 K=2048 N=512 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 524288 of 1048576 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x85000  coef 0x87000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 512 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 264 of 512 words written, 256 EXACT with the shift per element, 256 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8  g8 8/8  g9 8/8  g10 8/8  g11 8/8  g12 8/8  g13 8/8  g14 8/8  g15 8/8  g16 8/8  g17 8/8  g18 8/8  g19 8/8  g20 8/8  g21 8/8  g22 8/8  g23 8/8  g24 8/8  g25 8/8  g26 8/8  g27 8/8  g28 8/8  g29 8/8  g30 8/8  g31 8/8  g32 0/8  g33 0/8  g34 0/8  g35 0/8  g36 0/8  g37 0/8  g38 0/8  g39 0/8  g40 0/8  g41 0/8  g42 0/8  g43 0/8  g44 0/8  g45 0/8  g46 0/8  g47 0/8  g48 0/8  g49 0/8  g50 0/8  g51 0/8  g52 0/8  g53 0/8  g54 0/8  g55 0/8  g56 0/8  g57 0/8  g58 0/8  g59 0/8  g60 0/8  g61 0/8  g62 0/8  g63 0/8
+  row 0 mismatches: 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 ... 256 total
+
+===== int4  K = 2048  N = 1024     N/2 would be 512
+matmul M=1 K=2048 N=1024 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 1048576 of 2097152 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x105000  coef 0x107000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 1024 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 520 of 1024 words written, 512 EXACT with the shift per element, 512 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8  g8 8/8  g9 8/8  g10 8/8  g11 8/8  g12 8/8  g13 8/8  g14 8/8  g15 8/8  g16 8/8  g17 8/8  g18 8/8  g19 8/8  g20 8/8  g21 8/8  g22 8/8  g23 8/8  g24 8/8  g25 8/8  g26 8/8  g27 8/8  g28 8/8  g29 8/8  g30 8/8  g31 8/8  g32 8/8  g33 8/8  g34 8/8  g35 8/8  g36 8/8  g37 8/8  g38 8/8  g39 8/8  g40 8/8  g41 8/8  g42 8/8  g43 8/8  g44 8/8  g45 8/8  g46 8/8  g47 8/8  g48 8/8  g49 8/8  g50 8/8  g51 8/8  g52 8/8  g53 8/8  g54 8/8  g55 8/8  g56 8/8  g57 8/8  g58 8/8  g59 8/8  g60 8/8  g61 8/8  g62 8/8  g63 8/8  g64 0/8  g65 0/8  g66 0/8  g67 0/8  g68 0/8  g69 0/8  g70 0/8  g71 0/8  g72 0/8  g73 0/8  g74 0/8  g75 0/8  g76 0/8  g77 0/8  g78 0/8  g79 0/8  g80 0/8  g81 0/8  g82 0/8  g83 0/8  g84 0/8  g85 0/8  g86 0/8  g87 0/8  g88 0/8  g89 0/8  g90 0/8  g91 0/8  g92 0/8  g93 0/8  g94 0/8  g95 0/8  g96 0/8  g97 0/8  g98 0/8  g99 0/8  g100 0/8  g101 0/8  g102 0/8  g103 0/8  g104 0/8  g105 0/8  g106 0/8  g107 0/8  g108 0/8  g109 0/8  g110 0/8  g111 0/8  g112 0/8  g113 0/8  g114 0/8  g115 0/8  g116 0/8  g117 0/8  g118 0/8  g119 0/8  g120 0/8  g121 0/8  g122 0/8  g123 0/8  g124 0/8  g125 0/8  g126 0/8  g127 0/8
+  row 0 mismatches: 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529 530 531 532 533 534 535 ... 512 total
+
+===== int4  K = 2048  N = 2048     N/2 would be 1024
+matmul M=1 K=2048 N=2048 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 2097152 of 4194304 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x205000  coef 0x208000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 2048 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 1032 of 2048 words written, 1024 EXACT with the shift per element, 1024 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8  g8 8/8  g9 8/8  g10 8/8  g11 8/8  g12 8/8  g13 8/8  g14 8/8  g15 8/8  g16 8/8  g17 8/8  g18 8/8  g19 8/8  g20 8/8  g21 8/8  g22 8/8  g23 8/8  g24 8/8  g25 8/8  g26 8/8  g27 8/8  g28 8/8  g29 8/8  g30 8/8  g31 8/8  g32 8/8  g33 8/8  g34 8/8  g35 8/8  g36 8/8  g37 8/8  g38 8/8  g39 8/8  g40 8/8  g41 8/8  g42 8/8  g43 8/8  g44 8/8  g45 8/8  g46 8/8  g47 8/8  g48 8/8  g49 8/8  g50 8/8  g51 8/8  g52 8/8  g53 8/8  g54 8/8  g55 8/8  g56 8/8  g57 8/8  g58 8/8  g59 8/8  g60 8/8  g61 8/8  g62 8/8  g63 8/8  g64 8/8  g65 8/8  g66 8/8  g67 8/8  g68 8/8  g69 8/8  g70 8/8  g71 8/8  g72 8/8  g73 8/8  g74 8/8  g75 8/8  g76 8/8  g77 8/8  g78 8/8  g79 8/8  g80 8/8  g81 8/8  g82 8/8  g83 8/8  g84 8/8  g85 8/8  g86 8/8  g87 8/8  g88 8/8  g89 8/8  g90 8/8  g91 8/8  g92 8/8  g93 8/8  g94 8/8  g95 8/8  g96 8/8  g97 8/8  g98 8/8  g99 8/8  g100 8/8  g101 8/8  g102 8/8  g103 8/8  g104 8/8  g105 8/8  g106 8/8  g107 8/8  g108 8/8  g109 8/8  g110 8/8  g111 8/8  g112 8/8  g113 8/8  g114 8/8  g115 8/8  g116 8/8  g117 8/8  g118 8/8  g119 8/8  g120 8/8  g121 8/8  g122 8/8  g123 8/8  g124 8/8  g125 8/8  g126 8/8  g127 8/8  g128 0/8  g129 0/8  g130 0/8  g131 0/8  g132 0/8  g133 0/8  g134 0/8  g135 0/8  g136 0/8  g137 0/8  g138 0/8  g139 0/8  g140 0/8  g141 0/8  g142 0/8  g143 0/8  g144 0/8  g145 0/8  g146 0/8  g147 0/8  g148 0/8  g149 0/8  g150 0/8  g151 0/8  g152 0/8  g153 0/8  g154 0/8  g155 0/8  g156 0/8  g157 0/8  g158 0/8  g159 0/8  g160 0/8  g161 0/8  g162 0/8  g163 0/8  g164 0/8  g165 0/8  g166 0/8  g167 0/8  g168 0/8  g169 0/8  g170 0/8  g171 0/8  g172 0/8  g173 0/8  g174 0/8  g175 0/8  g176 0/8  g177 0/8  g178 0/8  g179 0/8  g180 0/8  g181 0/8  g182 0/8  g183 0/8  g184 0/8  g185 0/8  g186 0/8  g187 0/8  g188 0/8  g189 0/8  g190 0/8  g191 0/8  g192 0/8  g193 0/8  g194 0/8  g195 0/8  g196 0/8  g197 0/8  g198 0/8  g199 0/8  g200 0/8  g201 0/8  g202 0/8  g203 0/8  g204 0/8  g205 0/8  g206 0/8  g207 0/8  g208 0/8  g209 0/8  g210 0/8  g211 0/8  g212 0/8  g213 0/8  g214 0/8  g215 0/8  g216 0/8  g217 0/8  g218 0/8  g219 0/8  g220 0/8  g221 0/8  g222 0/8  g223 0/8  g224 0/8  g225 0/8  g226 0/8  g227 0/8  g228 0/8  g229 0/8  g230 0/8  g231 0/8  g232 0/8  g233 0/8  g234 0/8  g235 0/8  g236 0/8  g237 0/8  g238 0/8  g239 0/8  g240 0/8  g241 0/8  g242 0/8  g243 0/8  g244 0/8  g245 0/8  g246 0/8  g247 0/8  g248 0/8  g249 0/8  g250 0/8  g251 0/8  g252 0/8  g253 0/8  g254 0/8  g255 0/8
+  row 0 mismatches: 1024 1025 1026 1027 1028 1029 1030 1031 1032 1033 1034 1035 1036 1037 1038 1039 1040 1041 1042 1043 1044 1045 1046 1047 ... 1024 total
+
+===== the anchor again, before anything is allowed to hang         =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== 5) LAST, BECAUSE IT IS EXPECTED TO WEDGE: int4 chained.      =====
+=====    two tasks at N = 256, which is where 306 died.            =====
+bench M=1 K=2048 N=256 int4, 20 reps, 1.05 MOP, 0.26 MB of weights
+
+  tasks    us/submit    us/matmul    GB/s         GOP/s       
+  1        168.5        168.46       1.56         6.2         
+[   33.154435] rocket 27700000.npu: NPU job timed out
+[   33.155172] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.156100] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.157071] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  2        25579.8      12789.91     0.02         0.1         
+[   33.158018] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.159353] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.160314] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.161295] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.162140] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.163094] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.164010] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.164851] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.165689] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.166627] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.167542] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.168383] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.169222] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.170059] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.171000] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.171912] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.172824] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.173735] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.174677] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.175592] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.176431] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  4        896.7        224.18       1.17         4.7         
+[   33.177320] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.178703] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.179621] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.180531] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.181440] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.182355] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.183279] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.184191] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.185033] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.185872] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.186792] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.187709] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.188622] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.189531] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.190413] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.191335] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.192247] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.193154] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.193996] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.194920] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.195838] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  8        902.7        112.83       2.32         9.3         
+[   33.196818] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.198131] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.199058] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.199976] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.200887] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.201795] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.202719] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.203637] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.204550] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.730395] rocket 27700000.npu: NPU job timed out
+[   33.731148] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.732074] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.732988] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.733901] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.734872] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.735791] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.736703] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.737617] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.738492] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.739443] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  16       27111.4      1694.46      0.15         0.6         
+[   33.740472] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.741849] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.742885] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.743861] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.744778] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.745623] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.746639] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.747619] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.748534] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.749378] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.750221] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.751231] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.752148] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.752993] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.753835] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.754841] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.755774] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.756620] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.757463] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.758342] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.759264] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  32       916.7        28.65        9.15         36.6        
+[   33.760232] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.761629] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.762630] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.763548] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.764392] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.765278] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.766122] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.767136] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.768057] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.768902] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.769746] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.770755] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.771674] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.772519] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.773365] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.774207] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.775215] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.776065] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.776911] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.777756] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.778660] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  64       897.6        14.03        18.69        74.8        
+[   33.779638] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.781186] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.782042] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.783065] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.784051] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.784905] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.785755] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.786878] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.787808] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.788728] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.789648] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.790724] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.791649] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.792509] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.793358] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.794206] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.795223] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.796144] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.796991] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.797838] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[   33.798850] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+  128      939.4        7.34         35.72        142.9       
+
+  marginal cost of one task: 0.7 us  (401.13 GB/s)   [from 64 and 128 tasks]
+  fixed cost of a submit:    167.8 us
+
+  cpu, one thread, same matmul: 4002.9 us   (sink 23508)
+  !! POISON. This arm is VOID.
+  !! health OK, the block recovered, continuing
+
+===== control first, then the two slopes. Nothing else decides it. =====
+
+RK3576 NPU bringup
+rock4d login: 

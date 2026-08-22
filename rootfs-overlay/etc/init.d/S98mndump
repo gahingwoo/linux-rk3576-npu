@@ -2,93 +2,100 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 310. int4's MARGINAL COST, WHICH HAS NEVER BEEN MEASURED.
+# 2026-08-22 round 311. CAN AN int8 JOB HAND BACK THE RAW ACCUMULATOR?
 #
-# ⚠⚠ ROUND 306 PARKED int4 ON A MEASUREMENT THAT DOES NOT SUPPORT IT, AND THE
-# EVIDENCE IS IN 306's OWN LOG. Both int4 bench tables died:
+# int4 is closed. Round 310 measured why, and it was not bandwidth: int4
+# computes CORRECTLY at every N up to 2048 (half width, exact = N/2, which
+# nobody knew because a guard of mine had been refusing N >= 512 for four
+# rounds) and is 9 to 22 percent FASTER than int8 at N <= 256 -- and then falls
+# off a cliff. K = 2048, single task, healthy block, and entry 4 of that round
+# proves these same shapes compute right:
 #
-#   int8 K=2048 N=256              int4 K=2048 N=256
-#     1   224.2                      1   222.7
-#     2   246.8                      [   33.186739] NPU job timed out
-#     4   419.1                      2   10904.3      <- a timeout printed as
-#     ...                            [   33.762739] NPU job timed out    a number
-#     marginal 57.4 us (9.14 GB/s)
-#     fixed    166.8 us
+#     N     int8      int4
+#     128   175.5     136.8      int4 22% faster
+#     256   177.0     161.1      int4  9% faster
+#     512   213.1    1345.2      6.3x slower
+#     1024  369.7   12047.6     32.6x slower
+#     2048  554.6   18942.6     34.2x slower
 #
-# So int4 has ONE point, at one task, where 166.8 of the 224 microseconds is
-# fixed submit cost. Halving the weight bytes is worth 28 us there, or 12% of
-# the number, and the conclusion drawn was "half the bytes, the same time".
-#
-# ⚠ THAT SINGLE POINT CANNOT TELL THE TWO ANSWERS APART. Both of these fit it:
-#
-#   int4 slope EQUALS int8's        166.8 + 57.4 = 224 us     the parking
-#   int4 slope is HALF int8's       194   + 28.7 = 223 us     a higher intercept
-#
-# and nothing has ever measured int4's intercept. A submit's fixed cost is not
-# obliged to be the same on a path with its own DPU and RDMA configuration.
-#
-# TWO OTHER THINGS FROM 306 THAT WERE MY OWN AND NOT THE HARDWARE'S:
-#   - N >= 512 came back "exact 0", which was the ngrp > 32 guard REFUSING.
-#     The guard went to 256 groups in the parking commit itself and HAS NEVER
-#     BEEN ON THE BOARD. Checked on the host today at 36 shapes, K 64..2048 by
-#     N 16..2048: the packer writes exactly charsiu_weight_bytes at every one,
-#     no overrun, no refusal.
-#   - the bench wrote every chained int4 task's output over the one before it
-#     (stride m*n, element four bytes). Fixed. Found by inspection, and it is
-#     NOT the hang: the allocation always had the factor of four.
+# So int4 cannot make a big job: a K=2048 N=2048 projection needs eight N=256
+# jobs, 1288 us, against int8's one at 554.6. 2.3x slower. Parked, with the
+# discriminating experiment for the cliff written down for whoever returns.
 #
 # ---------------------------------------------------------------------------
-# THE INSTRUMENT: A MARGINAL WITHOUT CHAINING
+# SO int8 IT IS, AND int8 HAS ONE THING IN THE WAY
 # ---------------------------------------------------------------------------
 #
-# int4 chaining hangs from TWO tasks up, so the difference-of-task-counts method
-# can never give it a marginal. --nsweep gets the same two constants from single
-# task runs: hold K at 2048, walk N through 128 256 512 1024 2048, and fit
-# microseconds against weight megabytes. The SLOPE is the marginal cost per byte
-# and the INTERCEPT is everything that does not scale with them.
+# charsiu's int8 path requantises through the coefficient buffer and writes a
+# BYTE. A coefficient buffer holds ONE set of numbers for the whole run, so that
+# output scale cannot follow the token.
+#
+# ⚠ MEASURED ON THE HOST, in the CPU model of this exact format, so it is not a
+# story about outliers. Per tensor, the smallest and largest |y| across calls:
+#
+#     blk.1.ffn_down     0.132  ->  392.429    ratio 2971
+#     blk.0.ffn_down     0.120  ->   20.588    ratio  171
+#     blk.15.ffn_down    1.651  ->  246.019    ratio  149
+#
+# A scale sized for the largest vector leaves a typical one 127/2971 of a level,
+# which is zero. And the model says so: with a per call optimal output scale
+# Llama-3.2-1B still writes "Paris. The Eiffel Tower is a famous landmark...";
+# with a FROZEN scale it writes "a country", at every calibration length tried
+# from 8 calls to 512.
+#
+# **So a projection cannot leave the NPU as a byte, and step 2 needs the raw
+# accumulator.** The w4a16 path already writes FOUR bytes an element under an
+# identity requant. This round asks whether that output stage works with int8
+# WEIGHTS, one register at a time.
+#
+#   CHARSIU_WIDE8=<mask>   bit 0 0x4010   bit 1 0x4030   bit 2 0x4038
+#                          bit 3 0x4044   bit 4 0x4050   bit 5 0x40ac/b0/b4
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) READ THE FIT LINE, NOT ANY SINGLE ROW. Every row still has the fixed cost
-#    in it. That is the mistake this whole round exists to correct.
+# 1) ENTRY 2 IS THE CONTROL AND IT MUST PASS FIRST. No mask at all, so this is
+#    today's int8 job with a 4x output buffer. It must read
+#      BYTES  64 of 64 exact      WORDS  0 of 64
+#      and "0 of 64 elements have a non sentinel byte above the low one"
+#    because a one byte output leaves the top three bytes of every word at the
+#    0xa5 sentinel. If the control does not look like that, the reader is wrong
+#    and nothing below it can be read.
 #
-# 2) ENTRY 2 IS THE CONTROL AND IT MUST PASS FIRST. int8's fit has to reproduce
-#    what the chained sweep already measured: about 97 us/MB, which is 10.3
-#    GB/s, and an intercept near 170 us. If it does not, the instrument is wrong
-#    and int4's fit means nothing. Do not read entry 3 until entry 2 checks out.
+# 2) THEN THE SWEEP. For each single bit and then the whole bundle, the two
+#    numbers that matter are:
+#      "elements with a non sentinel byte ABOVE the low one"  -> the WIDTH
+#      "reading as WORDS ... exact"                           -> and correct
+#    A register that widens the output but gets the arithmetic wrong is still
+#    the answer to which register carries the width, and is worth more than one
+#    that changes nothing.
 #
-# 3) THEN ENTRY 3. int4's slope against int8's is the whole round:
-#      about HALF   -> int4 really is 2x per byte, and step 2 should target int4
-#                      rather than int8. On a 1B model that is 16.7 tok/s
-#                      against int8's 8.4, and the board's CPU does 5.53.
-#      about EQUAL  -> the parking stands, and this time it is measured.
-#      in between   -> report the number, do not round it to a story.
-#
-# 4) ENTRY 4 is correctness at the N values the guard used to refuse. A timing
-#    for a shape that computes the wrong answer is not a timing of anything.
-#    Read `wrote`, not `exact`: a half width job that is CORRECT is a different
-#    thing from a broken layout, and only `wrote` separates them.
+# 3) A run that writes NOTHING (0 bytes off the sentinel) is a dead job, not a
+#    narrow one. Say so rather than reading it as "no change".
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# **int4's SLOPE IS ABOUT HALF int8's, AND ITS INTERCEPT IS HIGHER.** That is
-# the reading of 306's single point that nobody tested. If instead the slopes
-# match and the intercepts match, 306 was right for the right reason and int4
-# is closed properly.
+# **0x4050 (bit 4) CARRIES THE WIDTH.** int8 writes 0x80011111 and w4a16 writes
+# 0x00023333; the nibble runs 1111 against 3333 look like a per byte enable and
+# the 8 in the top nibble like a mode. Round 260 already swept 0x4050 field by
+# field on the int8 path, so it is the register with the most reason to be it.
 #
-# I also expect entry 5's chaining probe to still hang. It goes LAST for that
-# reason: a wedged block voids everything after it, and everything above it is
-# the round.
+# I also expect the identity requant alone (bit 5) NOT to widen anything: an
+# identity requant behind an eight bit output stage just means the byte holds
+# the low eight bits of the accumulator, which is exactly what round 178's note
+# in job.c already warns about.
+#
+# ⚠ THE WHOLE BUNDLE GOES LAST among the masks, because if it wedges, the single
+# bit results above it are the round.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
+WD=/opt/charsiu/charsiu_wide
 MM=/opt/charsiu/charsiu_matmul
-BE=/opt/charsiu/charsiu_bench
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -124,55 +131,54 @@ c() {
 	return 0
 }
 
-M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
-
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-	if [ -w /sys/module/rocket/parameters/reset_autosuspend ]; then
+	[ -w /sys/module/rocket/parameters/reset_autosuspend ] && \
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
-		log "reset_autosuspend = $(cat /sys/module/rocket/parameters/reset_autosuspend)"
-	else
-		log "!! reset_autosuspend NOT WRITABLE. A timeout will kill the round."
-	fi
 
 	log ""
 	log "===== 1) the anchor                                                ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 310: a marginal for int4, from single task runs.       #####"
+	log "##### ROUND 311: which register makes an int8 output four bytes.   #####"
 
 	log ""
-	log "===== 2) THE CONTROL. int8 --nsweep. must give ~97 us/MB, ~170 us. ====="
-	c X=1 X=1 $BE --nsweep 2048 50
+	log "===== 2) THE CONTROL. no mask. bytes 64/64, words 0/64, no high    ====="
+	log "=====    bytes touched. If this is not what it says, stop reading.  ====="
+	c X=1 X=1 $WD 1 64 64
 
 	log ""
-	log "===== 3) THE ROUND. int4 --nsweep. slope against int8's.           ====="
-	c "CHARSIU_W4=1" X=1 $BE --nsweep 2048 50
-
-	log ""
-	log "===== 4) correctness where the guard used to refuse. read wrote.   ====="
-	for NN in 256 512 1024 2048
+	log "===== 3) one register at a time                                    ====="
+	for B in 1 2 4 8 16 32
 	do
 		log ""
-		log "===== int4  K = 2048  N = $NN     N/2 would be $((NN / 2))"
-		c "$M4" X=1 $MM 1 2048 $NN
+		log "===== CHARSIU_WIDE8=$B"
+		c "CHARSIU_WIDE8=$B" X=1 $WD 1 64 64
 	done
 
 	log ""
-	log "===== the anchor again, before anything is allowed to hang         ====="
+	log "===== 4) the identity requant WITH the width candidate             ====="
+	log "=====    0x4050 and the requant together, which is what w4a16 does  ====="
+	c "CHARSIU_WIDE8=48" X=1 $WD 1 64 64
+
+	log ""
+	log "===== the anchor again, before the bundle is allowed to wedge       ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 5) LAST, BECAUSE IT IS EXPECTED TO WEDGE: int4 chained.      ====="
-	log "=====    two tasks at N = 256, which is where 306 died.            ====="
-	c "CHARSIU_W4=1" X=1 $BE 1 2048 256 20
+	log "===== 5) LAST: the whole bundle                                    ====="
+	c "CHARSIU_WIDE8=63" X=1 $WD 1 64 64
 
 	log ""
-	log "===== control first, then the two slopes. Nothing else decides it. ====="
+	log "===== 6) and the int8 regression, so the tree is still sane        ====="
+	c X=1 X=1 $MM 1 64 64
+
+	log ""
+	log "===== control, then which bit widened it, then whether it is right ====="
 	sync
 }
 case "$1" in
