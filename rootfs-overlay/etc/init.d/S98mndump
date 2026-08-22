@@ -2,61 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 333. THE PAIR IS (2r, 2r+1), AND IT WAS READ NOT GUESSED.
+# 2026-08-22 round 334. THE PACKING IS RIGHT. THE WRITE COUNT IS SHORT.
 #
-# ROUND 332 ASKED THE ONE QUESTION AND GOT A CLEAN ANSWER. --kpair at the
-# phantom settings, K=64 N=64, printing the k each byte multiplies with:
+# 🔑 ROUND 333 GOT int4 TO FULL WIDTH FOR THE FIRST TIME, at one shape:
 #
-#   w0    byte 0 -> k 0,1     byte 4 -> k 8,9     byte 256 -> k 32,33
-#   w1    byte 8 -> k 16,17                       byte 264 -> k 48,49
-#   w64   byte 1024 -> k 0,1                      byte 1280 -> k 32,33
+#   N=64  K=64   paired packing, NO halfk, against the FULL K reference
+#                -> **64 EXACT of 64**
 #
-# ⚠ **w64 carries the SAME k as w0.** The phantom word is a duplicate of one
-# half, not the other half, so round 330's out[c] + out[c+N] was two copies of
-# the same partial sum and could never have worked.
+# That is not the old 64 of 64. The old one scored against a reference over half
+# the k because halfk had zeroed the rest; this one uses every k and the
+# hardware still gets every channel exactly right. The pair (2r, 2r+1) read out
+# of --kpair in round 332 is the real one.
 #
-# 🔑 **But w0 and w1 TOGETHER cover all 64 k.** That is the halfk parity rule
-# itself, seen from the hardware's side: an even word takes k 0..15 and 32..47,
-# an odd word takes 16..31 and 48..63. So a real channel is the PAIR (2r, 2r+1),
-# and with 0x3020 = 2N-1 there are 2N words -- N real channels, each with the
-# whole of K, and N*K nibbles is exactly the N*K/2 byte buffer. Nothing is
-# padded and nothing is wasted.
+# ⚠ AND THE BIGGER SHAPES STOPPED AT EXACTLY HALF, for a reason the log states
+# rather than one I have to infer:
 #
-#   k = 16*(w mod 2) + 32*j + 2*byte_in_slot + nibble
+#   N=256   256 words written, highest index 255   (512 are needed)  128 of 256
+#   N=512   512 words written, highest index 511  (1024 are needed)  256 of 512
+#   N=64    128 words written                                  ->    64 of 64
 #
-# with j indexing the slots the measured map gives word w. Every term of that
-# came off the board: the slots from --map at 1376 points, the k from --kpair
-# this round, the intra-slot order from rounds 265-288 and reproduced by 332's
-# own control.
+# **Channels 128..255 live in words 256..511 and those words were never
+# written.** The packing put their weights in the buffer and the hardware never
+# emitted the second half of the sum. Nothing about the layout is wrong here --
+# the write count is.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS ROUND CHANGES
+# ---------------------------------------------------------------------------
+#
+# `0x3020` was set to 2N-1 at all three shapes and it was enough at N=64 and not
+# at N=256. ⚠ **The DPU carries the channel count too and I did not touch it**:
+#
+#   0x402c   n - 1              0xff at N=256
+#   0x4030   (n - 1) << 16      0x00ff0310
+#
+# So this round declares 2N to the DPU as well, one register at a time, with the
+# write count as the acceptance: **512 words written, highest index 511** at
+# N=256, and then 256 EXACT of 256 follows or the packing was not what 333 says.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2a IS THE CONTROL, today's packing: 64 of 64 at N=64 and the
-#    128 of 256 that twenty rounds have printed. Unchanged means the build is
-#    what I think it is.
-# 2) ENTRY 2b IS THE ROUND: paired packing, no halfk, 0x40b8 = 3 and
-#    0x3020 = 2N-1, scoring out[2r] + out[2r+1].
-#    **256 EXACT of 256 is int4 at full width for the first time.**
-# 3) ⚠ THE HALFK ZEROING IS OFF and must be: the paired packing uses every k,
-#    so the reference is the full dot product. If it needs halfk to score, it
-#    has not done what it claims.
-# 4) THREE SHAPES, because a packing that works at one is a coincidence.
-# 5) ENTRY 3 IS THE PRICE, if 2b lands: the bench at the same settings, on
-#    medians with the stall count. int4 has to beat 9.3 GB/s of int8 bytes with
-#    half as many, so anything above 4.7 GB/s is a real win and below it is not.
+# 1) ENTRY 2b MUST REPRODUCE 64 of 64 at N=64. That is now the control for the
+#    packing itself, and it is a stronger one than 2a because it runs without
+#    halfk against the full reference.
+# 2) THE `placement: N words written` LINE IS THE ROUND, before the exact count.
+#    If it still says 256 at N=256, the register that caps the write is not any
+#    of the three tried and the exact count cannot move.
+# 3) ⚠ ONE ARM POISONED IN 333 (the bench at 0x3020 = 0x3ff) and the block
+#    recovered. The bench is dropped this round; the price can wait until the
+#    arithmetic is right.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# ⚠ Six wrong predictions on int4, so the record says discount this. What is
-# different: nothing in the packing is assumed any more. The slots were
-# measured, the k were measured this round, the intra-slot order was measured
-# and re-confirmed by 332's control, and the arithmetic closes exactly with no
-# spare bytes. If 2b still fails, the failure is in something none of those
-# three probes can see, and int4 stops there.
+# The DPU's own channel count is the cap. It is the only thing left that carries
+# n and was not doubled, the failure is exactly a factor of two in the WRITE and
+# not in the values, and the shape where it worked is the shape where the
+# default 0x3020 happened to already exceed n.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -162,7 +167,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 333: a channel is the pair (2r, 2r+1)                 #####"
+	log "##### ROUND 334: the packing is right, the write count is short   #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -175,23 +180,21 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) THE ROUND: a channel is the pair (2r, 2r+1)               ====="
-	log "===== 2a CONTROL, today's packing: 64 of 64 and 128 of 256"
-	c "$M4" $MM 1 64 64
-	c "$M4" $MM 1 2048 256
-	log "===== 2b PAIRED packing, no halfk, 0x40b8=3 and 0x3020=2N-1"
+	log "===== 2) declare 2N to the DPU as well, one register at a time.    ====="
+	log "===== 2a the packing's own control: N=64 must stay 64 of 64"
 	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	log "===== 2b N=256 with 0x3020 only, which must reproduce 128 of 256"
 	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" $MM 1 1024 512
-	log "===== 2c the same without the register pair, which must be WORSE"
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 2048 256
-
-	log ""
-	log "===== 3) and the price, if it landed: medians and stalls           ====="
-	log "=====    int8 fits 9.3 GB/s, so int4 needs 4.7 to be worth it      ====="
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" "$CE" $BE --nsweep 2048 50
-	c "$CE" $BE --nsweep 2048 50
+	log "===== 2c + DPU 0x402c = 2N-1"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff,0x402c=0x1ff" $MM 1 2048 256
+	log "===== 2d + DPU 0x4030 high half = 2N-1"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff,0x402c=0x1ff,0x4030=0x01ff0310" $MM 1 2048 256
+	log "===== 2e + a coefficient buffer for 2N channels"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_COEF_ELEMS=65536" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff,0x402c=0x1ff,0x4030=0x01ff0310" $MM 1 2048 256
+	log "===== 2f the same full set at N=512 K=1024"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_COEF_ELEMS=65536" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff,0x402c=0x3ff,0x4030=0x03ff0310" $MM 1 1024 512
+	log "===== 2g and at a projection's shape, N=1024 K=2048"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_COEF_ELEMS=65536" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7ff,0x402c=0x7ff,0x4030=0x07ff0310" $MM 1 2048 1024
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -202,7 +205,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2a is the control; 2b is the round; 256 of 256 is full width. ====="
+	log "===== read \"words written\" first; 512 at N=256 is the round.       ====="
 	sync
 }
 case "$1" in
