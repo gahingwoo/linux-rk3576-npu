@@ -2,87 +2,84 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 313. A PROJECTION ON THE NPU, INSIDE THE DECODE LOOP.
+# 2026-08-22 round 314. THE FEED FORWARD, IN SHAPES THAT HAVE BEEN MEASURED.
 #
-# Round 312 finished the output stage. 0x40b8 = 3 was the last register between
-# charsiu and the vendor's own w4a16 block, found by diffing the two offline,
-# and the board swept it into a reading rather than a guess:
+# ROUND 313 WORKED, AND THEN COST A POWER CYCLE. Three rungs of its ladder
+# produced the reference text CHARACTER FOR CHARACTER against the CPU:
 #
-#     0x40b8      0    1    2    3    4    7   15
-#     bytes     112  160  208  256  208  128   64
-#     exact       4    8   12   64   16   16   16
+#     blk.0.attn_q on the NPU          identical
+#     all sixteen attn_q               identical
+#     EVERY attention projection       identical      <- 64 tensors
 #
-# A peak on both columns, not a trend. And at a projection's shape, M=1 K=2048
-# N=1024: **4096 of 4096 bytes written, 1024 of 1024 elements byte exact against
-# the accumulator.** So the hardware hands back the complete raw int32 sum.
+# So a Llama-3.2-1B decode loop with all 64 attention projections computed on
+# this NPU produces the same tokens as the CPU model of the same arithmetic.
+# That is the substitution working, and it is the point of having built the CPU
+# loop first.
 #
-# ⚠ It did NOT undo int4's half width. int4 with 0x40b8=3 goes from 136 words
-# written to 256 -- so int4's write geometry was short too -- but its exact
-# count falls from 128 to 16 and the survivors are g0 and g30. The placement
-# moved. int4 stays closed; that is a lead for whoever reopens it, not a result.
+# ⚠ THEN THE ffn RUNG WEDGED THE BOARD AND KEPT WEDGING IT. "NPU job timed out"
+# every 1.86 seconds, 61 times, 539 IOMMU errors, until the power was pulled.
 #
-# ---------------------------------------------------------------------------
-# WHAT IS NEW, AND WHY THE ACCEPTANCE TEST IS NOT "COHERENT TEXT"
-# ---------------------------------------------------------------------------
+# TWO THINGS WERE WRONG AND BOTH ARE FIXED.
 #
-# charsiu_run can now put a projection on the hardware. The substitution is
-# exact rather than approximate, because the CPU already computes the same sum:
+# 1) THE SHAPE. Attention is N = 2048 or 512 with K = 2048. The feed forward is
+#    N = 8192 (gate, up) and K = 8192 (down), and the largest shape ANY of this
+#    has been measured at is round 312's N = 1024, K = 2048. ffn_gate asks for
+#    16.8 MB of weights in one job against the 2.1 MB that is known to work.
 #
-#     acc[n] = sum_k a_q[k] * w_q[n][k]        <- the CPU, and now the DPU
-#     y[n]   = acc[n] * a_scale * w_scale[n]   <- always the CPU
+#    So a projection is now CUT INTO SLICES of a measured shape, N at 1024 and
+#    K at 2048 by default. The output stage is what makes that exact rather than
+#    approximate: acc_out returns a raw int32 sum, so partial sums over a split
+#    K add with no rounding at all.
 #
-# So the two runs must produce **the same tokens, character for character**.
-# Not similar. Not coherent. The same. Anything else is a defect with a known
-# reference to bisect against, which is the whole reason the CPU loop was built
-# first.
+# 2) THE HANG. A wedged block answers every submit with a driver side timeout
+#    and the ioctl STILL RETURNS SUCCESS, so charsiu never noticed. The only
+#    reliable detector is the clock. Three slow submits (over 100 ms) now retire
+#    the hardware path: it prints the shape that stopped answering and every
+#    matvec after it runs on the CPU, so the run finishes and reports instead of
+#    repeating a timeout until someone pulls the power.
 #
-#   CHARSIU_NPU=1        open the device and route what fits
-#   CHARSIU_NPU_ONLY=S   route only tensors whose name contains S
-#   CHARSIU_NPU_MAXN=N   skip anything wider (default 8192, which leaves the
-#                        128256 wide output head on the CPU)
+#    And every rung below is wrapped in a hard `timeout`, because a guard inside
+#    the program cannot help if the program is not the thing that is stuck.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE REFERENCE, on the CPU, and every line below it is diffed
-#    against this one and nothing else:
+# 1) ENTRY 2 IS THE REFERENCE, on the CPU. Every rung is diffed against this and
+#    nothing else:
 #
 #      Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of
 #      the most famous landmarks in the world. It was built for
 #
-# 2) ENTRY 3 IS THE ROUND, and it is a LADDER. One projection, then all sixteen
-#    of one kind, then attention, then the feed forward, then everything.
-#    **Read the FIRST rung that differs.** A ladder exists so that a
-#    disagreement names one tensor rather than a hundred and thirteen, and
-#    reading only the last rung throws that away.
+# 2) THE LADDER AGAIN, AND READ THE FIRST RUNG THAT DIFFERS. Note that the
+#    attention rungs are NOT a repeat: attn_q is two slices now where it was one
+#    job, so 313's result does not carry over and rung 1 is a real test.
 #
-# 3) Each rung prints "on the NPU" or "on the CPU" per tensor when verbose. If a
-#    rung says "on the CPU" for everything, no buffer could be allocated and the
-#    rung is a CPU run wearing an NPU label. Check that before reading its text.
+# 3) A rung that prints "the NPU stopped answering at K=.. N=.." DEGRADED. Its
+#    text came partly from the CPU and says nothing about the hardware. The
+#    SHAPE in that line is the result of that rung.
 #
-# 4) TOKENS PER SECOND ARE NOT THE POINT OF THIS ROUND. There is one submit per
-#    projection and no chaining, so 112 submits a token at about 200 to 550 us
-#    each is the floor. Record it; do not compare it to 5.53 yet.
+# 4) TOKENS PER SECOND ARE STILL NOT THE POINT. Slicing multiplies the submits:
+#    about 30 a layer, 480 a token, none of them chained. Record it.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) EVERY RUNG PRODUCES THE REFERENCE TEXT EXACTLY. The arithmetic is the same
-#    integer sum on both sides and round 312 measured 1024 of 1024 elements
-#    exact at this very shape. If a rung diverges, the likeliest causes in
-#    order: the input packing (a_q + 128 through charsiu_pack_input), the
-#    coefficient buffer being read when acc_out should bypass it, and the
-#    output surface at an N that is not 1024.
+# A) EVERY RUNG PRODUCES THE REFERENCE TEXT, ffn INCLUDED. Every slice is
+#    N <= 1024 and K <= 2048, and round 312 measured 1024 of 1024 elements exact
+#    at exactly that shape.
 #
-# B) THE FULL RUNG WILL ALLOCATE 973 MB OF WEIGHT BUFFERS ACROSS 112 BOs. That
-#    has never been done on this driver. If it fails it fails gracefully -- the
-#    tensor stays on the CPU and says so -- so the failure mode is a quiet
-#    downgrade rather than a crash, and entry 3's per tensor lines are how it
-#    is caught.
+# B) THE FULL RUNG WANTS 480 SLICES AND 1440 BUFFERS, which is far more than
+#    this driver has ever been asked for. If it runs out, it degrades quietly --
+#    the tensor stays on the CPU and says so -- so the per tensor lines are how
+#    that is caught, not the text.
 #
-# C) 1 to 4 tokens a second, dominated by 112 unchained submits.
+# C) ENTRY 5 IS THE CONTROL FOR THE NEW GUARD AND IT IS SUPPOSED TO FAIL. It
+#    sets the slice limits back to the whole tensor, which is what wedged 313.
+#    It must print "the NPU stopped answering", finish, and leave the block
+#    healthy enough for the anchor after it. If it hangs instead, the guard does
+#    not work and that is the most important line in the log.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -90,6 +87,7 @@ WORK=/usr/lib/libteflon-working.so
 RUN=/opt/charsiu/charsiu_run
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
+TMO="busybox timeout 420"
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -116,7 +114,7 @@ w() {
 	return 0
 }
 
-# $1 label, $2.. env
+# $1 label, $2.. env.  Hard timeout outside the program as well as inside it.
 rung() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
 	lbl="$1"; shift
@@ -124,8 +122,10 @@ rung() {
 	log ""
 	log "  -- $lbl"
 	sleep 1
-	env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 -t 4 \
-		> "$C" 2>&1
+	$TMO env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 \
+		-t 4 > "$C" 2>&1
+	rc=$?
+	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the hard timeout)"
 	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
 	return 0
 }
@@ -143,22 +143,17 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 313: a projection on the NPU, in the decode loop.      #####"
+	log "##### ROUND 314: the feed forward, cut into measured shapes.       #####"
 
 	log ""
 	log "===== 2) THE REFERENCE. the same arithmetic, on the CPU.           ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 3) THE LADDER. read the FIRST rung that differs.             ====="
+	log "===== 3) THE LADDER. attention first, because slicing changed it.  ====="
 
 	log ""
-	log "===== one projection: blk.0.attn_q"
-	rung "blk.0.attn_q on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
-		CHARSIU_NPU_ONLY=blk.0.attn_q CHARSIU_NPU_VERBOSE=1
-
-	log ""
-	log "===== all sixteen attn_q"
+	log "===== attn_q, now two slices each"
 	rung "attn_q on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
 		CHARSIU_NPU_ONLY=attn_q
 
@@ -166,6 +161,16 @@ start() {
 	log "===== every attention projection"
 	rung "attn on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
 		CHARSIU_NPU_ONLY=attn
+
+	log ""
+	log "===== THE ONE THAT WEDGED 313: ffn_gate alone, N=8192 in 8 slices"
+	rung "ffn_gate on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=ffn_gate
+
+	log ""
+	log "===== ffn_down alone, K=8192 in 4 slices summed on the CPU"
+	rung "ffn_down on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=ffn_down
 
 	log ""
 	log "===== every feed forward projection"
@@ -177,19 +182,26 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== everything under n = 8192, which is 112 tensors"
+	log "===== everything under n = 8192: 112 tensors, about 480 slices"
 	rung "all projections on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1
-
-	log ""
-	log "===== 4) the plain CPU loop, so the tree is still sane             ====="
-	rung "plain CPU" X=1
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== the reference, then the first rung that differs from it.     ====="
+	log "===== 5) THE CONTROL FOR THE GUARD. this is SUPPOSED to fail.      ====="
+	log "=====    slice limits back to whole tensors, which is what wedged   ====="
+	log "=====    313. It must SAY it stopped and FINISH, not hang.          ====="
+	rung "no slicing, the 313 shape" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=ffn_gate CHARSIU_NPU_NMAX=8192 CHARSIU_NPU_KMAX=8192
+
+	log ""
+	log "===== the anchor, after the deliberate wedge                        ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== reference, then the first rung that differs, then the guard. ====="
 	sync
 }
 case "$1" in

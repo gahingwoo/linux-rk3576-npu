@@ -1,0 +1,1304 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.9%, RX DQS Vref:27.8%, TX Vref:19.0%,21.0%
+DQ roc:
+p4 n0, p6 n0, p2 n0, p5 n0, p1 n0, p6 n0, p0 n1, p2 n0, p1 n1, 
+p7 n0, p3 n6, p7 n0, p2 n0, p1 n0, p5 n0, p0 n2, p6 n0, p0 n0, 
+
+DQ rds:l0 h1 l0 h1 l0 h1 l0 l0, l0 l0 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:29.6%, TX Vref:19.0%,21.0%
+DQ roc:
+p4 n0, p7 n0, p5 n0, p6 n0, p5 n0, p5 n0, p2 n7, p2 n0, p6 n0, 
+p7 n0, p5 n0, p4 n0, p2 n0, p5 n0, p3 n0, p1 n0, p0 n3, p5 n0, 
+
+DQ rds:h1 h1 h1 l0 l0 h2 l0 l0, h1 l0 h2 h1 l0 l0 h2 l0 
+DQS roc: p0, n0, p3, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004806] Console: colour dummy device 80x25
+[    0.005334] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006292] pid_max: default: 32768 minimum: 301
+[    0.007184] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007935] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009132] VFS: Finished mounting rootfs on nullfs
+[    0.012557] rcu: Hierarchical SRCU implementation.
+[    0.013061] rcu:     Max phase no-delay instances is 1000.
+[    0.013854] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021435] EFI services will not be available.
+[    0.022525] smp: Bringing up secondary CPUs ...
+[    0.023677] Detected VIPT I-cache on CPU1
+[    0.023795] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024674] Detected VIPT I-cache on CPU2
+[    0.024754] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025589] Detected VIPT I-cache on CPU3
+[    0.025669] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026571] CPU features: detected: Spectre-v3a
+[    0.026590] CPU features: detected: Spectre-BHB
+[    0.026597] CPU features: detected: ARM erratum 1742098
+[    0.026605] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026611] Detected PIPT I-cache on CPU4
+[    0.026694] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027505] Detected PIPT I-cache on CPU5
+[    0.027569] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028352] Detected PIPT I-cache on CPU6
+[    0.028419] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029208] Detected PIPT I-cache on CPU7
+[    0.029274] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029405] smp: Brought up 1 node, 8 CPUs
+[    0.038531] SMP: Total of 8 processors activated.
+[    0.038986] CPU: All CPU(s) started at EL2
+[    0.039400] CPU features: detected: 32-bit EL0 Support
+[    0.039874] CPU features: detected: 32-bit EL1 Support
+[    0.040352] CPU features: detected: CRC32 instructions
+[    0.040838] CPU features: detected: PMUv3
+[    0.041288] alternatives: applying system-wide alternatives
+[    0.044984] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050371] devtmpfs: initialized
+[    0.067171] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.067945] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069084] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069672] 0 pages in range for non-PLT usage
+[    0.069677] 511152 pages in range for PLT usage
+[    0.076839] DMI: not present or invalid.
+[    0.081279] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.082922] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.084041] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.084828] audit: initializing netlink subsys (disabled)
+[    0.085495] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.090676] thermal_sys: Registered thermal governor 'step_wise'
+[    0.090686] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.091339] cpuidle: using governor menu
+[    0.092608] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.093441] ASID allocator initialised with 32768 entries
+[    0.098635] Serial: AMBA PL011 UART driver
+[    0.107552] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.108899] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.110181] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.111400] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.112629] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.122960] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.123670] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.124719] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.126702] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.182383] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.183017] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.193819] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.194452] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.195031] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.195654] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.196230] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.196866] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.197444] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.198067] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.201307] ACPI: Interpreter disabled.
+[    0.212117] iommu: Default domain type: Translated
+[    0.212566] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.213761] SCSI subsystem initialized
+[    0.214515] usbcore: registered new interface driver usbfs
+[    0.215064] usbcore: registered new interface driver hub
+[    0.215584] usbcore: registered new device driver usb
+[    0.218676] pps_core: LinuxPPS API ver. 1 registered
+[    0.219138] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.219986] PTP clock support registered
+[    0.220630] EDAC MC: Ver: 3.0.0
+[    0.221581] scmi_core: SCMI protocol bus registered
+[    0.224450] FPGA manager framework
+[    0.225977] vgaarb: loaded
+[    0.226772] clocksource: Switched to clocksource arch_sys_counter
+[    0.227650] VFS: Disk quotas dquot_6.6.0
+[    0.228032] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.228929] pnp: PnP ACPI: disabled
+[    0.236603] NET: Registered PF_INET protocol family
+[    0.237527] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.250521] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.251472] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.252200] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.253928] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.256487] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.257206] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.258500] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.259505] RPC: Registered named UNIX socket transport module.
+[    0.260055] RPC: Registered udp transport module.
+[    0.260487] RPC: Registered tcp transport module.
+[    0.260921] RPC: Registered tcp-with-tls transport module.
+[    0.261427] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.262031] PCI: CLS 0 bytes, default 64
+[    0.266161] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.266876] kvm [1]: nv: 710 fine grained trap handlers
+[    0.267794] kvm [1]: IPA Size Limit: 40 bits
+[    0.270901] kvm [1]: vgic interrupt IRQ9
+[    0.271307] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.273870] Initialise system trusted keyrings
+[    0.274513] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.275691] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.276538] NFS: Registering the id_resolver key type
+[    0.277031] Key type id_resolver registered
+[    0.277418] Key type id_legacy registered
+[    0.277807] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.278426] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.279592] Key type asymmetric registered
+[    0.279975] Asymmetric key parser 'x509' registered
+[    0.280469] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.281154] io scheduler mq-deadline registered
+[    0.281574] io scheduler kyber registered
+[    0.281984] io scheduler bfq registered
+[    0.291212] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.292967] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.294856] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.296723] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.298340] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.299980] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.301721] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.303349] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.304976] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.306598] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.308245] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.309871] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.311640] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.313265] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.315030] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.316788] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.353978] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.422412] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.423141] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.425845] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.426550] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.429120] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.429822] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.464508] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.468871] printk: legacy console [ttyS0] disabled
+[    0.469663] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.470615] printk: legacy console [ttyS0] enabled
+[    0.470615] printk: legacy console [ttyS0] enabled
+[    0.471507] printk: legacy bootconsole [uart8250] disabled
+[    0.471507] printk: legacy bootconsole [uart8250] disabled
+[    0.480447] msm_serial: driver initialized
+[    0.482347] SuperH (H)SCI(F) driver initialized
+[    0.483666] STM32 USART driver initialized
+[    0.491091] random: crng init done
+[    0.494741] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.496900] platform 27d00000.vop: Adding to iommu group 1
+[    0.504988] loop: module loaded
+[    0.507989] megasas: 07.734.00.00-rc1
+[    0.524111] tun: Universal TUN/TAP device driver, 1.6
+[    0.525563] VFIO - User Level meta-driver version: 0.3
+[    0.537382] usbcore: registered new interface driver usb-storage
+[    0.547841] i2c_dev: i2c /dev entries driver
+[    0.553015] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.553923] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.554849] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.593845] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.594508] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.595527] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.596472] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.597424] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.604008] scsi host0: ufshcd
+[    1.036000] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.036957] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.037699] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.038359] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.047335] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.047863] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.048933] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.049888] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.050533] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.051350] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.058313] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.061758] usbcore: registered new interface driver usbhid
+[    1.062256] usbhid: USB HID core driver
+[    1.073456] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.075543] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.095569] NET: Registered PF_INET6 protocol family
+[    1.097100] Segment Routing with IPv6
+[    1.097455] In-situ OAM (IOAM) with IPv6
+[    1.097855] NET: Registered PF_PACKET protocol family
+[    1.098379] Key type dns_resolver registered
+[    1.127733] registered taskstats version 1
+[    1.128339] Loading compiled-in X.509 certificates
+[    1.138185] Demotion targets for Node 0: null
+[    1.273613] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.279746] cpu cpu0: EM: created perf domain
+[    1.282017] cpu cpu4: EM: created perf domain
+[    1.289283] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.290057] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.290649] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.291216] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.297879] platform 27700000.npu: Adding to iommu group 2
+[    1.304823] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.306310] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.308017] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.312998] clk: Not disabling unused clocks
+[    1.313380] PM: genpd: Disabling unused power domains
+[    1.313965] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.321694] Waiting for root device /dev/mmcblk0p2...
+[    1.377699] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.511810] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 82
+[    1.513296] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.514746] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.518275]  mmcblk0: p1 p2
+[    1.601645] EXT4-fs (mmcblk0p2): mounted filesystem a40bbf05-3a43-4169-a698-e17b22af1654 r/w with ordered data mode. Quota mode: none.
+[    1.602837] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.603897] devtmpfs: mounted
+[    1.604350] VFS: Pivoted into new rootfs
+[    1.610225] Freeing unused kernel memory: 13248K
+[    1.610875] Run /sbin/init as init process
+[    1.699110] EXT4-fs (mmcblk0p2): re-mounted a40bbf05-3a43-4169-a698-e17b22af1654.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.509784] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.510643] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.511383] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.512110] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.513018] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.513926] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.514856] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.515766] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.516735] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.517643] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.518553] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.519481] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.520429] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.521354] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+##### ROUND 313: a projection on the NPU, in the decode loop.      #####
+
+===== 2) THE REFERENCE. the same arithmetic, on the CPU.           =====
+
+  -- CPU, NPU number format
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 299 ms | prompt 6 tok in 21751 ms, 0.28 tok/s | gen 32 tok in 8694 ms, 3.68 tok/s | peak 2506 MB]
+
+===== 3) THE LADDER. read the FIRST rung that differs.             =====
+
+===== one projection: blk.0.attn_q
+
+  -- blk.0.attn_q on the NPU
+charsiu: NPU open, routing tensors with n <= 8192
+  -> on the NPU
+npu-quant  blk.0.attn_q.weight           2048 x 2048  rms 0.9589%
+  -> on the CPU
+npu-quant  blk.0.attn_k.weight           512 x 2048  rms 1.0708%
+  -> on the CPU
+npu-quant  blk.0.attn_v.weight           512 x 2048  rms 0.9131%
+  -> on the CPU
+npu-quant  blk.0.attn_output.weight      2048 x 2048  rms 1.1167%
+  -> on the CPU
+npu-quant  blk.0.ffn_gate.weight         8192 x 2048  rms 0.8822%
+  -> on the CPU
+npu-quant  blk.0.ffn_up.weight           8192 x 2048  rms 0.8578%
+  -> on the CPU
+npu-quant  blk.0.ffn_down.weight         2048 x 8192  rms 1.0947%
+  -> on the CPU
+npu-quant  blk.1.attn_q.weight           2048 x 2048  rms 0.9925%
+  -> on the CPU
+npu-quant  blk.1.attn_k.weight           512 x 2048  rms 0.9070%
+  -> on the CPU
+npu-quant  blk.1.attn_v.weight           512 x 2048  rms 0.9479%
+  -> on the CPU
+npu-quant  blk.1.attn_output.weight      2048 x 2048  rms 1.1624%
+  -> on the CPU
+npu-quant  blk.1.ffn_gate.weight         8192 x 2048  rms 0.8740%
+  -> on the CPU
+npu-quant  blk.1.ffn_up.weight           8192 x 2048  rms 0.8845%
+  -> on the CPU
+npu-quant  blk.1.ffn_down.weight         2048 x 8192  rms 1.1120%
+  -> on the CPU
+npu-quant  blk.2.attn_q.weight           2048 x 2048  rms 0.9680%
+  -> on the CPU
+npu-quant  blk.2.attn_k.weight           512 x 2048  rms 1.0430%
+  -> on the CPU
+npu-quant  blk.2.attn_v.weight           512 x 2048  rms 0.8740%
+  -> on the CPU
+npu-quant  blk.2.attn_output.weight      2048 x 2048  rms 1.0022%
+  -> on the CPU
+npu-quant  blk.2.ffn_gate.weight         8192 x 2048  rms 0.8565%
+  -> on the CPU
+npu-quant  blk.2.ffn_up.weight           8192 x 2048  rms 0.8658%
+  -> on the CPU
+npu-quant  blk.2.ffn_down.weight         2048 x 8192  rms 1.0892%
+  -> on the CPU
+npu-quant  blk.3.attn_q.weight           2048 x 2048  rms 0.8940%
+  -> on the CPU
+npu-quant  blk.3.attn_k.weight           512 x 2048  rms 0.8941%
+  -> on the CPU
+npu-quant  blk.3.attn_v.weight           512 x 2048  rms 0.9240%
+  -> on the CPU
+npu-quant  blk.3.attn_output.weight      2048 x 2048  rms 0.9902%
+  -> on the CPU
+npu-quant  blk.3.ffn_gate.weight         8192 x 2048  rms 0.8636%
+  -> on the CPU
+npu-quant  blk.3.ffn_up.weight           8192 x 2048  rms 0.8806%
+  -> on the CPU
+npu-quant  blk.3.ffn_down.weight         2048 x 8192  rms 1.0824%
+  -> on the CPU
+npu-quant  blk.4.attn_q.weight           2048 x 2048  rms 0.9132%
+  -> on the CPU
+npu-quant  blk.4.attn_k.weight           512 x 2048  rms 0.9340%
+  -> on the CPU
+npu-quant  blk.4.attn_v.weight           512 x 2048  rms 0.9030%
+  -> on the CPU
+npu-quant  blk.4.attn_output.weight      2048 x 2048  rms 1.0815%
+  -> on the CPU
+npu-quant  blk.4.ffn_gate.weight         8192 x 2048  rms 0.8706%
+  -> on the CPU
+npu-quant  blk.4.ffn_up.weight           8192 x 2048  rms 0.8948%
+  -> on the CPU
+npu-quant  blk.4.ffn_down.weight         2048 x 8192  rms 1.0960%
+  -> on the CPU
+npu-quant  blk.5.attn_q.weight           2048 x 2048  rms 0.9761%
+  -> on the CPU
+npu-quant  blk.5.attn_k.weight           512 x 2048  rms 1.0976%
+  -> on the CPU
+npu-quant  blk.5.attn_v.weight           512 x 2048  rms 0.9014%
+  -> on the CPU
+npu-quant  blk.5.attn_output.weight      2048 x 2048  rms 1.0335%
+  -> on the CPU
+npu-quant  blk.5.ffn_gate.weight         8192 x 2048  rms 0.8697%
+  -> on the CPU
+npu-quant  blk.5.ffn_up.weight           8192 x 2048  rms 0.8906%
+  -> on the CPU
+npu-quant  blk.5.ffn_down.weight         2048 x 8192  rms 1.1833%
+  -> on the CPU
+npu-quant  blk.6.attn_q.weight           2048 x 2048  rms 0.8709%
+  -> on the CPU
+npu-quant  blk.6.attn_k.weight           512 x 2048  rms 0.9048%
+  -> on the CPU
+npu-quant  blk.6.attn_v.weight           512 x 2048  rms 0.9009%
+  -> on the CPU
+npu-quant  blk.6.attn_output.weight      2048 x 2048  rms 0.9735%
+  -> on the CPU
+npu-quant  blk.6.ffn_gate.weight         8192 x 2048  rms 0.8770%
+  -> on the CPU
+npu-quant  blk.6.ffn_up.weight           8192 x 2048  rms 0.8878%
+  -> on the CPU
+npu-quant  blk.6.ffn_down.weight         2048 x 8192  rms 1.1428%
+  -> on the CPU
+npu-quant  blk.7.attn_q.weight           2048 x 2048  rms 0.8675%
+  -> on the CPU
+npu-quant  blk.7.attn_k.weight           512 x 2048  rms 0.9072%
+  -> on the CPU
+npu-quant  blk.7.attn_v.weight           512 x 2048  rms 0.8904%
+  -> on the CPU
+npu-quant  blk.7.attn_output.weight      2048 x 2048  rms 1.0389%
+  -> on the CPU
+npu-quant  blk.7.ffn_gate.weight         8192 x 2048  rms 0.8967%
+  -> on the CPU
+npu-quant  blk.7.ffn_up.weight           8192 x 2048  rms 0.8854%
+  -> on the CPU
+npu-quant  blk.7.ffn_down.weight         2048 x 8192  rms 1.1532%
+  -> on the CPU
+npu-quant  blk.8.attn_q.weight           2048 x 2048  rms 0.9397%
+  -> on the CPU
+npu-quant  blk.8.attn_k.weight           512 x 2048  rms 1.0182%
+  -> on the CPU
+npu-quant  blk.8.attn_v.weight           512 x 2048  rms 0.9049%
+  -> on the CPU
+npu-quant  blk.8.attn_output.weight      2048 x 2048  rms 1.0201%
+  -> on the CPU
+npu-quant  blk.8.ffn_gate.weight         8192 x 2048  rms 0.9300%
+  -> on the CPU
+npu-quant  blk.8.ffn_up.weight           8192 x 2048  rms 0.8934%
+  -> on the CPU
+npu-quant  blk.8.ffn_down.weight         2048 x 8192  rms 1.1778%
+  -> on the CPU
+npu-quant  blk.9.attn_q.weight           2048 x 2048  rms 0.8829%
+  -> on the CPU
+npu-quant  blk.9.attn_k.weight           512 x 2048  rms 0.9508%
+  -> on the CPU
+npu-quant  blk.9.attn_v.weight           512 x 2048  rms 0.9935%
+  -> on the CPU
+npu-quant  blk.9.attn_output.weight      2048 x 2048  rms 1.1584%
+  -> on the CPU
+npu-quant  blk.9.ffn_gate.weight         8192 x 2048  rms 0.9217%
+  -> on the CPU
+npu-quant  blk.9.ffn_up.weight           8192 x 2048  rms 0.8915%
+  -> on the CPU
+npu-quant  blk.9.ffn_down.weight         2048 x 8192  rms 1.1440%
+  -> on the CPU
+npu-quant  blk.10.attn_q.weight          2048 x 2048  rms 0.8890%
+  -> on the CPU
+npu-quant  blk.10.attn_k.weight          512 x 2048  rms 0.9645%
+  -> on the CPU
+npu-quant  blk.10.attn_v.weight          512 x 2048  rms 1.2228%
+  -> on the CPU
+npu-quant  blk.10.attn_output.weight     2048 x 2048  rms 1.0891%
+  -> on the CPU
+npu-quant  blk.10.ffn_gate.weight        8192 x 2048  rms 0.8781%
+  -> on the CPU
+npu-quant  blk.10.ffn_up.weight          8192 x 2048  rms 0.8710%
+  -> on the CPU
+npu-quant  blk.10.ffn_down.weight        2048 x 8192  rms 1.1484%
+  -> on the CPU
+npu-quant  blk.11.attn_q.weight          2048 x 2048  rms 0.9016%
+  -> on the CPU
+npu-quant  blk.11.attn_k.weight          512 x 2048  rms 1.0583%
+  -> on the CPU
+npu-quant  blk.11.attn_v.weight          512 x 2048  rms 1.0618%
+  -> on the CPU
+npu-quant  blk.11.attn_output.weight     2048 x 2048  rms 1.0996%
+  -> on the CPU
+npu-quant  blk.11.ffn_gate.weight        8192 x 2048  rms 0.8614%
+  -> on the CPU
+npu-quant  blk.11.ffn_up.weight          8192 x 2048  rms 0.8540%
+  -> on the CPU
+npu-quant  blk.11.ffn_down.weight        2048 x 8192  rms 1.0829%
+  -> on the CPU
+npu-quant  blk.12.attn_q.weight          2048 x 2048  rms 0.9922%
+  -> on the CPU
+npu-quant  blk.12.attn_k.weight          512 x 2048  rms 1.2353%
+  -> on the CPU
+npu-quant  blk.12.attn_v.weight          512 x 2048  rms 1.0605%
+  -> on the CPU
+npu-quant  blk.12.attn_output.weight     2048 x 2048  rms 1.0386%
+  -> on the CPU
+npu-quant  blk.12.ffn_gate.weight        8192 x 2048  rms 0.8684%
+  -> on the CPU
+npu-quant  blk.12.ffn_up.weight          8192 x 2048  rms 0.8489%
+  -> on the CPU
+npu-quant  blk.12.ffn_down.weight        2048 x 8192  rms 1.0190%
+  -> on the CPU
+npu-quant  blk.13.attn_q.weight          2048 x 2048  rms 0.9778%
+  -> on the CPU
+npu-quant  blk.13.attn_k.weight          512 x 2048  rms 1.1481%
+  -> on the CPU
+npu-quant  blk.13.attn_v.weight          512 x 2048  rms 1.0817%
+  -> on the CPU
+npu-quant  blk.13.attn_output.weight     2048 x 2048  rms 0.9487%
+  -> on the CPU
+npu-quant  blk.13.ffn_gate.weight        8192 x 2048  rms 0.8968%
+  -> on the CPU
+npu-quant  blk.13.ffn_up.weight          8192 x 2048  rms 0.8528%
+  -> on the CPU
+npu-quant  blk.13.ffn_down.weight        2048 x 8192  rms 1.0233%
+  -> on the CPU
+npu-quant  blk.14.attn_q.weight          2048 x 2048  rms 1.0783%
+  -> on the CPU
+npu-quant  blk.14.attn_k.weight          512 x 2048  rms 1.5459%
+  -> on the CPU
+npu-quant  blk.14.attn_v.weight          512 x 2048  rms 1.3613%
+  -> on the CPU
+npu-quant  blk.14.attn_output.weight     2048 x 2048  rms 0.9907%
+  -> on the CPU
+npu-quant  blk.14.ffn_gate.weight        8192 x 2048  rms 0.8935%
+  -> on the CPU
+npu-quant  blk.14.ffn_up.weight          8192 x 2048  rms 0.8476%
+  -> on the CPU
+npu-quant  blk.14.ffn_down.weight        2048 x 8192  rms 1.0413%
+  -> on the CPU
+npu-quant  blk.15.attn_q.weight          2048 x 2048  rms 1.1307%
+  -> on the CPU
+npu-quant  blk.15.attn_k.weight          512 x 2048  rms 1.5741%
+  -> on the CPU
+npu-quant  blk.15.attn_v.weight          512 x 2048  rms 1.3747%
+  -> on the CPU
+npu-quant  blk.15.attn_output.weight     2048 x 2048  rms 1.1800%
+  -> on the CPU
+npu-quant  blk.15.ffn_gate.weight        8192 x 2048  rms 0.8987%
+  -> on the CPU
+npu-quant  blk.15.ffn_up.weight          8192 x 2048  rms 0.9063%
+  -> on the CPU
+npu-quant  blk.15.ffn_down.weight        2048 x 8192  rms 1.1859%
+  -> on the CPU
+npu-quant  token_embd.weight             128256 x 2048  rms 1.0054%
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 127 ms | prompt 6 tok in 12889 ms, 0.47 tok/s | gen 32 tok in 8859 ms, 3.61 tok/s | peak 2511 MB]
+
+===== all sixteen attn_q
+
+  -- attn_q on the NPU
+charsiu: NPU open, routing tensors with n <= 8192
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 127 ms | prompt 6 tok in 13919 ms, 0.43 tok/s | gen 32 tok in 8670 ms, 3.69 tok/s | peak 2516 MB]
+
+===== every attention projection
+
+  -- attn on the NPU
+charsiu: NPU open, routing tensors with n <= 8192
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 126 ms | prompt 6 tok in 15496 ms, 0.39 tok/s | gen 32 tok in 8291 ms, 3.86 tok/s | peak 2512 MB]
+
+===== every feed forward projection
+
+  -- ffn on the NPU
+charsiu: NPU open, routing tensors with n <= 8192
+[  128.066937] rocket 27700000.npu: NPU job timed out
+[  129.922951] rocket 27700000.npu: NPU job timed out
+[  131.778888] rocket 27700000.npu: NPU job timed out
+[  133.634924] rocket 27700000.npu: NPU job timed out
+[  135.490920] rocket 27700000.npu: NPU job timed out
+[  137.346931] rocket 27700000.npu: NPU job timed out
+[  139.202877] rocket 27700000.npu: NPU job timed out
+[  141.058876] rocket 27700000.npu: NPU job timed out
+[  142.914921] rocket 27700000.npu: NPU job timed out
+[  144.770946] rocket 27700000.npu: NPU job timed out
+[  146.626937] rocket 27700000.npu: NPU job timed out
+[  148.482936] rocket 27700000.npu: NPU job timed out
+[  150.338945] rocket 27700000.npu: NPU job timed out
+[  152.194926] rocket 27700000.npu: NPU job timed out
+[  154.050880] rocket 27700000.npu: NPU job timed out
+[  155.906949] rocket 27700000.npu: NPU job timed out
+[  158.850948] rocket 27700000.npu: NPU job timed out
+[  158.856675] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.857790] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.860400] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.867689] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.868861] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.871505] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.878882] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.880117] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.882594] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.889894] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.891243] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.893734] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  158.901147] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.426892] rocket 27700000.npu: NPU job timed out
+[  159.433662] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.434937] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.437433] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.444500] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.445671] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.448264] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.455258] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.456355] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.458801] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.465756] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.467063] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.469555] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  159.476632] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.002879] rocket 27700000.npu: NPU job timed out
+[  160.010093] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.011324] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.013867] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.021397] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.022497] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.025173] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.032775] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.033939] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.036614] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.044100] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.045271] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.048010] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.055558] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  160.578945] rocket 27700000.npu: NPU job timed out
+[  161.186931] rocket 27700000.npu: NPU job timed out
+[  161.192694] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.193786] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.196228] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.201476] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.202579] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.205152] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.210273] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.211407] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.213802] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.218910] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.220015] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.222399] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.227546] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.228644] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.231259] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.236261] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.237357] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.762936] rocket 27700000.npu: NPU job timed out
+[  161.767814] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.769047] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.771688] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.776820] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.777921] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.780562] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.785653] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.787034] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.789527] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.794637] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.795881] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.798354] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.803501] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.804676] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.807249] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.812163] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  161.813348] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.338872] rocket 27700000.npu: NPU job timed out
+[  162.343832] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.344926] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.347503] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.352578] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.353683] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.356279] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.361235] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.362336] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.364778] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.946935] rocket 27700000.npu: NPU job timed out
+[  162.952231] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.953395] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.956085] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.961356] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.962530] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.965214] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.970664] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.971896] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.974381] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.979881] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.981050] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.983680] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.988911] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.990074] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.992686] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  162.998137] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.522953] rocket 27700000.npu: NPU job timed out
+[  163.527960] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.529128] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.531711] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.537033] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.538204] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.540735] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.546182] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.547399] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.549873] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.555135] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.556313] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.558820] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.564182] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.565343] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.567938] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  163.573196] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.098930] rocket 27700000.npu: NPU job timed out
+[  164.104083] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.105174] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.107750] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.112899] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.114004] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.116579] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.121797] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.123061] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.125470] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.706876] rocket 27700000.npu: NPU job timed out
+[  164.712350] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.713437] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.715887] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.720886] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.721992] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.724452] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.729748] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.730903] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.733314] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.738472] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.739613] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.742007] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.747083] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.748180] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.750568] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.755629] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  164.756720] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.282922] rocket 27700000.npu: NPU job timed out
+[  165.288262] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.289351] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.291801] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.296808] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.297901] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.300364] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.305496] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.306589] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.309051] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.314199] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.315333] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.317729] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.322895] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.324001] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.326404] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.331497] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.332602] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.335045] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.858881] rocket 27700000.npu: NPU job timed out
+[  165.863994] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.865079] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.867529] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.872528] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.873626] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  165.876089] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.466943] rocket 27700000.npu: NPU job timed out
+[  166.474407] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.475637] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.478189] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.483535] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.484708] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.487410] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.492794] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.493964] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.496574] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.502039] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.503214] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.505696] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.511079] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.512252] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.514730] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  166.520240] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.042884] rocket 27700000.npu: NPU job timed out
+[  167.047857] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.049022] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.051711] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.057093] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.058265] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.060947] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.066325] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.067602] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.070084] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.075641] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.076813] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.079532] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.085078] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.086250] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.088865] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.094298] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.095752] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.098249] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.103860] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.105030] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.107749] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.113043] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.114213] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.116822] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.122264] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.123460] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.125943] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ gere[  167.714936] rocket 27700000.npu: NPU job timed out
+[  167.721443] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.722613] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.725070] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.732514] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.733616] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.736094] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.743360] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.744464] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.746904] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.754125] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.755283] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.757681] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  167.765021] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.290874] rocket 27700000.npu: NPU job timed out
+[  168.298144] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.299269] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.301663] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.308882] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.309967] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.312419] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.320049] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.321146] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.323614] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.331111] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.332199] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.334591] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.342156] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.866879] rocket 27700000.npu: NPU job timed out
+[  168.874352] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.875640] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.878188] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.886017] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.887288] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.889835] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.897541] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.898705] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.901387] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.909175] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.910344] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.913038] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  168.920761] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  169.442932] rocket 27700000.npu: NPU job timed out
+rende[  170.050929] rocket 27700000.npu: NPU job timed out
+[  170.056949] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.058044] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.060494] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.067823] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.068935] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.071542] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.079146] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.080250] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.082646] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.090463] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.091621] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.094020] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.101774] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.626958] rocket 27700000.npu: NPU job timed out
+[  170.634295] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.635414] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.637804] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.645402] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.646490] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.649042] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.656625] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.657726] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.660302] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.667781] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.668881] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.671478] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  170.678966] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.202891] rocket 27700000.npu: NPU job timed out
+[  171.210423] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.211648] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.214189] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.222066] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.223293] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.225834] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.233829] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.235177] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.237744] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.245521] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.246623] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.249301] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.257108] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  171.778877] rocket 27700000.npu: NPU job timed out
+ Sil[  172.386941] rocket 27700000.npu: NPU job timed out
+[  172.392201] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.393294] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.395888] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.401168] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.402264] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.404711] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.410041] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.411184] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.413589] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.418882] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.419983] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.422376] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.427759] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.428855] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.431437] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.436778] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.962927] rocket 27700000.npu: NPU job timed out
+[  172.968033] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.969126] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.971583] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.976722] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.977822] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.980303] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.985569] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.986669] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.989121] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.994415] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.995572] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  172.997966] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.003190] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.004291] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.006680] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.011921] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.013020] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.538874] rocket 27700000.npu: NPU job timed out
+[  173.544085] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.545310] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.547840] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.553202] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.554304] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.556903] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.562352] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.563618] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  173.566100] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+ertest[  174.146933] rocket 27700000.npu: NPU job timed out
+[  174.153920] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.155163] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.157722] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.165749] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.167007] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.169505] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.177424] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.178587] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.181168] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.189214] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.190310] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.192913] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.201028] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.722938] rocket 27700000.npu: NPU job timed out
+[  174.730710] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.731831] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.734224] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.741825] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.742965] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.745373] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.753208] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.754300] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.756786] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.764859] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.765955] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.768428] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  174.776126] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.298905] rocket 27700000.npu: NPU job timed out
+[  175.306085] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.307363] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.309848] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.317301] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.318491] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.321180] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.328802] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.329904] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.332631] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.340198] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.341372] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.344085] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.351708] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  175.874874] rocket 27700000.npu: NPU job timed out
+ijo[  176.482940] rocket 27700000.npu: NPU job timed out
+[  176.488800] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.489889] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.492429] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.499926] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.501022] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.503569] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.511328] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.512494] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.515086] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.523088] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.524317] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.526832] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  176.534589] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.058948] rocket 27700000.npu: NPU job timed out
+[  177.066613] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.067873] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.070350] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.078339] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.079643] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.082126] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.090061] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.091342] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.093825] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.101604] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.103017] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.105580] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.113515] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.634935] rocket 27700000.npu: NPU job timed out
+[  177.642116] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.643400] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.645942] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.653509] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.654684] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.657306] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.664837] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.665935] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.668460] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.675879] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.677117] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.679637] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  177.687153] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.210931] rocket 27700000.npu: NPU job timed out
+bas[  178.818876] rocket 27700000.npu: NPU job timed out
+[  178.824861] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.825951] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.828411] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.833868] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.835048] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.837471] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.843067] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.844165] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.846560] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.851934] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.853037] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.855512] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.860899] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.861991] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.864460] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.869997] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.871444] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.873935] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.879362] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.880461] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.882991] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.888311] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.889410] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.891859] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.897187] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.898283] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.900757] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.906385] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.907640] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.910116] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.915988] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.917159] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.919689] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  178.925337] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.458878] rocket 27700000.npu: NPU job timed out
+[  179.464590] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.465981] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.468445] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.474136] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.475419] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.477830] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.483233] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.484330] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  179.486729] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+aic[  180.066955] rocket 27700000.npu: NPU job timed out
+[  180.073759] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.074961] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.077471] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.085245] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.086419] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.088991] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.097221] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.098383] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.101005] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.109210] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.110373] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.112953] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.121173] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.642929] rocket 27700000.npu: NPU job timed out
+[  180.650565] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.651850] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.654330] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.662183] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.663468] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.665942] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.673703] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.674841] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.677345] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.685071] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.686237] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.688854] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  180.696726] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.218923] rocket 27700000.npu: NPU job timed out
+[  181.226747] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.228002] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.230484] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.238336] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.239567] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.242047] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.249899] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.251138] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.253637] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.261502] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.262670] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.265178] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.273105] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  181.794942] rocket 27700000.npu: NPU job timed out
+ay[  182.402919] rocket 27700000.npu: NPU job timed out
+[  182.411415] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.412646] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.415356] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.425299] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.426472] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.429217] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.439718] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.440887] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.443572] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.454074] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.978898] rocket 27700000.npu: NPU job timed out
+[  182.988978] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.990065] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  182.992509] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.002728] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.003870] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.006268] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.016858] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.017953] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.020544] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.030828] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.554877] rocket 27700000.npu: NPU job timed out
+[  183.564565] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.565804] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.568396] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.578378] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.579660] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.582206] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.592179] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.593341] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.595854] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  183.605851] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.130919] rocket 27700000.npu: NPU job timed out
+[  184.141013] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.142176] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.144842] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.155248] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.156482] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.159210] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.169634] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.170725] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.173401] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+obj[  184.770946] rocket 27700000.npu: NPU job timed out
+[  184.778602] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.779865] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.782409] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.790443] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.791727] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.794211] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.802182] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.803459] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.805940] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.813666] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.814873] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.817361] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
+[  184.825318] rk_iommu 27702000.iommu: Error during raw reset. MMU_DTE_ADDR is not functioning
