@@ -2,80 +2,65 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 330. THE HALF WIDTH IS NOT A DEFECT, IT IS THE OTHER HALF.
+# 2026-08-22 round 331. THE WORDS ARE THERE. READ THE PAIRING.
 #
-# ⚠ ROUND 329 WAS HALF A CHANGE AND THAT IS WHY IT DID NOTHING. It set
-# 0x40b8 = 3 and 0x3020 = 2N-1, which is what makes the hardware COMPUTE and
-# WRITE 2N words, and left the packing alone -- so those extra words held
-# nothing. The registers were never the whole change.
+# ⚠ ROUND 330 WAS REFUTED, the sixth time on int4, and I said in its header
+# that entry 3 would sweep the two things the packer guesses -- and then wrote
+# a third shape there instead. The sweep the header promised was not in the
+# script. That is on me and this round is it.
 #
-# ---------------------------------------------------------------------------
-# COUNT WHAT THE MEASURED MAP ACTUALLY DELIVERS
-# ---------------------------------------------------------------------------
+# BUT ONE THING IN 330 WORKED, AND IT IS THE HALF THAT MATTERS:
 #
-# Round 325 read the address map at every live byte of three geometries, 1376
-# points, one form:
+#   at N=64:  128 words written, highest index 127
 #
-#     w = 32 * floor(s / K) + (s mod 32),      s = byte / 8
+# **That is exactly 2N, and it is the first time charsiu has made the hardware
+# compute and write 2N words.** `0x40b8 = 3` with `0x3020 = 2N-1` does what the
+# count said it would. The phantom words exist and hold real computed sums.
 #
-# A declared channel is fed by the slots with `s mod 32 == w mod 32` inside its
-# own block. That is K/32 slots of 16 nibbles, so **every channel gets exactly
-# K/2 nibbles.** And a buffer of N*K/2 bytes holds N*K nibbles, so the other
-# half of it feeds words N..2N-1.
-#
-# **Those words are not spare and they are not a defect. They are real computed
-# outputs of the same buffer.** Put the second half of each channel's k in them
-# and add:
-#
-#     out[c] + out[c+N] = the full dot product
-#
-# with the buffer still exactly N*K/2 bytes and every nibble in it used. That is
-# int4 at full width with no register left to find -- the arithmetic closes.
+# What was wrong is the PAIRING: out[c] + out[c+N] scored zero of 64. The packer
+# guessed that the second half of a channel's k lands in word c+N, and it does
+# not. ⚠ There is a measured reason to expect that: the existing packer's own
+# halfk rule says **a channel is fed the k whose bit 4 equals its own parity**,
+# and c and c+N have the SAME parity when N is even -- so both words would want
+# the same half of k and the sum would double count.
 #
 # ---------------------------------------------------------------------------
-# AND THE VENDOR'S FILE, WHICH IS WHY I TRUST THE COUNT
+# SO STOP GUESSING THE PAIRING AND READ IT
 # ---------------------------------------------------------------------------
 #
-# The .rkllm was taken apart offline this round. It is the same model, and the
-# method was validated on a POSITIVE CONTROL before anything was concluded:
-# its fp16 region is the token embedding, 2048 halfs a row, and the row at
-# 0x1afeda0 matches our own token_embd row 4999 at **r = +1.0000**.
+# charsiu_matmul now searches. For every channel it takes the reference and asks
+# whether any two written words sum to it, and prints the rule:
 #
-# Its int4 region starts at 0x21000000, and the nibble histogram is symmetric,
-# peaked at 0, 18.8% at each end and 0.1% in the middle: **signed two's
-# complement nibbles, 3.13 bits of entropy.** Real weights, not compressed.
+#   pairing: channel -> the two words that sum to its reference
+#   pairing: <hit> of <n> channels are the sum of two written words
 #
-# ⚠ And a full value correlation of one channel's 2048 weights against every
-# byte and nibble alignment of that whole region peaks at **0.13, which is the
-# noise floor**. So a channel's weights are NOT contiguous anywhere in the file:
-# **the vendor stores them pre-shuffled into the hardware's layout**, which is
-# the layout the count above describes.
+# **If that count is n, int4 is at full width and the only thing left is to read
+# the index rule off the line above it.** If it is zero, the second half of k is
+# not in the buffer at all and the count in round 330 is wrong somewhere.
+#
+# Entry 3 sweeps the two knobs the packer still guesses, now that there is a
+# reader that can tell which one landed: which half of k goes to the phantom
+# word (the top half, the odd k, or the bit-4 parity the halfk rule uses) and
+# the order inside a slot.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2a IS THE CONTROL, today's packing: 64 of 64 at N=64 and the
-#    128 of 256 that twenty rounds have printed.
-# 2) ENTRY 2b IS THE ROUND. Same shapes, CHARSIU_W4_PHANTOM packing, 0x40b8 = 3
-#    and 0x3020 = 2N-1. **256 of 256 exact is int4 at full width.**
-# 3) ⚠ THE HALFK ZEROING IS OFF in 2b and must be: the phantom packing uses
-#    every k, so the reference is the full dot product. If 2b needs halfk to
-#    score, it has not done what it claims.
-# 4) ENTRY 3 SWEEPS THE TWO THINGS THE PACKER GUESSES, because the map fixes
-#    which SLOTS a word owns but not which k goes in them: the half split
-#    (first half of k vs the even k) and the intra-slot order.
+# 1) THE `pairing:` COUNT IS THE ROUND. Everything else is diagnosis.
+# 2) THEN THE RULE on the line above it: c=w0+w64 for every c is a clean
+#    answer; a scatter is not, and a scatter means the packer put the halves
+#    somewhere the map does not send them.
+# 3) ENTRY 2a IS STILL THE CONTROL and must print 64 of 64 and 128 of 256.
+# 4) ⚠ A pairing found at ONE shape and not the others is a coincidence, which
+#    is why N=64, N=256 and N=512 all run.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# ⚠ I have been wrong about int4 five times. What is different here is that
-# nothing is being guessed about the hardware: the map was measured at 1376
-# points, the count that follows from it is arithmetic, and the vendor's file
-# independently says the weights are stored pre-shuffled rather than contiguous.
-# The two things this round can still get wrong are which HALF of k goes in the
-# phantom word and the order inside a slot, and entry 3 sweeps both.
+# No prediction. Six wrong ones is enough, and this round is built so the
+# hardware writes the answer down rather than scoring mine.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -181,7 +166,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 330: the phantom words are the other half of the sum  #####"
+	log "##### ROUND 331: the words are there, read the pairing            #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -194,25 +179,26 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) THE ROUND: the phantom words are the other half of the   ====="
-	log "=====    sum. out[c] + out[c+N], same buffer, every nibble used.   ====="
-	log "===== 2a CONTROL, today's packing"
+	log "===== 2) the pairing, READ rather than guessed.                    ====="
+	log "===== 2a CONTROL, today's packing: 64 of 64 and 128 of 256"
 	c "$M4" $MM 1 64 64
 	c "$M4" $MM 1 2048 256
-	log "===== 2b THE PHANTOM PACKING, no halfk, 0x40b8=3 and 0x3020=2N-1"
+	log "===== 2b phantom + the register pair, at three shapes"
 	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
 	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
-	log "===== 2c the same without the register pair, which must be WORSE"
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 2048 256
-	log "===== 2d and with 0x40b8=3 only, to separate the two registers"
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 2048 256
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" $MM 1 1024 512
 
 	log ""
-	log "===== 3) a third shape, so a fit on two points is not a law        ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" $MM 1 1024 512
-	c "$M4" $MM 1 1024 512
+	log "===== 3) the two knobs the packer still guesses                    ====="
+	log "===== 3a split by ODD k instead of the top half"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_SPLIT=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_SPLIT=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
+	log "===== 3b split by bit 4 of k, which is the halfk rule"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_SPLIT=2" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_SPLIT=2" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
+	log "===== 3c intra-slot order k=j / k=j+16 instead of k=2j / k=2j+1"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_ORDER=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1 CHARSIU_W4_PH_ORDER=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -223,7 +209,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2a is the control; 2b is the round; 256 of 256 is full width. ====="
+	log "===== the pairing count is the round; the rule is the line above.   ====="
 	sync
 }
 case "$1" in
