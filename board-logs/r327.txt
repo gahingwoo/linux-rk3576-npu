@@ -1,0 +1,634 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.9%, RX DQS Vref:27.8%, TX Vref:18.0%,21.0%
+DQ roc:
+p5 n0, p6 n0, p1 n0, p5 n0, p0 n0, p6 n0, p0 n1, p1 n0, p2 n0, 
+p4 n0, p5 n4, p7 n0, p2 n0, p1 n0, p5 n0, p0 n2, p6 n0, p1 n1, 
+
+DQ rds:l0 h1 l0 h1 h1 h1 l0 h1, l0 h1 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:30.0%, TX Vref:19.0%,20.0%
+DQ roc:
+p3 n0, p6 n0, p7 n0, p4 n0, p7 n0, p7 n0, p2 n7, p5 n0, p6 n0, 
+p3 n0, p7 n0, p6 n0, p2 n0, p4 n0, p4 n0, p1 n0, p0 n3, p3 n0, 
+
+DQ rds:h1 h1 l0 l0 l0 h1 l0 l0, h1 l0 h2 l0 l0 h1 h2 l0 
+DQS roc: p0, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004823] Console: colour dummy device 80x25
+[    0.005354] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006313] pid_max: default: 32768 minimum: 301
+[    0.007206] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007959] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009151] VFS: Finished mounting rootfs on nullfs
+[    0.012581] rcu: Hierarchical SRCU implementation.
+[    0.013081] rcu:     Max phase no-delay instances is 1000.
+[    0.013874] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021491] EFI services will not be available.
+[    0.022579] smp: Bringing up secondary CPUs ...
+[    0.023748] Detected VIPT I-cache on CPU1
+[    0.023867] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024727] Detected VIPT I-cache on CPU2
+[    0.024810] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025640] Detected VIPT I-cache on CPU3
+[    0.025721] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026620] CPU features: detected: Spectre-v3a
+[    0.026638] CPU features: detected: Spectre-BHB
+[    0.026645] CPU features: detected: ARM erratum 1742098
+[    0.026653] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026659] Detected PIPT I-cache on CPU4
+[    0.026743] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027549] Detected PIPT I-cache on CPU5
+[    0.027613] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028394] Detected PIPT I-cache on CPU6
+[    0.028460] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029248] Detected PIPT I-cache on CPU7
+[    0.029314] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029445] smp: Brought up 1 node, 8 CPUs
+[    0.038613] SMP: Total of 8 processors activated.
+[    0.039070] CPU: All CPU(s) started at EL2
+[    0.039484] CPU features: detected: 32-bit EL0 Support
+[    0.039959] CPU features: detected: 32-bit EL1 Support
+[    0.040438] CPU features: detected: CRC32 instructions
+[    0.040927] CPU features: detected: PMUv3
+[    0.041379] alternatives: applying system-wide alternatives
+[    0.045078] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050494] devtmpfs: initialized
+[    0.067210] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.067983] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069124] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.069714] 0 pages in range for non-PLT usage
+[    0.069719] 511152 pages in range for PLT usage
+[    0.076889] DMI: not present or invalid.
+[    0.081333] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.082981] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.084098] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.084887] audit: initializing netlink subsys (disabled)
+[    0.085553] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.090692] thermal_sys: Registered thermal governor 'step_wise'
+[    0.090702] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.091356] cpuidle: using governor menu
+[    0.092620] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.093455] ASID allocator initialised with 32768 entries
+[    0.098588] Serial: AMBA PL011 UART driver
+[    0.107852] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.109247] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.110638] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.111872] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.113103] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.123410] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.124123] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.125169] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.127141] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.183040] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.183676] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.194545] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.195180] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.195760] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.196386] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.196981] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.197608] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.198186] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.198811] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.202044] ACPI: Interpreter disabled.
+[    0.212835] iommu: Default domain type: Translated
+[    0.213302] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.214496] SCSI subsystem initialized
+[    0.215291] usbcore: registered new interface driver usbfs
+[    0.215842] usbcore: registered new interface driver hub
+[    0.216372] usbcore: registered new device driver usb
+[    0.219481] pps_core: LinuxPPS API ver. 1 registered
+[    0.219942] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.220790] PTP clock support registered
+[    0.221456] EDAC MC: Ver: 3.0.0
+[    0.222386] scmi_core: SCMI protocol bus registered
+[    0.225223] FPGA manager framework
+[    0.226752] vgaarb: loaded
+[    0.227547] clocksource: Switched to clocksource arch_sys_counter
+[    0.228446] VFS: Disk quotas dquot_6.6.0
+[    0.228828] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.229730] pnp: PnP ACPI: disabled
+[    0.237384] NET: Registered PF_INET protocol family
+[    0.238311] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.251205] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.252159] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.252888] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.254617] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.257180] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.257898] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.259188] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.260200] RPC: Registered named UNIX socket transport module.
+[    0.260751] RPC: Registered udp transport module.
+[    0.261186] RPC: Registered tcp transport module.
+[    0.261621] RPC: Registered tcp-with-tls transport module.
+[    0.262126] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.262730] PCI: CLS 0 bytes, default 64
+[    0.266867] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.267587] kvm [1]: nv: 710 fine grained trap handlers
+[    0.268498] kvm [1]: IPA Size Limit: 40 bits
+[    0.271570] kvm [1]: vgic interrupt IRQ9
+[    0.271978] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.274550] Initialise system trusted keyrings
+[    0.275201] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.276380] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.277224] NFS: Registering the id_resolver key type
+[    0.277707] Key type id_resolver registered
+[    0.278096] Key type id_legacy registered
+[    0.278492] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.279112] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.280274] Key type asymmetric registered
+[    0.280660] Asymmetric key parser 'x509' registered
+[    0.281154] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.281841] io scheduler mq-deadline registered
+[    0.282263] io scheduler kyber registered
+[    0.282670] io scheduler bfq registered
+[    0.291562] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.293316] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.295187] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.297070] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.298692] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.300321] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.302062] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.303687] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.305314] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.306939] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.308571] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.310196] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.311959] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.313585] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.315334] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.317102] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.355996] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.423931] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.424640] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.427370] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.428094] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.430647] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.431348] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.466132] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.470472] printk: legacy console [ttyS0] disabled
+[    0.471263] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.472241] printk: legacy console [ttyS0] enabled
+[    0.472241] printk: legacy console [ttyS0] enabled
+[    0.473105] printk: legacy bootconsole [uart8250] disabled
+[    0.473105] printk: legacy bootconsole [uart8250] disabled
+[    0.481292] msm_serial: driver initialized
+[    0.483182] SuperH (H)SCI(F) driver initialized
+[    0.484421] STM32 USART driver initialized
+[    0.491665] random: crng init done
+[    0.495105] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.497246] platform 27d00000.vop: Adding to iommu group 1
+[    0.505259] loop: module loaded
+[    0.508310] megasas: 07.734.00.00-rc1
+[    0.524464] tun: Universal TUN/TAP device driver, 1.6
+[    0.525890] VFIO - User Level meta-driver version: 0.3
+[    0.537793] usbcore: registered new interface driver usb-storage
+[    0.548317] i2c_dev: i2c /dev entries driver
+[    0.553474] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.554384] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.555282] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.595006] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.595706] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.596683] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.597627] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.598578] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.604895] scsi host0: ufshcd
+[    1.036653] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.037607] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.038348] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.039008] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.047917] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.048446] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.049519] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.050479] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.051126] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.051916] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.058925] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.062416] usbcore: registered new interface driver usbhid
+[    1.062915] usbhid: USB HID core driver
+[    1.074058] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.076184] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.096890] NET: Registered PF_INET6 protocol family
+[    1.098438] Segment Routing with IPv6
+[    1.098794] In-situ OAM (IOAM) with IPv6
+[    1.099196] NET: Registered PF_PACKET protocol family
+[    1.099733] Key type dns_resolver registered
+[    1.128944] registered taskstats version 1
+[    1.129574] Loading compiled-in X.509 certificates
+[    1.139527] Demotion targets for Node 0: null
+[    1.275930] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.282139] cpu cpu0: EM: created perf domain
+[    1.284426] cpu cpu4: EM: created perf domain
+[    1.289708] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.290359] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.290944] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.291461] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.298606] platform 27700000.npu: Adding to iommu group 2
+[    1.305443] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.307083] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.309348] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.312970] clk: Not disabling unused clocks
+[    1.313375] PM: genpd: Disabling unused power domains
+[    1.314008] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.323012] Waiting for root device /dev/mmcblk0p2...
+[    1.378468] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.492911] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 81
+[    1.494375] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.495786] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.498773]  mmcblk0: p1 p2
+[    1.701362] EXT4-fs (mmcblk0p2): mounted filesystem 0ada6760-759c-4df0-9e4c-90bc192a958b r/w with ordered data mode. Quota mode: none.
+[    1.702500] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.703575] devtmpfs: mounted
+[    1.704111] VFS: Pivoted into new rootfs
+[    1.710045] Freeing unused kernel memory: 13248K
+[    1.710644] Run /sbin/init as init process
+[    1.799734] EXT4-fs (mmcblk0p2): re-mounted 0ada6760-759c-4df0-9e4c-90bc192a958b.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.511250] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.512130] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.512850] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.513577] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.514485] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.515392] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.516321] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.517229] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.518198] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.519106] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.520027] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.520946] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.521894] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.522818] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+
+===== 0) the limit's own control. expect rc 124 after ~3s.         =====
+  -- capped 3 sleep 60  ->  rc 124 after 3s
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+##### ROUND 327: measure the CPU's share instead of subtracting it #####
+
+===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. =====
+=====    matmul stages minus the hardware path = the quantise.     =====
+
+  -- the decode loop on the NPU, stages on
+charsiu: NPU open, routing tensors with n <= 128256
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 297 ms | prompt 6 tok in 31174 ms, 0.19 tok/s | gen 32 tok in 4885 ms, 6.55 tok/s | peak 2517 MB]
+charsiu stages: 38 tokens, 948.6 ms a token
+  token embedding      0.10 ms a token     0.0%
+  attn rmsnorm         0.39 ms a token     0.0%
+  q k v               90.51 ms a token     9.5%
+  rope + kv copy       1.80 ms a token     0.2%
+  attention            4.04 ms a token     0.4%
+  o proj              58.38 ms a token     6.2%
+  residual             0.09 ms a token     0.0%
+  ffn rmsnorm          0.24 ms a token     0.0%
+  gate + up          393.41 ms a token    41.5%
+  silu * up            3.00 ms a token     0.3%
+  down               211.05 ms a token    22.2%
+  residual             0.09 ms a token     0.0%
+  final rmsnorm        0.02 ms a token     0.0%
+  output head        185.51 ms a token    19.6%
+charsiu NPU: 113 tensors, 144 slices, 2470 submits, 19.01 MB per submit
+charsiu NPU: 5030 ms in the hardware path, 9.34 GB/s of weights, 2036 us a submit
+charsiu NPU: of that, 64 ms submitting, 4736 ms waiting for the fence, 228 ms reading back
+
+===== 3) the same stages with the NPU off, one boot apart.         =====
+
+  -- the CPU path, stages on
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 126 ms | prompt 6 tok in 12802 ms, 0.47 tok/s | gen 32 tok in 8673 ms, 3.69 tok/s | peak 2506 MB]
+charsiu stages: 38 tokens, 564.4 ms a token
+  token embedding      0.03 ms a token     0.0%
+  attn rmsnorm         0.69 ms a token     0.1%
+  q k v               52.81 ms a token     9.4%
+  rope + kv copy       3.20 ms a token     0.6%
+  attention           13.79 ms a token     2.4%
+  o proj              32.92 ms a token     5.8%
+  residual             0.30 ms a token     0.1%
+  ffn rmsnorm          0.67 ms a token     0.1%
+  gate + up          225.05 ms a token    39.9%
+  silu * up            9.20 ms a token     1.6%
+  down               119.77 ms a token    21.2%
+  residual             0.30 ms a token     0.1%
+  final rmsnorm        0.05 ms a token     0.0%
+  output head        105.61 ms a token    18.7%
+
+===== 4) int4: the live map, and the TWO registers the vendor       =====
+=====    writes differently AT THE SHAPE WHERE WE COLLAPSE.         =====
+=====    timing only -- the input packing is not changed, so read   =====
+=====    the microseconds and ignore any correctness these print.   =====
+===== 4a today
+  single task, K = 2048, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       186.9        0.70       
+  256    0.262       192.3        1.36       
+  512    0.524       267.9        1.96       
+  1024   1.049       17310.7      0.06       
+  2048   2.097       18829.2      0.11       
+
+  fit over 5 points:  10937.3 us/MB  (0.09 GB/s)   +  -1530.8 us that does not scale with the bytes
+===== 4b the live map, 0x40b8 = 3
+  single task, K = 2048, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       170.3        0.77       
+  256    0.262       167.1        1.57       
+  512    0.524       312.2        1.68       
+  1024   1.049       4870.1       0.22       
+  2048   2.097       21927.5      0.10       
+
+  fit over 5 points:  11350.8 us/MB  (0.09 GB/s)   +  -3734.8 us that does not scale with the bytes
+===== 4c the vendor's 0x100c: int4 weights with 8 BIT activations
+  single task, K = 2048, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       158.7        0.83       
+  256    0.262       188.2        1.39       
+  512    0.524       232.7        2.25       
+  1024   1.049       11126.1      0.09       
+  2048   2.097       21999.9      0.10       
+
+  fit over 5 points:  11972.1 us/MB  (0.08 GB/s)   +  -2988.0 us that does not scale with the bytes
+===== 4d the vendor's 0x1098 = 1
+  single task, K = 2048, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       175.6        0.75       
+  256    0.262       169.3        1.55       
+  512    0.524       259.9        2.02       
+  1024   1.049       8045.2       0.13       
+  2048   2.097       20739.7      0.10       
+
+  fit over 5 points:  11051.1 us/MB  (0.09 GB/s)   +  -3102.7 us that does not scale with the bytes
+===== 4e both, which is the vendor's stream exactly
+  single task, K = 2048, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.131       223.6        0.59       
+  256    0.262       208.9        1.26       
+  512    0.524       259.3        2.02       
+  1024   1.049       8020.2       0.13       
+  2048   2.097       15726.7      0.13       
+
+  fit over 5 points:  8508.6 us/MB  (0.12 GB/s)   +  -2026.8 us that does not scale with the bytes
+===== 4f and at K=512, where there is no cliff to hide the slope
+  single task, K = 512, 20 reps, M = 1   [int4]
+
+  N      weight MB   us           GB/s       
+  128    0.033       173.0        0.19       
+  256    0.066       149.8        0.44       
+  512    0.131       161.1        0.81       
+  1024   0.262       229.4        1.14       
+  2048   0.524       421.8        1.24       
+
+  fit over 5 points:  546.1 us/MB  (1.83 GB/s)   +  116.1 us that does not scale with the bytes
+=====    int8 at K=512 and K=2048, the denominators                 =====
+  single task, K = 512, 20 reps, M = 1   [int8]
+
+  N      weight MB   us           GB/s       
+  128    0.066       177.5        0.37       
+  256    0.131       176.0        0.74       
+  512    0.262       214.9        1.22       
+  1024   0.524       226.8        2.31       
+  2048   1.049       355.5        2.95       
+
+  fit over 5 points:  180.2 us/MB  (5.55 GB/s)   +  156.9 us that does not scale with the bytes
+  single task, K = 2048, 20 reps, M = 1   [int8]
+
+  N      weight MB   us           GB/s       
+  128    0.262       186.6        1.40       
+  256    0.524       199.4        2.63       
+  512    1.049       247.6        4.23       
+  1024   2.097       363.5        5.77       
+  2048   4.194       593.8        7.06       
+
+  fit over 5 points:  105.7 us/MB  (9.47 GB/s)   +  146.5 us that does not scale with the bytes
+
+===== 5) the standing number, no timers, so they cannot be blamed  =====
+
+  -- the decode loop on the NPU
+charsiu: NPU open, routing tensors with n <= 128256
+ Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of the most famous landmarks in the world. It was built for
+
+[load 126 ms | prompt 6 tok in 21530 ms, 0.28 tok/s | gen 32 tok in 4886 ms, 6.55 tok/s | peak 2529 MB]
+charsiu NPU: 113 tensors, 144 slices, 2470 submits, 19.01 MB per submit
+charsiu NPU: 5017 ms in the hardware path, 9.36 GB/s of weights, 2031 us a submit
+charsiu NPU: of that, 63 ms submitting, 4725 ms waiting for the fence, 228 ms reading back
+
+===== the anchor again                                             =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== add the five matmul stages, subtract the hardware path.      =====
+
+RK3576 NPU bringup
+rock4d login: 

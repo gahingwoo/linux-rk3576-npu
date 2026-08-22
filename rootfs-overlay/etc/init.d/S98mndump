@@ -2,113 +2,79 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 327. STOP SUBTRACTING THE CPU's SHARE AND MEASURE IT.
+# 2026-08-22 round 328. A MEAN CANNOT TELL SLOW FROM STALLING.
 #
-# ROUND 326 ANSWERED BOTH ITS QUESTIONS, AND ONE OF THEM REFUTED MY PREDICTION.
+# ⚠ TWO INSTRUMENTS WERE WRONG IN ROUND 327 AND BOTH WERE MINE.
 #
-# 1) THE BLOCK LENGTH IS NOT IN ANY OF THE THREE REGISTERS. 0x1020 doubled,
-#    0x1030 doubled, both together: the map is byte for byte the control's,
-#    56 of 56 points on the same form, and the acceptance stays 128 of 256.
-#    0x1024 halved breaks the block (2 live points, and it poisoned twice).
-#    A clean, complete negative.
+# 1) THE STAGE TABLE WAS 86% PROMPT. It printed "38 tokens, 948.6 ms a token"
+#    on a run whose generation was 152.7 ms a token, because the six prompt
+#    tokens fault 1.3 GB of weights in off the card and build the NPU tensors,
+#    and that 31 seconds got divided across every stage. ⚠ The host check I
+#    built it against had exactly the same defect -- it said 90.5 ms a token
+#    where the decode was 29 -- and I quoted it in the round header anyway.
+#    Fixed: the timers reset after the prompt. The host now prints 27.4 ms a
+#    token against a wall clock of 27.7, which is the check that was missing.
 #
-# 2) ⚠ THE CLIFF IS A BYTE CAPACITY, NOT A COUNT, AND I PREDICTED A COUNT.
-#    The N sweep at three K, last good and first bad in each row:
+# 2) THE BENCH TIMED THE WHOLE LOOP AND DIVIDED BY THE REPS. That number
+#    cannot tell "every rep takes 5 ms" from "one rep in twenty takes 100 ms
+#    and the other nineteen take 200 us", and those are completely different
+#    faults. ⚠ int4's collapse above 512 KiB has been read as a BANDWIDTH for
+#    three rounds on exactly that number, and the same arm has come back at
+#    4.9, 8.0, 9.2, 14.5 and 17.7 ms across five runs -- a spread that a rate
+#    does not have and a count of stalls does. Fixed: every rep is timed, and
+#    each point prints min, median, max and how many reps ran over twice the
+#    median. The fit is on the MEDIANS now.
 #
-#        K=512    N=2048  0.524 MB   505 us     no cliff at all
-#        K=1024   N=1024  0.524 MB   273 us  |  N=2048  1.049 MB   7932 us
-#        K=2048   N=512   0.524 MB   230 us  |  N=1024  1.049 MB   9238 us
-#
-#    **Every row survives 0.524 MB and dies at 1.049. int4 has a 512 KiB weight
-#    ceiling.** int8 does not: 1.049 MB at K=512 is 282 us, and round 325 ran
-#    4.19 MB at 562 us. Same 0x101c value in both, so it is not that field.
-#
-# 3) AND THE NUMBER THAT ACTUALLY CLOSES int4, from the K=512 row that has no
-#    cliff in it -- five clean points, no timeouts, int8 in the same boot:
-#
-#        int4   661.5 us/MB   1.51 GB/s   + 142.9 us
-#        int8   105.8 us/MB   9.45 GB/s   + 166.9 us
-#
-#    **int4 moves a byte 6.2 times slower than int8.** Half the bytes at a sixth
-#    of the rate is 3x SLOWER overall, and that is the whole case: not a cliff
-#    nobody understands, a marginal cost measured over five points.
+# ⚠ AND THE DENOMINATOR MOVED TOO. int8 at K=512 fitted 9.45 GB/s in round 326
+# and 5.55 in round 327, same shape, same board. So round 326's headline "int4
+# moves a byte 6.2x slower than int8" is quoted from a pair of numbers that are
+# not reproducible to better than 40%, and it needs re-measuring before it is
+# repeated. That is what entry 4 is for.
 #
 # ---------------------------------------------------------------------------
-# SO THIS ROUND ASKS THE TWO THINGS THAT ARE LEFT
+# WHAT IS STILL SOLID, AND WHY int4 IS STILL OPEN
 # ---------------------------------------------------------------------------
 #
-# A) THE LAST HONEST int4 QUESTION. Every bench number above was taken on the
-#    OLD map, where half the weight bytes are dead -- the fetch reads 8 live
-#    bytes and skips 8. At `0x40b8 = 3` every byte is live and contiguous. If
-#    that is what the 6.2x is, int4 at the new map fetches near 9 GB/s and int4
-#    comes back with its 2x intact. If it still reads 1.5, the layout is the
-#    ceiling and int4 is closed on a measurement rather than a mystery.
+# The vendor's own .rkllm is the SAME MODEL and its int4 ops run at 1 MiB and
+# 2 MiB of weights -- exactly where charsiu collapses and four times past it.
+# So the 512 KiB ceiling is charsiu's. And the CNA half of the vendor's stream
+# at that shape agrees with charsiu's on 44 of 44 registers once the two
+# address placeholders are set aside, with only 0x100c bit 29 (the vendor uses
+# EIGHT bit activations for int4) and 0x1098 left over.
 #
-# B) WHERE THE TOKEN'S TIME ACTUALLY GOES ON THE CPU. The hardware path is
-#    measured to the microsecond and the CPU's 21 ms is a SUBTRACTION -- the
-#    kind of number I have had to withdraw five times in this project. Every
-#    stage of the forward pass is stamped now (CHARSIU_STAGES), so:
-#
-#      stage total for the matmuls  -  npudev's hardware path  =  the CPU work
-#      INSIDE the matmuls, which is the activation quantise and the output
-#      dequantise, and it is invisible today.
-#
-#    ⚠ Host run, CPU only, as the sanity check this was built against: the
-#    elementwise stages -- both rmsnorms, rope, attention, silu, both residuals
-#    -- total **0.9 ms of 90.5**. If that ratio holds on the A72 the "21 ms of
-#    elementwise" I have been quoting is wrong too, and the time is in the
-#    quantise, which is a much easier thing to fix.
-#
-# ---------------------------------------------------------------------------
-# ⚠ AND THE VENDOR'S OWN FILE SAYS THE 512 KiB CEILING IS MINE
-# ---------------------------------------------------------------------------
-#
-# The .rkllm in ~/Documents/kiln is Llama-3.2-1B-Instruct-rk3576-w4a16 -- THE
-# SAME MODEL charsiu runs. Reading its register streams offline (no board):
-#
-#   its int4 ops are ic=2048 oc=1024, weight_bytes 0x00100000 = 1 MiB
-#   and ic=4096 oc=1024, which is 2 MiB
-#
-# **That is exactly the size where charsiu collapses, and four times it.** So
-# the 512 KiB ceiling is charsiu's, not the silicon's.
-#
-# Diffing that stream against charsiu's at the SAME shape: 46 registers, and
-# once the two address placeholders are set aside they agree on 44 of 44 except
-#
-#   0x100c   vendor 00600120   charsiu 20600120   bit 29 = 16 bit activations
-#   0x1098   vendor 00000001   charsiu 00000004   already known from the int8
-#                                                 comparison, never board tested
-#
-# **The vendor runs its int4 projections with EIGHT bit activations and charsiu
-# forces sixteen.** Entry 4 tries both, timing only -- the input packing is not
-# changed, so those arms measure the fetch and nothing else.
+# Round 327 tried both and every arm landed inside the noise of the arm it was
+# being compared with. ⚠ That is not a negative yet, because the noise is the
+# thing being fixed this round.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE MEASUREMENT. Add up the five matmul stages (q k v, o proj,
-#    gate + up, down, output head) and compare with the hardware path npudev
-#    prints in the same run. The difference is the CPU inside the matmuls.
-#    Everything else is the elementwise, and it should be small.
-# 2) ENTRY 3 IS THE SAME RUN WITHOUT THE NPU, so each stage has a before and
-#    after in one boot.
-# 3) ENTRY 4 IS int4's LAST ARM. 1.5 GB/s at the new map closes it; 9 reopens
-#    it, and nothing in between is a result.
-# 4) ENTRY 5 IS THE STANDING NUMBER, uninstrumented, so the timers cannot be
-#    blamed for it: about 6.55 tokens a second.
+# A) ENTRY 3, THE COLUMN THAT DECIDES IT: "reps > 2x median" at N=1024, K=2048.
+#
+#      0 of 50, median ~9000 us   int4 really is slow. A rate.
+#      a few of 50, median ~250   int4 STALLS, and everything since round 310
+#                                 has been measuring how often, not how fast.
+#
+#    Those two want completely different next rounds, and no mean can separate
+#    them, which is the whole reason this round exists.
+# B) ENTRY 4 RE-MEASURES THE DENOMINATOR at 50 reps with a median, twice in the
+#    same boot. If int8 at K=512 is stable now, 326's 6.2x can be restated
+#    honestly; if it still swings 40%, no ratio from this bench is quotable.
+# C) ENTRY 2 IS THE STAGE SPLIT, now that the instrument agrees with the wall
+#    clock. Add the five matmul stages and compare with npudev's hardware path:
+#    the difference is the quantise and dequantise, and everything else is the
+#    elementwise.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The elementwise is SMALL and most of the CPU's share is the quantise and
-# dequantise around each matvec. I am saying it plainly because it is
-# falsifiable in one line of entry 2, and because the alternative -- 21 ms of
-# rmsnorm and softmax on a 1B model at one token -- does not survive the host
-# measurement above.
-#
-# On int4 I make no prediction. My last two there were wrong.
+# int4 STALLS rather than being slow, because a 3.5x spread across five runs of
+# the same arm is not what a bandwidth does. ⚠ I have been wrong about int4
+# three times now -- the wrapping stride, the dead bytes, and a count for the
+# cliff -- so this is written down to be killed, and entry 3 kills it in one
+# column.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -211,7 +177,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 327: measure the CPU's share instead of subtracting it #####"
+	log "##### ROUND 328: a mean cannot tell slow from stalling.           #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -220,29 +186,28 @@ start() {
 		CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the same stages with the NPU off, one boot apart.         ====="
+	log "===== 2b) the same stages with the NPU off, one boot apart.        ====="
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 4) int4: the live map, and the TWO registers the vendor       ====="
-	log "=====    writes differently AT THE SHAPE WHERE WE COLLAPSE.         ====="
-	log "=====    timing only -- the input packing is not changed, so read   ====="
-	log "=====    the microseconds and ignore any correctness these print.   ====="
-	log "===== 4a today"
-	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 20
-	log "===== 4b the live map, 0x40b8 = 3"
-	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 2048 20
-	log "===== 4c the vendor's 0x100c: int4 weights with 8 BIT activations"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "$CE" $BE --nsweep 2048 20
-	log "===== 4d the vendor's 0x1098 = 1"
-	c "CHARSIU_W4=1" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 2048 20
-	log "===== 4e both, which is the vendor's stream exactly"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 2048 20
-	log "===== 4f and at K=512, where there is no cliff to hide the slope"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 512 20
-	log "=====    int8 at K=512 and K=2048, the denominators                 ====="
-	c "$CE" $BE --nsweep 512 20
-	c "$CE" $BE --nsweep 2048 20
+	log "===== 3) int4's collapse: EVERY rep, or a few? read the last      ====="
+	log "=====    column. 0 of 50 slow means a rate; a few means a stall.   ====="
+	log "===== 3a today, K=2048"
+	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 50
+	log "===== 3b the vendor's two registers, 8 bit activations and 1098=1"
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 2048 50
+	log "===== 3c the live map, 0x40b8 = 3"
+	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 2048 50
+
+	log ""
+	log "===== 4) the denominator, twice in one boot, on medians.           ====="
+	log "=====    326 fitted int8 K=512 at 9.45 GB/s and 327 at 5.55.       ====="
+	c "$CE" $BE --nsweep 512 50
+	c "$CE" $BE --nsweep 512 50
+	c "$CE" $BE --nsweep 2048 50
+	log "=====    and int4 at K=512, where there is no cliff in the row     ====="
+	c "CHARSIU_W4=1" "$CE" $BE --nsweep 512 50
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "CHARSIU_CNA_1098=1" "$CE" $BE --nsweep 512 50
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -253,7 +218,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== add the five matmul stages, subtract the hardware path.      ====="
+	log "===== the last column of entry 3 is the round.                     ====="
 	sync
 }
 case "$1" in
