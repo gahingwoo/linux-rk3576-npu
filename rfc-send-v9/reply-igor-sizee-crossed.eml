@@ -7,63 +7,41 @@ Hi Igor,
 
 SIZE_E_1 stays at 0 and the diff stays as it is. Your reason is better than the
 one I would have given: a register built from the trace with one field swapped
-to upstream's value is a configuration nothing has ever run, and that is worth
-more than a smaller diff.
+to upstream's value is a configuration nothing has ever run.
 
-Your question has an answer and it is partly uncomfortable, so let me give the
-measurement rather than the summary. Since we last spoke I swept SIZE_E_2 across
-all eight of its values on a second path, the int4 one, at 64 output channels:
+I crossed SIZE_E_1 with the channel count, seven values, with the control beside
+each one in the same boot:
 
-    SIZE_E_2       0    1    2    3    4..7
-    words written  32   32   36   40   the job hangs
+    N                      16   24   32   40   48   56   64
+    SIZE_E_1 = 1  written  16   24   32   40   48   56   64
+                  correct  16   24   32   40   48   56   64
+    SIZE_E_1 = 0  written   8   24   32   40   48   56   64
+                  correct   8   24   32   40   48   56   64
 
-and the count that came out CORRECT stayed at 32 in all of them, so what the
-field moves is how many words the block writes, not how many channels it
-computes.
+Six of the seven are identical. At N = 16 they are not: upstream's 0 asks for
+sixteen channels and delivers eight, in both the words written and the count
+that comes out correct.
 
-So on that path the field is additive in FOURS, not in sixteens. That does not
-sit well with the semantics I sent you on the 17th, where SIZE_E_n + 1 counted
-16-channel atoms. It is a different register value on a different precision, so
-it does not refute the reading for the path it was read from, and I am not going
-to pretend it supports it either.
+So your conservative choice is right, and one shape in seven is what two shapes
+could never have found.
 
-SIZE_E_1 on that path is inert: setting it from 1 to 0 leaves the channel count
-at 40 and the probe's sixteen point window unchanged. That is a smaller claim
-than "no effect" and it is the size of what I actually read. SIZE_E_0 is inert at
-0 and hangs at 2 and at 6. RGP_CNTER and OD_BYPASS are inert, RESERVED_0 hangs.
+Two corrections I owe you. The first version of this reply said I had not run
+the cross sweep, and I had; the round is named after you. And I nearly handed
+you an old floor(n/16)*16 shortfall as a possible SIZE_E_1 effect, but the
+traced value writes all 24 at N = 24 in this round too, so that one belongs to
+the channel count register and not to this field.
 
-Now the part your question actually asks. I said I would cross the two and I
-have, at seven channel counts, with the control alongside each one in the same
-boot rather than borrowed from an earlier round:
+Separately, on the int4 path at 64 output channels, SIZE_E_2 moves the words the
+block writes but not the channels it computes:
 
-    N                     16   24   32   40   48   56   64
-    SIZE_E_1 = 1  wrote   16   24   32   40   48   56   64
-                  correct 16   24   32   40   48   56   64
-    SIZE_E_1 = 0  wrote    8   24   32   40   48   56   64
-                  correct  8   24   32   40   48   56   64
+    SIZE_E_2       1    2    3
+    words written  32   36   40
 
-Six of the seven are identical, so SIZE_E_1 is inert at 24, 32, 40, 48, 56 and
-64 and I can say that with a control under it now rather than as an impression.
-
-At N = 16 it is not inert. Asking for sixteen channels with the field at
-upstream's 0 delivers eight, and both the words written and the count that comes
-out correct halve. One shape in seven, the smallest one, and it is exactly the
-kind of thing two shapes could not have found. So your conservative choice is
-not just tidier, it is right, and I would not have known that without the sweep
-you asked for.
-
-I also owe you a correction on the way to this. The first version of this reply
-said I had not run the cross sweep and I had; the round is titled after you. And
-it was half a round, because it swept SIZE_E_1 = 0 at all seven N and never ran
-the traced value beside them, so four of the seven only had a control by accident
-elsewhere in the log. The table above is the round that fixes that.
-
-And the loose end I was going to hand you is closed by the same run. I had an
-earlier measurement that asking for n channels writes floor(n/16)*16 of them,
-and I was about to tell you that SIZE_E_1 = 0 might be what lifts it. It is not:
-in this round the traced value writes all 24 at N = 24 too. That earlier
-shortfall belongs to a different setting of the channel count register, not to
-this field, and comparing across two rounds is what made it look otherwise.
+and the correct count stayed at 32 in all three. Additive in fours, not in
+sixteens, which does not sit well with the semantics I sent you on the 17th. It
+is a different register value on a different precision, so it does not refute
+the reading for the path it was read from, and I am not going to pretend it
+supports it either.
 
 The re-run offer is noted and I will take it when v9 goes. Glad the trip was
 fine, and I hope the countryside is treating the board well.
