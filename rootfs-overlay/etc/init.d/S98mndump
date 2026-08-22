@@ -2,85 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 321. WHAT THE 23 ms IS MADE OF, AND WHETHER BIGGER SLICES
-# MAKE IT SMALLER.
+# 2026-08-22 round 322. FEWER TASKS, UNTIL SOMETHING BREAKS.
 #
-# ROUND 320 MEASURED THE SPLIT INSTEAD OF INFERRING IT, and two of my earlier
-# inferences were wrong.
+# ROUND 321 SPLIT THE HARDWARE PATH AND KILLED MY RESIDUAL. Per token, all 113
+# on the NPU at N=1024 K=2048:
 #
-#   rung                     gen ms/tok   hardware   CPU     GB/s   tok/s
-#   all 113                  179.8        156.1      23.7    7.92   5.56
-#   all 113, 1 task/submit   218.4        195.1      23.3    6.34   4.58
-#   112, head on the CPU     192.2        127.2      65.0    7.65   5.20
-#   head alone                265.8        28.7     237.1    9.14   3.76
-#   everything on the CPU     266.5          -      266.5      -    3.75
+#     submitting     3.3 ms    2%
+#     THE FENCE    148.4 ms   94%
+#     reading back   5.4 ms    3.5%
 #
-#   - THE HARDWARE PATH IS 87% OF A TOKEN. Only about 24 ms is CPU. My "58 ms of
-#     CPU" was the CPU's output head, which is now on the NPU.
-#   - THE HEAD ALONE REACHES 9.14 GB/s, near the bench's 10.35. ⚠ My round 319
-#     claim that it only managed 4.2 was WRONG; it came from subtracting whole
-#     token times across two different regimes. Fourth inference refuted by a
-#     measurement.
-#   - The head costs 29 ms on the NPU against 58 on the CPU, which is exactly
-#     why routing it wins.
-#   - Chaining is worth 39 ms a token, and (156-195)/(113-606) puts a submit at
-#     79 us -- the same number round 317 got a different way.
+# The fence contains the compute, so what matters is how far above the bytes it
+# sits: 1236 MB at the bench's 10.35 GB/s is 119 ms, and the fence is 148.
 #
-#   NPU 5.56 against the best CPU path's 5.53. Ahead for the first time, by half
-#   a percent, which is not a number to dress up.
+# AND THE SLICE SWEEP WAS NOT FLAT, WHICH I HAD SAID WOULD CONTRADICT 319:
+#
+#     slices        606     542     319     287
+#     hardware ms   157.2   154.4   148.2   146.0
+#     GB/s          7.86    8.00    8.34    8.46
+#     tok/s         5.55    5.62    5.83    5.90
+#
+# ⚠ IT IS NOT A CONTRADICTION, AND PUTTING THE TWO TOGETHER IS THE RESULT.
+# Round 319 varied TASKS PER SUBMIT at a fixed 606 slices and got a flat line.
+# Round 321 varied HOW MANY SLICES EXIST and got a real slope. So the submit is
+# nearly free and **the cost is per TASK**: 606 to 287 slices saved 11.2 ms,
+# which is about 35 us a task.
+#
+# Text identical at every slice size, including N = 2048 and K = 4096 which
+# nothing had verified at acc_out before. Those are now the defaults.
+#
+#   NPU 5.90 against the best CPU path's 5.53. Ahead by 6.7%.
 #
 # ---------------------------------------------------------------------------
 # WHY THIS ROUND EXISTS
 # ---------------------------------------------------------------------------
 #
-# 156 ms of hardware path is about 124 ms of irreducible weight fetch at the
-# hardware's own ceiling, about 9 ms of submit, and **about 23 ms left over**.
+# If a task costs 35 us then the way to spend less is to have fewer, and the
+# fewest possible is ONE PER TENSOR: 113 slices against today's 287, which at
+# 35 us each is about 6 ms a token, or roughly 6.2 tokens a second.
 #
-# ⚠ THAT 23 IS A RESIDUAL, NOT A MEASUREMENT, and residuals are what the last
-# four wrong calls were made of. So the runtime now splits its own hardware path
-# three ways and prints it:
-#
-#     of that, A ms submitting, B ms waiting for the fence, C ms reading back
-#
-# bo_prep is not a read: it WAITS for the job. So B is the fence and C is the
-# copy, and they have completely different fixes. A big B would justify merging
-# the independent projections -- q, k and v all read one RMSNorm output, and so
-# do gate and up -- into one submit each, which would remove 48 fences a token
-# as well as 48 submits. A big C would not.
+# ⚠ THAT MEANS N = 8192, WHICH IS EXACTLY THE SHAPE THAT WEDGED ROUND 313 AND
+# COST A POWER CYCLE. It is worth asking again, because three things have
+# changed since: the output is an accumulator rather than a requantised byte,
+# the coefficient buffer is 65536 elements rather than k*n, and a submit that
+# stops answering now retires the hardware path instead of repeating a timeout
+# forever. **The failure, if it comes, will be loud rather than fatal** -- that
+# is the whole reason this can be asked at all.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE THREE WAY SPLIT IN ENTRY 2 IS THE ROUND. A and C are charsiu's own
-#    cost; B is the hardware plus the driver. Note that B necessarily contains
-#    the real compute, so it cannot go to zero -- what matters is whether it is
-#    much larger than the 124 ms the bytes alone need.
+# 1) THE TEXT FIRST, character for character against entry 7. Every wider slice
+#    in this round is a shape nothing has verified. A timing for a wrong answer
+#    is not a timing.
 #
-# 2) ENTRIES 3 AND 4 ask whether fewer, larger slices help. Both change a shape
-#    nothing has verified at acc_out, so **read `wrote`-style evidence first:
-#    the text has to be identical, character for character, or the timing is a
-#    timing of a wrong answer.** N = 2048 and K = 4096 are both untested here.
+# 2) THEN "the NPU stopped answering" IF IT APPEARS. That line naming a K and an
+#    N is the most valuable thing this round can produce, because it is the
+#    first honest measurement of where the shape limit actually is -- round 313
+#    found it with a power cable.
 #
-# 3) Entry 5 is the control that everything is diffed against.
+# 3) THEN slices, hardware ms and tok/s, which should keep improving until they
+#    do not.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) B, THE FENCE, IS MOST OF IT, because it contains the compute. The number
-#    worth having is B minus the 124 ms the bytes need: that is what the fence
-#    costs beyond the work, and it is what merging submits could remove.
+# A) N = 4096 WORKS AND HELPS. 199 slices, about 5.95 to 6.0 tok/s.
 #
-# B) LARGER SLICES HELP A LITTLE OR NOT AT ALL. Round 319's task cap sweep was
-#    flat across a thirty-two fold range, which already says per submit cost is
-#    not the limiter, and slice size mostly changes the same quantity.
-#    ⚠ If N = 2048 turns out to be much faster, that would contradict 319 and
-#    the contradiction is the result.
+# B) N = 8192 IS WHERE IT BREAKS, and it breaks loudly. If it does not break,
+#    round 313's wedge was the byte output or the 67 MB coefficient buffer and
+#    not the shape, and that is worth more than the speed.
 #
-# C) The text stays identical at every slice size. If it does not, acc_out has a
-#    shape dependence nobody has looked for and that is worth more than the
-#    round.
+# C) The gain flattens before 113 slices, because 35 us a task times 174 tasks
+#    is 6 ms out of 146, and the fence is still 29 ms above what the bytes need.
+#    ⚠ Five timing predictions of mine in a row have been wrong, so the number
+#    to take from this round is the one printed, not the one above.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -169,29 +166,41 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 321: submit, fence and copy, told apart.              #####"
+	log "##### ROUND 322: a task costs 35 us, so have fewer of them.       #####"
 
 	log ""
-	log "===== 2) THE ROUND. everything, split three ways.                  ====="
-	rung "all 113, N=1024 K=2048" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 2) the new default, N=2048 K=4096. should reproduce 5.90.    ====="
+	rung "N=2048 K=4096, 287 slices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) fewer, wider slices. N = 2048 is untested at acc_out.     ====="
-	rung "all 113, N=2048" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
-		CHARSIU_NPU_NMAX=2048
+	log "===== 3) N = 4096                                                  ====="
+	rung "N=4096 K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
+		CHARSIU_NPU_NMAX=4096
 
 	log ""
-	log "===== 4) and a deeper K. 4096 is untested too.                     ====="
-	rung "all 113, K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
-		CHARSIU_NPU_KMAX=4096
+	log "===== the anchor, before the shape that wedged 313                 ====="
+	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 5) both at once, the fewest slices this can make             ====="
-	rung "all 113, N=2048 K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
-		"$HEAD" CHARSIU_NPU_NMAX=2048 CHARSIU_NPU_KMAX=4096
+	log "===== 4) N = 8192. THIS IS ROUND 313's SHAPE. loud, not fatal.     ====="
+	rung "N=8192 K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
+		CHARSIU_NPU_NMAX=8192
 
 	log ""
-	log "===== 6) the CPU reference the text is diffed against              ====="
+	log "===== the anchor, straight after it                                 ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== 5) and K = 8192 with it: one slice a tensor, 113 in total    ====="
+	rung "N=8192 K=8192, one slice a tensor" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		"$CE" "$HEAD" CHARSIU_NPU_NMAX=8192 CHARSIU_NPU_KMAX=8192
+
+	log ""
+	log "===== 6) back to the default, to show the block is still fine      ====="
+	rung "N=2048 K=4096 again" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 7) the CPU reference the text is diffed against              ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
@@ -199,7 +208,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== the three way split, then whether wider slices changed it.   ====="
+	log "===== text first, then where it stops answering, then tok/s.       ====="
 	sync
 }
 case "$1" in
