@@ -2,66 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 332. ONE QUESTION: DO THE PHANTOM WORDS CARRY DIFFERENT k?
+# 2026-08-22 round 333. THE PAIR IS (2r, 2r+1), AND IT WAS READ NOT GUESSED.
 #
-# ⚠ ROUND 331 IS A CLEAN NEGATIVE. The pairing search found 15 of 64, 38 of 256
-# and 309 of 512 -- and the pairs are scattered (`11=w2+w88`, `20=w31+w83`),
-# with no rule and no arm of the sweep standing out from the others. Those
-# counts scale with the number of PAIRS, not with anything real: they are
-# coincidences. Odd k, bit-4 parity and the other intra-slot order all scored
-# the same. **The second half of a channel's k is not in the buffer in any form
-# tried, and no sum of two written words is its dot product.**
+# ROUND 332 ASKED THE ONE QUESTION AND GOT A CLEAN ANSWER. --kpair at the
+# phantom settings, K=64 N=64, printing the k each byte multiplies with:
 #
-# ---------------------------------------------------------------------------
-# SO STOP SWEEPING PACKINGS AND ASK THE HARDWARE WHICH k IT READ
-# ---------------------------------------------------------------------------
+#   w0    byte 0 -> k 0,1     byte 4 -> k 8,9     byte 256 -> k 32,33
+#   w1    byte 8 -> k 16,17                       byte 264 -> k 48,49
+#   w64   byte 1024 -> k 0,1                      byte 1280 -> k 32,33
 #
-# Everything about the WORD a byte feeds was measured (`--map`, 1376 points).
-# Nothing about the k inside it has been, at these settings -- it has only ever
-# been guessed, three times, and all three failed. There is already a probe for
-# exactly this: `--kpair` lights one nibble, walks a one-hot input across k, and
-# prints which k the nibble multiplied with.
+# ⚠ **w64 carries the SAME k as w0.** The phantom word is a duplicate of one
+# half, not the other half, so round 330's out[c] + out[c+N] was two copies of
+# the same partial sum and could never have worked.
 #
-# At K=64 N=64 the block is 64 slots = 512 bytes, so
+# 🔑 **But w0 and w1 TOGETHER cover all 64 k.** That is the halfk parity rule
+# itself, seen from the hardware's side: an even word takes k 0..15 and 32..47,
+# an odd word takes 16..31 and 48..63. So a real channel is the PAIR (2r, 2r+1),
+# and with 0x3020 = 2N-1 there are 2N words -- N real channels, each with the
+# whole of K, and N*K nibbles is exactly the N*K/2 byte buffer. Nothing is
+# padded and nothing is wasted.
 #
-#   word  0   slots 0 and 32     bytes 0..7    and 256..263
-#   word  1   slots 1 and 33     bytes 8..15   and 264..271
-#   word 64   slots 128 and 160  bytes 1024..  and 1280..     (the PHANTOM half)
-#   word 65   slots 129 and 161  bytes 1032..  and 1288..
+#   k = 16*(w mod 2) + 32*j + 2*byte_in_slot + nibble
 #
-# **THE WHOLE ROUND IS ONE COMPARISON: does word 64 pair with the same k as
-# word 0, or with different k?**
-#
-#   different k   the phantom words hold the rest of the sum, the packer just
-#                 has to put the right k there, and int4 goes to full width
-#   the same k    the phantom words are a redundant copy, a channel really can
-#                 only ever see K/2, and int4 is closed for good on a
-#                 measurement rather than on a sixth failed guess
-#
-# Either answer ends the search, which is why this is worth one more boot.
+# with j indexing the slots the measured map gives word w. Every term of that
+# came off the board: the slots from --map at 1376 points, the k from --kpair
+# this round, the intra-slot order from rounds 265-288 and reproduced by 332's
+# own control.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 3a IS THE CONTROL: --kpair at TODAY's settings, where the answer is
-#    already known from rounds 265 to 288 -- byte j of a slot carries k = 2j in
-#    its low nibble and k = 2j+1 in its high. If that does not come back, the
-#    probe is not reading what it used to and nothing below counts.
-# 2) ENTRY 3b IS THE ROUND, the same probe with 0x40b8 = 3 and 0x3020 = 2N-1.
-#    Read the k column for bytes 1024 and 1280 against bytes 0 and 256.
-# 3) ENTRY 2 IS THE STANDING CONTROL, unchanged: 64 of 64 and 128 of 256.
+# 1) ENTRY 2a IS THE CONTROL, today's packing: 64 of 64 at N=64 and the
+#    128 of 256 that twenty rounds have printed. Unchanged means the build is
+#    what I think it is.
+# 2) ENTRY 2b IS THE ROUND: paired packing, no halfk, 0x40b8 = 3 and
+#    0x3020 = 2N-1, scoring out[2r] + out[2r+1].
+#    **256 EXACT of 256 is int4 at full width for the first time.**
+# 3) ⚠ THE HALFK ZEROING IS OFF and must be: the paired packing uses every k,
+#    so the reference is the full dot product. If it needs halfk to score, it
+#    has not done what it claims.
+# 4) THREE SHAPES, because a packing that works at one is a coincidence.
+# 5) ENTRY 3 IS THE PRICE, if 2b lands: the bench at the same settings, on
+#    medians with the stall count. int4 has to beat 9.3 GB/s of int8 bytes with
+#    half as many, so anything above 4.7 GB/s is a real win and below it is not.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# No prediction, and this time there is a reason beyond my record: the two
-# outcomes are equally consistent with everything measured so far. The count in
-# round 330 says the phantom words are fed from the unused half of the buffer;
-# the halfk rule says a channel only ever sees the k whose bit 4 matches its
-# parity, and both words in a pair share that parity. **Those two cannot both
-# be true, and --kpair says which.**
+# ⚠ Six wrong predictions on int4, so the record says discount this. What is
+# different: nothing in the packing is assumed any more. The slots were
+# measured, the k were measured this round, the intra-slot order was measured
+# and re-confirmed by 332's control, and the arithmetic closes exactly with no
+# spare bytes. If 2b still fails, the failure is in something none of those
+# three probes can see, and int4 stops there.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -167,7 +162,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 332: do the phantom words carry different k?          #####"
+	log "##### ROUND 333: a channel is the pair (2r, 2r+1)                 #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -180,21 +175,23 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) the standing control: today's packing                     ====="
+	log "===== 2) THE ROUND: a channel is the pair (2r, 2r+1)               ====="
+	log "===== 2a CONTROL, today's packing: 64 of 64 and 128 of 256"
 	c "$M4" $MM 1 64 64
 	c "$M4" $MM 1 2048 256
+	log "===== 2b PAIRED packing, no halfk, 0x40b8=3 and 0x3020=2N-1"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" $MM 1 1024 512
+	log "===== 2c the same without the register pair, which must be WORSE"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 2048 256
 
 	log ""
-	log "===== 3) WHICH k DOES EACH BYTE CARRY? the one thing never measured ====="
-	log "===== 3a CONTROL: --kpair today. rounds 265-288 say k=2j and 2j+1."
-	c "CHARSIU_W4=1 CHARSIU_KPAIR_BYTES=0,4,8,256,260,264,1024,1028,1032,1280,1284,1288" \
-	  $I4 1 64 64 --kpair
-	log "===== 3b THE ROUND: the same probe at 0x40b8=3 and 0x3020=2N-1"
-	log "=====    word 0 is bytes 0 and 256; word 64 is bytes 1024 and 1280"
-	c "CHARSIU_W4=1 CHARSIU_KPAIR_BYTES=0,4,8,256,260,264,1024,1028,1032,1280,1284,1288" \
-	  "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --kpair
-	log "===== 3c and the map at the same settings, so the WORD is confirmed"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --map 8
+	log "===== 3) and the price, if it landed: medians and stalls           ====="
+	log "=====    int8 fits 9.3 GB/s, so int4 needs 4.7 to be worth it      ====="
+	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" "$CE" $BE --nsweep 2048 50
+	c "$CE" $BE --nsweep 2048 50
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -205,7 +202,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 3a is the control; 3b answers it; either answer ends it.      ====="
+	log "===== 2a is the control; 2b is the round; 256 of 256 is full width. ====="
 	sync
 }
 case "$1" in
