@@ -2,104 +2,91 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 324. int4: DID THE VALUES CHANGE, OR DID THEY MOVE?
+# 2026-08-22 round 325. READ THE WHOLE MAP, THEN REPACK.
 #
-# WHERE THE RUNTIME STANDS. Round 323 grouped q, k and v into one fence and
-# gate and up into another: 6.55 tokens a second against the best CPU path's
-# 5.53, ahead by 18%, with the text character for character the CPU's. The
-# budget is nearly empty -- 153 ms a token is 132 ms of NPU and 21 of CPU, and
-# of that 132 about 119 is the weight bytes themselves, 11% off the 10.35 GB/s
-# the bench measures. No amount of batching touches the bytes.
+# ROUND 324 FOUND THE THING int4 HAS BEEN MISSING SINCE 280, AND IT IS NOT A
+# COMPUTATION LIMIT. It is half the weight buffer never being read.
 #
-# SO THE ONLY 2x LEFT IS int4, AND THE VENDOR PROVES IT EXISTS. Their .rkllm
-# says W4A16: int4 projections, an int8 LM head, 750 MB a token where charsiu
-# moves 1236. At charsiu's own measured rate that is 80 ms against 132.
+# The instrument is --map: one live nibble at a time, printing the output word
+# it reaches. Byte offset against the word it lights, at K=64 N=64:
+#
+#     byte      0..63    64..127   128..191   192..255
+#     today     w0..w7    DEAD      w8..w15     DEAD
+#     0x40b8=3  w0..w7   w8..w15   w16..w23   w24..w31
+#
+# **The dead runs come alive.** Every byte of the buffer feeds a channel at the
+# new setting, where half of them fed nothing before, and words written go 64 to
+# 112 at N=64 and 136 to 256 at N=256. That is what "half width" always was.
+#
+# AND THAT EXPLAINS THE SCORE FALLING. charsiu's packer still writes the old
+# layout, so its group of 8 channels lands two runs further out than the reader
+# looks: 324 measured ch8..15 at w16..23 and ch16..23 at w32..39, which is
+# exactly what the new address map predicts. **The values did not change. The
+# map under them did.** int4 reopens, and the work is a repack.
+#
+# ⚠ THREE THINGS 324 GOT WRONG OR COULD NOT SAY, ALL OF THEM MINE
+#
+#   1  ITS OWN PROBE WAS UNREADABLE and the control is what caught it. The tool
+#      generated weights as `i * 13 % 15`, which is FIFTEEN distinct channel
+#      patterns, doubled to thirty by the halfk parity. So ref[c] == ref[c+30],
+#      the search for a value found a duplicate, and "256 of 256 present" was
+#      free. Entry 2a printed ident = 30 where the score said 64 of 64, which is
+#      a metric disagreeing with a known answer. Fixed: a per channel hash, and
+#      a line that counts how many references are actually distinct.
+#   2  ⚠ AND r312's "the survivors are g0 and g30" IS THE SAME ARTIFACT.
+#      ref[240] IS ref[0]. My "240 is 256 minus one feature atom, a wrapping
+#      stride would do that" was wrong, and it was a suspicion I wrote down
+#      before the run precisely so it could be killed. It is killed.
+#   3  I LIMITED THE MAP TO 512 OF 2048 BYTES, so it shows w0..w31 and stops.
+#      What feeds w32 and up, and how many k-runs a channel gets, is unmeasured.
+#      A packer cannot be written from a quarter of a map, and this file records
+#      three closed forms fitted to one point that died in the round after.
 #
 # ---------------------------------------------------------------------------
-# THE ONE THING ROUND 312 LEFT, AND WHY A SCORE CANNOT SETTLE IT
+# WHAT THIS ROUND DOES
 # ---------------------------------------------------------------------------
 #
-# 0x40b8 = 3 finished the int8 output stage: 1024 of 1024 channels byte exact as
-# the raw accumulator. Pointed at int4 it did this:
-#
-#                        words written    exact    which groups
-#     as it is today        136 of 256      128    g0..g15
-#     with 0x40b8 = 3       256 of 256       16    g0 and g30
-#
-# Read as a score that is a regression and int4 stayed closed. But those two
-# rows are equally consistent with two OPPOSITE stories:
-#
-#   A  the hardware now computes something else, and 0x40b8 is int8 only
-#   B  it computes the SAME 128 values, writes 120 more, and puts them
-#      somewhere the surface formula does not look
-#
-# Under B the half width was the short WRITE all along and int4's 2x is intact.
-# The exact count cannot tell A from B, because it only ever reads one index per
-# channel. Nothing in this project has been settled by reasoning about which is
-# likelier, and twice a closed form fitted to one number died in the round after.
-#
-# ---------------------------------------------------------------------------
-# WHAT THIS ROUND CHANGES
-# ---------------------------------------------------------------------------
-#
-# charsiu_matmul's int4 arm now SEARCHES. For every channel it computes the
-# expected value on the CPU and looks for that value across the WHOLE output
-# buffer instead of at the one index the surface formula picks, then prints
-# where each channel landed. No submits are added: it is a different reading of
-# the same bytes.
-#
-#   placement: <found> of <nz> channels ... <ident> at the index the formula reads
+# 1) THE WHOLE MAP, at the new setting, at three geometries. Not a sample: every
+#    byte at K=64 N=64, then K=128 N=64 and K=64 N=128 at half resolution, so
+#    the K scaling and the N scaling are separated. `8*K` and `4*K` were once
+#    the same number here and the wrong one was picked.
+# 2) THE INSTRUMENT'S OWN CALIBRATION, entry 2e: the same map on int8 at the
+#    same setting, where the layout is known good and byte exact.
+# 3) THE PLACEMENT AGAIN with weights that do not repeat, so `found` means
+#    something. The `distinct` line has to read n of n before anything else
+#    on those arms is read at all.
+# 4) THE CLIFF, AND A NEW SUSPECT FOR IT. int4 is fine to N=512 and collapses
+#    60x at N=1024 -- with no timeout and no IOMMU error, so it is a real slow
+#    completion, not a failure. ⚠ The bench does not cap the coefficient buffer,
+#    and `charsiu_coef_bytes` is table + k*n*4, which at K=2048 N=1024 asks for
+#    8.4 MB. Capping that is what made the int8 projections work in round 316.
+#    Entry 4 runs the sweep with and without the cap.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE CONTROLS FIRST, ENTRIES 2a AND 2c. They run the shapes exactly as they
-#    are today, where the answer is already known: 64 of 64 at N=64 K=64 and 128
-#    of 256 at K=2048 N=256. The probe must report found == ident == the exact
-#    count. If it does not, the probe is wrong and nothing below it means
-#    anything -- a new reading has to reproduce the old one first.
-#
-# 2) THEN 2b AND 2d, which is the round:
-#
-#      found == nz, ident small     STORY B. The values are all there and only
-#                                   the placement moved. int4 REOPENS.
-#      found == nz/2                still half width, permuted. A smaller
-#                                   result, still worth having: it says the
-#                                   short write and the half width are the same
-#                                   fault.
-#      found tiny                   STORY A. 0x40b8 is int8 only, and the r312
-#                                   lead is dead. That is a clean close.
-#
-# 3) ENTRY 2e ASKS THE OTHER HALF OF THE QUESTION. Every int4 round since 280
-#    has zeroed the weights a channel is not fed (CHARSIU_W4_HALFK), because
-#    only half the k reach any channel. 2e drops that at the new setting: if the
-#    hardware now fetches every k, the reference over all k matches without the
-#    zeroing, and the half width is gone in K as well as in N.
-#
-# 4) ENTRY 3 IS THE WEIGHT SIDE. --map lights one nibble at a time and prints
-#    the word it reaches. Run at the same setting it says whether the ADDRESS
-#    map moved too, which is what a repacking would have to follow.
-#
-# 5) ENTRY 4 IS THE CLIFF. int4 is 9-22% faster than int8 at N<=256 and 34x
-#    slower at N=2048, which is what closed it in round 310. If the short write
-#    was the cliff, the sweep changes shape at the new setting. ⚠ A timed out
-#    job still returns a positive number, so read an absurd microsecond count as
-#    a failure, not a measurement.
-#
-# 6) ENTRY 5 IS THE STANDING NUMBER, unchanged by any of this: about 6.5 tokens
-#    a second. It is here so the round has a witness that the block was healthy
-#    while the int4 arms ran.
+# A) ENTRY 2b IS THE ROUND. Read it as a table of byte -> word and write down
+#    the rule, including what happens past byte 512 where 324 stopped. The
+#    question the packer needs answered: for channel c, WHICH bytes feed it, and
+#    how many of them -- because 8 bytes is 16 nibbles and K=64 needs 64.
+# B) ENTRY 2a IS THE CONTROL and must reproduce 324's alternating dead runs.
+#    If the old map is not what it was, the instrument moved, not the hardware.
+# C) THE `distinct` LINE GATES ENTRY 3. n of n or stop reading.
+# D) ENTRY 4: if the cap moves the cliff, int4's closing argument from round 310
+#    was measuring my own buffer, and the whole shape ceiling goes with it.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# I DO NOT KNOW, and that is the reason to run it. The one thing worth writing
-# down is that g0 and g30 surviving is a strange pair for a computation that has
-# simply gone wrong -- 240 is 256 minus 16, one feature atom -- and a stride
-# that wraps would produce exactly that. That is a suspicion, not a prediction,
-# and entry 2a is there so a wrong probe cannot dress it up as a result.
+# THE MAP: I expect the run structure to continue past 512 and to be indexed by
+# k as well as by channel, but I am not predicting the form -- that is the
+# mistake this file already records three times. The map is being READ.
+#
+# THE CLIFF: honestly, I doubt the coefficient buffer explains a 60x step
+# between N=512 and N=1024 when the buffer only doubles. It is in the round
+# because it costs one arm and round 316 already caught that buffer once.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -111,11 +98,10 @@ BE=/opt/charsiu/charsiu_bench
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
 LIMIT=420
-ARMCAP=180
+ARMCAP=240
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
 M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
-M4F="CHARSIU_W4=1"
 B8="CHARSIU_OVERRIDE=0x40b8=3"
 ABORT=0
 log() { echo "$@" > "$C"; }
@@ -158,8 +144,6 @@ capped() {
 	return 124
 }
 
-# one probe arm. Everything is inside the wall clock limit, because an int4 job
-# that hangs took the block in round 310 and cost a power cycle in 313.
 c() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
 	before=$(nbad)
@@ -208,44 +192,47 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 324: int4 -- did the values change, or did they move? #####"
+	log "##### ROUND 325: read the whole map, then repack.                 #####"
 
 	log ""
-	log "===== 2a) THE PROBE'S OWN CONTROL. N=64 K=64 as it is today.       ====="
-	log "=====     known answer 64 of 64. found and ident must both be it.  ====="
+	log "===== 2a) THE CONTROL MAP. today's setting, K=64 N=64, all 2048 B. ====="
+	log "=====     must reproduce 324: alternating 64 byte runs are DEAD.   ====="
+	c "CHARSIU_W4=1" $I4 1 64 64 --map 16
+
+	log ""
+	log "===== 2b) THE ROUND. the same map at 0x40b8 = 3, EVERY byte.       ====="
+	log "=====     read the rule off it, including past byte 512.           ====="
+	c "CHARSIU_W4=1" "$B8" $I4 1 64 64 --map 8
+
+	log ""
+	log "===== 2c) the K scaling: K=128 N=64 at the new setting             ====="
+	c "CHARSIU_W4=1" "$B8" $I4 1 128 64 --map 16
+
+	log ""
+	log "===== 2d) the N scaling: K=64 N=128 at the new setting             ====="
+	c "CHARSIU_W4=1" "$B8" $I4 1 64 128 --map 16
+
+	log ""
+	log "===== 2e) the instrument's calibration: int8, same setting.        ====="
+	log "=====     a layout that is known byte exact, read by the same probe ====="
+	c "CHARSIU_MAP_W8=1" "$B8" $I4 1 64 64 --map 16
+
+	log ""
+	log "===== 3) the placement again, with weights that do not repeat.     ====="
+	log "=====    READ THE distinct LINE FIRST: n of n, or stop.            ====="
 	c "$M4" $MM 1 64 64
-
-	log ""
-	log "===== 2b) the same shape with 0x40b8 = 3                           ====="
 	c "$M4" "$B8" $MM 1 64 64
-
-	log ""
-	log "===== 2c) THE SECOND CONTROL. K=2048 N=256 as it is today.         ====="
-	log "=====     known answer 128 of 256, groups 0 to 15.                 ====="
 	c "$M4" $MM 1 2048 256
-
-	log ""
-	log "===== 2d) THE ROUND. K=2048 N=256 with 0x40b8 = 3.                 ====="
-	log "=====     r312 read 16 of 256 here. Where are the other 240?       ====="
 	c "$M4" "$B8" $MM 1 2048 256
 
 	log ""
-	log "===== 2e) and the K half: the same, WITHOUT the halfk zeroing      ====="
-	log "=====     if the hardware now fetches every k, this matches too    ====="
-	c "$M4F" "$B8" $MM 1 64 64
-	c "$M4F" "$B8" $MM 1 2048 256
-
-	log ""
-	log "===== 3) the weight side. one nibble at a time, 64 offsets.        ====="
-	log "=====    today, then at 0x40b8 = 3. Did the ADDRESS map move?      ====="
-	c "CHARSIU_W4=1" $I4 1 64 64 --map 8 512
-	c "CHARSIU_W4=1" "$B8" $I4 1 64 64 --map 8 512
-
-	log ""
-	log "===== 4) the cliff. int4 N sweep at K=2048, today then at 3.       ====="
-	log "=====    r310: 161 us at N=256 and 18943 at N=2048.                ====="
+	log "===== 4) the cliff, and whether it is my own coefficient buffer.   ====="
+	log "=====    int4 fine to N=512, 60x slower at N=1024, no timeout.     ====="
 	c "CHARSIU_W4=1" $BE --nsweep 2048 20
-	c "CHARSIU_W4=1" "$B8" $BE --nsweep 2048 20
+	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 20
+	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 2048 20
+	log "=====    and int8 in the same boot, as the denominator             ====="
+	c "$CE" $BE --nsweep 2048 20
 
 	log ""
 	log "===== 5) the standing number, and a witness the block was well     ====="
@@ -256,7 +243,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== controls 2a and 2c FIRST, then found vs ident on 2b and 2d.  ====="
+	log "===== 2a is the control, 2b is the round, distinct gates entry 3.  ====="
 	sync
 }
 case "$1" in
