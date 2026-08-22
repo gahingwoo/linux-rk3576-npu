@@ -2,102 +2,94 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 326. THE BLOCK IS SIZED FOR 16 CHANNELS AND INDEXED FOR 32.
+# 2026-08-22 round 327. STOP SUBTRACTING THE CPU's SHARE AND MEASURE IT.
 #
-# ⚠ FIRST, THE CORRECTION. ROUND 324's HEADLINE WAS WRONG AND ROUND 325's OWN
-# DATA IS WHAT KILLED IT.
+# ROUND 326 ANSWERED BOTH ITS QUESTIONS, AND ONE OF THEM REFUTED MY PREDICTION.
 #
-# 324 said `0x40b8 = 3` brings int4's dead weight bytes alive and therefore ends
-# the half width. The first half of that is true and the conclusion does not
-# follow. 325 read the WHOLE map at three geometries and it fits one form, at
-# every live point, 1376 of 1376:
+# 1) THE BLOCK LENGTH IS NOT IN ANY OF THE THREE REGISTERS. 0x1020 doubled,
+#    0x1030 doubled, both together: the map is byte for byte the control's,
+#    56 of 56 points on the same form, and the acceptance stays 128 of 256.
+#    0x1024 halved breaks the block (2 live points, and it poisoned twice).
+#    A clean, complete negative.
 #
-#     w = 32 * floor(s / K) + (s mod 32),      s = byte / 8
+# 2) ⚠ THE CLIFF IS A BYTE CAPACITY, NOT A COUNT, AND I PREDICTED A COUNT.
+#    The N sweep at three K, last good and first bad in each row:
 #
-# and the old map fits a different one, with alternate 8 slot runs dead. Count
-# the slots each channel actually receives and they are THE SAME: two 8 byte
-# slots per channel, K/2 nibbles, in both. The old map wastes half the buffer on
-# DEAD runs; the new map wastes half of it on words BEYOND N -- at K=64 N=64 it
-# addresses w0..w111 where only w0..w63 exist. Two mechanisms, one outcome.
+#        K=512    N=2048  0.524 MB   505 us     no cliff at all
+#        K=1024   N=1024  0.524 MB   273 us  |  N=2048  1.049 MB   7932 us
+#        K=2048   N=512   0.524 MB   230 us  |  N=1024  1.049 MB   9238 us
 #
-# And the acceptance test says so directly. With weights that no longer repeat,
-# K=2048 N=256:
+#    **Every row survives 0.524 MB and dies at 1.049. int4 has a 512 KiB weight
+#    ceiling.** int8 does not: 1.049 MB at K=512 is 282 us, and round 325 ran
+#    4.19 MB at 562 us. Same 0x101c value in both, so it is not that field.
 #
-#     as it is today     128 of 256 present, all at their own index
-#     0x40b8 = 3         128 of 256 present, at (n/8)*16 + n%8
+# 3) AND THE NUMBER THAT ACTUALLY CLOSES int4, from the K=512 row that has no
+#    cliff in it -- five clean points, no timeouts, int8 in the same boot:
 #
-# **Same count. The values moved; there are still only half of them.** int4's
-# half width is NOT solved and 324's "the work is a repack" was my error.
+#        int4   661.5 us/MB   1.51 GB/s   + 142.9 us
+#        int8   105.8 us/MB   9.45 GB/s   + 166.9 us
 #
-# ---------------------------------------------------------------------------
-# WHAT THE MEASURED FORM ACTUALLY SAYS, AND THE ONE NUMBER THAT IS OFF BY 2
-# ---------------------------------------------------------------------------
-#
-# charsiu emits, for int4 at K=64 N=64 (wbytes 2048, n_pad 64):
-#
-#     0x101c   wbytes            2048
-#     0x1020   wbytes / n_pad      32     bytes a channel = 64 nibbles = ALL of K
-#     0x1030   the same, << 16    32      (int8 doubles this, int4 does not)
-#
-# So the registers declare 32 bytes a channel, which is the whole of K. The map
-# delivers 16. The block in the measured form is K slots = 8K bytes = 512 bytes
-# at K=64, which is SIXTEEN channels at 32 bytes each -- and the form indexes
-# THIRTY TWO channels into it, `s mod 32`. **The byte budget is for 16 and the
-# indexing is for 32, and that factor of two IS the half width.**
+#    **int4 moves a byte 6.2 times slower than int8.** Half the bytes at a sixth
+#    of the rate is 3x SLOWER overall, and that is the whole case: not a cliff
+#    nobody understands, a marginal cost measured over five points.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS ROUND DOES
+# SO THIS ROUND ASKS THE TWO THINGS THAT ARE LEFT
 # ---------------------------------------------------------------------------
 #
-# 1) SWEEP THE REGISTERS THAT COULD CARRY THE BLOCK LENGTH, one at a time, and
-#    READ THE BLOCK OFF THE MAP rather than reasoning about it: 0x1020 doubled,
-#    0x1030 doubled, both, and 0x1024 (n_pad - 1) halved. If any of them moves
-#    the block to 2K slots, or the indexing to `s mod 16`, a channel gets four
-#    slots instead of two and int4 is full width.
-# 2) ACCEPTANCE, in the same boot, for each: does `found` reach n of n at
-#    K=2048 N=256? That is the only line that settles it.
-# 3) AND THE CLIFF, with the discriminating sweep that has been written down
-#    since round 310 and never run: the same N sweep at K=512, K=1024 and
-#    K=2048. **If the cliff N halves as K doubles it is a BYTE capacity; if it
-#    sits at the same N regardless of K it is a count or a field width.**
-#    ⚠ This matters more than the width does. Round 325 measured int8 at
-#    10.76 GB/s and int4 at 0.13 in the same boot, and capping the coefficient
-#    buffer did not fix it. A correct int4 that cannot make a big job is worth
-#    nothing, and at N <= 512 int4 already takes the same time as int8 for half
-#    the bytes, because 157 us of it is fixed cost.
+# A) THE LAST HONEST int4 QUESTION. Every bench number above was taken on the
+#    OLD map, where half the weight bytes are dead -- the fetch reads 8 live
+#    bytes and skips 8. At `0x40b8 = 3` every byte is live and contiguous. If
+#    that is what the 6.2x is, int4 at the new map fetches near 9 GB/s and int4
+#    comes back with its 2x intact. If it still reads 1.5, the layout is the
+#    ceiling and int4 is closed on a measurement rather than a mystery.
+#
+# B) WHERE THE TOKEN'S TIME ACTUALLY GOES ON THE CPU. The hardware path is
+#    measured to the microsecond and the CPU's 21 ms is a SUBTRACTION -- the
+#    kind of number I have had to withdraw five times in this project. Every
+#    stage of the forward pass is stamped now (CHARSIU_STAGES), so:
+#
+#      stage total for the matmuls  -  npudev's hardware path  =  the CPU work
+#      INSIDE the matmuls, which is the activation quantise and the output
+#      dequantise, and it is invisible today.
+#
+#    ⚠ Host run, CPU only, as the sanity check this was built against: the
+#    elementwise stages -- both rmsnorms, rope, attention, silu, both residuals
+#    -- total **0.9 ms of 90.5**. If that ratio holds on the A72 the "21 ms of
+#    elementwise" I have been quoting is wrong too, and the time is in the
+#    quantise, which is a much easier thing to fix.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# A) ENTRY 2a IS THE CONTROL and must reproduce w = 32*floor(s/K) + s%32.
-#    If it does not, the instrument moved and nothing else on the page counts.
-# B) In 2b..2e read ONE thing off each map: at which byte does the word base
-#    step, and how many distinct words appear before it does. Control is 512 and
-#    32. Half the words (16) or twice the byte (1024) is the answer.
-# C) ENTRY 3 IS THE ACCEPTANCE. `distinct` must read n of n first, then `found`.
-#    128 of 256 is today. 256 of 256 is int4 at full width.
-# D) ENTRY 4 IS THE ONE THAT DECIDES WHETHER ANY OF THIS IS WORTH DOING.
+# 1) ENTRY 2 IS THE MEASUREMENT. Add up the five matmul stages (q k v, o proj,
+#    gate + up, down, output head) and compare with the hardware path npudev
+#    prints in the same run. The difference is the CPU inside the matmuls.
+#    Everything else is the elementwise, and it should be small.
+# 2) ENTRY 3 IS THE SAME RUN WITHOUT THE NPU, so each stage has a before and
+#    after in one boot.
+# 3) ENTRY 4 IS int4's LAST ARM. 1.5 GB/s at the new map closes it; 9 reopens
+#    it, and nothing in between is a result.
+# 4) ENTRY 5 IS THE STANDING NUMBER, uninstrumented, so the timers cannot be
+#    blamed for it: about 6.55 tokens a second.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# ⚠ I HAVE NOW BEEN WRONG ABOUT int4 TWICE IN THREE ROUNDS -- "the survivors are
-# g0 and g30 mean a wrapping stride" (an artifact of my own weights) and "the
-# dead bytes coming alive ends the half width" (they feed phantom channels).
-# Both were stated before the data and both were killed by the round after, and
-# that is the system working. So: no prediction on the registers.
+# The elementwise is SMALL and most of the CPU's share is the quantise and
+# dequantise around each matvec. I am saying it plainly because it is
+# falsifiable in one line of entry 2, and because the alternative -- 21 ms of
+# rmsnorm and softmax on a 1B model at one token -- does not survive the host
+# measurement above.
 #
-# On the cliff I will commit to one, because it is falsifiable and cheap: the
-# cliff is a COUNT, not a capacity, and N=1024 will collapse at K=512 as well.
+# On int4 I make no prediction. My last two there were wrong.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 RUN=/opt/charsiu/charsiu_run
-MM=/opt/charsiu/charsiu_matmul
-I4=/opt/charsiu/charsiu_int4
 BE=/opt/charsiu/charsiu_bench
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
@@ -105,8 +97,7 @@ LIMIT=420
 ARMCAP=240
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
-M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
-B8=0x40b8=3
+B8="CHARSIU_OVERRIDE=0x40b8=3"
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -174,17 +165,6 @@ rung() {
 	return 0
 }
 
-# one map arm and its acceptance test, so a register that moves the block is
-# read next to the only line that says whether it helped.
-pair() {
-	lbl="$1"; ov="$2"
-	log ""
-	log "  == $lbl   OVERRIDE=$ov"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=$ov" $I4 1 64 64 --map 32
-	c "$M4" "CHARSIU_OVERRIDE=$ov" $MM 1 64 64
-	c "$M4" "CHARSIU_OVERRIDE=$ov" $MM 1 2048 256
-}
-
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
@@ -207,34 +187,29 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 326: sized for 16 channels, indexed for 32.           #####"
+	log "##### ROUND 327: measure the CPU's share instead of subtracting it #####"
 
 	log ""
-	log "===== 2) the block length, one register at a time.                 ====="
-	log "=====    read WHERE the word base steps and HOW MANY words first.  ====="
-	pair "2a CONTROL: 0x40b8 = 3 alone. block 512 B, 32 words." "$B8"
-	pair "2b 0x1020 doubled: 64 bytes a channel"      "$B8,0x1020=64"
-	pair "2c 0x1030 doubled: 0x00400000"              "$B8,0x1030=0x00400000"
-	pair "2d both doubled"                            "$B8,0x1020=64,0x1030=0x00400000"
-	pair "2e 0x1024 halved: declare 32 channels"      "$B8,0x1024=31"
+	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
+	log "=====    matmul stages minus the hardware path = the quantise.     ====="
+	rung "the decode loop on the NPU, stages on" \
+		CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) today's two arms, unchanged, as the denominator           ====="
-	c "$M4" $MM 1 64 64
-	c "$M4" $MM 1 2048 256
+	log "===== 3) the same stages with the NPU off, one boot apart.         ====="
+	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 4) THE CLIFF: does its N move with K? unrun since r310.      ====="
-	log "=====    halves as K doubles -> a BYTE capacity                    ====="
-	log "=====    same N at every K   -> a count or a field width           ====="
+	log "===== 4) int4's LAST arm: does the live map fetch any faster?      ====="
+	log "=====    1.5 GB/s closes it, 9 reopens it, between is not a result ====="
 	c "CHARSIU_W4=1" "$CE" $BE --nsweep 512 20
-	c "CHARSIU_W4=1" "$CE" $BE --nsweep 1024 20
-	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 20
-	log "=====    and int8 at K=512 in the same boot, as the denominator    ====="
+	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 512 20
+	c "CHARSIU_W4=1" "$B8" "$CE" $BE --nsweep 2048 20
+	log "=====    int8 at K=512 again, the denominator                      ====="
 	c "$CE" $BE --nsweep 512 20
 
 	log ""
-	log "===== 5) the standing number, and a witness the block was well     ====="
+	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
 	rung "the decode loop on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
@@ -242,7 +217,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2a is the control; entry 3 is the denominator; 4 decides.    ====="
+	log "===== add the five matmul stages, subtract the hardware path.      ====="
 	sync
 }
 case "$1" in
