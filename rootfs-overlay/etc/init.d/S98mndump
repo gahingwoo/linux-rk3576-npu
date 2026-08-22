@@ -2,62 +2,72 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 338. IS int4 EVEN A MATMUL? THE GRID SAYS NO.
+# 2026-08-23 round 339. THE BIT THAT TURNED int4 INTO A LOGARITHM.
 #
-# ⚠⚠ A CORRECTION THAT INVALIDATES WHAT int4 WAS SIGNED OFF ON. The arithmetic
-# this tree measured for int4 and has been checking against since round 265 is
+# ROUND 338 CONFIRMED THE BAD NEWS AND THEN NAMED THE CAUSE.
 #
-#     out = ((int16)fp16bits(w) * (int16)abits) >> 16
+# The control did exactly what it had to: with today's packing the old
+# reference scores 64 of 64 and the plain weighted sum scores 0 of 64. So the
+# hardware really is not computing a weighted sum, and everything int4 has been
+# signed off on since round 265 was exact against a nonlinear reference.
 #
-# and fp16bits is the BIT PATTERN of the nibble converted to a half, which is
-# not proportional to the nibble. Work out what weights that can represent:
+# Then a real half in the slot scored ZERO against both references, and fitting
+# candidate arithmetics to the measured numbers found the one that matches at
+# r = 1.0000:
 #
-#     nibble    0     1     2     3     4     5     6     7
-#     effective 0.000 1.000 1.067 1.100 1.133 1.150 1.167 1.183
+#     out = sum over k of ( fp16bits(w) * fp16bits(a) ) >> 16
 #
-# **Sixteen levels crammed into eighteen percent of range.** A weight can be
-# zero or about one, and nothing else. That is not a grid a weighted sum can
-# use, so "1024 of 1024 exact" in round 334 was exact against a NONLINEAR
-# reference, and none of the int4 correctness in this tree is a matmul.
+#     npu      -15034  61030  37592 103264  41052  36342   7792 -18048
+#     f16xf16  -15211  61267  37592 103037  40854  36225   7990 -17866
 #
-# The speed, the layout, the pairing and the three count registers are all real
-# and all still stand. What they compute is not.
+# **The DPU multiplies the two sixteen bit slots as INTEGER BIT PATTERNS.** And
+# since fp16bits(x) is about 1024*(15 + log2 x), that is a multiply in the LOG
+# domain. Whatever goes in the activation slot, the weight side can only ever be
+# 0 or the band 1.00 to 1.18, so no weighted sum is reachable down this path.
 #
 # ---------------------------------------------------------------------------
-# AND THE SAME FORMULA NAMES THE FIX
+# AND THE ONE REGISTER THAT PUTS IT THERE
 # ---------------------------------------------------------------------------
 #
-# A half weight multiplied by an INTEGER activation is exactly what that shape
-# looks like. charsiu puts an int8 in the HIGH BYTE of a sixteen bit slot; the
-# vendor is W4A16 with real halves. So fill the slot properly and ask the
-# hardware which reference it matches:
+# The 117 register diff against the vendor's own int4 op left five differences,
+# and the first is the one that matters:
 #
-#   CHARSIU_W4_AF16    packs the activation as a real half
-#   the tool now prints a PLAIN WEIGHTED SUM line beside the old one, fitted
-#   to one global scale, because the hardware's units are its own
+#     CNA 0x100c   vendor 00600120   charsiu 20600120
+#
+# ⚠**Bit 29 is SIXTEEN BIT ACTIVATIONS, charsiu sets it and the vendor does
+# not.** charsiu sets it because charsiu_effective_adtype returns FP16 for int4
+# to get an atom of 8, which is a LAYOUT decision that silently changed the
+# ARITHMETIC mode: in the sixteen bit mode the weight goes through an fp16
+# conversion, which is where fp16bits comes from.
+#
+# Clear it and the same nibble should meet an int8 activation in an integer
+# multiply, which is a weighted sum. The code already has the hatch:
+# CHARSIU_A8_STRIDE1 makes effective_adtype return the real type.
+#
+# ⚠ Round 329 did try 0x100c and got zero, but with the OLD packing and before
+# the pair was known. Nothing has been tried since the packing was right.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE CONTROL: today's int8-in-a-half-slot packing. The old
-#    reference must still score, and the PLAIN WEIGHTED SUM line must NOT,
-#    because that is the whole claim being made here.
-# 2) ENTRY 3 IS THE ROUND: the same job with a real half in the slot. If the
-#    plain weighted sum line comes back at n of n, int4 is a matmul after all
-#    and everything since round 265 was measuring a misconfiguration.
-# 3) IF NEITHER SCORES at entry 3, the half is not what the slot wants either,
-#    and the next question is what the DPU converts before it multiplies.
+# THE PLAIN WEIGHTED SUM LINE IS THE WHOLE ROUND, and entry 2 is the control
+# that must still show the old behaviour. If any arm in entry 3 prints n of n
+# on the plain sum, int4 becomes a matmul and everything measured about the
+# layout, the pair and the speed applies to it at once.
+#
+# ⚠ CORE 0x3018 is in there too, the other untested difference, because it has
+# never been run with the packing right either.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The real half makes it a weighted sum. The formula's shape, the vendor being
-# W4A16, and charsiu already telling the hardware sixteen bit activations while
-# feeding it eight all point the same way. ⚠ But I have been wrong about int4
-# six times, and this round exists because I nearly wired a nonlinear operation
-# into a language model.
+# Bit 29 is it. The arithmetic's shape, the vendor clearing it, and charsiu
+# setting it for a reason that has nothing to do with arithmetic all point one
+# way. ⚠ Seven wrong predictions on int4 says discount it; the difference is
+# that this one came from fitting the measured numbers rather than from a story
+# about them.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -179,7 +189,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 338: is int4 even a matmul?                           #####"
+	log "##### ROUND 339: the bit that turned int4 into a logarithm        #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -192,21 +202,21 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) CONTROL: today's packing, an int8 in a 16 bit slot.       ====="
-	log "=====    the old reference scores, the plain sum must NOT.         ====="
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	log "===== 2) CONTROL: as it is today. old reference 64, plain sum 0.   ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $MM 1 64 64
 
 	log ""
-	log "===== 3) THE ROUND: a REAL half in the slot.                       ====="
-	log "=====    read the PLAIN WEIGHTED SUM line.                          ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_AF16=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_W4_AF16=1" "$CE" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_W4_AF16=1" "$CE" $MM 1 2048 256
-
-	log ""
-	log "===== 4) and the halfk zeroing off, since a real half needs all k  ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_AF16=1" $MM 1 64 64
+	log "===== 3) THE ROUND: clear bit 29, an int8 activation, real multiply ====="
+	log "===== 3a via the emitter's own hatch"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_A8_STRIDE1=1" "$CE" $MM 1 64 64
+	log "===== 3b by forcing the register instead"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "$CE" $MM 1 64 64
+	log "===== 3c both"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_A8_STRIDE1=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "$CE" $MM 1 64 64
+	log "===== 3d and with the vendor's CORE 0x3018 on top"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_A8_STRIDE1=1" "CHARSIU_OVERRIDE=0x100c=0x00600120,0x3018=0x10000200" "$CE" $MM 1 64 64
+	log "===== 3e whichever it is, at a bigger shape"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_A8_STRIDE1=1" "CHARSIU_OVERRIDE=0x100c=0x00600120" "$CE" $MM 1 2048 256
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
