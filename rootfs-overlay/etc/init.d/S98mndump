@@ -2,67 +2,76 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 317. CHAINING. STEP 3.
+# 2026-08-22 round 318. THE OUTPUT HEAD, THE LAST BIG THING ON THE CPU.
 #
-# ROUND 316 FINISHED STEP 2. All 112 projections of Llama-3.2-1B on the NPU,
-# 480 slices, 18240 jobs over 38 tokens, and the generated text was CHARACTER
-# FOR CHARACTER the CPU's. Zero IOMMU errors, three clean anchors, and the whole
-# log contained two distinct generated lines -- the four token warm up and the
-# one every rung produced.
+# ROUND 317: CHAINING WORKS AND MY NUMBER FOR IT WAS WRONG.
 #
-# ⚠ AND IT WAS SLOWER THAN THE CPU. 4.20 tokens a second against charsiu's best
-# CPU path at 5.53. The cause is not the hardware and not the arithmetic: it is
-# 480 UNCHAINED SUBMITS A TOKEN, each carrying about 190 us of fixed cost, which
-# is roughly 91 ms a token of paying to start jobs rather than to do them.
+#   all projections, chained     4256 submits (112/token)   8.69 MB   5.08 tok/s
+#   the same, UNCHAINED         18240 submits (480/token)   2.03 MB   4.42 tok/s
 #
-# That number has been on the table since round 165 and the acceptance test with
-# it: BREAK EVEN IS 2.2 MB OF WEIGHTS PER SUBMIT. A slice is 2 MB, right at it.
-# A whole ffn_gate is 16.8 MB.
+# Text character for character the reference in every rung, zero IOMMU errors.
+# So the slices really do address different regions and chaining is correct.
 #
-# WHAT CHANGED. The slices of one projection now go in ONE submit. That needed
-# each slice to write somewhere different, so every slice gets its own region of
-# a shared output buffer and its own region of a shared input buffer, baked into
-# its register stream when it is built. 480 submits a token becomes 112, one per
-# projection, and the average submit carries about 11 MB.
+# ⚠ I PREDICTED ABOUT 6 tok/s AND SAID IT WOULD PUT THE NPU AHEAD OF THE CPU.
+# It did neither. And the reason is a second number of mine that was wrong:
+# removing 368 submits a token saved 29 ms, which is **79 us a submit**, not the
+# 190 us the round 165 figure implied. Chaining was worth 15%, not 40%.
+#
+# ⚠ AND THE DENOMINATOR NEEDS SAYING PROPERLY. Entry 6 measured charsiu's plain
+# CPU path on the SAME FILE at 3.68 tok/s, which matches round 309's q8_0 number
+# of 3.74. The 5.53 that has been quoted as "the CPU" is round 309's PURE q4_0
+# model, a different file. So:
+#
+#   same file, CPU 3.68  ->  NPU 5.08     1.38x, and real
+#   best CPU on this board, 5.53          the NPU is still 8% BEHIND it
+#
+# ---------------------------------------------------------------------------
+# WHERE THE 197 ms A TOKEN ACTUALLY GOES
+# ---------------------------------------------------------------------------
+#
+#   ~97 ms   the NPU fetching 973 MB of projection weights at about 10 GB/s
+#   ~58 ms   THE CPU COMPUTING THE OUTPUT HEAD, 128256 x 2048 = 263 MB
+#   the rest attention scores and softmax, the norms, RoPE, SwiGLU, sampling
+#
+# The head is 21% of all the matmul weight and it is still on the CPU, because
+# CHARSIU_NPU_MAXN defaults to 8192 and the head is 128256 wide. On the NPU it
+# would be 263 MB at 10 GB/s, about 26 ms, saving roughly 32 ms a token.
+#
+# It costs 126 slices and 298 MB of buffers, and its submit fetches 263 MB in
+# one go, which is the largest single submit this project has ever made. The
+# slow submit guard now scales with the bytes -- 100 ms plus a millisecond a
+# megabyte, ten times slower than this hardware has ever been -- because a flat
+# limit would have retired a legitimate big submit as a wedge.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE REPORT LINE FIRST, EVERY TIME:
+# 1) THE REPORT LINE FIRST. Entry 2 must say 113 tensors and about 606 slices.
+#    112 tensors means the head did not go and the rung is round 317 again.
 #
-#      charsiu NPU: 112 tensors, 480 slices, S submits, X MB per submit
+# 2) THEN THE TEXT, against entry 5, character for character. The head is the
+#    ONE matmul whose output is compared directly against a vocabulary rather
+#    than fed onward, so an error there changes the token immediately and
+#    visibly -- this is the easiest place in the model to catch a wrong answer.
 #
-#    S must be about 112 per token, not 480. X must be well over 2.2. A rung
-#    whose submit count did not fall is not chained, whatever its text says --
-#    and round 315 is why that line is read before the text and not after.
-#
-# 2) THEN THE TEXT, against entry 5's CPU reference, character for character.
-#    Chaining must not change a single token: the same jobs are being submitted,
-#    only fewer times. If the text moves, the slices are writing over each
-#    other, and the first suspect is the output region stride.
-#
-# 3) THEN TOKENS PER SECOND, which is the only rung in this round that is
-#    supposed to be a MEASUREMENT rather than a check.
+# 3) THEN TOKENS PER SECOND, which is the measurement.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) IDENTICAL TEXT, 112 submits a token, about 11 MB each.
+# A) IDENTICAL TEXT, 113 tensors, 606 slices, 113 submits a token.
 #
-# B) **ABOUT 6 TOKENS A SECOND, WHICH WOULD PUT THE NPU AHEAD OF THE CPU FOR
-#    THE FIRST TIME.** 480 submits to 112 removes roughly 70 ms a token of fixed
-#    cost from 238 ms. If it lands under 5.53 the fixed cost was not the whole
-#    story and the next thing to measure is what else a submit costs.
+# B) **ABOUT 6.1 tok/s, WHICH WOULD FINALLY PUT THE NPU AHEAD OF 5.53.** 32 ms
+#    off 197. ⚠ I have now been wrong about a tokens per second prediction twice
+#    running, both times by assuming a cost I had not measured at the shape in
+#    question, so treat this as the thing being tested rather than the thing
+#    being confirmed.
 #
-# C) The per rung numbers below the full one exist so that a surprise can be
-#    attributed: ffn is 384 of the 480 slices and 24 of the 112 submits, so it
-#    is where chaining should show most.
-#
-# ⚠ Entry 3 is the deliberate control: the same run with chaining OFF, one
-# submit per slice, so this round carries its own before and after instead of
-# comparing against a different boot.
+# C) The head's submit is 263 MB and 126 chained tasks. If anything is going to
+#    find a limit in the driver or the block, it is this entry. It goes AFTER
+#    the anchor and BEFORE the smaller rungs for that reason.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -150,31 +159,32 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 317: chaining. read the submit count before the text.  #####"
+	log "##### ROUND 318: the output head. 113 tensors or it did not go.    #####"
 
 	log ""
-	log "===== 2) THE ROUND. all 112 projections, slices chained.           ====="
-	rung "all projections, chained" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
+	log "===== 2) THE ROUND. everything, the 128256 wide head included.     ====="
+	rung "all 113, head included" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
+		CHARSIU_NPU_MAXN=131072
 
 	log ""
-	log "===== 3) THE CONTROL. the same run with one submit per slice.      ====="
-	log "=====    same boot, so this is a before and after and not a memory. ====="
-	rung "all projections, UNCHAINED" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
-		CHARSIU_NPU_NOCHAIN=1
+	log "===== the anchor, right after the biggest submit ever made         ====="
+	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 4) where chaining should show most, and where least          ====="
-	rung "ffn chained  (384 of the 480 slices)" CHARSIU_NPU_QUANT=1 \
-		CHARSIU_NPU=1 "$CE" CHARSIU_NPU_ONLY=ffn
-	rung "attn chained (96 of the 480 slices)" CHARSIU_NPU_QUANT=1 \
-		CHARSIU_NPU=1 "$CE" CHARSIU_NPU_ONLY=attn
+	log "===== 3) THE CONTROL. the same run without the head: round 317.    ====="
+	rung "112 projections, head on the CPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
+
+	log ""
+	log "===== 4) the head ALONE, so its cost can be attributed             ====="
+	rung "only the head on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
+		CHARSIU_NPU_MAXN=131072 CHARSIU_NPU_ONLY=token_embd
 
 	log ""
 	log "===== 5) the CPU reference the text is diffed against              ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 6) and charsiu's best CPU path, which is the real denominator ====="
+	log "===== 6) and charsiu's plain CPU path on the same file             ====="
 	rung "plain CPU, q8_0" X=1
 
 	log ""
@@ -182,7 +192,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== submits per token, then the text, then tokens per second.    ====="
+	log "===== 113 tensors, then the text, then tokens per second.          ====="
 	sync
 }
 case "$1" in
