@@ -2,80 +2,80 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 329. I DIFFED HALF THE STREAM AND CALLED IT A MATCH.
+# 2026-08-22 round 330. THE HALF WIDTH IS NOT A DEFECT, IT IS THE OTHER HALF.
 #
-# ⚠ THE CORRECTION FIRST. Round 327 said charsiu's int4 stream and the vendor's
-# "agree on 44 of 44 registers". That comparison was the CNA block ONLY -- the
-# weight fetch half. The vendor's op continues past a gap into its CORE and DPU
-# streams, and diffing the WHOLE op, 117 registers, leaves four real
-# differences instead of two:
-#
-#   CNA  100c   vendor 00600120   charsiu 20600120   bit 29, 8 vs 16 bit acts
-#   CNA  1098   vendor 00000001   charsiu 00000004   known since the int8 diff
-#   CORE 3018   vendor 10000200   charsiu 10000001   NEW
-#   CORE 3020   vendor 000003ff   charsiu 000007ef   NEW, and it is the one
-#   DPU  40b8   vendor 00000003   charsiu 00000001   NEW
+# ⚠ ROUND 329 WAS HALF A CHANGE AND THAT IS WHY IT DID NOTHING. It set
+# 0x40b8 = 3 and 0x3020 = 2N-1, which is what makes the hardware COMPUTE and
+# WRITE 2N words, and left the packing alone -- so those extra words held
+# nothing. The registers were never the whole change.
 #
 # ---------------------------------------------------------------------------
-# WHY 0x3020 AND 0x40b8 TOGETHER ARE THE WHOLE int4 STORY
+# COUNT WHAT THE MEASURED MAP ACTUALLY DELIVERS
 # ---------------------------------------------------------------------------
 #
-# 0x3020 is the channel count. **The vendor writes oc-1, which is what int8
-# gets. charsiu writes 2*(ALIGN_UP(n,16)-8)-1, which is roughly TWICE that.**
+# Round 325 read the address map at every live byte of three geometries, 1376
+# points, one form:
 #
-# It does so for a reason recorded in job.c: rounds 274-276 measured that int4
-# asking for n-1 gets back n/2+8 channels, so round 280 inverted the formula and
-# doubled the request. ⚠ **Every one of those rounds ran with 0x40b8 = 1**,
-# because 0x40b8 = 3 was not found until round 312, and it was only ever tried
-# for int8 and for int4 WITH THE DOUBLED 0x3020 STILL IN PLACE.
+#     w = 32 * floor(s / K) + (s mod 32),      s = byte / 8
 #
-# So the two are the same workaround seen from both ends, and that explains the
-# thing round 325 could not: with 0x40b8 = 3 the placement moved to a stride of
-# SIXTEEN words per group of eight channels. **A stride of exactly double, on a
-# job that asked for exactly double the channels.**
+# A declared channel is fed by the slots with `s mod 32 == w mod 32` inside its
+# own block. That is K/32 slots of 16 nibbles, so **every channel gets exactly
+# K/2 nibbles.** And a buffer of N*K/2 bytes holds N*K nibbles, so the other
+# half of it feeds words N..2N-1.
+#
+# **Those words are not spare and they are not a defect. They are real computed
+# outputs of the same buffer.** Put the second half of each channel's k in them
+# and add:
+#
+#     out[c] + out[c+N] = the full dot product
+#
+# with the buffer still exactly N*K/2 bytes and every nibble in it used. That is
+# int4 at full width with no register left to find -- the arithmetic closes.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS ROUND DOES
+# AND THE VENDOR'S FILE, WHICH IS WHY I TRUST THE COUNT
 # ---------------------------------------------------------------------------
 #
-# Sets them TOGETHER, which has never been done, and adds the other three one at
-# a time on top. The acceptance is the line that has read 128 of 256 for twenty
-# rounds. And `--map` reads the block indexing at the same settings: today it is
-# `s mod 32`, thirty two channels in a block sized for sixteen. **If the pair is
-# the fix, the map becomes `s mod 16` and a channel gets twice the slots, which
-# is the whole of K instead of half.**
+# The .rkllm was taken apart offline this round. It is the same model, and the
+# method was validated on a POSITIVE CONTROL before anything was concluded:
+# its fp16 region is the token embedding, 2048 halfs a row, and the row at
+# 0x1afeda0 matches our own token_embd row 4999 at **r = +1.0000**.
 #
-# ⚠ The halfk zeroing is a REFERENCE, not a setting: it zeroes the weights a
-# channel is not fed. If the hardware now fetches every k, the arms WITHOUT it
-# are the ones that match. Both are run.
+# Its int4 region starts at 0x21000000, and the nibble histogram is symmetric,
+# peaked at 0, 18.8% at each end and 0.1% in the middle: **signed two's
+# complement nibbles, 3.13 bits of entropy.** Real weights, not compressed.
+#
+# ⚠ And a full value correlation of one channel's 2048 weights against every
+# byte and nibble alignment of that whole region peaks at **0.13, which is the
+# noise floor**. So a channel's weights are NOT contiguous anywhere in the file:
+# **the vendor stores them pre-shuffled into the hardware's layout**, which is
+# the layout the count above describes.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2a IS THE CONTROL: 64 of 64 at N=64 and 128 of 256 at N=256, all at
-#    their own index. If that moved, the build is not what I think it is.
-# 2) ENTRY 2d IS THE ROUND. `found` reaching 256 of 256, or `exact` reaching
-#    256, is int4 at full width for the first time.
-# 3) THE MAPS IN ENTRY 3: where does the word base step, and how many distinct
-#    words before it. Control is every 512 bytes and 32 words. **16 words is
-#    the answer.**
-# 4) ENTRY 4 IS THE BENCH, on medians with a stall count. int8 at K=2048 fits
-#    9.40 GB/s and is reproducible to 1%; that is the only denominator worth
-#    quoting.
+# 1) ENTRY 2a IS THE CONTROL, today's packing: 64 of 64 at N=64 and the
+#    128 of 256 that twenty rounds have printed.
+# 2) ENTRY 2b IS THE ROUND. Same shapes, CHARSIU_W4_PHANTOM packing, 0x40b8 = 3
+#    and 0x3020 = 2N-1. **256 of 256 exact is int4 at full width.**
+# 3) ⚠ THE HALFK ZEROING IS OFF in 2b and must be: the phantom packing uses
+#    every k, so the reference is the full dot product. If 2b needs halfk to
+#    score, it has not done what it claims.
+# 4) ENTRY 3 SWEEPS THE TWO THINGS THE PACKER GUESSES, because the map fixes
+#    which SLOTS a word owns but not which k goes in them: the half split
+#    (first half of k vs the even k) and the intra-slot order.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The pair is the fix. I am saying it plainly: 0x3020 doubled and 0x40b8 = 1 are
-# one workaround, the vendor uses neither, and the doubled stride round 325
-# measured is the fingerprint of asking for twice the channels.
-#
-# ⚠ I have been wrong about int4 four times now, and three of those were stated
-# before the data in exactly this box. The difference this time is that the
-# claim came out of the vendor's own register stream rather than out of my
-# reasoning about a score -- and entry 2d kills it in one line either way.
+# ⚠ I have been wrong about int4 five times. What is different here is that
+# nothing is being guessed about the hardware: the map was measured at 1376
+# points, the count that follows from it is arithmetic, and the vendor's file
+# independently says the weights are stored pre-shuffled rather than contiguous.
+# The two things this round can still get wrong are which HALF of k goes in the
+# phantom word and the order inside a slot, and entry 3 sweeps both.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -181,7 +181,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 329: 0x3020 and 0x40b8 are one workaround seen twice  #####"
+	log "##### ROUND 330: the phantom words are the other half of the sum  #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -194,40 +194,25 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) THE ROUND: 0x3020 and 0x40b8, which have never been set  ====="
-	log "=====    together. acceptance is the 128-of-256 line.              ====="
-	log "===== 2a CONTROL, today"
+	log "===== 2) THE ROUND: the phantom words are the other half of the   ====="
+	log "=====    sum. out[c] + out[c+N], same buffer, every nibble used.   ====="
+	log "===== 2a CONTROL, today's packing"
 	c "$M4" $MM 1 64 64
 	c "$M4" $MM 1 2048 256
-	log "===== 2b 0x40b8 = 3 alone, which is round 325"
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 64 64
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 2048 256
-	log "===== 2c 0x3020 = oc-1 alone, the vendor's channel count"
-	c "$M4" "CHARSIU_OVERRIDE=0x3020=0x3f" $MM 1 64 64
-	c "$M4" "CHARSIU_OVERRIDE=0x3020=0xff" $MM 1 2048 256
-	log "===== 2d THE PAIR. 0x40b8 = 3 AND 0x3020 = oc-1."
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3f" $MM 1 64 64
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0xff" $MM 1 2048 256
-	log "===== 2e the pair WITHOUT the halfk zeroing: does it fetch all k?"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3f" $MM 1 64 64
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0xff" $MM 1 2048 256
-	log "===== 2f the pair plus CORE 0x3018 = 0x10000200"
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3f,0x3018=0x10000200" $MM 1 64 64
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0xff,0x3018=0x10000200" $MM 1 2048 256
-	log "===== 2g and the vendor's complete set, 8 bit activations too"
-	log "=====    (charsiu packs the input for 16, so read the GEOMETRY)"
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0xff,0x3018=0x10000200,0x100c=0x00600120" "CHARSIU_CNA_1098=1" $MM 1 2048 256
+	log "===== 2b THE PHANTOM PACKING, no halfk, 0x40b8=3 and 0x3020=2N-1"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x1ff" $MM 1 2048 256
+	log "===== 2c the same without the register pair, which must be WORSE"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" $MM 1 2048 256
+	log "===== 2d and with 0x40b8=3 only, to separate the two registers"
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 2048 256
 
 	log ""
-	log "===== 3) the map at the same settings. today it is s mod 32.       ====="
-	log "=====    32 channels in a block sized for 16. Look for 16.         ====="
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3f" $I4 1 64 64 --map 16
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x3020=0x3f" $I4 1 64 64 --map 16
-
-	log ""
-	log "===== 4) and the bench, on medians with the stall count.           ====="
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3" "$CE" $BE --nsweep 2048 50
-	c "$CE" $BE --nsweep 2048 50
+	log "===== 3) a third shape, so a fit on two points is not a law        ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_PHANTOM=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x3ff" $MM 1 1024 512
+	c "$M4" $MM 1 1024 512
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -238,7 +223,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2a is the control, 2d is the round, the map confirms it.     ====="
+	log "===== 2a is the control; 2b is the round; 256 of 256 is full width. ====="
 	sync
 }
 case "$1" in
