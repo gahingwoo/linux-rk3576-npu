@@ -2,80 +2,85 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 320. STOP INFERRING THE SPLIT AND MEASURE IT.
+# 2026-08-22 round 321. WHAT THE 23 ms IS MADE OF, AND WHETHER BIGGER SLICES
+# MAKE IT SMALLER.
 #
-# ROUND 319 REFUTED BOTH OF MY PREDICTIONS, USEFULLY.
+# ROUND 320 MEASURED THE SPLIT INSTEAD OF INFERRING IT, and two of my earlier
+# inferences were wrong.
 #
-# The buffer I sized wrong WAS the whole of round 318's regression:
+#   rung                     gen ms/tok   hardware   CPU     GB/s   tok/s
+#   all 113                  179.8        156.1      23.7    7.92   5.56
+#   all 113, 1 task/submit   218.4        195.1      23.3    6.34   4.58
+#   112, head on the CPU     192.2        127.2      65.0    7.65   5.20
+#   head alone                265.8        28.7     237.1    9.14   3.76
+#   everything on the CPU     266.5          -      266.5      -    3.75
 #
-#     all 113, head on the NPU     4.18  ->  5.49 tok/s
-#     112, head on the CPU         5.08  ->  5.13
+#   - THE HARDWARE PATH IS 87% OF A TOKEN. Only about 24 ms is CPU. My "58 ms of
+#     CPU" was the CPU's output head, which is now on the NPU.
+#   - THE HEAD ALONE REACHES 9.14 GB/s, near the bench's 10.35. ⚠ My round 319
+#     claim that it only managed 4.2 was WRONG; it came from subtracting whole
+#     token times across two different regimes. Fourth inference refuted by a
+#     measurement.
+#   - The head costs 29 ms on the NPU against 58 on the CPU, which is exactly
+#     why routing it wins.
+#   - Chaining is worth 39 ms a token, and (156-195)/(113-606) puts a submit at
+#     79 us -- the same number round 317 got a different way.
 #
-# so routing the head is worth 7% and my "it will still not be worth it" was
-# wrong. And the task cap sweep on the head alone came back FLAT across a
-# thirty-two fold range:
-#
-#     tasks a submit  126    32     16     8      4
-#     MB a submit     262.7  65.7   32.8   16.4   8.2
-#     tok/s           3.68   3.59   3.61   3.66   3.58
-#
-# **So the per submit and per handle cost is NOT the limiter.** That hypothesis
-# is dead, and capping the chain does nothing: entry 5 ran everything at 16
-# tasks a submit and got the same 5.49.
-#
-# WHERE THAT LEAVES IT:
-#
-#     same q8_0 file, CPU        3.68
-#     NPU, everything            5.49      1.49x
-#     best CPU on this board     5.53      pure q4_0, round 309 -- LEVEL, not ahead
+#   NPU 5.56 against the best CPU path's 5.53. Ahead for the first time, by half
+#   a percent, which is not a number to dress up.
 #
 # ---------------------------------------------------------------------------
 # WHY THIS ROUND EXISTS
 # ---------------------------------------------------------------------------
 #
-# 182 ms a token. If the NPU fetches 1236 MB at the 10 GB/s round 306 measured,
-# that is 124 ms, leaving 58 for the CPU.
+# 156 ms of hardware path is about 124 ms of irreducible weight fetch at the
+# hardware's own ceiling, about 9 ms of submit, and **about 23 ms left over**.
 #
-# ⚠ THAT SENTENCE IS AN INFERENCE, AND I HAVE NOW BEEN WRONG THREE TIMES RUNNING
-# BY INFERRING A COST INSTEAD OF MEASURING IT: the 190 us submit that was 79,
-# the head that would be worth 32 ms and was worth minus 42, the handle count
-# that explained nothing. So charsiu now times the hardware path itself and the
-# report says:
+# ⚠ THAT 23 IS A RESIDUAL, NOT A MEASUREMENT, and residuals are what the last
+# four wrong calls were made of. So the runtime now splits its own hardware path
+# three ways and prints it:
 #
-#     charsiu NPU: N ms in the hardware path, X GB/s of weights, Y us a submit
+#     of that, A ms submitting, B ms waiting for the fence, C ms reading back
+#
+# bo_prep is not a read: it WAITS for the job. So B is the fence and C is the
+# copy, and they have completely different fixes. A big B would justify merging
+# the independent projections -- q, k and v all read one RMSNorm output, and so
+# do gate and up -- into one submit each, which would remove 48 fences a token
+# as well as 48 submits. A big C would not.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE NEW REPORT LINE IS THE ROUND. Against the rung's own generation time it
-#    splits the token three ways with no arithmetic on my part:
-#      the hardware path       what the NPU and its read back actually took
-#      the rest                everything the CPU still does
-#      GB/s of weights         whether the fetch is at the 10 the bench measured
+# 1) THE THREE WAY SPLIT IN ENTRY 2 IS THE ROUND. A and C are charsiu's own
+#    cost; B is the hardware plus the driver. Note that B necessarily contains
+#    the real compute, so it cannot go to zero -- what matters is whether it is
+#    much larger than the 124 ms the bytes alone need.
 #
-# 2) IF GB/s IS NEAR 10, the NPU side is at the hardware's measured ceiling and
-#    every remaining win is on the CPU side or in fetching fewer bytes.
-#    IF IT IS WELL UNDER 10, the runtime is losing something the bench did not,
-#    and that is the next thing to find.
+# 2) ENTRIES 3 AND 4 ask whether fewer, larger slices help. Both change a shape
+#    nothing has verified at acc_out, so **read `wrote`-style evidence first:
+#    the text has to be identical, character for character, or the timing is a
+#    timing of a wrong answer.** N = 2048 and K = 4096 are both untested here.
 #
-# 3) The text, character for character against entry 6, as always.
+# 3) Entry 5 is the control that everything is diffed against.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) ABOUT 124 ms IN THE HARDWARE PATH, near 10 GB/s. ⚠ This is the fourth time
-#    I have predicted a timing this week and the first three were wrong, so the
-#    useful outcome is the number and not the prediction.
+# A) B, THE FENCE, IS MOST OF IT, because it contains the compute. The number
+#    worth having is B minus the 124 ms the bytes need: that is what the fence
+#    costs beyond the work, and it is what merging submits could remove.
 #
-# B) THE READ BACK IS INSIDE THAT NUMBER AND MAY NOT BE SMALL. Every submit is
-#    followed by a bo_prep, a scan of the output regions on the CPU, and a
-#    bo_fini. For the head that is 126 regions and 504 KB a token; for the whole
-#    model 606 regions. Entry 3 runs with the accumulate loop as the only
-#    difference it can be, by capping to one task a submit -- if the hardware
-#    path time barely moves while the submit count grows sixteen fold, the read
-#    back rather than the submit is what it is made of.
+# B) LARGER SLICES HELP A LITTLE OR NOT AT ALL. Round 319's task cap sweep was
+#    flat across a thirty-two fold range, which already says per submit cost is
+#    not the limiter, and slice size mostly changes the same quantity.
+#    ⚠ If N = 2048 turns out to be much faster, that would contradict 319 and
+#    the contradiction is the result.
+#
+# C) The text stays identical at every slice size. If it does not, acc_out has a
+#    shape dependence nobody has looked for and that is worth more than the
+#    round.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -164,41 +169,37 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 320: how many of the 182 ms are actually the NPU.     #####"
+	log "##### ROUND 321: submit, fence and copy, told apart.              #####"
 
 	log ""
-	log "===== 2) THE ROUND. everything, and the hardware path timed.       ====="
-	rung "all 113" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 2) THE ROUND. everything, split three ways.                  ====="
+	rung "all 113, N=1024 K=2048" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the same, one task a submit. sixteen times the submits,   ====="
-	log "=====    the same read back. what does the hardware path do?       ====="
-	rung "all 113, one task a submit" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
-		"$CE" "$HEAD" CHARSIU_NPU_MAXTASK=1
+	log "===== 3) fewer, wider slices. N = 2048 is untested at acc_out.     ====="
+	rung "all 113, N=2048" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
+		CHARSIU_NPU_NMAX=2048
 
 	log ""
-	log "===== 4) without the head, so its share can be attributed          ====="
-	rung "112, head on the CPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
+	log "===== 4) and a deeper K. 4096 is untested too.                     ====="
+	rung "all 113, K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
+		CHARSIU_NPU_KMAX=4096
 
 	log ""
-	log "===== 5) the head alone                                            ====="
-	rung "head alone" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
-		CHARSIU_NPU_ONLY=token_embd
+	log "===== 5) both at once, the fewest slices this can make             ====="
+	rung "all 113, N=2048 K=4096" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
+		"$HEAD" CHARSIU_NPU_NMAX=2048 CHARSIU_NPU_KMAX=4096
 
 	log ""
 	log "===== 6) the CPU reference the text is diffed against              ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 7) and charsiu's plain CPU path on the same file             ====="
-	rung "plain CPU, q8_0" X=1
-
-	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== ms in the hardware path, and the GB/s beside it.             ====="
+	log "===== the three way split, then whether wider slices changed it.   ====="
 	sync
 }
 case "$1" in
