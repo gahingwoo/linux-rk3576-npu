@@ -2,67 +2,62 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 337. THE SHAPES NOBODY HAS EVER BUILT.
+# 2026-08-23 round 338. IS int4 EVEN A MATMUL? THE GRID SAYS NO.
 #
-# Igor sent two files off-list on the 17th and they sat unused for five days,
-# which is on me. mk1x1.py builds a quantised 1x1 CONV_2D with 64 input
-# channels and ANY output channel count, by writing the flatbuffer by hand;
-# oc_perch.py scores the delegate against the CPU interpreter per output
-# channel against the RAW reference. Both are in igor-oc/ with his licences.
+# ⚠⚠ A CORRECTION THAT INVALIDATES WHAT int4 WAS SIGNED OFF ON. The arithmetic
+# this tree measured for int4 and has been checking against since round 265 is
 #
-# WHY THEY MATTER HERE. 0x4050 was fitted on ten vendor models at oc = 16, 32,
-# ... 160. The two candidate rules,
+#     out = ((int16)fp16bits(w) * (int16)abits) >> 16
 #
-#     DIV_ROUND_UP(oc,16) parity        and        oc mod 32
+# and fp16bits is the BIT PATTERN of the nibble converted to a half, which is
+# not proportional to the nibble. Work out what weights that can represent:
 #
-# **give the same answer at every multiple of sixteen**, which is every model
-# the rule was ever fitted on. They only disagree where oc is not a multiple of
-# sixteen, and until now nobody had a way to build one of those. His generator
-# builds them.
+#     nibble    0     1     2     3     4     5     6     7
+#     effective 0.000 1.000 1.067 1.100 1.133 1.150 1.167 1.183
 #
-#     oc     20  40  50  60  90 100 114      32  48  64
-#     parity  0   1   0   0   0   1   0       0   1   0
-#     mod 32  1   0   1   1   1   0   1       0   1   0
-#             ^^^^^^ disagree ^^^^^^^         ^ agree, the controls ^
+# **Sixteen levels crammed into eighteen percent of range.** A weight can be
+# zero or about one, and nothing else. That is not a grid a weighted sum can
+# use, so "1024 of 1024 exact" in round 334 was exact against a NONLINEAR
+# reference, and none of the int4 correctness in this tree is a matmul.
 #
-# ⚠ BOTH POLARITIES ARE IN THERE ON PURPOSE. The first set I generated was
-# five counts that all disagreed the same way round, which tests one direction
-# and calls it a discrimination. 40 and 100 disagree the other way.
+# The speed, the layout, the pairing and the three count registers are all real
+# and all still stand. What they compute is not.
 #
 # ---------------------------------------------------------------------------
-# TWO GUARDS THAT COME WITH HIS SCORER, AND WHY I AM NOT REPLACING THEM
+# AND THE SAME FORMULA NAMES THE FIX
 # ---------------------------------------------------------------------------
 #
-# It prints, on every model, the number of CONSTANT REFERENCE CHANNELS, which
-# must be zero, because a channel whose reference never varies matches
-# trivially; and the number of NPU CHANNELS PINNED AT THE ZERO POINT, which
-# says whether the comparison is measuring arithmetic or a clamp. It compares
-# against the raw CPU output and never against max(cpu, zero_point), because
-# clamping the reference hides a difference on one side and invents one on the
-# other. That is the same lesson this tree learned on op28, arrived at
-# independently.
+# A half weight multiplied by an INTEGER activation is exactly what that shape
+# looks like. charsiu puts an int8 in the HIGH BYTE of a sixteen bit slot; the
+# vendor is W4A16 with real halves. So fill the slot properly and ask the
+# hardware which reference it matches:
+#
+#   CHARSIU_W4_AF16    packs the activation as a real half
+#   the tool now prints a PLAIN WEIGHTED SUM line beside the old one, fitted
+#   to one global scale, because the hardware's units are its own
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE CONTROLS FIRST, oc = 32, 48 and 64. They must come back clean. Igor
-#    gets 48 of 48 within 1 and 40 bit exact at oc = 48 on RK3588 with upstream
-#    Mesa; a different number here is itself a datum, since this is our fork.
-# 2) THEN THE SEVEN THAT DISAGREE. If the failures follow the parity column,
-#    the r197..r204 reading stands. If they follow the mod 32 column, the rule
-#    charsiu and Mesa both carry is wrong at shapes no vendor model has.
-# 3) `constant reference channels` must be 0 on every line. If it is not, that
-#    model proves nothing and the line is void.
+# 1) ENTRY 2 IS THE CONTROL: today's int8-in-a-half-slot packing. The old
+#    reference must still score, and the PLAIN WEIGHTED SUM line must NOT,
+#    because that is the whole claim being made here.
+# 2) ENTRY 3 IS THE ROUND: the same job with a real half in the slot. If the
+#    plain weighted sum line comes back at n of n, int4 is a matmul after all
+#    and everything since round 265 was measuring a misconfiguration.
+# 3) IF NEITHER SCORES at entry 3, the half is not what the slot wants either,
+#    and the next question is what the DPU converts before it multiplies.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The parity column, because that is what r197..r204 was re-derived from rather
-# than fitted to. But the whole point of these shapes is that the evidence so
-# far cannot tell the two apart, so a prediction here is worth very little and
-# the table is worth a lot.
+# The real half makes it a weighted sum. The formula's shape, the vendor being
+# W4A16, and charsiu already telling the hardware sixteen bit activations while
+# feeding it eight all point the same way. ⚠ But I have been wrong about int4
+# six times, and this round exists because I nearly wired a nonlinear operation
+# into a language model.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -184,7 +179,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 337: the shapes nobody has ever built                 #####"
+	log "##### ROUND 338: is int4 even a matmul?                           #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -197,16 +192,21 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) the controls: oc a multiple of 16, both rules agree.      ====="
-	for OC in 032 048 064; do
-		ocp "conv1x1-oc$OC.tflite"
-	done
+	log "===== 2) CONTROL: today's packing, an int8 in a 16 bit slot.       ====="
+	log "=====    the old reference scores, the plain sum must NOT.         ====="
+	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $MM 1 64 64
 
 	log ""
-	log "===== 3) the shapes that separate the two rules, both polarities.  ====="
-	for OC in 020 040 050 060 090 100 114; do
-		ocp "conv1x1-oc$OC.tflite"
-	done
+	log "===== 3) THE ROUND: a REAL half in the slot.                       ====="
+	log "=====    read the PLAIN WEIGHTED SUM line.                          ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_AF16=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_W4_AF16=1" "$CE" $MM 1 64 64
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_W4_AF16=1" "$CE" $MM 1 2048 256
+
+	log ""
+	log "===== 4) and the halfk zeroing off, since a real half needs all k  ====="
+	c "CHARSIU_W4=1 CHARSIU_W4_AF16=1" $MM 1 64 64
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -217,7 +217,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== controls clean first; then does the failure follow parity?   ====="
+	log "===== the PLAIN WEIGHTED SUM line is the round.                     ====="
 	sync
 }
 case "$1" in
