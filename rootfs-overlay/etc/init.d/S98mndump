@@ -2,81 +2,121 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 323. ONE FENCE FOR q, k AND v.
+# 2026-08-22 round 324. int4: DID THE VALUES CHANGE, OR DID THEY MOVE?
 #
-# ROUND 322 REFUTED THE PREDICTION THAT MATTERED, AND THE REFUTATION IS THE
-# RESULT. N = 8192 DOES NOT WEDGE.
+# WHERE THE RUNTIME STANDS. Round 323 grouped q, k and v into one fence and
+# gate and up into another: 6.55 tokens a second against the best CPU path's
+# 5.53, ahead by 18%, with the text character for character the CPU's. The
+# budget is nearly empty -- 153 ms a token is 132 ms of NPU and 21 of CPU, and
+# of that 132 about 119 is the weight bytes themselves, 11% off the 10.35 GB/s
+# the bench measures. No amount of batching touches the bytes.
 #
-#     slices        287     192     144     128
-#     hardware ms   146.1   141.2   141.0   1901
-#     GB/s          8.46    8.75    8.76    0.65
-#     tok/s         5.90    6.08    6.09    0.55   <- K=8192
+# SO THE ONLY 2x LEFT IS int4, AND THE VENDOR PROVES IT EXISTS. Their .rkllm
+# says W4A16: int4 projections, an int8 LM head, 750 MB a token where charsiu
+# moves 1236. At charsiu's own measured rate that is 80 ms against 132.
 #
-# That is the shape round 313 needed a power cycle to escape, so **313's hang
-# was the requantised byte output or the 67 MB coefficient buffer, not the
-# width**. The limit is on K: K = 4096 works at every N up to 8192, and K = 8192
-# collapses to 0.65 GB/s with 131 driver timeouts -- and COLLAPSES rather than
-# hanging, with the text still correct and the block recovering afterwards.
+# ---------------------------------------------------------------------------
+# THE ONE THING ROUND 312 LEFT, AND WHY A SCORE CANNOT SETTLE IT
+# ---------------------------------------------------------------------------
 #
-# N = 8192, K = 4096 is the default now. 6.09 tokens a second against the best
-# CPU path's 5.53, ahead by 10%.
+# 0x40b8 = 3 finished the int8 output stage: 1024 of 1024 channels byte exact as
+# the raw accumulator. Pointed at int4 it did this:
 #
-# ⚠ AND MY OWN GUARD WAS BLIND TO IT. Thirteen times slower, 131 timeouts, 3718
-# IOMMU errors, and nothing printed: the budget is 100 ms plus a millisecond a
-# megabyte, which is 1 GB/s, and 0.65 sat just under it. "It stopped answering"
-# and "it is thirteen times slower than it has ever been" are different things
-# and a run has to say which. There is now a separate, non fatal notice for the
-# second, because the answers in that rung were still correct.
+#                        words written    exact    which groups
+#     as it is today        136 of 256      128    g0..g15
+#     with 0x40b8 = 3       256 of 256       16    g0 and g30
+#
+# Read as a score that is a regression and int4 stayed closed. But those two
+# rows are equally consistent with two OPPOSITE stories:
+#
+#   A  the hardware now computes something else, and 0x40b8 is int8 only
+#   B  it computes the SAME 128 values, writes 120 more, and puts them
+#      somewhere the surface formula does not look
+#
+# Under B the half width was the short WRITE all along and int4's 2x is intact.
+# The exact count cannot tell A from B, because it only ever reads one index per
+# channel. Nothing in this project has been settled by reasoning about which is
+# likelier, and twice a closed form fitted to one number died in the round after.
 #
 # ---------------------------------------------------------------------------
 # WHAT THIS ROUND CHANGES
 # ---------------------------------------------------------------------------
 #
-# Round 321 measured the fence at 94% of the hardware path. A fence removed is
-# therefore worth more than a submit removed, and 48 of them a token are removed
-# for free: **q, k and v all multiply the same RMSNorm output, and so do gate and
-# up**, so there is no reason to wait for one before starting the next.
+# charsiu_matmul's int4 arm now SEARCHES. For every channel it computes the
+# expected value on the CPU and looks for that value across the WHOLE output
+# buffer instead of at the one index the surface formula picks, then prints
+# where each channel landed. No submits are added: it is a different reading of
+# the same bytes.
 #
-# 113 fences a token becomes 65. The arithmetic is untouched.
+#   placement: <found> of <nz> channels ... <ident> at the index the formula reads
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE SUBMIT COUNT. Entry 2 must be about 65 a token where entry 3 is 113.
-#    If it is not, the grouping did not engage and the rung is entry 3 twice.
+# 1) THE CONTROLS FIRST, ENTRIES 2a AND 2c. They run the shapes exactly as they
+#    are today, where the answer is already known: 64 of 64 at N=64 K=64 and 128
+#    of 256 at K=2048 N=256. The probe must report found == ident == the exact
+#    count. If it does not, the probe is wrong and nothing below it means
+#    anything -- a new reading has to reproduce the old one first.
 #
-# 2) THE TEXT, character for character against entry 4. Grouping changes WHEN
-#    jobs are waited for and nothing else, so a difference means the three
-#    outputs are landing on top of each other.
+# 2) THEN 2b AND 2d, which is the round:
 #
-# 3) THEN the fence column, which is the whole point: 141 ms of hardware path is
-#    about 119 ms of bytes at the bench's rate and about 22 ms of something else.
-#    If that 22 falls with the fence count, it was per fence.
+#      found == nz, ident small     STORY B. The values are all there and only
+#                                   the placement moved. int4 REOPENS.
+#      found == nz/2                still half width, permuted. A smaller
+#                                   result, still worth having: it says the
+#                                   short write and the half width are the same
+#                                   fault.
+#      found tiny                   STORY A. 0x40b8 is int8 only, and the r312
+#                                   lead is dead. That is a clean close.
+#
+# 3) ENTRY 2e ASKS THE OTHER HALF OF THE QUESTION. Every int4 round since 280
+#    has zeroed the weights a channel is not fed (CHARSIU_W4_HALFK), because
+#    only half the k reach any channel. 2e drops that at the new setting: if the
+#    hardware now fetches every k, the reference over all k matches without the
+#    zeroing, and the half width is gone in K as well as in N.
+#
+# 4) ENTRY 3 IS THE WEIGHT SIDE. --map lights one nibble at a time and prints
+#    the word it reaches. Run at the same setting it says whether the ADDRESS
+#    map moved too, which is what a repacking would have to follow.
+#
+# 5) ENTRY 4 IS THE CLIFF. int4 is 9-22% faster than int8 at N<=256 and 34x
+#    slower at N=2048, which is what closed it in round 310. If the short write
+#    was the cliff, the sweep changes shape at the new setting. ⚠ A timed out
+#    job still returns a positive number, so read an absurd microsecond count as
+#    a failure, not a measurement.
+#
+# 6) ENTRY 5 IS THE STANDING NUMBER, unchanged by any of this: about 6.5 tokens
+#    a second. It is here so the round has a witness that the block was healthy
+#    while the int4 arms ran.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# ABOUT 6.4 TOKENS A SECOND, if the 22 ms is 195 us a fence and 48 of them go.
-# ⚠ Five of my timing predictions in a row have been wrong, and the one that was
-# right last round was right for the wrong reason, so this is the thing being
-# tested. The number to take away is the printed one.
-#
-# The honest floor: if the fence overhead is per BYTE rather than per fence,
-# entry 2 equals entry 3 and the remaining 22 ms is simply the difference
-# between this runtime's 8.76 GB/s and the bench's 10.35, which no amount of
-# batching will touch.
+# I DO NOT KNOW, and that is the reason to run it. The one thing worth writing
+# down is that g0 and g30 surviving is a strange pair for a computation that has
+# simply gone wrong -- 240 is 256 minus 16, one feature atom -- and a stride
+# that wraps would produce exactly that. That is a suspicion, not a prediction,
+# and entry 2a is there so a wrong probe cannot dress it up as a result.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
 RUN=/opt/charsiu/charsiu_run
+MM=/opt/charsiu/charsiu_matmul
+I4=/opt/charsiu/charsiu_int4
+BE=/opt/charsiu/charsiu_bench
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
 LIMIT=420
+ARMCAP=180
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
+M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
+M4F="CHARSIU_W4=1"
+B8="CHARSIU_OVERRIDE=0x40b8=3"
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -118,6 +158,19 @@ capped() {
 	return 124
 }
 
+# one probe arm. Everything is inside the wall clock limit, because an int4 job
+# that hangs took the block in round 310 and cost a power cycle in 313.
+c() {
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
+	before=$(nbad)
+	sleep 1
+	capped "$ARMCAP" env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
+	rc=$?
+	[ "$rc" != "0" ] && log "  !! the arm exited $rc (124 is the wall clock limit)"
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
+	return 0
+}
+
 rung() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
 	lbl="$1"; shift
@@ -155,32 +208,55 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 323: one fence for q, k and v. 113 becomes 65.        #####"
+	log "##### ROUND 324: int4 -- did the values change, or did they move? #####"
 
 	log ""
-	log "===== 2) THE ROUND. grouped: q,k,v in one submit, gate,up in one.  ====="
-	rung "grouped" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 2a) THE PROBE'S OWN CONTROL. N=64 K=64 as it is today.       ====="
+	log "=====     known answer 64 of 64. found and ident must both be it.  ====="
+	c "$M4" $MM 1 64 64
 
 	log ""
-	log "===== 3) THE CONTROL. the same run, one projection at a time.      ====="
-	log "=====    same boot, so this is a before and after.                 ====="
-	rung "ungrouped" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
-		CHARSIU_NPU_NOGROUP=1
+	log "===== 2b) the same shape with 0x40b8 = 3                           ====="
+	c "$M4" "$B8" $MM 1 64 64
 
 	log ""
-	log "===== 4) the CPU reference the text is diffed against              ====="
-	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
+	log "===== 2c) THE SECOND CONTROL. K=2048 N=256 as it is today.         ====="
+	log "=====     known answer 128 of 256, groups 0 to 15.                 ====="
+	c "$M4" $MM 1 2048 256
 
 	log ""
-	log "===== 5) and grouped again, to show it is not drift                ====="
-	rung "grouped, repeat" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 2d) THE ROUND. K=2048 N=256 with 0x40b8 = 3.                 ====="
+	log "=====     r312 read 16 of 256 here. Where are the other 240?       ====="
+	c "$M4" "$B8" $MM 1 2048 256
+
+	log ""
+	log "===== 2e) and the K half: the same, WITHOUT the halfk zeroing      ====="
+	log "=====     if the hardware now fetches every k, this matches too    ====="
+	c "$M4F" "$B8" $MM 1 64 64
+	c "$M4F" "$B8" $MM 1 2048 256
+
+	log ""
+	log "===== 3) the weight side. one nibble at a time, 64 offsets.        ====="
+	log "=====    today, then at 0x40b8 = 3. Did the ADDRESS map move?      ====="
+	c "CHARSIU_W4=1" $I4 1 64 64 --map 8 512
+	c "CHARSIU_W4=1" "$B8" $I4 1 64 64 --map 8 512
+
+	log ""
+	log "===== 4) the cliff. int4 N sweep at K=2048, today then at 3.       ====="
+	log "=====    r310: 161 us at N=256 and 18943 at N=2048.                ====="
+	c "CHARSIU_W4=1" $BE --nsweep 2048 20
+	c "CHARSIU_W4=1" "$B8" $BE --nsweep 2048 20
+
+	log ""
+	log "===== 5) the standing number, and a witness the block was well     ====="
+	rung "the decode loop on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== submits a token, then the text, then the fence column.       ====="
+	log "===== controls 2a and 2c FIRST, then found vs ident on 2b and 2d.  ====="
 	sync
 }
 case "$1" in
