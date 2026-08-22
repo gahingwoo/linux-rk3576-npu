@@ -1,0 +1,59 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: The generator and the scorer, as promised
+To: Igor Paunovic <royalnet026@gmail.com>
+
+Hi Igor,
+
+Sorry for the five days. Both files sat unopened while I was on something else,
+and they should have gone straight to the board.
+
+Post them. They are the only way anyone can build an output channel count that
+is not a multiple of sixteen, and that turns out to matter more than either of
+us said at the time. MIT on the generator is right, keep it. I have put both in
+my tree under igor-oc/ with your licences and a note saying where they came
+from, and I will drop that copy if you would rather the only one be yours.
+
+Here is why they mattered. 0x4050 in the Mesa driver was fitted on ten vendor
+models at oc = 16, 32, ... 160. The two candidate readings,
+
+    DIV_ROUND_UP(oc,16) parity        and        oc mod 32
+
+give the same answer at every multiple of sixteen, which is every model the rule
+was ever fitted on. Until your generator there was no way to build a counter
+example, and the parity form was carried on the strength of one shape, oc = 56.
+
+RK3576, my fork of Mesa, your scorer, ROCKET_SEED=7:
+
+    oc      bit exact   within 1   maxdiff   const ref   pinned
+    32        28/32       32/32       1          0          0
+    48        40/48       48/48       1          0          0
+    64        55/64       64/64       1          0          0
+    20        18/20       20/20       1          0          0
+    40        34/40       40/40       1          0          0
+    50        43/50       50/50       1          0          0
+    60        53/60       60/60       1          0          0
+    90        78/90       90/90       1          0          0
+    100       86/100     100/100      1          0          0
+    114       98/114     114/114      1          0          0
+
+The last seven are the ones where the two readings disagree, and 40 and 100
+disagree the other way round from 20, 50, 60, 90 and 114, which I only noticed
+after generating five that all leaned the same way. The driver emits the parity
+form. If the modulo form were the truth it would be emitting the wrong constant
+at all seven and they would fail. They do not, so the parity form is confirmed
+at seven shapes instead of one.
+
+And oc = 48 comes back 40 bit exact, 48 of 48 within 1, which is your RK3588
+number to the channel. Different SoC, different Mesa, same arithmetic.
+
+Both of your guards read zero on every line, so none of that is a constant
+channel matching itself or a clamp being measured instead of the arithmetic. I
+had arrived at the same two rules the hard way, on an op28 disagreement that
+turned out to be the reference being clamped, so it was a good feeling to open
+your scorer and find them already in it.
+
+I still owe you the oc = 64 polarity answer from the other thread and I have not
+forgotten it.
+
+Regards,
+Jiaxing
