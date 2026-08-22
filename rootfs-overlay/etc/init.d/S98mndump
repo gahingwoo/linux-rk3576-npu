@@ -2,71 +2,80 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 319. A BUFFER I SIZED WRONG, AND A SUBMIT THAT IS SLOW.
+# 2026-08-22 round 320. STOP INFERRING THE SPLIT AND MEASURE IT.
 #
-# ROUND 318 REFUTED ME IN THE OPPOSITE DIRECTION. Routing the 128256 wide output
-# head made the model SLOWER, 5.08 to 4.18 tokens a second:
+# ROUND 319 REFUTED BOTH OF MY PREDICTIONS, USEFULLY.
 #
-#   all 113, head on the NPU   606 slices  10.94 MB   239.0 ms/token   4.18
-#   112, head on the CPU       480 slices   8.69 MB   197.0 ms/token   5.08
-#   the head ALONE on the NPU  126 slices  262.67 MB  270.1 ms/token   3.70
-#   everything on the CPU                             265.6 ms/token   3.77
+# The buffer I sized wrong WAS the whole of round 318's regression:
 #
-# Text character for character in every rung, three clean anchors, zero IOMMU
-# errors. **That is the third tokens per second prediction of mine in a row to be
-# wrong, all three by assuming a cost I had not measured at the shape in hand.**
+#     all 113, head on the NPU     4.18  ->  5.49 tok/s
+#     112, head on the CPU         5.08  ->  5.13
 #
-# THERE ARE TWO SEPARATE THINGS IN THOSE NUMBERS AND ONLY ONE IS THE HARDWARE'S.
+# so routing the head is worth 7% and my "it will still not be worth it" was
+# wrong. And the task cap sweep on the head alone came back FLAT across a
+# thirty-two fold range:
 #
-# 1) MOST OF THE 42 ms IS A BUFFER I SIZED WRONG. The output buffer was SHARED
-#    and therefore sized for the WIDEST tensor. Adding the head took it from
-#    128 KB to 2.48 MB, and charsiu_bo_prep and _fini are cache maintenance over
-#    a WHOLE buffer object, paid by every one of the 113 matvecs in a token:
-#    280 MB of cache operations a token where there had been 14. The head alone
-#    does not show it because only one matvec a token is on the hardware.
-#    FIXED: every tensor now has its own output buffer, sized for its own slices.
+#     tasks a submit  126    32     16     8      4
+#     MB a submit     262.7  65.7   32.8   16.4   8.2
+#     tok/s           3.68   3.59   3.61   3.66   3.58
 #
-# 2) THE HEAD REALLY IS SLOW ON THE NPU, AND THAT PART IS REAL. Working back
-#    from the head alone rung, the CPU computes it in about 58 ms and the NPU in
-#    about 62. 263 MB in 62 ms is 4.2 GB/s, where an eight task submit reaches
-#    10. The suspect is the submit itself: the head is 126 chained tasks and
-#    253 buffer handles in ONE ioctl, where round 306's bench chained 128 tasks
-#    over about five handles and measured 10.35 GB/s.
+# **So the per submit and per handle cost is NOT the limiter.** That hypothesis
+# is dead, and capping the chain does nothing: entry 5 ran everything at 16
+# tasks a submit and got the same 5.49.
 #
-#    CHARSIU_NPU_MAXTASK caps the tasks per submit so that can be asked directly.
+# WHERE THAT LEAVES IT:
+#
+#     same q8_0 file, CPU        3.68
+#     NPU, everything            5.49      1.49x
+#     best CPU on this board     5.53      pure q4_0, round 309 -- LEVEL, not ahead
+#
+# ---------------------------------------------------------------------------
+# WHY THIS ROUND EXISTS
+# ---------------------------------------------------------------------------
+#
+# 182 ms a token. If the NPU fetches 1236 MB at the 10 GB/s round 306 measured,
+# that is 124 ms, leaving 58 for the CPU.
+#
+# ⚠ THAT SENTENCE IS AN INFERENCE, AND I HAVE NOW BEEN WRONG THREE TIMES RUNNING
+# BY INFERRING A COST INSTEAD OF MEASURING IT: the 190 us submit that was 79,
+# the head that would be worth 32 ms and was worth minus 42, the handle count
+# that explained nothing. So charsiu now times the hardware path itself and the
+# report says:
+#
+#     charsiu NPU: N ms in the hardware path, X GB/s of weights, Y us a submit
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 AGAINST ENTRY 3 IS THE BUFFER FIX. Both are round 318 rungs run
-#    again with per tensor buffers. If entry 2 comes back near 5.0 from 4.18,
-#    the cache maintenance was the 42 ms and the head costs about what the CPU
-#    charges for it. If it stays at 4.18, the buffer was not it and the head is
-#    simply expensive.
+# 1) THE NEW REPORT LINE IS THE ROUND. Against the rung's own generation time it
+#    splits the token three ways with no arithmetic on my part:
+#      the hardware path       what the NPU and its read back actually took
+#      the rest                everything the CPU still does
+#      GB/s of weights         whether the fetch is at the 10 the bench measured
 #
-# 2) ENTRY 4 IS THE MEASUREMENT: the head alone, at 126, 32, 16 and 8 tasks a
-#    submit. **Read the tokens per second across that sweep.** If smaller
-#    submits are faster, the cost is per handle or per submit setup rather than
-#    per byte, and the fix is to cap the chain rather than to lengthen it -- the
-#    opposite of what round 317 was built on.
+# 2) IF GB/s IS NEAR 10, the NPU side is at the hardware's measured ceiling and
+#    every remaining win is on the CPU side or in fetching fewer bytes.
+#    IF IT IS WELL UNDER 10, the runtime is losing something the bench did not,
+#    and that is the next thing to find.
 #
-# 3) The text, character for character against entry 5, in every rung as always.
+# 3) The text, character for character against entry 6, as always.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) ENTRY 2 RECOVERS TO ABOUT 5.0 AND STILL DOES NOT BEAT ENTRY 3's 5.08,
-#    because the head costs 62 ms on the NPU against 58 on the CPU. In other
-#    words: the buffer was my bug, and routing the head is STILL not worth it.
-#    ⚠ That is a prediction that the round is expected to end with the head
-#    going back to the CPU, which is a result and not a failure.
+# A) ABOUT 124 ms IN THE HARDWARE PATH, near 10 GB/s. ⚠ This is the fourth time
+#    I have predicted a timing this week and the first three were wrong, so the
+#    useful outcome is the number and not the prediction.
 #
-# B) THE TASK CAP MATTERS. 8 or 16 tasks a submit beats 126 on the head. If it
-#    does not, the 4.2 GB/s is not the handle count and the next suspect is the
-#    weight buffers themselves: 126 distinct 2 MB objects scattered across the
-#    IOMMU rather than one contiguous 263 MB.
+# B) THE READ BACK IS INSIDE THAT NUMBER AND MAY NOT BE SMALL. Every submit is
+#    followed by a bo_prep, a scan of the output regions on the CPU, and a
+#    bo_fini. For the head that is 126 regions and 504 KB a token; for the whole
+#    model 606 regions. Entry 3 runs with the accumulate loop as the only
+#    difference it can be, by capping to one task a submit -- if the hardware
+#    path time barely moves while the submit count grows sixteen fold, the read
+#    back rather than the submit is what it is made of.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -76,6 +85,7 @@ M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
 LIMIT=420
 CE=CHARSIU_COEF_ELEMS=65536
+HEAD=CHARSIU_NPU_MAXN=131072
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -154,44 +164,41 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 319: per tensor buffers, and why a 126 task submit    #####"
-	log "#####            only reaches 4.2 GB/s.                           #####"
+	log "##### ROUND 320: how many of the 182 ms are actually the NPU.     #####"
 
 	log ""
-	log "===== 2) all 113 with per tensor buffers. was 4.18.                ====="
-	rung "all 113, head included" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
-		CHARSIU_NPU_MAXN=131072
+	log "===== 2) THE ROUND. everything, and the hardware path timed.       ====="
+	rung "all 113" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) 112 without the head, the same fix. was 5.08.             ====="
-	rung "112 projections, head on the CPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
+	log "===== 3) the same, one task a submit. sixteen times the submits,   ====="
+	log "=====    the same read back. what does the hardware path do?       ====="
+	rung "all 113, one task a submit" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		"$CE" "$HEAD" CHARSIU_NPU_MAXTASK=1
 
 	log ""
-	log "===== 4) THE MEASUREMENT. the head alone, tasks per submit swept.  ====="
-	for T in 0 32 16 8 4
-	do
-		log ""
-		log "===== CHARSIU_NPU_MAXTASK = $T   (0 means all 126 in one)"
-		rung "head alone, $T tasks a submit" CHARSIU_NPU_QUANT=1 \
-			CHARSIU_NPU=1 "$CE" CHARSIU_NPU_MAXN=131072 \
-			CHARSIU_NPU_ONLY=token_embd CHARSIU_NPU_MAXTASK=$T
-	done
+	log "===== 4) without the head, so its share can be attributed          ====="
+	rung "112, head on the CPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
 
 	log ""
-	log "===== 5) and the same cap on everything, in case it helps there too ====="
-	rung "all 113, 16 tasks a submit" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
-		CHARSIU_NPU_MAXN=131072 CHARSIU_NPU_MAXTASK=16
+	log "===== 5) the head alone                                            ====="
+	rung "head alone" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD" \
+		CHARSIU_NPU_ONLY=token_embd
 
 	log ""
 	log "===== 6) the CPU reference the text is diffed against              ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
+	log "===== 7) and charsiu's plain CPU path on the same file             ====="
+	rung "plain CPU, q8_0" X=1
+
+	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 2 against 3, then the task cap sweep.                  ====="
+	log "===== ms in the hardware path, and the GB/s beside it.             ====="
 	sync
 }
 case "$1" in
