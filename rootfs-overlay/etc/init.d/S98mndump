@@ -2,94 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 311. CAN AN int8 JOB HAND BACK THE RAW ACCUMULATOR?
+# 2026-08-22 round 312. ONE REGISTER: 0x40b8.
 #
-# int4 is closed. Round 310 measured why, and it was not bandwidth: int4
-# computes CORRECTLY at every N up to 2048 (half width, exact = N/2, which
-# nobody knew because a guard of mine had been refusing N >= 512 for four
-# rounds) and is 9 to 22 percent FASTER than int8 at N <= 256 -- and then falls
-# off a cliff. K = 2048, single task, healthy block, and entry 4 of that round
-# proves these same shapes compute right:
+# ROUND 311 ANSWERED THE GATING QUESTION AND IT IS YES. With the whole w4a16
+# output stage forced onto an int8 WEIGHT job (CHARSIU_WIDE8=63), the output
+# came back as the raw signed 32 bit accumulator:
 #
-#     N     int8      int4
-#     128   175.5     136.8      int4 22% faster
-#     256   177.0     161.1      int4  9% faster
-#     512   213.1    1345.2      6.3x slower
-#     1024  369.7   12047.6     32.6x slower
-#     2048  554.6   18942.6     34.2x slower
+#     0  bytes f3 73 00 00   word    29683   accumulator    29683
+#     2  bytes c5 b1 ff ff   word   -20027   accumulator   -20027
+#     5  bytes d5 91 ff ff   word   -28203   accumulator   -28203
+#     7  bytes 55 74 ff ff   word   -35755   accumulator   -35755
 #
-# So int4 cannot make a big job: a K=2048 N=2048 projection needs eight N=256
-# jobs, 1288 us, against int8's one at 554.6. 2.3x slower. Parked, with the
-# discriminating experiment for the cliff written down for whoever returns.
+# byte for byte, sign extension included. So a projection CAN leave this NPU as
+# an accumulator, which is what it has to do: a coefficient buffer's output
+# scale is frozen at build time and ffn_down's magnitude moves 2971x between
+# tokens.
+#
+# ⚠ MY PREDICTION WAS WRONG. I said 0x4050 carried the width. Alone it writes
+# FEWER bytes (32 of 256) and wedges the block; so does 0x4010 alone (128 bytes,
+# wedged). Only the COMPLETE bundle works, and it does not wedge. The half of
+# the prediction that held is that the identity requant alone changes nothing.
+#
+# WHAT IS STILL WRONG: only 160 of 256 bytes are written and only 8 of 64
+# elements are right. The output stage is in w4a16 mode; the geometry is not.
 #
 # ---------------------------------------------------------------------------
-# SO int8 IT IS, AND int8 HAS ONE THING IN THE WAY
+# AND THE ANSWER WAS READ OFF THE VENDOR, NOT GUESSED
 # ---------------------------------------------------------------------------
 #
-# charsiu's int8 path requantises through the coefficient buffer and writes a
-# BYTE. A coefficient buffer holds ONE set of numbers for the whole run, so that
-# output scale cannot follow the token.
+# The .rkllm's CORE+DPU streams carry the w4a16 output stage as 67 registers, at
+# oc = 1024. Diffed against what charsiu emits at M=1 K=4096 N=1024 with
+# CHARSIU_WIDE8=63, on the host, with no board:
 #
-# ⚠ MEASURED ON THE HOST, in the CPU model of this exact format, so it is not a
-# story about outliers. Per tensor, the smallest and largest |y| across calls:
+#     0x4004  absent / 0000000e     the conv stream carries this one, not a diff
+#     0x4008  absent / 0000001d     same
+#     0x4018  0 / 00005000          charsiu's output address, not a diff
+#     0x40b8  00000003 / 00000001   <-- THE ONLY REAL DIFFERENCE
 #
-#     blk.1.ffn_down     0.132  ->  392.429    ratio 2971
-#     blk.0.ffn_down     0.120  ->   20.588    ratio  171
-#     blk.15.ffn_down    1.651  ->  246.019    ratio  149
-#
-# A scale sized for the largest vector leaves a typical one 127/2971 of a level,
-# which is zero. And the model says so: with a per call optimal output scale
-# Llama-3.2-1B still writes "Paris. The Eiffel Tower is a famous landmark...";
-# with a FROZEN scale it writes "a country", at every calibration length tried
-# from 8 calls to 512.
-#
-# **So a projection cannot leave the NPU as a byte, and step 2 needs the raw
-# accumulator.** The w4a16 path already writes FOUR bytes an element under an
-# identity requant. This round asks whether that output stage works with int8
-# WEIGHTS, one register at a time.
-#
-#   CHARSIU_WIDE8=<mask>   bit 0 0x4010   bit 1 0x4030   bit 2 0x4038
-#                          bit 3 0x4044   bit 4 0x4050   bit 5 0x40ac/b0/b4
+# Set 0x40b8 = 3 and the two blocks are identical. job.c calls that register
+# `ow * (2*oh - window)` and computes 1 at M = 1; the vendor writes 3.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE CONTROL AND IT MUST PASS FIRST. No mask at all, so this is
-#    today's int8 job with a 4x output buffer. It must read
-#      BYTES  64 of 64 exact      WORDS  0 of 64
-#      and "0 of 64 elements have a non sentinel byte above the low one"
-#    because a one byte output leaves the top three bytes of every word at the
-#    0xa5 sentinel. If the control does not look like that, the reader is wrong
-#    and nothing below it can be read.
+# 1) ENTRY 2 IS THE CONTROL and must REPRODUCE 311: 160 of 256 bytes, 8 of 64
+#    words exact. If it does not, something else moved and entry 3 means nothing.
 #
-# 2) THEN THE SWEEP. For each single bit and then the whole bundle, the two
-#    numbers that matter are:
-#      "elements with a non sentinel byte ABOVE the low one"  -> the WIDTH
-#      "reading as WORDS ... exact"                           -> and correct
-#    A register that widens the output but gets the arithmetic wrong is still
-#    the answer to which register carries the width, and is worth more than one
-#    that changes nothing.
+# 2) ENTRY 3 IS THE ROUND. The two numbers:
+#      "output bytes moved off the sentinel"   256 of 256 is a full write
+#      "reading as WORDS ... exact"            64 of 64 is a correct one
+#    Both, or say which one is missing. 256 written with 8 right is a different
+#    result from 160 written with 8 right and has to be reported as such.
 #
-# 3) A run that writes NOTHING (0 bytes off the sentinel) is a dead job, not a
-#    narrow one. Say so rather than reading it as "no change".
+# 3) ENTRY 4 sweeps 0x40b8 anyway. If 3 is not it, the sweep turns a miss into a
+#    reading instead of another round.
 #
 # ---------------------------------------------------------------------------
-# WHAT I EXPECT
+# WHAT I EXPECT, AND ONE THING WORTH MORE THAN THE ROUND
 # ---------------------------------------------------------------------------
 #
-# **0x4050 (bit 4) CARRIES THE WIDTH.** int8 writes 0x80011111 and w4a16 writes
-# 0x00023333; the nibble runs 1111 against 3333 look like a per byte enable and
-# the 8 in the top nibble like a mode. Round 260 already swept 0x4050 field by
-# field on the int8 path, so it is the register with the most reason to be it.
+# A) 0x40b8 = 3 GIVES 256 OF 256 BYTES AND 64 OF 64 WORDS EXACT. The register is
+#    the last difference from a stream the vendor actually runs, and the symptom
+#    is a partial write.
 #
-# I also expect the identity requant alone (bit 5) NOT to widen anything: an
-# identity requant behind an eight bit output stage just means the byte holds
-# the low eight bits of the accumulator, which is exactly what round 178's note
-# in job.c already warns about.
+# B) ⚠**IT MAY ALSO UNDO int4's HALF WIDTH.** charsiu's int4 has given
+#    `exact = N/2` at every N since round 280 and that was read as a property of
+#    the int4 layout. But int4 emits the SAME 0x40b8 = rows, and the vendor
+#    writes 3 there too. If entry 5 turns int4's 128 of 256 into 256 of 256,
+#    then the "half width" that closed int4 in round 310 was this register all
+#    along, and int4 reopens with its 2x intact. That is worth more than
+#    everything else in this round, which is why it is here rather than in a
+#    later one -- and why it is a PREDICTION and not a hope: N/2 exactly, at
+#    four different N, is what a wrong write geometry looks like, not what a
+#    wrong weight layout looks like.
 #
-# ⚠ THE WHOLE BUNDLE GOES LAST among the masks, because if it wedges, the single
-# bit results above it are the round.
+# C) I do NOT expect the int8 byte path to change. Entry 7 is the regression.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -131,6 +119,8 @@ c() {
 	return 0
 }
 
+M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
+
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
@@ -144,41 +134,51 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 311: which register makes an int8 output four bytes.   #####"
+	log "##### ROUND 312: 0x40b8, the last register between charsiu and    #####"
+	log "#####            the vendor's own w4a16 output stage.             #####"
 
 	log ""
-	log "===== 2) THE CONTROL. no mask. bytes 64/64, words 0/64, no high    ====="
-	log "=====    bytes touched. If this is not what it says, stop reading.  ====="
-	c X=1 X=1 $WD 1 64 64
-
-	log ""
-	log "===== 3) one register at a time                                    ====="
-	for B in 1 2 4 8 16 32
-	do
-		log ""
-		log "===== CHARSIU_WIDE8=$B"
-		c "CHARSIU_WIDE8=$B" X=1 $WD 1 64 64
-	done
-
-	log ""
-	log "===== 4) the identity requant WITH the width candidate             ====="
-	log "=====    0x4050 and the requant together, which is what w4a16 does  ====="
-	c "CHARSIU_WIDE8=48" X=1 $WD 1 64 64
-
-	log ""
-	log "===== the anchor again, before the bundle is allowed to wedge       ====="
-	w conv2d-cal.tflite ""
-
-	log ""
-	log "===== 5) LAST: the whole bundle                                    ====="
+	log "===== 2) THE CONTROL. WIDE8=63 alone. must reproduce 311:          ====="
+	log "=====    160 of 256 bytes, 8 of 64 words exact.                    ====="
 	c "CHARSIU_WIDE8=63" X=1 $WD 1 64 64
 
 	log ""
-	log "===== 6) and the int8 regression, so the tree is still sane        ====="
+	log "===== 3) THE ROUND. WIDE8=63 plus 0x40b8 = 3.                      ====="
+	c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=3" $WD 1 64 64
+
+	log ""
+	log "===== 4) and sweep it, so a miss is still a reading                ====="
+	for V in 0 2 4 7 15
+	do
+		log ""
+		log "===== 0x40b8 = $V"
+		c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=$V" $WD 1 64 64
+	done
+
+	log ""
+	log "===== 5) THE ONE WORTH MORE THAN THE ROUND: does it undo int4's    ====="
+	log "=====    half width? exact has been N/2 at every N since r280.     ====="
+	log ""
+	log "===== int4 K=2048 N=256, as it is today"
+	c "$M4" X=1 $MM 1 2048 256
+	log ""
+	log "===== int4 K=2048 N=256 with 0x40b8 = 3"
+	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 2048 256
+
+	log ""
+	log "===== 6) and if it worked, at a projection's shape                 ====="
+	c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=3" $WD 1 2048 1024
+
+	log ""
+	log "===== 7) the int8 byte regression, unchanged either way            ====="
 	c X=1 X=1 $MM 1 64 64
 
 	log ""
-	log "===== control, then which bit widened it, then whether it is right ====="
+	log "===== the anchor again                                             ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== control, then 256 of 256 and 64 of 64, then int4's exact.    ====="
 	sync
 }
 case "$1" in
