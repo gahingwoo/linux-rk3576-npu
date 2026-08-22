@@ -2,7 +2,17 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 314. THE FEED FORWARD, IN SHAPES THAT HAVE BEEN MEASURED.
+# 2026-08-22 round 315. THE FEED FORWARD, IN SHAPES THAT HAVE BEEN MEASURED.
+#
+# ⚠ ROUND 314 PRODUCED NO DATA AT ALL. Every rung exited 127, "timeout: applet
+# not found": CONFIG_TIMEOUT is not built into this busybox. I had checked with
+# `strings` on the binary, found the word, and read that as the applet being
+# there -- it is in the name table, which lists applets that are NOT compiled
+# in. **I verified the wrong thing, and it voided a whole round.**
+#
+# So the limit is now plain shell, which depends on nothing, AND ENTRY 0 PROVES
+# IT WORKS BEFORE ANY RUNG RELIES ON IT. A guard that has not been shown to
+# fire is not a guard.
 #
 # ROUND 313 WORKED, AND THEN COST A POWER CYCLE. Three rungs of its ladder
 # produced the reference text CHARACTER FOR CHARACTER against the CPU:
@@ -87,7 +97,7 @@ WORK=/usr/lib/libteflon-working.so
 RUN=/opt/charsiu/charsiu_run
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
-TMO="busybox timeout 420"
+LIMIT=420
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -114,7 +124,27 @@ w() {
 	return 0
 }
 
-# $1 label, $2.. env.  Hard timeout outside the program as well as inside it.
+# Run a command with a wall clock limit, in plain shell.
+#
+# No applet, no external binary: round 314 lost everything to `timeout` not
+# being compiled into this busybox. $1 is the limit in seconds, the rest is the
+# command. Returns 0 if it finished, 124 if it had to be killed.
+capped() {
+	lim="$1"; shift
+	"$@" &
+	pid=$!
+	i=0
+	while [ "$i" -lt "$lim" ]; do
+		kill -0 "$pid" 2>/dev/null || { wait "$pid"; return $?; }
+		sleep 1
+		i=$((i + 1))
+	done
+	kill -9 "$pid" 2>/dev/null
+	wait "$pid" 2>/dev/null
+	return 124
+}
+
+# $1 label, $2.. env.  A limit outside the program as well as inside it.
 rung() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
 	lbl="$1"; shift
@@ -122,10 +152,10 @@ rung() {
 	log ""
 	log "  -- $lbl"
 	sleep 1
-	$TMO env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 \
-		-t 4 > "$C" 2>&1
+	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos \
+		-q -c 512 -t 4 > "$C" 2>&1
 	rc=$?
-	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the hard timeout)"
+	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
 	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
 	return 0
 }
@@ -139,11 +169,27 @@ start() {
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
 
 	log ""
+	log "===== 0) THE GUARD'S OWN CONTROL. 314 lost every rung to an applet ====="
+	log "=====    that was not there, so this proves the limit fires before  ====="
+	log "=====    anything depends on it. Expect: killed, rc 124, ~3s.       ====="
+	t0=$(cut -d. -f1 /proc/uptime)
+	capped 3 sleep 60
+	rc=$?
+	t1=$(cut -d. -f1 /proc/uptime)
+	log "  -- capped 3 sleep 60  ->  rc $rc after $((t1 - t0))s"
+	if [ "$rc" = "124" ]; then
+		log "  -- the limit FIRES. the rungs below can be trusted to end."
+	else
+		log "  !! THE LIMIT DID NOT FIRE. Everything below may hang; the"
+		log "  !! most important line in this log is this one."
+	fi
+
+	log ""
 	log "===== 1) the anchor                                                ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 314: the feed forward, cut into measured shapes.       #####"
+	log "##### ROUND 315: the feed forward, cut into measured shapes.       #####"
 
 	log ""
 	log "===== 2) THE REFERENCE. the same arithmetic, on the CPU.           ====="
