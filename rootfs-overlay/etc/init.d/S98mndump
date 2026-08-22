@@ -2,65 +2,56 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 335. int4 IS CORRECT AT A PROJECTION'S SHAPE. WHAT DOES IT COST?
+# 2026-08-22 round 336. THE CONTROL IGOR'S ANSWER IS MISSING.
 #
-# 🔑🔑 ROUND 334 FINISHED THE ARITHMETIC. The missing register was DPU 0x4030's
-# high half -- 0x3020 alone and 0x3020 with 0x402c both wrote N words and got
-# half the channels, and 0x4030 is the one that was capping the write:
+# A reply to Igor has been sitting unsent since the 21st, and checking it before
+# posting caught two things. That check has now earned its keep four times.
 #
-#   N=256  K=2048    512 words written   **256 EXACT of 256**
-#   N=512  K=1024   1024 words written   **512 EXACT of 512**
-#   N=1024 K=2048   2048 words written  **1024 EXACT of 1024**
+# 1) ⚠ IT SAID "I HAVE NOT RUN IT" AND WE HAD. Round 285 entry 9 is literally
+#    titled "SIZE_E_1 crossed with the channel count. Owed to Igor."
 #
-# **That last one is a projection's shape at 1 MiB of weights, byte exact, with
-# no halfk and against the full K reference** -- the shape where int4 used to
-# collapse to nine milliseconds.
+# 2) ⚠ AND THE ROUND THAT RAN IT IS HALF A ROUND. It swept N of 16, 24, 32, 40,
+#    48, 56 and 64 with SIZE_E_1 forced to 0 and never ran them at the traced
+#    value of 1. Four of the seven happen to have a control elsewhere in the
+#    same log and are inert. The other three do not:
 #
-# Nothing in it is guessed. The slots came from --map at 1376 points, the k from
-# --kpair, the intra-slot order from rounds 265-288 and re-confirmed by 332's
-# control, and the three count registers from 334 one at a time.
+#      N               16   24   32   40   48   56   64
+#      words written   16   24   32   40   48   56   64
+#      correct         16   16   32   24   48   32   64
+#                           ^^        ^^        ^^   no same-round control
 #
-# The whole recipe is now one flag, CHARSIU_W4_PAIRED, in the emitter:
+# ⚠ AND THE LOOSE END THAT MAKES THIS A ROUND RATHER THAN A SENTENCE. An earlier
+# round at the TRACED value measured that asking for n channels writes
+# floor(n/16)*16 of them: ask for 24 and 16 arrive. The table above, at
+# SIZE_E_1 = 0, writes all 24. **If that survives a same-round control then
+# SIZE_E_1 is NOT inert at the N that are not multiples of sixteen, and what it
+# moves is the write count** -- the opposite of what Igor has been told twice.
 #
-#   channel r is the pair of words (2r, 2r+1)
-#   k = 16*(w mod 2) + 32*j + 2*byte_in_slot + nibble
-#   CORE 0x3020 = 2N-1,  DPU 0x4030 high = 2N-1,  DPU 0x40b8 = 3
-#   read out[2r] + out[2r+1];  buffer unchanged at N*K/2 bytes
-#
-# ---------------------------------------------------------------------------
-# SO THIS ROUND IS THE PRICE, AND IT IS THE ONLY THING LEFT THAT DECIDES int4
-# ---------------------------------------------------------------------------
-#
-# Correct is not enough. int8 fits **9.3 GB/s** on medians and never stalls, and
-# int4 moves half the bytes, so **int4 has to beat 4.7 GB/s to be worth
-# anything at all**. Everything measured before this round said it does not --
-# 1.37 GB/s at K=512, 3.5 with 0x40b8 = 3, and nine to fifteen reps in fifty
-# stalling to 100 ms above N=1024.
-#
-# ⚠ But every one of those numbers was taken with the OLD register set, which
-# asked for N words and half the channels. **The paired recipe changes what the
-# hardware is being asked to do, so the price has to be measured again.**
+# Two different rounds is not a comparison. This is the missing half.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE CORRECTNESS ANCHOR: N=1024 K=2048 must print 1024 EXACT of
-#    1024 again. If it does not, 334 was a one-boot accident.
-# 2) ENTRY 3 IS THE ROUND: the same sweep as int8, on MEDIANS with the stall
-#    count, at the paired recipe. Read the `reps > 2x median` column first --
-#    a median of 300 us with fifteen stalls is a different problem from a
-#    median of 9000.
-# 3) THE NUMBER THAT DECIDES IT: int4's us/MB against int8's in the same boot.
-#    **Below half of int8's us/MB and int4 wins the token; above it and int4 is
-#    correct and useless**, and that is a clean place to stop.
+# ONE TABLE, SEVEN PAIRS, back to back in one boot at 0x4050 = 0x00023333 (the
+# traced value, SIZE_E_1 = 1) and 0x00023133 (upstream, SIZE_E_1 = 0):
+#
+#   the pairs agree     SIZE_E_1 is inert at every N and the reply can say so
+#   the 1 arm writes 16, 32, 48 where the 0 arm writes 24, 40, 56
+#                       SIZE_E_1 moves the write count, the reply has to be
+#                       rewritten, and Igor's conservative choice was right for
+#                       a reason neither of us had
+#
+# The four multiples of sixteen run too, as the control that must show nothing.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# No prediction on the speed. The correctness came from measurement and so
-# should this.
+# The pairs agree, and the 24/40/56 shortfall is the sixteen quantum with
+# nothing to do with SIZE_E_1 -- because that quantum was measured on a round
+# where SIZE_E_1 sat at its traced value throughout. That is the boring reading
+# and it is the one the cross-round numbers actually point at.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -166,7 +157,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 335: int4 is correct. what does it cost?              #####"
+	log "##### ROUND 336: the control Igor is owed                         #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -179,22 +170,15 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) the correctness anchor: the whole recipe behind one flag  ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_COEF_ELEMS=65536" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_COEF_ELEMS=65536" $MM 1 2048 256
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_COEF_ELEMS=65536" $MM 1 2048 1024
-
-	log ""
-	log "===== 3) THE PRICE. int8 is 9.3 GB/s, so int4 needs 4.7 to win.    ====="
-	log "===== 3a int4, the paired recipe"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $BE --nsweep 2048 50
-	log "===== 3b int4 as it was, for the before and after"
-	c "CHARSIU_W4=1" "$CE" $BE --nsweep 2048 50
-	log "===== 3c int8 in the same boot, the denominator"
-	c "$CE" $BE --nsweep 2048 50
-	log "===== 3d and at K=512, where no cliff can hide the slope"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $BE --nsweep 512 50
-	c "$CE" $BE --nsweep 512 50
+	log "===== 2) SIZE_E_1 against the channel count, WITH the control.     ====="
+	log "=====    traced 0x00023333 vs upstream 0x00023133, same boot.      ====="
+	for NN in 24 40 56 16 32 48 64; do
+		log ""
+		log "===== N = $NN   SIZE_E_1 = 1  (traced)   <-- THE CONTROL"
+		c "$M4" "CHARSIU_OVERRIDE=0x4050=0x00023333" $MM 1 64 $NN
+		log "===== N = $NN   SIZE_E_1 = 0  (upstream)"
+		c "$M4" "CHARSIU_OVERRIDE=0x4050=0x00023133" $MM 1 64 $NN
+	done
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -205,7 +189,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== entry 2 must reproduce 1024 of 1024; entry 3 decides int4.    ====="
+	log "===== read the pairs: agree = inert, differ = the reply is wrong.   ====="
 	sync
 }
 case "$1" in

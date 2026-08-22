@@ -14,8 +14,12 @@ Your question has an answer and it is partly uncomfortable, so let me give the
 measurement rather than the summary. Since we last spoke I swept SIZE_E_2 across
 all eight of its values on a second path, the int4 one, at 64 output channels:
 
-    SIZE_E_2   0    1    2    3    4..7
-    channels   32   32   36   40   the job hangs
+    SIZE_E_2       0    1    2    3    4..7
+    words written  32   32   36   40   the job hangs
+
+and the count that came out CORRECT stayed at 32 in all of them, so what the
+field moves is how many words the block writes, not how many channels it
+computes.
 
 So on that path the field is additive in FOURS, not in sixteens. That does not
 sit well with the semantics I sent you on the 17th, where SIZE_E_n + 1 counted
@@ -28,24 +32,38 @@ at 40 and the probe's sixteen point window unchanged. That is a smaller claim
 than "no effect" and it is the size of what I actually read. SIZE_E_0 is inert at
 0 and hangs at 2 and at 6. RGP_CNTER and OD_BYPASS are inert, RESERVED_0 hangs.
 
-Now the part your question actually asks, and the honest answer is that I have
-not run it. I do have a channel count sweep now, seven values, 16 through 64 in
-steps of 8, and every one of them ran with 0x4050 at its traced value. I have
-never crossed the two. Whether some N leans on SIZE_E_1 where 64 does not is
-exactly what a sweep of SIZE_E_1 AT each of those seven N would say, and it is
-cheap, so it goes in the next board round rather than into a paragraph of
-reasoning.
+Now the part your question actually asks. I said I would cross the two and I
+have, at seven channel counts, 16 through 64 in steps of 8, with SIZE_E_1 forced
+to 0 against its traced 1:
 
-Which means your conservative choice and the honest one are the same choice for
-a second reason: two shapes cannot rule it out, and I now know that seven shapes
-have not been asked either.
+    N               16   24   32   40   48   56   64
+    words written   16   24   32   40   48   56   64
+    correct         16   16   32   24   48   32   64
 
-One other thing from the same seven point sweep, since it bears on how that
-register family is read. When the channel register asks for exactly n, the
-hardware writes floor(n/16)*16 of them, at every one of the seven, and asking for
-the next multiple of sixteen delivers all n. So sixteen is a real quantum on this
-block, which is at least consistent with 16-channel atoms being the unit SIZE_E
-counts something in, even if the count itself came out in fours.
+Read the four that are multiples of sixteen: 16, 32, 48 and 64 come back
+identical to the traced value, so SIZE_E_1 is inert there and your conservative
+choice costs nothing at those shapes.
+
+The other three I cannot attribute, and that is my fault rather than a result:
+the round ran 24, 40 and 56 only with SIZE_E_1 at 0 and never at 1, so there is
+no same-round control for them. The shortfall at those N looks like the same
+sixteen-channel quantum below, which would make it nothing to do with SIZE_E_1,
+but I am not going to hand you a reading with no control under it. If it matters
+to you I will run the missing half.
+
+So your conservative choice and the honest one are still the same choice: inert
+where I can prove it, unproven where I cannot.
+
+And there is a loose end in that table which I would rather hand you than tidy
+away. An earlier round, with 0x4050 at its traced value, measured that when the
+channel register asks for exactly n the block writes floor(n/16)*16 of them --
+24 asks and 16 arrive. The table above, at SIZE_E_1 = 0, writes all 24. Those
+are two different rounds and I will not put weight on a cross-round comparison,
+but if it survives a same-round control then SIZE_E_1 is not inert at the N that
+are not multiples of sixteen, and it is the write count that it moves. That is
+the opposite of what I have been telling you, so it goes on the board before it
+goes in a mail: the missing half is N of 24, 40 and 56 at the traced value, and
+it is one entry.
 
 The re-run offer is noted and I will take it when v9 goes. Glad the trip was
 fine, and I hope the countryside is treating the board well.
