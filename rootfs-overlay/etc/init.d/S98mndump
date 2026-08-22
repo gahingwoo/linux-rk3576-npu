@@ -2,99 +2,93 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-21 round 309. THE CONFOUND 308 COULD NOT SEPARATE.
+# 2026-08-22 round 310. int4's MARGINAL COST, WHICH HAS NEVER BEEN MEASURED.
 #
-# 308 answered its own question and then showed the answer was not clean.
+# ⚠⚠ ROUND 306 PARKED int4 ON A MEASUREMENT THAT DOES NOT SUPPORT IT, AND THE
+# EVIDENCE IS IN 306's OWN LOG. Both int4 bench tables died:
 #
-# The integer kernel worked: q4_0 went 2.65 -> 4.94 tok/s on this board at four
-# threads, and the best number moved 2.68 -> 5.08. Both controls held: the
-# CHARSIU_NO_QACT line reproduced 307's byte for byte, and the scalar build
-# still matched. So the arithmetic is right and the speedup is real.
+#   int8 K=2048 N=256              int4 K=2048 N=256
+#     1   224.2                      1   222.7
+#     2   246.8                      [   33.186739] NPU job timed out
+#     4   419.1                      2   10904.3      <- a timeout printed as
+#     ...                            [   33.762739] NPU job timed out    a number
+#     marginal 57.4 us (9.14 GB/s)
+#     fixed    166.8 us
 #
-# Its prediction, q4_0 beats q8_0, held at four and six threads and FAILED at
-# one and two:
+# So int4 has ONE point, at one task, where 166.8 of the 224 microseconds is
+# fixed submit cost. Halving the weight bytes is worth 28 us there, or 12% of
+# the number, and the conclusion drawn was "half the bytes, the same time".
 #
-#     t=1   q4_0 2.14   q8_0 2.96        t=4   q4_0 5.08   q8_0 3.73
-#     t=2   q4_0 3.40   q8_0 3.71        t=8   q4_0 4.78   q8_0 4.80
+# ⚠ THAT SINGLE POINT CANNOT TELL THE TWO ANSWERS APART. Both of these fit it:
 #
-# ⚠ I read that crossover as "few cores are ALU bound, four cores are byte
-# bound". THAT READING HAS A CONFOUND AND IT IS MINE: the two files do not
-# differ only in the projections. **llama.cpp quantises token_embd to q6_K in a
-# q4_0 file and to q8_0 in a q8_0 file**, Llama 3.2 ties the output head to it,
-# and at a 128256 vocabulary that tensor is a fifth of the weights. q6_K costs
-# far more ALU per byte than q8_0 does. So "q4_0 versus q8_0" was never a
-# bytes-against-bytes comparison.
+#   int4 slope EQUALS int8's        166.8 + 57.4 = 224 us     the parking
+#   int4 slope is HALF int8's       194   + 28.7 = 223 us     a higher intercept
 #
-# WHAT IS NEW. A third file, built with llama-quantize --pure, whose token_embd
-# is q4_0 like everything else in it. On the host, four threads:
+# and nothing has ever measured int4's intercept. A submit's fixed cost is not
+# obliged to be the same on a path with its own DPU and RDMA configuration.
 #
-#     q4_0 (q6_K head)  35.29        q4_0 --pure  40.70        q8_0  34.43
+# TWO OTHER THINGS FROM 306 THAT WERE MY OWN AND NOT THE HARDWARE'S:
+#   - N >= 512 came back "exact 0", which was the ngrp > 32 guard REFUSING.
+#     The guard went to 256 groups in the parking commit itself and HAS NEVER
+#     BEEN ON THE BOARD. Checked on the host today at 36 shapes, K 64..2048 by
+#     N 16..2048: the packer writes exactly charsiu_weight_bytes at every one,
+#     no overrun, no refusal.
+#   - the bench wrote every chained int4 task's output over the one before it
+#     (stride m*n, element four bytes). Fixed. Found by inspection, and it is
+#     NOT the hang: the allocation always had the factor of four.
 #
-# so the head alone was worth 15%, and with it gone the host crossover
-# DISAPPEARS -- pure q4_0 is ahead at every thread count, by more as threads are
-# added:
+# ---------------------------------------------------------------------------
+# THE INSTRUMENT: A MARGINAL WITHOUT CHAINING
+# ---------------------------------------------------------------------------
 #
-#     t=1  21.67 / 21.45     t=2  34.26 / 32.92
-#     t=4  40.70 / 34.74     t=8  31.73 / 30.41       (pure q4_0 / q8_0)
-#
-# ⚠ THE PURE FILE IS AN INSTRUMENT, NOT A GOOD MODEL. It was requantised from
-# the q8_0 file, so it is quantised twice, and its output head is 4 bit. It says
-# true sentences about grammar and false ones about the world. It exists to hold
-# ONE format constant across a whole model, and its text is only ever compared
-# against ITSELF on the host.
+# int4 chaining hangs from TWO tasks up, so the difference-of-task-counts method
+# can never give it a marginal. --nsweep gets the same two constants from single
+# task runs: hold K at 2048, walk N through 128 256 512 1024 2048, and fit
+# microseconds against weight megabytes. The SLOPE is the marginal cost per byte
+# and the INTERCEPT is everything that does not scale with them.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) TEXT FIRST. Six lines, and here is every one of them.
+# 1) READ THE FIT LINE, NOT ANY SINGLE ROW. Every row still has the fixed cost
+#    in it. That is the mistake this whole round exists to correct.
 #
-#    q4_0, both paths, and q4_0-pure, both paths, are each internally identical:
-#      q4_0       ...is Rome. The capital of Spain is Madrid. The capital of
-#                 Portugal is Lisbon. The capital
-#      q4_0-pure  Paris. Paris is the most populous city in the world, with a
-#                 population of over 2 million people. The city is known for
-#                 its rich history, art
+# 2) ENTRY 2 IS THE CONTROL AND IT MUST PASS FIRST. int8's fit has to reproduce
+#    what the chained sweep already measured: about 97 us/MB, which is 10.3
+#    GB/s, and an intercept near 170 us. If it does not, the instrument is wrong
+#    and int4's fit means nothing. Do not read entry 3 until entry 2 checks out.
 #
-#    q8_0 is the one whose two paths legitimately differ:
-#      quantised  ...Claude Monet painted the water
-#      exact      ...Claude Monet painted many landscapes
+# 3) THEN ENTRY 3. int4's slope against int8's is the whole round:
+#      about HALF   -> int4 really is 2x per byte, and step 2 should target int4
+#                      rather than int8. On a 1B model that is 16.7 tok/s
+#                      against int8's 8.4, and the board's CPU does 5.53.
+#      about EQUAL  -> the parking stands, and this time it is measured.
+#      in between   -> report the number, do not round it to a story.
 #
-#    The q4_0 exact line must also still match ROUND 307's. Anything else and
-#    the timings below are timings of a wrong answer.
-#
-# 2) THEN THE ROUND, entry 4. Read q4_0-pure against q8_0 at every thread count.
+# 4) ENTRY 4 is correctness at the N values the guard used to refuse. A timing
+#    for a shape that computes the wrong answer is not a timing of anything.
+#    Read `wrote`, not `exact`: a half width job that is CORRECT is a different
+#    thing from a broken layout, and only `wrote` separates them.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) **q4_0-pure IS AHEAD OF q8_0 AT EVERY THREAD COUNT, INCLUDING ONE AND
-#    TWO.** That is what the host does once the head is the same format. If the
-#    board still crosses over at low thread counts, then something about the
-#    RK3576 and not the file makes 4 bit unpacking expensive there, and 308's
-#    ALU-versus-bytes reading survives after all.
+# **int4's SLOPE IS ABOUT HALF int8's, AND ITS INTERCEPT IS HIGHER.** That is
+# the reading of 306's single point that nobody tested. If instead the slopes
+# match and the intercepts match, 306 was right for the right reason and int4
+# is closed properly.
 #
-# B) **THE BOARD'S BEST NUMBER GOES FROM 5.08 TO ABOUT 6 tok/s.** The host
-#    gained 15% from the pure head; the board should gain at least that, since
-#    it is the more bandwidth starved of the two and the pure file is 9%
-#    smaller as well.
-#
-# C) q4_0-pure at 8 threads will still be no better than at 4, as in 308. Four
-#    A53 cores added contention and not throughput there and nothing here
-#    changes that.
-#
-# ⚠ Entry 0 warms all three files. PROMPT TOK/S IS I/O; READ THE GEN COLUMN.
+# I also expect entry 5's chaining probe to still hang. It goes LAST for that
+# reason: a wedged block voids everything after it, and everything above it is
+# the round.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-RUN=/opt/charsiu/charsiu_run
-RUNS=/opt/charsiu/charsiu_run_scalar
-M4=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0.gguf
-MP=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0-pure.gguf
-M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
-PROMPT="The capital of France is"
+MM=/opt/charsiu/charsiu_matmul
+BE=/opt/charsiu/charsiu_bench
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -121,83 +115,64 @@ w() {
 	return 0
 }
 
-# $1 binary, $2 model, $3 tokens, $4 threads, $5 env (or "-")
-gen() {
-	log ""
-	if [ "$5" = "-" ]; then
-		log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4"
-		"$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
-	else
-		log "  -- $(basename $1)  $(basename $2)  -n $3  -t $4  [$5]"
-		env "$5" "$1" "$2" -p "$PROMPT" -n "$3" --ignore-eos -q -c 512 -t "$4" > "$C" 2>&1
-	fi
+c() {
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
+	before=$(nbad)
+	sleep 1
+	env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
 	return 0
 }
+
+M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
 
 start() {
 	i=0
 	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || log "no accel device (the charsiu entries do not need it)"
+	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
 	dmesg -n 4 2>/dev/null
-	[ -w /sys/module/rocket/parameters/reset_autosuspend ] && \
+	if [ -w /sys/module/rocket/parameters/reset_autosuspend ]; then
 		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
+		log "reset_autosuspend = $(cat /sys/module/rocket/parameters/reset_autosuspend)"
+	else
+		log "!! reset_autosuspend NOT WRITABLE. A timeout will kill the round."
+	fi
 
 	log ""
-	log "===== 0) warm all three files. TIMINGS IN THIS ENTRY ARE I/O.      ====="
-	cat "$M4" > /dev/null 2>&1
-	cat "$MP" > /dev/null 2>&1
-	cat "$M8" > /dev/null 2>&1
-	log "  -- three models in the page cache"
-	log "  -- $(free -m 2>/dev/null | head -2 | tail -1)"
-
-	log ""
-	log "===== 1) the NPU anchor                                            ====="
+	log "===== 1) the anchor                                                ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 309: the same format all the way through a file.       #####"
+	log "##### ROUND 310: a marginal for int4, from single task runs.       #####"
 
 	log ""
-	log "===== 2) THE TEXT. three files, quantised activation.              ====="
-	gen "$RUN" "$M4" 32 4 -
-	gen "$RUN" "$MP" 32 4 -
-	gen "$RUN" "$M8" 32 4 -
+	log "===== 2) THE CONTROL. int8 --nsweep. must give ~97 us/MB, ~170 us. ====="
+	c X=1 X=1 $BE --nsweep 2048 50
 
 	log ""
-	log "===== 3) THE CONTROL. exact f32 activation, same three.            ====="
-	log "=====    q4_0 must still be round 307's line, byte for byte.       ====="
-	gen "$RUN" "$M4" 32 4 CHARSIU_NO_QACT=1
-	gen "$RUN" "$MP" 32 4 CHARSIU_NO_QACT=1
-	gen "$RUN" "$M8" 32 4 CHARSIU_NO_QACT=1
+	log "===== 3) THE ROUND. int4 --nsweep. slope against int8's.           ====="
+	c "CHARSIU_W4=1" X=1 $BE --nsweep 2048 50
 
 	log ""
-	log "===== 4) THE ROUND. pure q4_0 against q8_0, every thread count.    ====="
-	log "=====    I say pure is ahead at ALL of them, including 1 and 2.    ====="
-	for T in 1 2 4 6 8
+	log "===== 4) correctness where the guard used to refuse. read wrote.   ====="
+	for NN in 256 512 1024 2048
 	do
-		gen "$RUN" "$MP" 24 "$T" -
-		gen "$RUN" "$M8" 24 "$T" -
+		log ""
+		log "===== int4  K = 2048  N = $NN     N/2 would be $((NN / 2))"
+		c "$M4" X=1 $MM 1 2048 $NN
 	done
 
 	log ""
-	log "===== 5) and the q6_K head's own cost, on this board               ====="
-	log "=====    same projections, only the output head differs            ====="
-	for T in 1 4 8
-	do
-		gen "$RUN" "$M4" 24 "$T" -
-		gen "$RUN" "$MP" 24 "$T" -
-	done
-
-	log ""
-	log "===== 6) the scalar control, no NEON at all                        ====="
-	gen "$RUNS" "$MP" 24 4 -
-
-	log ""
-	log "===== the NPU anchor again                                         ====="
+	log "===== the anchor again, before anything is allowed to hang         ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== text, then pure against q8_0, then what the q6_K head cost.  ====="
+	log "===== 5) LAST, BECAUSE IT IS EXPECTED TO WEDGE: int4 chained.      ====="
+	log "=====    two tasks at N = 256, which is where 306 died.            ====="
+	c "CHARSIU_W4=1" X=1 $BE 1 2048 256 20
+
+	log ""
+	log "===== control first, then the two slopes. Nothing else decides it. ====="
 	sync
 }
 case "$1" in
