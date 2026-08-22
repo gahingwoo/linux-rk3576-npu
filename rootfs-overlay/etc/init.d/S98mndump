@@ -2,88 +2,94 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 312. ONE REGISTER: 0x40b8.
+# 2026-08-22 round 313. A PROJECTION ON THE NPU, INSIDE THE DECODE LOOP.
 #
-# ROUND 311 ANSWERED THE GATING QUESTION AND IT IS YES. With the whole w4a16
-# output stage forced onto an int8 WEIGHT job (CHARSIU_WIDE8=63), the output
-# came back as the raw signed 32 bit accumulator:
+# Round 312 finished the output stage. 0x40b8 = 3 was the last register between
+# charsiu and the vendor's own w4a16 block, found by diffing the two offline,
+# and the board swept it into a reading rather than a guess:
 #
-#     0  bytes f3 73 00 00   word    29683   accumulator    29683
-#     2  bytes c5 b1 ff ff   word   -20027   accumulator   -20027
-#     5  bytes d5 91 ff ff   word   -28203   accumulator   -28203
-#     7  bytes 55 74 ff ff   word   -35755   accumulator   -35755
+#     0x40b8      0    1    2    3    4    7   15
+#     bytes     112  160  208  256  208  128   64
+#     exact       4    8   12   64   16   16   16
 #
-# byte for byte, sign extension included. So a projection CAN leave this NPU as
-# an accumulator, which is what it has to do: a coefficient buffer's output
-# scale is frozen at build time and ffn_down's magnitude moves 2971x between
-# tokens.
+# A peak on both columns, not a trend. And at a projection's shape, M=1 K=2048
+# N=1024: **4096 of 4096 bytes written, 1024 of 1024 elements byte exact against
+# the accumulator.** So the hardware hands back the complete raw int32 sum.
 #
-# ⚠ MY PREDICTION WAS WRONG. I said 0x4050 carried the width. Alone it writes
-# FEWER bytes (32 of 256) and wedges the block; so does 0x4010 alone (128 bytes,
-# wedged). Only the COMPLETE bundle works, and it does not wedge. The half of
-# the prediction that held is that the identity requant alone changes nothing.
-#
-# WHAT IS STILL WRONG: only 160 of 256 bytes are written and only 8 of 64
-# elements are right. The output stage is in w4a16 mode; the geometry is not.
+# ⚠ It did NOT undo int4's half width. int4 with 0x40b8=3 goes from 136 words
+# written to 256 -- so int4's write geometry was short too -- but its exact
+# count falls from 128 to 16 and the survivors are g0 and g30. The placement
+# moved. int4 stays closed; that is a lead for whoever reopens it, not a result.
 #
 # ---------------------------------------------------------------------------
-# AND THE ANSWER WAS READ OFF THE VENDOR, NOT GUESSED
+# WHAT IS NEW, AND WHY THE ACCEPTANCE TEST IS NOT "COHERENT TEXT"
 # ---------------------------------------------------------------------------
 #
-# The .rkllm's CORE+DPU streams carry the w4a16 output stage as 67 registers, at
-# oc = 1024. Diffed against what charsiu emits at M=1 K=4096 N=1024 with
-# CHARSIU_WIDE8=63, on the host, with no board:
+# charsiu_run can now put a projection on the hardware. The substitution is
+# exact rather than approximate, because the CPU already computes the same sum:
 #
-#     0x4004  absent / 0000000e     the conv stream carries this one, not a diff
-#     0x4008  absent / 0000001d     same
-#     0x4018  0 / 00005000          charsiu's output address, not a diff
-#     0x40b8  00000003 / 00000001   <-- THE ONLY REAL DIFFERENCE
+#     acc[n] = sum_k a_q[k] * w_q[n][k]        <- the CPU, and now the DPU
+#     y[n]   = acc[n] * a_scale * w_scale[n]   <- always the CPU
 #
-# Set 0x40b8 = 3 and the two blocks are identical. job.c calls that register
-# `ow * (2*oh - window)` and computes 1 at M = 1; the vendor writes 3.
+# So the two runs must produce **the same tokens, character for character**.
+# Not similar. Not coherent. The same. Anything else is a defect with a known
+# reference to bisect against, which is the whole reason the CPU loop was built
+# first.
+#
+#   CHARSIU_NPU=1        open the device and route what fits
+#   CHARSIU_NPU_ONLY=S   route only tensors whose name contains S
+#   CHARSIU_NPU_MAXN=N   skip anything wider (default 8192, which leaves the
+#                        128256 wide output head on the CPU)
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE CONTROL and must REPRODUCE 311: 160 of 256 bytes, 8 of 64
-#    words exact. If it does not, something else moved and entry 3 means nothing.
+# 1) ENTRY 2 IS THE REFERENCE, on the CPU, and every line below it is diffed
+#    against this one and nothing else:
 #
-# 2) ENTRY 3 IS THE ROUND. The two numbers:
-#      "output bytes moved off the sentinel"   256 of 256 is a full write
-#      "reading as WORDS ... exact"            64 of 64 is a correct one
-#    Both, or say which one is missing. 256 written with 8 right is a different
-#    result from 160 written with 8 right and has to be reported as such.
+#      Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is one of
+#      the most famous landmarks in the world. It was built for
 #
-# 3) ENTRY 4 sweeps 0x40b8 anyway. If 3 is not it, the sweep turns a miss into a
-#    reading instead of another round.
+# 2) ENTRY 3 IS THE ROUND, and it is a LADDER. One projection, then all sixteen
+#    of one kind, then attention, then the feed forward, then everything.
+#    **Read the FIRST rung that differs.** A ladder exists so that a
+#    disagreement names one tensor rather than a hundred and thirteen, and
+#    reading only the last rung throws that away.
+#
+# 3) Each rung prints "on the NPU" or "on the CPU" per tensor when verbose. If a
+#    rung says "on the CPU" for everything, no buffer could be allocated and the
+#    rung is a CPU run wearing an NPU label. Check that before reading its text.
+#
+# 4) TOKENS PER SECOND ARE NOT THE POINT OF THIS ROUND. There is one submit per
+#    projection and no chaining, so 112 submits a token at about 200 to 550 us
+#    each is the floor. Record it; do not compare it to 5.53 yet.
 #
 # ---------------------------------------------------------------------------
-# WHAT I EXPECT, AND ONE THING WORTH MORE THAN THE ROUND
+# WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) 0x40b8 = 3 GIVES 256 OF 256 BYTES AND 64 OF 64 WORDS EXACT. The register is
-#    the last difference from a stream the vendor actually runs, and the symptom
-#    is a partial write.
+# A) EVERY RUNG PRODUCES THE REFERENCE TEXT EXACTLY. The arithmetic is the same
+#    integer sum on both sides and round 312 measured 1024 of 1024 elements
+#    exact at this very shape. If a rung diverges, the likeliest causes in
+#    order: the input packing (a_q + 128 through charsiu_pack_input), the
+#    coefficient buffer being read when acc_out should bypass it, and the
+#    output surface at an N that is not 1024.
 #
-# B) ⚠**IT MAY ALSO UNDO int4's HALF WIDTH.** charsiu's int4 has given
-#    `exact = N/2` at every N since round 280 and that was read as a property of
-#    the int4 layout. But int4 emits the SAME 0x40b8 = rows, and the vendor
-#    writes 3 there too. If entry 5 turns int4's 128 of 256 into 256 of 256,
-#    then the "half width" that closed int4 in round 310 was this register all
-#    along, and int4 reopens with its 2x intact. That is worth more than
-#    everything else in this round, which is why it is here rather than in a
-#    later one -- and why it is a PREDICTION and not a hope: N/2 exactly, at
-#    four different N, is what a wrong write geometry looks like, not what a
-#    wrong weight layout looks like.
+# B) THE FULL RUNG WILL ALLOCATE 973 MB OF WEIGHT BUFFERS ACROSS 112 BOs. That
+#    has never been done on this driver. If it fails it fails gracefully -- the
+#    tensor stays on the CPU and says so -- so the failure mode is a quiet
+#    downgrade rather than a crash, and entry 3's per tensor lines are how it
+#    is caught.
 #
-# C) I do NOT expect the int8 byte path to change. Entry 7 is the regression.
+# C) 1 to 4 tokens a second, dominated by 112 unchained submits.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-WD=/opt/charsiu/charsiu_wide
-MM=/opt/charsiu/charsiu_matmul
+RUN=/opt/charsiu/charsiu_run
+M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
+PROMPT="The capital of France is"
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -110,16 +116,19 @@ w() {
 	return 0
 }
 
-c() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
+# $1 label, $2.. env
+rung() {
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
+	lbl="$1"; shift
 	before=$(nbad)
+	log ""
+	log "  -- $lbl"
 	sleep 1
-	env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
+	env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 -t 4 \
+		> "$C" 2>&1
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
 	return 0
 }
-
-M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
 
 start() {
 	i=0
@@ -134,51 +143,53 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 312: 0x40b8, the last register between charsiu and    #####"
-	log "#####            the vendor's own w4a16 output stage.             #####"
+	log "##### ROUND 313: a projection on the NPU, in the decode loop.      #####"
 
 	log ""
-	log "===== 2) THE CONTROL. WIDE8=63 alone. must reproduce 311:          ====="
-	log "=====    160 of 256 bytes, 8 of 64 words exact.                    ====="
-	c "CHARSIU_WIDE8=63" X=1 $WD 1 64 64
+	log "===== 2) THE REFERENCE. the same arithmetic, on the CPU.           ====="
+	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 3) THE ROUND. WIDE8=63 plus 0x40b8 = 3.                      ====="
-	c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=3" $WD 1 64 64
+	log "===== 3) THE LADDER. read the FIRST rung that differs.             ====="
 
 	log ""
-	log "===== 4) and sweep it, so a miss is still a reading                ====="
-	for V in 0 2 4 7 15
-	do
-		log ""
-		log "===== 0x40b8 = $V"
-		c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=$V" $WD 1 64 64
-	done
+	log "===== one projection: blk.0.attn_q"
+	rung "blk.0.attn_q on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=blk.0.attn_q CHARSIU_NPU_VERBOSE=1
 
 	log ""
-	log "===== 5) THE ONE WORTH MORE THAN THE ROUND: does it undo int4's    ====="
-	log "=====    half width? exact has been N/2 at every N since r280.     ====="
-	log ""
-	log "===== int4 K=2048 N=256, as it is today"
-	c "$M4" X=1 $MM 1 2048 256
-	log ""
-	log "===== int4 K=2048 N=256 with 0x40b8 = 3"
-	c "$M4" "CHARSIU_OVERRIDE=0x40b8=3" $MM 1 2048 256
+	log "===== all sixteen attn_q"
+	rung "attn_q on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=attn_q
 
 	log ""
-	log "===== 6) and if it worked, at a projection's shape                 ====="
-	c "CHARSIU_WIDE8=63" "CHARSIU_OVERRIDE=0x40b8=3" $WD 1 2048 1024
+	log "===== every attention projection"
+	rung "attn on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=attn
 
 	log ""
-	log "===== 7) the int8 byte regression, unchanged either way            ====="
-	c X=1 X=1 $MM 1 64 64
+	log "===== every feed forward projection"
+	rung "ffn on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_ONLY=ffn
+
+	log ""
+	log "===== the anchor, before the biggest rung                          ====="
+	w conv2d-cal.tflite ""
+
+	log ""
+	log "===== everything under n = 8192, which is 112 tensors"
+	rung "all projections on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1
+
+	log ""
+	log "===== 4) the plain CPU loop, so the tree is still sane             ====="
+	rung "plain CPU" X=1
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== control, then 256 of 256 and 64 of 64, then int4's exact.    ====="
+	log "===== the reference, then the first rung that differs from it.     ====="
 	sync
 }
 case "$1" in

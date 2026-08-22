@@ -1,0 +1,728 @@
+
+ Serial  Port opened
+DDR 2f85f4b2d4 cym 24/11/07-19:07:28,fwver: v1.09
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.9%, RX DQS Vref:27.8%, TX Vref:21.0%,23.0%
+DQ roc:
+p4 n0, p4 n0, p1 n0, p4 n0, p1 n0, p5 n0, p0 n1, p2 n0, p1 n1, 
+p5 n0, p3 n3, p3 n0, p3 n0, p1 n0, p5 n0, p0 n2, p5 n0, p1 n0, 
+
+DQ rds:l0 h1 l0 h1 l0 h1 l0 l0, l0 h1 l0 l0 l0 l0 l0 l0 
+DQS roc: p2, n0, p1, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:29.6%, TX Vref:19.0%,21.0%
+DQ roc:
+p4 n0, p4 n0, p5 n0, p3 n0, p6 n0, p6 n0, p0 n1, p2 n0, p3 n0, 
+p3 n0, p7 n0, p5 n0, p2 n0, p4 n0, p5 n0, p1 n0, p0 n4, p4 n0, 
+
+DQ rds:h1 h1 l0 l0 l0 h1 l0 l0, h1 l0 h1 l0 l0 h1 h2 l0 
+DQS roc: p0, n0, p3, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+
+U-Boot SPL 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+Trying to boot from SPI
+## Checking hash(es) for config config-1 ... OK
+## Checking hash(es) for Image atf-1 ... sha256+ OK
+## Checking hash(es) for Image u-boot ... sha256+ OK
+## Checking hash(es) for Image fdt-1 ... sha256+ OK
+## Checking hash(es) for Image atf-2 ... sha256+ OK
+## Checking hash(es) for Image atf-3 ... sha256+ OK
+NOTICE:  BL31: v2.14.0(release):de38734
+NOTICE:  BL31: Built : 10:14:09, Apr 19 2026
+
+
+U-Boot 2026.04-ge3405917a180 (Apr 19 2026 - 18:59:00 +0000)
+
+Model: Radxa ROCK 4D
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1050 devices, 32 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 0' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fcec5000, end 00000000fcedab7d ... OK
+Working FDT set to fcec5000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 7.2.0-rc5-next-20260730 (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2024.02.8) 12.4.0, GNU ld (GNU Binutils) 2.40) #98 SMP PREEMPT Wed Aug 19 18:59:41 NZST 2026
+[    0.000000] KASLR enabled
+[    0.000000] Machine model: Radxa ROCK 4D
+[    0.000000] earlycon: uart8250 MMIO32:0x000000002ad40000 (options '')
+[    0.000000] printk: legacy bootconsole [uart8250] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] NODE_DATA(0) allocated [mem 0x33e774b00-0x33e7771ff]
+[    0.000000] cma: Reserved 32 MiB at 0x00000000fe000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.5
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+[    0.000000] percpu: Embedded 26 pages/cpu s69272 r8192 d29032 u106496
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw clk_ignore_unused log_buf_len=8M
+[    0.000000] printk: log buffer data + meta data: 8388608 + 29360128 = 37748736 bytes
+[    0.000000] printk: early log buf free: 128896(98%)
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] software IO TLB: area num 8.
+[    0.000000] software IO TLB: mapped [mem 0x00000000f8ec5000-0x00000000fcec5000] (64MB)
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 3145216
+[    0.000000] Policy zone: Normal
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=8.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=8
+[    0.000000] RCU Tasks: Setting shift to 3 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=8.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000001] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.004811] Console: colour dummy device 80x25
+[    0.005347] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.006303] pid_max: default: 32768 minimum: 301
+[    0.007195] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.007951] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.009150] VFS: Finished mounting rootfs on nullfs
+[    0.012594] rcu: Hierarchical SRCU implementation.
+[    0.013093] rcu:     Max phase no-delay instances is 1000.
+[    0.013878] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.021503] EFI services will not be available.
+[    0.022592] smp: Bringing up secondary CPUs ...
+[    0.023751] Detected VIPT I-cache on CPU1
+[    0.023872] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.024746] Detected VIPT I-cache on CPU2
+[    0.024828] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.025657] Detected VIPT I-cache on CPU3
+[    0.025735] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.026637] CPU features: detected: Spectre-v3a
+[    0.026656] CPU features: detected: Spectre-BHB
+[    0.026662] CPU features: detected: ARM erratum 1742098
+[    0.026670] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[    0.026676] Detected PIPT I-cache on CPU4
+[    0.026761] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[    0.027572] Detected PIPT I-cache on CPU5
+[    0.027637] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[    0.028417] Detected PIPT I-cache on CPU6
+[    0.028483] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[    0.029270] Detected PIPT I-cache on CPU7
+[    0.029338] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[    0.029472] smp: Brought up 1 node, 8 CPUs
+[    0.038618] SMP: Total of 8 processors activated.
+[    0.039077] CPU: All CPU(s) started at EL2
+[    0.039491] CPU features: detected: 32-bit EL0 Support
+[    0.039967] CPU features: detected: 32-bit EL1 Support
+[    0.040446] CPU features: detected: CRC32 instructions
+[    0.040934] CPU features: detected: PMUv3
+[    0.041385] alternatives: applying system-wide alternatives
+[    0.045084] Memory: 12139672K/12580864K available (17856K kernel code, 5602K rwdata, 14844K rodata, 13248K init, 696K bss, 403028K reserved, 32768K cma-reserved)
+[    0.050524] devtmpfs: initialized
+[    0.067606] posixtimers hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    0.068378] futex hash table entries: 2048 (131072 bytes on 1 NUMA nodes, total 128 KiB, linear).
+[    0.069520] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.070108] 0 pages in range for non-PLT usage
+[    0.070113] 511152 pages in range for PLT usage
+[    0.075793] DMI: not present or invalid.
+[    0.080198] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.081865] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[    0.082978] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.083748] audit: initializing netlink subsys (disabled)
+[    0.084413] audit: type=2000 audit(0.080:1): state=initialized audit_enabled=0 res=1
+[    0.089154] thermal_sys: Registered thermal governor 'step_wise'
+[    0.089163] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.089817] cpuidle: using governor menu
+[    0.091084] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.091928] ASID allocator initialised with 32768 entries
+[    0.097111] Serial: AMBA PL011 UART driver
+[    0.106299] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[    0.107608] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[    0.108914] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[    0.110295] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[    0.111544] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[    0.121459] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /soc/vop@27d00000
+[    0.122185] /soc/vop@27d00000: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.123243] /soc/interrupt-controller@2a701000: Fixed dependency cycle(s) with /soc/interrupt-controller@2a701000
+[    0.125199] /soc/pcie@22000000: Fixed dependency cycle(s) with /soc/pcie@22000000/legacy-interrupt-controller
+[    0.181188] /hdmi-con: Fixed dependency cycle(s) with /soc/hdmi@27da0000
+[    0.181822] /soc/hdmi@27da0000: Fixed dependency cycle(s) with /hdmi-con
+[    0.192688] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.193322] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.193900] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.194526] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.195104] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.195745] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.196321] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.196945] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.200173] ACPI: Interpreter disabled.
+[    0.211020] iommu: Default domain type: Translated
+[    0.211468] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.212679] SCSI subsystem initialized
+[    0.213501] usbcore: registered new interface driver usbfs
+[    0.214051] usbcore: registered new interface driver hub
+[    0.214573] usbcore: registered new device driver usb
+[    0.217651] pps_core: LinuxPPS API ver. 1 registered
+[    0.218114] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.218963] PTP clock support registered
+[    0.219613] EDAC MC: Ver: 3.0.0
+[    0.220538] scmi_core: SCMI protocol bus registered
+[    0.223427] FPGA manager framework
+[    0.224936] vgaarb: loaded
+[    0.225763] clocksource: Switched to clocksource arch_sys_counter
+[    0.226648] VFS: Disk quotas dquot_6.6.0
+[    0.227029] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.227916] pnp: PnP ACPI: disabled
+[    0.235674] NET: Registered PF_INET protocol family
+[    0.236600] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.249467] tcp_listen_portaddr_hash hash table entries: 8192 (order: 5, 131072 bytes, linear)
+[    0.250418] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.251147] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.252878] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.255438] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.256157] UDP hash table entries: 8192 (order: 7, 524288 bytes, linear)
+[    0.257453] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.258468] RPC: Registered named UNIX socket transport module.
+[    0.259019] RPC: Registered udp transport module.
+[    0.259454] RPC: Registered tcp transport module.
+[    0.259889] RPC: Registered tcp-with-tls transport module.
+[    0.260395] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.260999] PCI: CLS 0 bytes, default 64
+[    0.265109] kvm [1]: nv: 570 coarse grained trap handlers
+[    0.265830] kvm [1]: nv: 710 fine grained trap handlers
+[    0.266748] kvm [1]: IPA Size Limit: 40 bits
+[    0.269874] kvm [1]: vgic interrupt IRQ9
+[    0.270280] kvm [1]: Hyp nVHE mode initialized successfully
+[    0.272849] Initialise system trusted keyrings
+[    0.273482] workingset: timestamp_bits=42 (anon: 37) max_order=22 bucket_order=0 (anon: 0)
+[    0.274654] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.275512] NFS: Registering the id_resolver key type
+[    0.275996] Key type id_resolver registered
+[    0.276384] Key type id_legacy registered
+[    0.276780] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.277400] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.278563] Key type asymmetric registered
+[    0.278947] Asymmetric key parser 'x509' registered
+[    0.279446] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.280130] io scheduler mq-deadline registered
+[    0.280551] io scheduler kyber registered
+[    0.280960] io scheduler bfq registered
+[    0.290144] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1
+[    0.291897] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@2
+[    0.293782] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@0/power-domain@1/power-domain@3
+[    0.295651] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@4
+[    0.297270] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5
+[    0.298898] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@5/power-domain@6
+[    0.300641] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@8
+[    0.302271] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@12
+[    0.303897] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@13
+[    0.305520] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@14
+[    0.307157] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15
+[    0.308783] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@15/power-domain@11
+[    0.310555] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18
+[    0.312180] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@7
+[    0.313938] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@16
+[    0.315695] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier soc for /soc/power-management@27380000/power-controller/power-domain@18/power-domain@17
+[    0.352874] ledtrig-cpu: registered to indicate activity on CPUs
+[    0.421072] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.421801] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.424595] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.425302] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.427891] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[    0.428596] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[    0.463280] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.467680] printk: legacy console [ttyS0] disabled
+[    0.468498] 2ad40000.serial: ttyS0 MMIO32:0x000000002ad40000 (irq = 26, base_baud = 1500000) is a 16550A
+[    0.469451] printk: legacy console [ttyS0] enabled
+[    0.469451] printk: legacy console [ttyS0] enabled
+[    0.470335] printk: legacy bootconsole [uart8250] disabled
+[    0.470335] printk: legacy bootconsole [uart8250] disabled
+[    0.479301] msm_serial: driver initialized
+[    0.481281] SuperH (H)SCI(F) driver initialized
+[    0.482519] STM32 USART driver initialized
+[    0.489769] random: crng init done
+[    0.493163] platform 27b00000.video-codec: Adding to iommu group 0
+[    0.495325] platform 27d00000.vop: Adding to iommu group 1
+[    0.503354] loop: module loaded
+[    0.506217] megasas: 07.734.00.00-rc1
+[    0.521416] tun: Universal TUN/TAP device driver, 1.6
+[    0.522839] VFIO - User Level meta-driver version: 0.3
+[    0.533965] usbcore: registered new interface driver usb-storage
+[    0.544061] i2c_dev: i2c /dev entries driver
+[    0.549011] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs3-null-pins
+[    0.549943] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs2-null-pins
+[    0.550842] /soc/i2c@2ac40000/pmic@23: Fixed dependency cycle(s) with /soc/i2c@2ac40000/pmic@23/dvs1-null-pins
+[    0.589523] ufshcd-rockchip 2a2d0000.ufshc: freq-table-hz property not specified
+[    0.590227] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[    0.591204] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[    0.592148] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[    0.593097] ufshcd-rockchip 2a2d0000.ufshc: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[    0.599477] scsi host0: ufshcd
+[    1.031581] ufshcd-rockchip 2a2d0000.ufshc: link startup failed 1
+[    1.032546] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: Initialization failed with error -5
+[    1.033287] ufshcd-rockchip 2a2d0000.ufshc: error -EIO: ufshcd_pltfrm_init failed
+[    1.033977] ufshcd-rockchip 2a2d0000.ufshc: probe with driver ufshcd-rockchip failed with error -5
+[    1.042552] arm-scmi arm-scmi.0.auto: Using scmi_smc_transport
+[    1.043080] arm-scmi arm-scmi.0.auto: SCMI max-rx-timeout: 30ms / max-msg-size: 104bytes / max-msg: 20
+[    1.044147] scmi_protocol scmi_dev.1: Enabled polling mode TX channel - prot_id:16
+[    1.045112] arm-scmi arm-scmi.0.auto: SCMI Notifications - Core Enabled.
+[    1.045789] arm-scmi arm-scmi.0.auto: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[    1.046543] arm-scmi arm-scmi.0.auto: Enabling SCMI Quirk [quirk_clock_rates_triplet_out_of_spec]
+[    1.053542] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.057138] usbcore: registered new interface driver usbhid
+[    1.057637] usbhid: USB HID core driver
+[    1.069619] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 (0,8000003f) counters available
+[    1.071792] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 (0,8000003f) counters available
+[    1.092090] NET: Registered PF_INET6 protocol family
+[    1.093561] Segment Routing with IPv6
+[    1.093956] In-situ OAM (IOAM) with IPv6
+[    1.094360] NET: Registered PF_PACKET protocol family
+[    1.094871] Key type dns_resolver registered
+[    1.124267] registered taskstats version 1
+[    1.124877] Loading compiled-in X.509 certificates
+[    1.135038] Demotion targets for Node 0: null
+[    1.267929] rockchip-pm-domain 27380000.power-management:power-controller: Failed to create device link (0x180) with supplier 1-0023 for /soc/power-management@27380000/power-controller/power-domain@0
+[    1.274021] cpu cpu0: EM: created perf domain
+[    1.276328] cpu cpu4: EM: created perf domain
+[    1.283604] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[    1.284288] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[    1.284876] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[    1.285423] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 59,32 bit host data width,256 deep fifo
+[    1.293059] platform 27700000.npu: Adding to iommu group 2
+[    1.300540] [drm] Initialized rocket 0.0.0 for rknn on minor 0
+[    1.302135] rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+[    1.304265] mmc_host mmc0: Bus speed = 400000Hz (req 400000Hz, actual 400000HZ div = 0)
+[    1.310058] clk: Not disabling unused clocks
+[    1.310439] PM: genpd: Disabling unused power domains
+[    1.311019] dw-apb-uart 2ad40000.serial: forbid DMA for kernel console
+[    1.318053] Waiting for root device /dev/mmcblk0p2...
+[    1.374913] mmc_host mmc0: Bus speed = 198000000Hz (req 200000000Hz, actual 198000000HZ div = 0)
+[    1.507356] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 81
+[    1.508848] mmc0: new UHS-I speed SDR104 SDXC card at address 5048
+[    1.510371] mmcblk0: mmc0:5048 SD64G 58.0 GiB
+[    1.513735]  mmcblk0: p1 p2
+[    1.698842] EXT4-fs (mmcblk0p2): mounted filesystem d7c35f2a-ecdf-4d58-a881-0699371d5ef4 r/w with ordered data mode. Quota mode: none.
+[    1.700002] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    1.701003] devtmpfs: mounted
+[    1.701424] VFS: Pivoted into new rootfs
+[    1.707447] Freeing unused kernel memory: 13248K
+[    1.708048] Run /sbin/init as init process
+[    1.794027] EXT4-fs (mmcblk0p2): re-mounted d7c35f2a-ecdf-4d58-a881-0699371d5ef4.
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: Waiting for interface eth0 to appear.........[   11.514972] platform 22000000.pcie: deferred probe pending: rockchip-dw-pcie: failed to initialize the phy
+[   11.515840] platform 23000000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.516566] platform 23400000.usb: deferred probe pending: dwc3: failed to initialize core
+[   11.517300] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23400000.usb
+[   11.518250] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 23000000.usb
+[   11.519165] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 22000000.pcie
+[   11.520087] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27800000.gpu
+[   11.521000] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27b00000.video-codec
+[   11.521994] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d00000.vop
+[   11.522911] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27d50000.sai
+[   11.523828] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 27da0000.hdmi
+[   11.524752] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a220000.ethernet
+[   11.525706] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a2d0000.ufshc
+[   11.526655] rockchip-pm-domain 27380000.power-management:power-controller: sync_state() pending due to 2a340000.spi
+...... timeout!
+run-parts: /etc/network/if-pre-up.d/wait_iface: exit status 1
+FAIL
+Starting dropbear sshd: OK
+
+===== 1) the anchor                                                =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+##### ROUND 312: 0x40b8, the last register between charsiu and    #####
+#####            the vendor's own w4a16 output stage.             #####
+
+===== 2) THE CONTROL. WIDE8=63 alone. must reproduce 311:          =====
+=====    160 of 256 bytes, 8 of 64 words exact.                    =====
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  160 of 256 output bytes moved off the sentinel
+  40 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 8 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 3) THE ROUND. WIDE8=63 plus 0x40b8 = 3.                      =====
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  256 of 256 output bytes moved off the sentinel
+  64 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 64 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 4) and sweep it, so a miss is still a reading                =====
+
+===== 0x40b8 = 0
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  112 of 256 output bytes moved off the sentinel
+  28 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 4 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 3e 27 00 00   word       10046   accumulator       38022
+     5  bytes 38 ab ff ff   word      -21704   accumulator      -28203
+     6  bytes b9 d7 ff ff   word      -10311   accumulator       21408
+     7  bytes 96 88 00 00   word       34966   accumulator      -35755
+
+===== 0x40b8 = 2
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  208 of 256 output bytes moved off the sentinel
+  52 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 12 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 0x40b8 = 4
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  208 of 256 output bytes moved off the sentinel
+  52 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 16 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 0x40b8 = 7
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  128 of 256 output bytes moved off the sentinel
+  32 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 16 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 0x40b8 = 15
+wide8 probe  M=1 K=64 N=64 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  64 of 256 output bytes moved off the sentinel
+  16 of 64 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 1 of 64 exact
+  reading as WORDS  (accumulator, atom 4) : 16 of 64 exact
+
+  first 8 elements, raw:
+     0  bytes f3 73 00 00   word       29683   accumulator       29683
+     1  bytes 7f 49 00 00   word       18815   accumulator       18815
+     2  bytes c5 b1 ff ff   word      -20027   accumulator      -20027
+     3  bytes 0d f3 ff ff   word       -3315   accumulator       -3315
+     4  bytes 86 94 00 00   word       38022   accumulator       38022
+     5  bytes d5 91 ff ff   word      -28203   accumulator      -28203
+     6  bytes a0 53 00 00   word       21408   accumulator       21408
+     7  bytes 55 74 ff ff   word      -35755   accumulator      -35755
+
+===== 5) THE ONE WORTH MORE THAN THE ROUND: does it undo int4's    =====
+=====    half width? exact has been N/2 at every N since r280.     =====
+
+===== int4 K=2048 N=256, as it is today
+matmul M=1 K=2048 N=256 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 262144 of 524288 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x45000  coef 0x47000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 256 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 136 of 256 words written, 128 EXACT with the shift per element, 128 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 8/8  g2 8/8  g3 8/8  g4 8/8  g5 8/8  g6 8/8  g7 8/8  g8 8/8  g9 8/8  g10 8/8  g11 8/8  g12 8/8  g13 8/8  g14 8/8  g15 8/8  g16 0/8  g17 0/8  g18 0/8  g19 0/8  g20 0/8  g21 0/8  g22 0/8  g23 0/8  g24 0/8  g25 0/8  g26 0/8  g27 0/8  g28 0/8  g29 0/8  g30 0/8  g31 0/8
+  row 0 mismatches: 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 ... 128 total
+
+===== int4 K=2048 N=256 with 0x40b8 = 3
+matmul M=1 K=2048 N=256 w4 a8, feature atom 16, 64 entries per row
+HALFK: zeroed 262144 of 524288 weights. A channel is fed k with bit4 equal to its own parity, so even channels keep 0..15 and 32..47 and odd keep 16..31 and 48..63
+  scales in 0.0200 wt 0.1800 out 0.2500  zp in 128 wt 0 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x45000  coef 0x47000
+register stream: 143 entries
+submit ok
+  int4: reading the output as 256 signed 32 bit words, surface [n/4][m][n%4]
+    ch  0  npu    15184   shift/elem    15184   shift/sum    15184
+    ch  1  npu   -17018   shift/elem   -17018   shift/sum   -17018
+    ch  2  npu   -11687   shift/elem   -11687   shift/sum   -11687
+    ch  3  npu   -12175   shift/elem   -12175   shift/sum   -12175
+    ch  4  npu    -3757   shift/elem    -3757   shift/sum    -3757
+    ch  5  npu    14790   shift/elem    14790   shift/sum    14790
+    ch  6  npu     6545   shift/elem     6545   shift/sum     6545
+    ch  7  npu    10391   shift/elem    10391   shift/sum    10391
+int4 output: 256 of 256 words written, 16 EXACT with the shift per element, 16 EXACT with the shift on the sum
+  per group of 8 (row 0):  g0 8/8  g1 0/8  g2 0/8  g3 0/8  g4 0/8  g5 0/8  g6 0/8  g7 0/8  g8 0/8  g9 0/8  g10 0/8  g11 0/8  g12 0/8  g13 0/8  g14 0/8  g15 0/8  g16 0/8  g17 0/8  g18 0/8  g19 0/8  g20 0/8  g21 0/8  g22 0/8  g23 0/8  g24 0/8  g25 0/8  g26 0/8  g27 0/8  g28 0/8  g29 0/8  g30 8/8  g31 0/8
+  row 0 mismatches: 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 ... 240 total
+
+===== 6) and if it worked, at a projection's shape                 =====
+wide8 probe  M=1 K=2048 N=1024 int8   CHARSIU_WIDE8=63
+register stream: 143 entries
+submit ok
+
+  4096 of 4096 output bytes moved off the sentinel
+  1024 of 1024 elements have a non sentinel byte ABOVE the low one   (a one byte output leaves these alone)
+
+  reading as BYTES  (requantised, atom 16): 0 of 1024 exact
+  reading as WORDS  (accumulator, atom 4) : 1024 of 1024 exact
+
+  first 8 elements, raw:
+     0  bytes ff 9c 02 00   word      171263   accumulator      171263
+     1  bytes e3 78 03 00   word      227555   accumulator      227555
+     2  bytes ac 81 02 00   word      164268   accumulator      164268
+     3  bytes a6 25 01 00   word       75174   accumulator       75174
+     4  bytes 04 9e 00 00   word       40452   accumulator       40452
+     5  bytes ae fa ff ff   word       -1362   accumulator       -1362
+     6  bytes 95 6a ff ff   word      -38251   accumulator      -38251
+     7  bytes c0 33 ff ff   word      -52288   accumulator      -52288
+
+===== 7) the int8 byte regression, unchanged either way            =====
+matmul M=1 K=64 N=64 w8 a8, feature atom 16, 1 entries per row
+  scales in 0.0200 wt 0.0100 out 0.2500  zp in 128 wt 128 out 0
+bo iova: regcmd 0x1000  in 0x2000  wt 0x4000  out 0x6000  coef 0x8000
+register stream: 143 entries
+submit ok
+  reading the output as [n/atom][m][n%atom], the mirror of the input surface
+output: 64 of 64 bytes written, 64 BYTE EXACT, 0 differ by more than 1
+  reference spread: 5 distinct, 0..255   TOO FLAT TO JUDGE A MATCH
+  npu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  cpu[0..15]  255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+  npu range 0..255, 5 distinct
+  npu all:
+          255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+            0 255   1 255 254   1   2   0   0   1 255   0   2   0 255   0
+            1   0 255   0 255 255   0   1   0   0   1   0 255   1   0 255
+            1   2 255 255   1   0 255   0   1   0 255   1 255 254   1   2
+  cpu all:
+          255   1   0 255   1   0 255   1   2 255 255   1   0 255   0   1
+            0 255   1 255 254   1   2   0   0   1 255   0   2   0 255   0
+            1   0 255   0 255 255   0   1   0   0   1   0 255   1   0 255
+            1   2 255 255   1   0 255   0   1   0 255   1 255 254   1   2
+  npu signed:
+           -1   1   0  -1   1   0  -1   1   2  -1  -1   1   0  -1   0   1
+            0  -1   1  -1  -2   1   2   0   0   1  -1   0   2   0  -1   0
+            1   0  -1   0  -1  -1   0   1   0   0   1   0  -1   1   0  -1
+            1   2  -1  -1   1   0  -1   0   1   0  -1   1  -1  -2   1   2
+  cpu signed:
+           -1   1   0  -1   1   0  -1   1   2  -1  -1   1   0  -1   0   1
+            0  -1   1  -1  -2   1   2   0   0   1  -1   0   2   0  -1   0
+            1   0  -1   0  -1  -1   0   1   0   0   1   0  -1   1   0  -1
+            1   2  -1  -1   1   0  -1   0   1   0  -1   1  -1  -2   1   2
+  fit cpu = 1.0000 * npu + 0.00
+
+===== the anchor again                                             =====
+
+  -- conv2d-cal.tflite   
+rocket: OUT_CVT computed_shift=25 scale=0x7d34 -> emitting shift=25
+  conv2d-cal.tflite out(40, 40, 128): 128/128 channels match (maxdiff <= 1)
+    EXACT vs the same reference: 204401/204800 pixels, 59/128 channels identical, NOT byte exact
+    of those, COMPUTED (reference varies): 128    trivial (reference is constant): 0
+    npu distinct=256 min=0 max=255 | cpu distinct=256 | out_zp=128
+    channels that are CONSTANT: 0/128, of which pinned at out_zp: 0  (not empty)
+    reference channels that are constant: 0/128    npu constant but reference varies: 0
+    EXACT ARITHMETIC reference: 128/128 channels match, 204399/204800 pixels identical
+      the tflite interpreter itself differs from exact on 56/204800 pixels
+      of those the interpreter reads HIGH 51.8%
+    UNCLAMPED reference: the clamp rewrites 100820/204800 pixels across 128/128 channels
+      vs UNCLAMPED cpu: 128/128 channels match    COMPUTED 128    reference constant 0/128
+      vs max(cpu,zp) : 0/128 channels match    COMPUTED 0    reference constant 0/128
+      cpu unclamped min=0 max=255 distinct=256
+    rows with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    cols with any error: 40/40, first [0, 1, 2, 3, 4, 5] last [34, 35, 36, 37, 38, 39]
+    row maxdiff profile, every 8th: [1, 1, 1, 1, 1]
+    maxdiff excluding the outer ring: 1    whole surface: 1
+    by edge: row0 max 1 off>1 0 | rowN max 1 off>1 0 | col0 max 1 off>1 0 | colN max 1 off>1 0 | interior max 1 off>1 0
+    residual: within 1 100.0%   within 2 100.0%   within 4 100.0%   within 8 100.0%
+      of the pixels off by more than 1,   0.0% are at a rail of the hardware output
+    interior: exact 99.81%   off by exactly 1: 349, of which npu LOW   0.0%
+    off-by-1 by row, every 8th: [0.001, 0.002, 0.001, 0.002, 0.002]
+    off-by-1 by channel: median 0.000   lowest [(49, 0.0), (102, 0.0), (68, 0.0)]   highest [(66, 0.01), (20, 0.01), (90, 0.012)]
+    RAW ch 90 rows [1, 2] cols 1..16
+      y1 npu [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y1 ref [86, 71, 35, 121, 120, 166, 196, 215, 139, 57, 48, 60, 78, 118, 112, 247]
+      y2 npu [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+      y2 ref [239, 188, 160, 89, 68, 78, 106, 134, 114, 192, 211, 209, 133, 86, 70, 32]
+    every channel correct
+
+===== control, then 256 of 256 and 64 of 64, then int4's exact.    =====
+
+RK3576 NPU bringup
+rock4d login: 
