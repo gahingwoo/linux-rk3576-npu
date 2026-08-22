@@ -2,76 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-22 round 318. THE OUTPUT HEAD, THE LAST BIG THING ON THE CPU.
+# 2026-08-22 round 319. A BUFFER I SIZED WRONG, AND A SUBMIT THAT IS SLOW.
 #
-# ROUND 317: CHAINING WORKS AND MY NUMBER FOR IT WAS WRONG.
+# ROUND 318 REFUTED ME IN THE OPPOSITE DIRECTION. Routing the 128256 wide output
+# head made the model SLOWER, 5.08 to 4.18 tokens a second:
 #
-#   all projections, chained     4256 submits (112/token)   8.69 MB   5.08 tok/s
-#   the same, UNCHAINED         18240 submits (480/token)   2.03 MB   4.42 tok/s
+#   all 113, head on the NPU   606 slices  10.94 MB   239.0 ms/token   4.18
+#   112, head on the CPU       480 slices   8.69 MB   197.0 ms/token   5.08
+#   the head ALONE on the NPU  126 slices  262.67 MB  270.1 ms/token   3.70
+#   everything on the CPU                             265.6 ms/token   3.77
 #
-# Text character for character the reference in every rung, zero IOMMU errors.
-# So the slices really do address different regions and chaining is correct.
+# Text character for character in every rung, three clean anchors, zero IOMMU
+# errors. **That is the third tokens per second prediction of mine in a row to be
+# wrong, all three by assuming a cost I had not measured at the shape in hand.**
 #
-# ⚠ I PREDICTED ABOUT 6 tok/s AND SAID IT WOULD PUT THE NPU AHEAD OF THE CPU.
-# It did neither. And the reason is a second number of mine that was wrong:
-# removing 368 submits a token saved 29 ms, which is **79 us a submit**, not the
-# 190 us the round 165 figure implied. Chaining was worth 15%, not 40%.
+# THERE ARE TWO SEPARATE THINGS IN THOSE NUMBERS AND ONLY ONE IS THE HARDWARE'S.
 #
-# ⚠ AND THE DENOMINATOR NEEDS SAYING PROPERLY. Entry 6 measured charsiu's plain
-# CPU path on the SAME FILE at 3.68 tok/s, which matches round 309's q8_0 number
-# of 3.74. The 5.53 that has been quoted as "the CPU" is round 309's PURE q4_0
-# model, a different file. So:
+# 1) MOST OF THE 42 ms IS A BUFFER I SIZED WRONG. The output buffer was SHARED
+#    and therefore sized for the WIDEST tensor. Adding the head took it from
+#    128 KB to 2.48 MB, and charsiu_bo_prep and _fini are cache maintenance over
+#    a WHOLE buffer object, paid by every one of the 113 matvecs in a token:
+#    280 MB of cache operations a token where there had been 14. The head alone
+#    does not show it because only one matvec a token is on the hardware.
+#    FIXED: every tensor now has its own output buffer, sized for its own slices.
 #
-#   same file, CPU 3.68  ->  NPU 5.08     1.38x, and real
-#   best CPU on this board, 5.53          the NPU is still 8% BEHIND it
+# 2) THE HEAD REALLY IS SLOW ON THE NPU, AND THAT PART IS REAL. Working back
+#    from the head alone rung, the CPU computes it in about 58 ms and the NPU in
+#    about 62. 263 MB in 62 ms is 4.2 GB/s, where an eight task submit reaches
+#    10. The suspect is the submit itself: the head is 126 chained tasks and
+#    253 buffer handles in ONE ioctl, where round 306's bench chained 128 tasks
+#    over about five handles and measured 10.35 GB/s.
 #
-# ---------------------------------------------------------------------------
-# WHERE THE 197 ms A TOKEN ACTUALLY GOES
-# ---------------------------------------------------------------------------
-#
-#   ~97 ms   the NPU fetching 973 MB of projection weights at about 10 GB/s
-#   ~58 ms   THE CPU COMPUTING THE OUTPUT HEAD, 128256 x 2048 = 263 MB
-#   the rest attention scores and softmax, the norms, RoPE, SwiGLU, sampling
-#
-# The head is 21% of all the matmul weight and it is still on the CPU, because
-# CHARSIU_NPU_MAXN defaults to 8192 and the head is 128256 wide. On the NPU it
-# would be 263 MB at 10 GB/s, about 26 ms, saving roughly 32 ms a token.
-#
-# It costs 126 slices and 298 MB of buffers, and its submit fetches 263 MB in
-# one go, which is the largest single submit this project has ever made. The
-# slow submit guard now scales with the bytes -- 100 ms plus a millisecond a
-# megabyte, ten times slower than this hardware has ever been -- because a flat
-# limit would have retired a legitimate big submit as a wedge.
+#    CHARSIU_NPU_MAXTASK caps the tasks per submit so that can be asked directly.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) THE REPORT LINE FIRST. Entry 2 must say 113 tensors and about 606 slices.
-#    112 tensors means the head did not go and the rung is round 317 again.
+# 1) ENTRY 2 AGAINST ENTRY 3 IS THE BUFFER FIX. Both are round 318 rungs run
+#    again with per tensor buffers. If entry 2 comes back near 5.0 from 4.18,
+#    the cache maintenance was the 42 ms and the head costs about what the CPU
+#    charges for it. If it stays at 4.18, the buffer was not it and the head is
+#    simply expensive.
 #
-# 2) THEN THE TEXT, against entry 5, character for character. The head is the
-#    ONE matmul whose output is compared directly against a vocabulary rather
-#    than fed onward, so an error there changes the token immediately and
-#    visibly -- this is the easiest place in the model to catch a wrong answer.
+# 2) ENTRY 4 IS THE MEASUREMENT: the head alone, at 126, 32, 16 and 8 tasks a
+#    submit. **Read the tokens per second across that sweep.** If smaller
+#    submits are faster, the cost is per handle or per submit setup rather than
+#    per byte, and the fix is to cap the chain rather than to lengthen it -- the
+#    opposite of what round 317 was built on.
 #
-# 3) THEN TOKENS PER SECOND, which is the measurement.
+# 3) The text, character for character against entry 5, in every rung as always.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# A) IDENTICAL TEXT, 113 tensors, 606 slices, 113 submits a token.
+# A) ENTRY 2 RECOVERS TO ABOUT 5.0 AND STILL DOES NOT BEAT ENTRY 3's 5.08,
+#    because the head costs 62 ms on the NPU against 58 on the CPU. In other
+#    words: the buffer was my bug, and routing the head is STILL not worth it.
+#    ⚠ That is a prediction that the round is expected to end with the head
+#    going back to the CPU, which is a result and not a failure.
 #
-# B) **ABOUT 6.1 tok/s, WHICH WOULD FINALLY PUT THE NPU AHEAD OF 5.53.** 32 ms
-#    off 197. ⚠ I have now been wrong about a tokens per second prediction twice
-#    running, both times by assuming a cost I had not measured at the shape in
-#    question, so treat this as the thing being tested rather than the thing
-#    being confirmed.
-#
-# C) The head's submit is 263 MB and 126 chained tasks. If anything is going to
-#    find a limit in the driver or the block, it is this entry. It goes AFTER
-#    the anchor and BEFORE the smaller rungs for that reason.
+# B) THE TASK CAP MATTERS. 8 or 16 tasks a submit beats 126 on the head. If it
+#    does not, the 4.2 GB/s is not the handle count and the next suspect is the
+#    weight buffers themselves: 126 distinct 2 MB objects scattered across the
+#    IOMMU rather than one contiguous 263 MB.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -159,40 +154,44 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 318: the output head. 113 tensors or it did not go.    #####"
+	log "##### ROUND 319: per tensor buffers, and why a 126 task submit    #####"
+	log "#####            only reaches 4.2 GB/s.                           #####"
 
 	log ""
-	log "===== 2) THE ROUND. everything, the 128256 wide head included.     ====="
+	log "===== 2) all 113 with per tensor buffers. was 4.18.                ====="
 	rung "all 113, head included" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
 		CHARSIU_NPU_MAXN=131072
 
 	log ""
-	log "===== the anchor, right after the biggest submit ever made         ====="
-	w conv2d-cal.tflite ""
-
-	log ""
-	log "===== 3) THE CONTROL. the same run without the head: round 317.    ====="
+	log "===== 3) 112 without the head, the same fix. was 5.08.             ====="
 	rung "112 projections, head on the CPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE"
 
 	log ""
-	log "===== 4) the head ALONE, so its cost can be attributed             ====="
-	rung "only the head on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
-		CHARSIU_NPU_MAXN=131072 CHARSIU_NPU_ONLY=token_embd
+	log "===== 4) THE MEASUREMENT. the head alone, tasks per submit swept.  ====="
+	for T in 0 32 16 8 4
+	do
+		log ""
+		log "===== CHARSIU_NPU_MAXTASK = $T   (0 means all 126 in one)"
+		rung "head alone, $T tasks a submit" CHARSIU_NPU_QUANT=1 \
+			CHARSIU_NPU=1 "$CE" CHARSIU_NPU_MAXN=131072 \
+			CHARSIU_NPU_ONLY=token_embd CHARSIU_NPU_MAXTASK=$T
+	done
 
 	log ""
-	log "===== 5) the CPU reference the text is diffed against              ====="
+	log "===== 5) and the same cap on everything, in case it helps there too ====="
+	rung "all 113, 16 tasks a submit" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" \
+		CHARSIU_NPU_MAXN=131072 CHARSIU_NPU_MAXTASK=16
+
+	log ""
+	log "===== 6) the CPU reference the text is diffed against              ====="
 	rung "CPU, NPU number format" CHARSIU_NPU_QUANT=1
-
-	log ""
-	log "===== 6) and charsiu's plain CPU path on the same file             ====="
-	rung "plain CPU, q8_0" X=1
 
 	log ""
 	log "===== the anchor again                                             ====="
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 113 tensors, then the text, then tokens per second.          ====="
+	log "===== entry 2 against 3, then the task cap sweep.                  ====="
 	sync
 }
 case "$1" in
