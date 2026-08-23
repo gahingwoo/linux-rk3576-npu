@@ -2,115 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 343. THE VENDOR'S OWN STREAM, PLAYED BACK -- SECOND TRY.
+# 2026-08-23 round 344. THE VENDOR'S VALUES, FROM THE SIDE THAT RUNS.
 #
-# ⚠ ROUND 342 NEVER RAN THE VENDOR ARMS. My own script killed them: health()
-# set ABORT after the control arm poisoned the block, and every later arm
-# returned immediately -- while entry 5's health check then said the block had
-# recovered. The abort is now per arm, not per round.
+# ROUND 343 SETTLED THE ARITHMETIC AND FAILED THE REPLAY, both cleanly.
 #
-# 🔑 WHAT THE CONTROL ARM DID SAY, and it is sharper than anything before it.
-# Twelve clean rows, all twelve fitting ONE expression to six figures:
+# 🔑 THE ARITHMETIC. Sixteen rows of sixteen, all 1764 live, restore clean, and
+# every one of them fits ONE expression:
 #
 #       effective weight = (int16) fp16bits(s),  s = the nibble as int4
 #
-#   v    1     2     4     5     6     7  |  8     11    12    13    14    15
-#   d 1920  2048  2176  2208  2240  2272  | -1792 -1888 -1920 -1984 -2048 -2176
-#   s    1     2     4     5     6     7  | -8    -5    -4    -3    -2    -1
+#   v   1    2    3    4    5    6    7  |  8    9    10   11   12   13   14   15
+#   d 1920 2048 2112 2176 2208 2240 2272 |-1792-1824-1856-1888-1920-1984-2048-2176
 #
-# The negative half is the part that matters: fp16bits(-1) = 0xBC00 reads as
-# int16 -17408, and -2176/1920 * 15360 is exactly -17408. Sign, magnitude and
-# all sixteen codes are RIGHT.
+# Round 342 fitted that on twelve rows and PREDICTED 2112, -1824 and -1856 for
+# the three that had died. All three landed. **So the hardware reads the nibble
+# as a signed int4 and converts it to fp16 correctly -- sign, magnitude, all
+# sixteen codes. The only thing in the wrong domain is the MULTIPLY: it
+# multiplies the two fp16 bit patterns as integers.**
 #
-# 🔑**So the int4 decode is not broken. The hardware reads the nibble as a
-# signed int4 and converts it to fp16 correctly. What is in the wrong domain is
-# the MULTIPLY -- it multiplies the two fp16 bit patterns as integers.** That is
-# a mode, not a limit, and 0x40b8 (vendor 0x60, charsiu 0x20) has never been run.
-#
-# ⚠ v = 3, 9 and 10 were DEAD ROWS: the job timed out and the tool subtracted
-# whatever was in the buffer, printing -461431 twice. The expression predicts
-# 2112, -1824 and -1856 there. The tool now prints the live count on every row,
-# retries a row that does not match the reference, and says DEAD ROW instead of
-# a number.
-#
-# THE CAPTURE WORKED. The vendor LLM runtime ran under the interposer and left
-# 835 MB on the card: the task array, the register command buffer, the weights
-# and the activations of a real int4 projection. It looked like a hang and was
-# a slow write.
-#
-# What came out of it, before any board time:
-#
-#  1. THE VENDOR'S int4 GRID HAS NO ZERO. The nibble histogram over 1 MB of
-#     their weights is symmetric under u -> ~u, and reading the code as two's
-#     complement s gives mean -0.5 while reading it as s + 0.5 gives mean
-#     -0.026. Three separate megabytes agree. Their levels are +-0.5, +-1.5 ...
-#     +-7.5 times a per channel step. A midrise grid, sixteen levels, no code
-#     for zero.
-#
-#  2. THEIR PROJECTION IS K=2048 N=1024, 1 MiB of weights, NO bias buffer, and
-#     the DPU output stage is identity (0x40ac=0, 0x40b0=1, 0x40b4=0) -- they
-#     read the RAW accumulator and dequantise off the NPU, which is what
-#     charsiu already does.
-#
-#  3. THE STREAM DIFF, at the vendor's own shape, is 15 registers plus three
-#     whole groups:
-#         charsiu sets 0x100c bit 29, the vendor does not
-#         0x3018   charsiu 10000001   vendor 10000200
-#         0x40b8   charsiu 00000020   vendor 00000060
-#         0x103c   charsiu surf=64    vendor surf=2048
-#         five registers at 0x2810..0x2820 that NOTHING in this tree has ever
-#           written -- and they are the two that differ between the two
-#           subcores, so that block is the CBUF split
-#         the whole DPU_RDMA block, which charsiu writes and the vendor does not
-#         the 0x1d enable trailer, which charsiu writes and the vendor does not
-#     and five more where charsiu and the vendor put the SAME 0x1f in OPPOSITE
-#     HALVES of the word: charsiu's matmul is the transpose of theirs.
-#
-# Every int4 round so far changed one of those at a time. This one changes all
-# of them by deciding none of them: the stream submitted IS the captured one,
-# with three addresses substituted and nothing else touched.
+# ⛔ THE REPLAY. The vendor's 123 registers, submitted verbatim, TIMED OUT on
+# all four arms with 0 live words. Almost certainly because nothing turns the
+# units on: mainline rocket's drm_rocket_task has only regcmd and regcmd_count,
+# so the vendor's enable_mask = 0xd has nowhere to go, and their stream carries
+# no 0x1d trailer of its own. Two ways at it, and this round runs both.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE MEASUREMENT HAS NO FITTED REFERENCE. Submit, keep the output, change ONE
-# nibble of the weight buffer, submit again, subtract. The difference is that
-# nibble's contribution and nothing else. Sweeping it 0..15 gives the value the
-# hardware assigns each code, up to one common activation factor.
+# ARM 1, MERGE, is the one that matters: charsiu's stream carrying the vendor's
+# values. Host-checked, it applies **15 vendor values and inserts 5 registers**,
+# exactly the diff, and keeps only what the vendor does not write at all -- the
+# DPU_RDMA block and the enable trailer. If those twenty registers are what puts
+# the multiply in the integer domain, this arm's curve is NOT the table above.
 #
-#   a STRAIGHT LINE in v, or a straight line with a step at v=8 (two's
-#   complement), means the block is a real int4 multiplier and the 1.00 to 1.18
-#   band was a configuration fault of ours;
+# ARM 2 is the verbatim replay with the trailer appended. If it now runs, the
+# missing enable was the whole reason 343 timed out, and its curve is the
+# vendor's stream as nearly as this driver can submit it.
 #
-#   the SAME BAND again -- deltas whose ratios are 1.067, 1.100, 1.133 -- under
-#   the vendor's own stream means it is the silicon, and int4 is closed.
+# ARM 3 is the verbatim replay again, unchanged, which MUST time out. A fix
+# whose control does not bring the fault back has not been shown to be the fix.
 #
-# TWO CONTROLS, BOTH OF WHICH CAN FAIL, and they are inside the tool:
-#   CONTROL repeat   the same job twice must be byte identical, or the board is
-#                    not repeatable and nothing under it can be read;
-#   CONTROL restore  putting the nibble back must return the baseline, which
-#                    catches a stale buffer or a job that stopped running.
-# A POISON GATE: an all zero baseline prints VOID and the arm scores nothing.
-# Round 339 printed "64 of 64" on a job that timed out and returned zeros.
+# ARM 4 is the plain control and MUST reproduce the sixteen values above. If it
+# does not, the tool changed and nothing above it means anything.
 #
-# THE CONTROL ARM is the first entry: a regcmd of "-" runs the identical
-# measurement under the stream THIS TREE emits, same buffers, same board, same
-# code, so the only difference between the two curves is the 123 registers.
+# Every arm carries the tool's own two controls -- a repeat must be byte
+# identical, a restore must return the baseline -- a per row live count, and a
+# VOID gate on an all zero output.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# I do not know, and that is why it is worth a round. The one thing I will
-# predict is that the CONTROL arm reproduces the band, because that is the
-# configuration every previous round measured. If the control does NOT
-# reproduce it, the tool is the thing that changed and the vendor arm means
-# nothing either.
-#
-# The vendor arm may simply hang: it carries no DPU_RDMA and no enable trailer,
-# and this tree has never submitted a stream without them. A hang is a result
-# too, and it is the one that says the trailer is load bearing.
+# Arm 3 times out, arm 4 reproduces. Between arms 1 and 2 I have no prediction,
+# and the one I would least like to be true is that both run and both give the
+# same table, because that puts the multiply mode outside all 123 registers.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -134,13 +80,19 @@ health() {
 	fi
 }
 
-# arm: <label> <regcmd-or-dash> <byte> <high>
+# arm: <label> <regcmd-or-dash> <byte> <high> [extra env, one assignment]
+#
+# ⚠ THE ENV GOES IN AS AN ARGUMENT, not as a "VAR=x arm ..." prefix. Whether an
+# assignment before a FUNCTION call survives the call is unspecified -- dash
+# drops it, other shells keep it -- and the arm whose whole job is to time out
+# WITHOUT the trailer runs right after the one that has it. Not a question worth
+# leaving to the shell.
 arm() {
 	before=$(nbad)
 	log ""
 	log "  ---- $1"
 	sleep 1
-	$VD "$2" "$WT" "$IN" "$3" "$4" 4096 > /tmp/vd.txt 2>&1
+	env ${5:-IGNORED=1} $VD "$2" "$WT" "$IN" "$3" "$4" 4096 > /tmp/vd.txt 2>&1
 	cat /tmp/vd.txt > "$C"
 	after=$(nbad)
 	if [ "$after" != "$before" ]; then
@@ -157,30 +109,31 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 343: the vendor's own int4 stream, played back #####"
+	log "##### round 344: the vendor's values, from the side that runs #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) THE POINT OF THE ROUND: the vendor's stream          ====="
-	arm "vendor stream, byte 0 low" "$RGC" 0 0
+	log "===== 1) MERGE: our stream, the vendor's 15 values + 5 regs   ====="
+	log "  the point of the round. it should RUN, because our stream does."
+	arm "merge, byte 0 low" "+$RGC" 0 0
+	arm "merge, byte 0 high" "+$RGC" 0 1
+	arm "merge, byte 1024 low" "+$RGC" 1024 0
 
 	log ""
-	log "===== 2) the vendor's stream, byte 0 HIGH nibble              ====="
-	log "  the same byte's other half. peers give the same curve."
-	arm "vendor stream, byte 0 high" "$RGC" 0 1
+	log "===== 2) the verbatim replay, WITH the 0x1d enable trailer    ====="
+	log "  if 343 only timed out for want of an enable, this runs."
+	arm "verbatim + trailer, byte 0 low" "$RGC" 0 0 CHARSIU_VENDOR_TRAILER=1
 
 	log ""
-	log "===== 3) the vendor's stream, two more positions              ====="
-	arm "vendor stream, byte 1024 low" "$RGC" 1024 0
-	arm "vendor stream, byte 100000 low" "$RGC" 100000 0
+	log "===== 3) the verbatim replay, unchanged. MUST time out.       ====="
+	arm "verbatim, byte 0 low" "$RGC" 0 0
 
 	log ""
 	log "===== 4) CONTROL: charsiu's own stream, same byte             ====="
-	log "  must reproduce (int16)fp16bits(s): 1920 2048 2112 2176 2208"
-	log "  2240 2272 then -1792 -1824 -1856 -1888 -1920 -1984 -2048 -2176."
-	log "  if it does not, the tool changed and arm 1 means nothing."
+	log "  must reproduce 1920 2048 2112 2176 2208 2240 2272 then"
+	log "  -1792 -1824 -1856 -1888 -1920 -1984 -2048 -2176."
 	arm "control arm, this tree's stream" "-" 0 0
 
 	log ""
