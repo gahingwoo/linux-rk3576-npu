@@ -2,66 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 346. THE WHOLE THING IS DECODED. NOW CHECK IT PROPERLY.
+# 2026-08-23 round 347. DOES IT SURVIVE M = 1, WHICH IS THE ONE WE NEED.
 #
-# 🔑🔑🔑 ROUND 345 GAVE THE LAYOUT, AND IT CHECKS OUT ON THE HOST.
+# 🔑🔑🔑 ROUND 346 VERIFIED THE WHOLE int4 PATH ON THE BOARD.
 #
-# The bisect said CORE, not DPU -- I guessed DPU and was wrong. CNA's eight
-# values, the five inserted at 0x2810 and the DPU's four all leave the old
-# fp16bits band in place. **CORE's three, alone, give 8744*s and a float32
-# output.** They are
+#   VERIFY: 1275 of 1280 words within 1e-5 relative, worst 1.44e-05
 #
-#     0x3018   charsiu 10000001   vendor 10000200
-#     0x301c   charsiu 001f0000   vendor 0000001f
-#     0x3020   charsiu 000007ef   vendor 000003ff
+# under the merge AND, identically, under the vendor's own 123 registers with
+# the three enables appended. Their registers, their weights, their
+# activations, our driver, every live word against a CPU reference.
 #
-# ⚠ 0x3018 was judged "hangs" in rounds 339 and 341. It was tried alone, at a
-# different shape, without the other two.
+# ⚠ The five that missed 1e-5 are not misses: the board and the reference agree
+# to every printed digit (+0.086638 against +0.086639). 1e-5 was too tight for a
+# float32 result summed against 2048 double terms with cancellation. The tool
+# now prints 1e-4 and 1e-5 side by side and 1e-4 is the one to read.
 #
-# THE SLOPE MAP DECODED THE LAYOUT. The slope is the activation the nibble
-# meets, once it is divided by the right ulp -- and the ulp is PER OUTPUT WORD,
-# because the output is float32, and it changes SIGN for a negative word.
-# 122 of 128 nibbles then land on k = i mod 32 with the channel = i / 32, the
-# six misses being small activations lost to fp32 rounding. Extrapolating that
-# and checking against the eight words the log printed:
+# A check I did not design and which passed anyway: **2816 words where the board
+# wrote zero are exactly the ones where the reference computes zero**, because
+# only 15% of the vendor's activation buffer is nonzero.
 #
-#     out[n][m] = sum_k s(n,k) * a(k,m), in float
-#     weight nibble(n,k) = 32*16*(K/32)*(n/16) + 512*(k/32) + 32*(n%16) + k%32
-#     activation (k,m)   = fp16 slot 8*M*(k/8) + 8*m + (k%8)
-#     output word (n,m)  = 4*(M*(n/4) + m) + (n%4)
-#
-# **All eight words match to one fp32 ulp, worst relative error 1.04e-07.**
-# Blocks of 32 k for each of SIXTEEN channels, which is the feature atom this
-# project has met before.
+# THE BISECT, honestly: 0x3018 is the register that changes the arithmetic --
+# its baseline's first four words equal the merged ones exactly -- but alone it
+# wedged the block (19 fault lines), 0x301c alone was VOID, and 0x3020 alone
+# FAILED ITS REPEAT CONTROL so it is not readable at all. All three together is
+# clean and reproduces. So: 0x3018 switches, the other two are needed to run.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRIES 1 AND 2 ARE THE CLAIM. CHARSIU_VERIFY computes that reference on the
-# board for EVERY live word, not the eight I could read off a log, and prints
-# how many are within one part in 1e-5. Entry 1 does it under the merge, entry 2
-# under the vendor's own stream with the three enables appended. A pass in
-# entry 2 is the strongest form: their registers, their weights, their
-# activations, our driver.
+# EVERYTHING ABOVE IS AT M = 32, BECAUSE THAT IS WHAT THE VENDOR CAPTURED. The
+# decode loop charsiu actually needs is M = 1, and every stride in the decode
+# depends on M:
 #
-# ⚠ ONE THING I CANNOT PREDICT: the baseline has **1280 live words of 4096**,
-# and the reference expects a value in every one of the 4096. So either the
-# block writes only part of the buffer or my extent is wrong. The verify prints
-# both counts and the first four mismatches, which is what will say which.
+#     input  slot (k,m) = 8*M*(k/8) + 8*m + k%8    ->  k     at M = 1
+#     output word (n,m) = 4*(M*(n/4) + m) + n%4    ->  n     at M = 1
+#     weight nibble(n,k)                            unchanged, no M in it
 #
-# ENTRIES 3 TO 6 finish the bisect: each CORE register alone on charsiu's own
-# stream, then all three. The reading is not the constant -- the geometry
-# differs -- it is LINEAR IN s against the 1.00 to 1.18 band.
+# So at M = 1 both surfaces collapse to plain order, which is either very
+# convenient or a sign that M = 1 takes a different path entirely.
 #
-# ENTRY 7 is the control and must still give the old sixteen values.
+# ENTRY 1 is the anchor: the merge at M = 32, which must reproduce 1280 of 1280.
+# If it does not, the tool changed and nothing else counts.
+#
+# ENTRY 2 is the question: M = 1 with only the three CORE registers, which are
+# the ones that are M safe -- 0x3018 is constant, 0x301c is M-1 in the low half
+# and charsiu already writes 0 there at M = 1, 0x3020 is N-1.
+#
+# ENTRY 3 maps the layout at M = 1 whatever entry 2 says, so a failure is
+# located rather than just recorded.
+#
+# ENTRY 4 is the contrast: the FULL merge at M = 1, which carries M = 32
+# geometry and should therefore be wrong. If it passes anyway, the other
+# seventeen registers do not depend on M and I have the wrong model of them.
+#
+# ENTRY 5 is M = 8, so the M dependence is three points and not two.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# 0x3018, on its own, is the switch, and the other two are extent. I said DPU
-# last round and was wrong, so this is a guess and nothing more.
+# Entry 2 passes. The weight formula has no M in it, the two surfaces collapse
+# to the identity, and the three CORE registers carry no M except through a
+# field charsiu already computes. But the live word count moved between the
+# merge and CORE-only at M = 32 (1280 against 1756), so the extent is not
+# something I understand yet, and extent is exactly what M changes.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -114,38 +119,37 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 346: verify the decode, and finish the bisect #####"
+	log "##### round 347: does it survive M = 1 #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) VERIFY the decode under the merge, every live word   ====="
-	arm "verify, merge" "+$RGC" 0 0 CHARSIU_VERIFY=1
+	log "===== 1) ANCHOR: the merge at M=32. must give 1280 of 1280.   ====="
+	arm "anchor, merge M=32" "+$RGC" 0 0 CHARSIU_VERIFY=1
 
 	log ""
-	log "===== 2) VERIFY under the VENDOR'S OWN stream + the enables    ====="
-	log "  their registers, their weights, their activations, our driver."
-	arm "verify, verbatim + trailer" "$RGC" 0 0 "CHARSIU_VERIFY=1 CHARSIU_VENDOR_TRAILER=1"
+	log "===== 2) THE QUESTION: M=1, the three CORE registers          ====="
+	log "  0x301c is M-1 in the low half, so it is 0 at M=1."
+	arm "M=1, CORE three" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000000,0x3020=0x000003ff"
 
 	log ""
-	log "===== 3) CORE bisect: 0x3018 alone                            ====="
-	arm "0x3018 alone" "-" 0 0 CHARSIU_OVERRIDE=0x3018=0x10000200
+	log "===== 3) the layout at M=1, 32 bytes, whatever entry 2 said   ====="
+	arm "M=1 slope map" "-" 0 0 "CHARSIU_M=1 CHARSIU_SLOPE_MAP=32 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000000,0x3020=0x000003ff"
 
 	log ""
-	log "===== 4) CORE bisect: 0x301c alone                            ====="
-	arm "0x301c alone" "-" 0 0 CHARSIU_OVERRIDE=0x301c=0x0000001f
+	log "===== 4) CONTRAST: the full merge at M=1. carries M=32 values ====="
+	log "  and should therefore be wrong. if it passes, my model of the"
+	log "  other seventeen registers is wrong."
+	arm "M=1, full merge" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1"
 
 	log ""
-	log "===== 5) CORE bisect: 0x3020 alone                            ====="
-	arm "0x3020 alone" "-" 0 0 CHARSIU_OVERRIDE=0x3020=0x000003ff
+	log "===== 5) M=8, so the M dependence is three points not two     ====="
+	log "  0x301c = M-1 = 7 here, NOT the 0x1f the M=32 capture carries."
+	arm "M=8, CORE three" "-" 0 0 "CHARSIU_M=8 CHARSIU_VERIFY=1 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000007,0x3020=0x000003ff"
 
 	log ""
-	log "===== 6) CORE bisect: all three                               ====="
-	arm "all three CORE" "-" 0 0 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x0000001f,0x3020=0x000003ff
-
-	log ""
-	log "===== 7) CONTROL: charsiu's own stream. the old sixteen.      ====="
+	log "===== 6) CONTROL: charsiu's own stream at M=32. old sixteen.  ====="
 	arm "control arm, this tree's stream" "-" 0 0
 
 	log ""
