@@ -2,61 +2,76 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 351. THE SAME ROUND, WITH MY TWO BUGS OUT OF IT.
+# 2026-08-23 round 352. int4 IN THE DECODE LOOP. COUNT THE TOKENS.
 #
-# ⛔ ROUND 350 HAD TWO FAULTS AND BOTH WERE MINE. Neither is a hardware result.
+# ✅✅ ROUND 351: int4 IS BYTE EXACT THROUGH OUR OWN PACKERS, AND FASTER AT
+# EVERY SHAPE.
 #
-# 1. CHARSIU_N DID NOTHING. Two lines below the ones that read the environment
-#    reassigned k and n to 2048 and 1024, so **the whole N sweep ran four times
-#    at the same shape** and printed four nearly equal times as if they were a
-#    slope. int4 read 230.2, 222.5, 227.6, 217.2 us at "N = 256, 512, 1024,
-#    2048" -- all of them N = 1024.
+#   K=2048 N=256    256 of 256    worst 0.00e+00
+#   K=2048 N=1024  1024 of 1024   worst 0.00e+00
+#   K=1024 N=2048  2048 of 2048   worst 0.00e+00
+#   CHARSIU_W4_BITPAT                0 of 1024, nan and zero in the output
 #
-# 2. THE REFERENCE WAS WRONG, NOT THE BOARD. The generated activations were
-#    multiples of 0.05, which fp16 cannot represent. charsiu_pack_input_f16
-#    rounds them, so the hardware multiplied by the rounded value while the
-#    reference multiplied by the float:
+# Not "within a tolerance" -- EQUAL. Round 350's 2.4e-04 really was my
+# reference multiplying by a float32 the fp16 packer never handed the hardware.
 #
-#        board -45.989502   ref -46.000001    rel 2.28e-04
-#        board  -2.000488   ref  -2.000000    rel 2.44e-04
+#     N      int4      int8      int4 is
+#     256    151.3     229.0     1.51x faster
+#     512    158.8     283.0     1.78x
+#     1024   239.0     353.0     1.48x
+#     2048   367.0     520.0     1.42x
 #
-#    **The board is right in both.** 256 of 1024 "passed" only where the
-#    rounding happened to cancel. The activations are now exact sixteenths and
-#    the reference rounds through fp16 anyway, so neither can drift again.
+# Slopes: int4 128.8 us per MiB (8.14 GB/s), int8 81.6 (12.85 GB/s). int4 moves
+# each byte slower and has half as many, and the halving wins at every point.
 #
-# ✅ WHAT ROUND 350 DID ESTABLISH, because its controls held:
-#    - the packers run on the board and the block computes with what they write
-#    - CHARSIU_W4_BITPAT, reverting registers AND layout together, gives 0 of
-#      1024 with nan and zero in the output, so the control still fails
-#    - every repeat and restore control passed in all eleven arms
+# ---------------------------------------------------------------------------
+# WHAT IS NEW IN THE CODE
+# ---------------------------------------------------------------------------
 #
-# ⚠ AND ONE THING WORTH CARRYING: int4 at this shape read 277.6 us in round 349
-# and 217 to 230 us in round 350. **A single shape timing moves 20% between
-# boots**, which is one more reason to read a slope and not a row.
+# CHARSIU_NPU_W4V is the int4 DECODE path, and it is OPT IN. The int8 path
+# produces tokens identical to the CPU at 6.55 tok/s and is not being replaced
+# by one that has never decoded a sentence.
+#
+# It takes the REAL float activation, not the int8 quantised one, so it has no
+# input zero point, no wsum correction and no d1 in the dequantisation -- and
+# it skips charsiu_act's quantisation entirely, which is 10.1 ms of a 153 ms
+# token on the CPU side. So there are two savings in this arm and they are not
+# separable in the total; the stage table separates them.
+#
+# CHARSIU_NPU_W4V also forces the quantiser to four bits, because one switch
+# choosing the layout and the registers while another leaves the weights at
+# eight would be a fault nobody could see.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1 must now print N = 256 for the N = 256 arm. If the header line still
-# says 1024, the fix did not land and nothing else in the round counts.
+# ENTRY 1 IS THE STANDING NUMBER and it is the control: int8, which must still
+# be 6.55 tok/s and must still print the same sentence. If it moved, something
+# in this change touched the path it was not supposed to touch.
 #
-# ENTRIES 1 TO 3 are correctness through charsiu_pack_weights and
-# charsiu_pack_input_f16, the two the LLM path calls, at three shapes. With the
-# reference honest about fp16 these should be **all of N within 1e-5**, not 256
-# of 1024. Entry 4 is the control that must still score 0.
+# ENTRY 2 IS THE ANSWER. Two things to read and they are different questions:
 #
-# ENTRIES 5 AND 6 are the sweep, now at four genuinely different shapes.
-# **Read the SLOPE in us per MiB of weights**, and the intercept is the fixed
-# submit cost. A single row means nothing, as round 350 just demonstrated.
+#   THE RATE. The bounded estimate from round 351 is 8.8 to 10.6 tok/s. Below
+#   6.55 means the projections are not where the time goes and the arithmetic
+#   was for nothing at this scale.
+#
+#   THE TEXT. int4 weights are int4 weights: the sentence WILL differ from the
+#   int8 one somewhere, and that is not a bug. What would be a bug is garbage,
+#   repetition, or a wall of one token.
+#
+# ENTRY 3 is the same prompt on the CPU, so the two NPU arms have something
+# that is not each other to be compared against.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Correctness clean at all three shapes. For the slope, int4 about half of
-# int8's us per MiB with the same intercept -- which would put int4 near 2x on
-# a job big enough to hide the submit, against the 1.26x measured at one shape.
+# Somewhere between 8 and 10 tok/s and a sentence that reads as English but is
+# not word for word the int8 one. The way this goes wrong, if it does, is the
+# weight scales: the hardware returns sum of code times activation and the
+# dequantisation is now ONE multiply per channel with no d1, which is a line I
+# changed in two places and have not run once.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -66,6 +81,12 @@ V=/opt/charsiu/vendor
 RGC=$V/vendor-int4-k2048-n1024.regcmd
 WT=$V/vendor-wt-1M.bin
 IN=$V/vendor-in.bin
+RUN=/opt/charsiu/charsiu_run
+M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
+PROMPT="The capital of France is"
+LIMIT=420
+CE=CHARSIU_COEF_ELEMS=65536
+HEAD=CHARSIU_NPU_MAXN=131072
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -80,6 +101,34 @@ health() {
 	fi
 }
 
+capped() {
+	lim="$1"; shift
+	"$@" &
+	pid=$!
+	i=0
+	while [ "$i" -lt "$lim" ]; do
+		kill -0 "$pid" 2>/dev/null || { wait "$pid"; return $?; }
+		sleep 1
+		i=$((i + 1))
+	done
+	kill -9 "$pid" 2>/dev/null
+	wait "$pid" 2>/dev/null
+	return 124
+}
+rung() {
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
+	lbl="$1"; shift
+	before=$(nbad)
+	log ""
+	log "  -- $lbl"
+	sleep 1
+	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 \
+		--ignore-eos -q -c 512 -t 4 > "$C" 2>&1
+	rc=$?
+	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
+	return 0
+}
 # arm: <label> <regcmd-or-dash> <byte> <high> [extra env, one assignment]
 #
 # ⚠ THE ENV GOES IN AS AN ARGUMENT, not as a "VAR=x arm ..." prefix. Whether an
@@ -109,44 +158,31 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 351: the same round, with my two bugs out of it #####"
+	log "##### round 352: int4 in the decode loop. count the tokens. #####"
 	log "###############################################################"
-	log "  no fitted reference. one nibble changes, the output difference"
-	log "  is that nibble. a straight line means int4 is real."
+	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) correctness through our packers, N=256               ====="
-	log "  the header MUST print N = 256. if it says 1024, stop here."
-	arm "generated, N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+	log "===== 1) CONTROL: the standing int8 decode. 6.55 tok/s.       ====="
+	rung "int8 decode, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) correctness, N=1024                                  ====="
+	log "===== 2) THE ANSWER: int4 decode                              ====="
+	log "  read the RATE and the TEXT separately. the sentence WILL"
+	log "  differ from int8's; garbage or repetition is the bug."
+	rung "int4 decode" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 3) the CPU, so the two arms have a third thing to face  ====="
+	rung "cpu only" CHARSIU_NO_NPU=1
+
+	log ""
+	log "===== 4) the matmul is still exact under the decode's own      ====="
+	log "  packers, so a bad sentence cannot be blamed on the block.    "
 	arm "generated, N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 3) correctness, N=2048 and K=1024                       ====="
-	arm "generated, N=2048 K=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_K=1024 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 4) CONTROL: W4_BITPAT, registers and layout both back    ====="
-	arm "generated, W4_BITPAT" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_W4_BITPAT=1 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 5) int4 rate against N. READ THE SLOPE, us per MiB.      ====="
-	arm "int4 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int4 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int4 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int4 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 6) int8 rate against N, the same four shapes             ====="
-	arm "int8 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int8 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int8 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-	arm "int8 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 6) the anchor: int8 conv must still be exact           ====="
+	log "===== 5) the anchor: int8 conv must still be exact           ====="
 	health
 
 	log ""
