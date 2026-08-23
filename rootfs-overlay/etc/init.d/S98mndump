@@ -2,76 +2,84 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 352. int4 IN THE DECODE LOOP. COUNT THE TOKENS.
+# 2026-08-23 round 353. THE SENTENCE, NOT THE RATE. THE RATE IS DONE.
 #
-# ✅✅ ROUND 351: int4 IS BYTE EXACT THROUGH OUR OWN PACKERS, AND FASTER AT
-# EVERY SHAPE.
+# ✅✅✅ ROUND 352: int4 DECODES, AND IT IS 55% FASTER.
 #
-#   K=2048 N=256    256 of 256    worst 0.00e+00
-#   K=2048 N=1024  1024 of 1024   worst 0.00e+00
-#   K=1024 N=2048  2048 of 2048   worst 0.00e+00
-#   CHARSIU_W4_BITPAT                0 of 1024, nan and zero in the output
+#   int8   gen 32 tok in 4897 ms,  6.53 tok/s   5028 ms hardware, 2036 us/submit
+#   int4   gen 32 tok in 3163 ms, 10.12 tok/s   3052 ms hardware, 1235 us/submit
 #
-# Not "within a tolerance" -- EQUAL. Round 350's 2.4e-04 really was my
-# reference multiplying by a float32 the fp16 packer never handed the hardware.
+# 10.12 against 6.53, and the bounded estimate written before the run was 8.8 to
+# 10.6. The hardware path is 1.65x faster, which is what the shape sweep said.
 #
-#     N      int4      int8      int4 is
-#     256    151.3     229.0     1.51x faster
-#     512    158.8     283.0     1.78x
-#     1024   239.0     353.0     1.48x
-#     2048   367.0     520.0     1.42x
+# ✅ AND THE BLOCK IS NOT THE PROBLEM: entry 4 verified the matmul under the
+# decode's OWN packers at 1024 of 1024, worst 0.00e+00.
 #
-# Slopes: int4 128.8 us per MiB (8.14 GB/s), int8 81.6 (12.85 GB/s). int4 moves
-# each byte slower and has half as many, and the halving wins at every point.
+# ⚠ TWO FAULTS, AND THE HEARTBEAT EARNED ITS PLACE BY TELLING THEM APART.
+#
+# 1. STAGING TOOK 101 SECONDS. Steady, about a second a tensor -- 64 at 50.6 s,
+#    80 at 65.4, 96 at 82.5, 112 at 101.0 -- so it was slow work and not a
+#    wedge, which is exactly what the heartbeat was added to distinguish.
+#    **The int4 layout writes STRIDED into the buffer object: sixteen
+#    consecutive bytes, then a jump of 256.** A buffer object's mapping does
+#    not absorb that the way it absorbs int8's nearly sequential write. It now
+#    packs into ordinary memory and copies once, sequentially.
+#
+# 2. THE SENTENCE IS REPETITIVE.
+#
+#      int8  "Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is
+#             one of the most famous landmarks in the world. It was built for"
+#      int4  "Paris. Paris is the most populous city in France. Paris is the
+#             most famous city in the world. Paris is the most beautiful city"
+#
+#    English, on topic, grammatical, and stuck in one frame. That is not a
+#    hardware fault and not a layout fault -- the matmul is byte exact. **It is
+#    ONE absmax scale for a whole 2048 long row**, which is measured offline at
+#    0.1067 relative error against group 32's 0.0666.
 #
 # ---------------------------------------------------------------------------
 # WHAT IS NEW IN THE CODE
 # ---------------------------------------------------------------------------
 #
-# CHARSIU_NPU_W4V is the int4 DECODE path, and it is OPT IN. The int8 path
-# produces tokens identical to the CPU at 6.55 tok/s and is not being replaced
-# by one that has never decoded a sentence.
+# GROUPED SCALES FOR FREE. charsiu already cuts K into slices and sums their
+# accumulators, so if a slice IS a quantisation group, the group's scale can be
+# applied to that slice on the way in and NOTHING extra runs on the hardware.
+# Set CHARSIU_NPU_KMAX and CHARSIU_NPU_W4_GROUP to the same value. The
+# condition is strict on purpose: the slice must BE the group, because a slice
+# covering part of a group would need a scale per part and there is nowhere to
+# put one.
 #
-# It takes the REAL float activation, not the int8 quantised one, so it has no
-# input zero point, no wsum correction and no d1 in the dequantisation -- and
-# it skips charsiu_act's quantisation entirely, which is 10.1 ms of a 153 ms
-# token on the CPU side. So there are two savings in this arm and they are not
-# separable in the total; the stage table separates them.
-#
-# CHARSIU_NPU_W4V also forces the quantiser to four bits, because one switch
-# choosing the layout and the registers while another leaves the weights at
-# eight would be a fault nobody could see.
+# ⚠ IT IS NOT FREE IN SUBMITS. K = 2048 in one slice is one job; at KMAX = 512
+# it is four, and each pays the fixed submit cost. Entry 4 is int8 at the same
+# KMAX so the cost of the slicing is separated from the cost of int4.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1 IS THE STANDING NUMBER and it is the control: int8, which must still
-# be 6.55 tok/s and must still print the same sentence. If it moved, something
-# in this change touched the path it was not supposed to touch.
+# ENTRY 1: int4 as round 352 ran it, which must reproduce 10.12 tok/s and the
+# same repetitive sentence, and whose STAGING should now be seconds rather than
+# 101 of them. If the sentence changed without the quantiser changing, the
+# staging fix touched something it should not have.
 #
-# ENTRY 2 IS THE ANSWER. Two things to read and they are different questions:
+# ENTRIES 2 AND 3 are the answer: group 512 and group 128. Read the SENTENCE
+# first and the rate second. A sentence that stops circling is the result; a
+# rate that falls below 6.53 means the extra submits ate the win.
 #
-#   THE RATE. The bounded estimate from round 351 is 8.8 to 10.6 tok/s. Below
-#   6.55 means the projections are not where the time goes and the arithmetic
-#   was for nothing at this scale.
+# ENTRY 4 is int8 at KMAX 512, which separates "slicing costs submits" from
+# "int4 costs accuracy".
 #
-#   THE TEXT. int4 weights are int4 weights: the sentence WILL differ from the
-#   int8 one somewhere, and that is not a bug. What would be a bug is garbage,
-#   repetition, or a wall of one token.
-#
-# ENTRY 3 is the same prompt on the CPU, so the two NPU arms have something
-# that is not each other to be compared against.
+# ENTRY 5 is the int8 control and must still be 6.53 tok/s.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Somewhere between 8 and 10 tok/s and a sentence that reads as English but is
-# not word for word the int8 one. The way this goes wrong, if it does, is the
-# weight scales: the hardware returns sum of code times activation and the
-# dequantisation is now ONE multiply per channel with no d1, which is a line I
-# changed in two places and have not run once.
+# Group 512 helps a little and group 128 helps more, and the rate drops toward
+# int8's as the submits multiply -- so the useful answer is probably the
+# largest group that fixes the text. If group 128 still circles, the scale is
+# not what is wrong and the next thing is the quantiser itself, not its
+# granularity.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -158,31 +166,35 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 352: int4 in the decode loop. count the tokens. #####"
+	log "##### round 353: the sentence, not the rate. the rate is done. #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) CONTROL: the standing int8 decode. 6.55 tok/s.       ====="
-	rung "int8 decode, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 1) int4 as round 352 ran it. 10.12 tok/s, same sentence. ====="
+	log "  staging should be seconds now, not 101 of them."
+	rung "int4, one scale a row" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) THE ANSWER: int4 decode                              ====="
-	log "  read the RATE and the TEXT separately. the sentence WILL"
-	log "  differ from int8's; garbage or repetition is the bug."
-	rung "int4 decode" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
+	log "===== 2) int4 with a scale every 512. READ THE SENTENCE.       ====="
+	rung "int4, group 512" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
+		CHARSIU_NPU_KMAX=512 CHARSIU_NPU_W4_GROUP=512 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the CPU, so the two arms have a third thing to face  ====="
-	rung "cpu only" CHARSIU_NO_NPU=1
+	log "===== 3) int4 with a scale every 128                           ====="
+	rung "int4, group 128" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
+		CHARSIU_NPU_KMAX=128 CHARSIU_NPU_W4_GROUP=128 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the matmul is still exact under the decode's own      ====="
-	log "  packers, so a bad sentence cannot be blamed on the block.    "
-	arm "generated, N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+	log "===== 4) int8 at KMAX 512: what the SLICING alone costs        ====="
+	rung "int8, KMAX 512" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_KMAX=512 "$CE" "$HEAD"
 
 	log ""
-	log "===== 5) the anchor: int8 conv must still be exact           ====="
+	log "===== 5) CONTROL: the standing int8 decode, 6.53 tok/s        ====="
+	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 6) the anchor: int8 conv must still be exact           ====="
 	health
 
 	log ""
