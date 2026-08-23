@@ -42,6 +42,39 @@
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
+# ⚠ ENTRY 0 NO LONGER DECIDES ANYTHING -- it is kept because it characterises
+# the test rig, not because it settles the design. The card's bandwidth stopped
+# mattering the moment the deployment target turned out to be a PCIe SSD, where
+# 596 MB reads in about a second against 10 s of quantising.
+#
+# THE CACHE IS BUILT AND HOST VERIFIED, and it is NOT in this round on purpose:
+# writing 596 MB on the first rung and reading it on every rung after would
+# destroy the very measurement this round is for. It also does not fit in the
+# 3.5 GiB rootfs beside 2.7 GB of models, and growing that needs host disk this
+# machine does not have at 98% full.
+#
+#   charsiu_run --cache, on the host, with the real model:
+#     cold, writes   prompt 4886 ms, wall 5.64 s, cache 596 MB
+#     warm, reads    prompt 1188 ms, wall 1.90 s
+#     the generated text is IDENTICAL, and peak RSS falls 2497 to 1363 MB
+#
+#   All five staleness guards behave: the model's mtime, the group size and the
+#   bit width each force a rebuild, a settled cache reads back, and without
+#   --cache nothing is written at all.
+#
+# ORIGINAL NOTE, kept because the inference in it is still how the card was
+# characterised without measuring it: A weight cache -- quantise once,
+# write the PACKED bytes, mmap after -- would take the load from 20 s to the
+# time it takes to read 620 MB plus the 4.3 s of copying into buffer objects,
+# and the user never converts anything: the first run is what it is today and
+# writes a sidecar. Whether that is worth building depends entirely on what the
+# card reads at. Two inferences already point at "yes": the quantising column
+# FALLS across a boot (143978, 131547, 114571 in round 354; 16036 then 10659 in
+# 355) which is the page cache warming and says CPU is about 80% of it, and the
+# 18 s staging already reads the whole 1.3 GB gguf, which puts the card at 72
+# MB/s or better. Entry 0 measures it instead of inferring it. Below about 70
+# MB/s the cache is not worth building.
+#
 # THE QUANTISING COLUMN should fall from 16.0 s to about 10, and int8's 9.5
 # must NOT move -- int8 never took the second pass, so it is the control for
 # this change as it was for the getenv hoist.
@@ -165,6 +198,22 @@ start() {
 	log "##### round 356: four prompts, because two are not a measurement #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
+
+	log ""
+	log "===== 0) WHAT THE CARD ACTUALLY READS AT                       ====="
+	log "  the whole weight cache question turns on this one number."
+	log "  a packed cache would be 620 MB; below about 70 MB/s reading"
+	log "  it back is no faster than re-quantising and the cache is not"
+	log "  worth building."
+	sync
+	echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || \
+		log "  (could not drop caches; the figure below will be warm)"
+	log "  -- cold, 512 MB of the model file"
+	dd if=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+		of=/dev/null bs=1M count=512 2>&1 | tail -1 > "$C"
+	log "  -- warm, the same 512 MB again"
+	dd if=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+		of=/dev/null bs=1M count=512 2>&1 | tail -1 > "$C"
 
 	log ""
 	log "===== 1) the standing one                    ====="
