@@ -2,82 +2,62 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 358. THE SECOND NPU CORE HAS BEEN IDLE THE WHOLE TIME.
+# 2026-08-23 round 359. THE SECOND CORE IS REAL. IS IT CORRECT?
 #
-# ⛔ ROUND 357'S MAIN ARMS COULD NOT ANSWER, AND THAT WAS MY FAULT. The merge
-# carries the vendor's M = 32 geometry and I ran it at M = 1: entry 7's verify
-# says 8 of 1024. Round 347 had already measured exactly that and I had written
-# it down. Entries 2, 3 and 5 are void.
+# ✅✅ ROUND 358: BOTH CORES PROBE AND TWO PROCESSES GET 2.3x.
 #
-# What survives is one clean negative and one number:
+#   rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+#   rocket 27708000.npu: Rockchip NPU core 1 version: 1179210311
 #
-#   the five at 0x2810   270.1 us against a 275.9 baseline, controls clean
-#                        -> they do NOTHING for speed
-#   int8 at the shape    374.1 us for 2 MiB against int4's 275.9 for 1 MiB
+#   one process alone   295.8 us a submit
+#   two at once, A      223.9 us
+#   two at once, B      253.9 us
 #
-# ⚠ AND ROUND 357'S PREMISE IS RETRACTED. I argued that 620 MB a token at 6.7
-# GB/s is 92 ms and therefore the decode is bandwidth bound. **6.7 GB/s was
-# computed by dividing those bytes by that time.** Circular, and it proved
-# nothing.
+# Both concurrent processes beat the solo one, so 400 submits finished in about
+# the time 170 would have taken alone: **2.3x aggregate**. The factor of two is
+# there. The decode did not move, 8.51 tok/s, exactly as predicted -- charsiu
+# opens one DRM file and waits on every submit, so a second core cannot reach it.
 #
-# The marginal fit over round 351's four points, which is not circular:
+# ⛔ AND PROCESS B FAILED ITS REPEAT CONTROL: 552 of 1024 words differed between
+# two submits with nothing changed in between. **A 2x that returns a different
+# answer each time is worth nothing.** This round characterises that before
+# anything is built on it.
 #
-#     per element   int4 61 ns      int8 79.5 ns
-#     solving       compute 42.5 ns an element, fetch 37 ns a byte an element
-#     check         42.5 + 0.5*37 = 61  ✓
+# RULED OUT ALREADY, from the boot log and the driver source:
+#   the cores are in SEPARATE iommu groups, 2 and 3, so one process's domain
+#   cannot be yanked from under the other's job;
+#   each open DRM file has its own domain and its own scheduler entity, and the
+#   scheduler serialises jobs within a core.
 #
-# 🔑 **int4 is already getting the entire byte saving it is entitled to.** About
-# 53% of the marginal cost is COMPUTE, so 2x was never on the table and no
-# register was going to find it. The way out is not more int4.
-#
-# ---------------------------------------------------------------------------
-# THE THING THAT HAS BEEN SITTING THERE ALL ALONG
-# ---------------------------------------------------------------------------
-#
-#     rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
-#
-# One line, one core. rk3576.dtsi carries rknn_core_0 at 0x27700000 AND
-# rknn_core_1 at 0x27708000, both `status = "disabled"`, and this board's dts
-# has only ever turned on core 0. **Every charsiu decode ever measured has used
-# half of this chip.**
-#
-# This round turns core 1 on. Six lines of dts and not a line of charsiu.
+# NOT RULED OUT: both cores claim BOTH power domains, in opposite order, and
+# rocket runs a 50 ms autosuspend per core.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 0 IS THE WHOLE POINT AND IT IS ONE LINE OF dmesg. rocket must now print
-# a core 1 as well as a core 0. If it does not, the rest is noise and the
-# question becomes why it did not probe.
+# ENTRY 1 is the control that has to hold: ONE process, three times. If a solo
+# repeat control ever differs, this is not about concurrency at all and every
+# number in round 358 is suspect.
 #
-# ENTRY 2 RUNS TWO JOB STREAMS AT ONCE in separate processes, which means
-# separate DRM files and so separate scheduler entities. rocket initialises each
-# file's entity with the list of EVERY core, so two entities can sit on two
-# cores where one entity cannot.
+# ENTRY 2 is two processes, three times. Reliable, or a one off, and does it
+# stay with B or move.
 #
-#   both still near 275 us  -> the cores are genuinely parallel, and charsiu's
-#                              decode has a factor of two waiting inside it
-#   both near 550 us        -> they are sharing one core and turning on the
-#                              second changed nothing that matters
+# ENTRY 3 is the same with runtime power management pinned on for both cores.
+# Corruption that disappears there is a power domain race and the fix is in the
+# driver.
 #
-# That is the entire question and it needs no charsiu change to answer.
-#
-# ENTRY 3 runs the decode itself, which should NOT move -- charsiu still opens
-# one device and waits on every submit, so a second core cannot help it yet.
-# If it moves anyway, something about the scheduling is not what I think.
-#
-# ENTRY 4 is the anchor. A second core and a second IOMMU is exactly the kind
-# of change that breaks the first one.
+# ENTRY 4 runs the pair at DIFFERENT shapes. If one ever sees the other's data,
+# the live word count says so, because N differs.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# It probes. Whether two processes then land on two cores I do not know:
-# drm_sched load balances across the scheduler list, but nothing here has ever
-# exercised that, and the dtsi chains both power domains into both cores in
-# opposite order for reasons nobody has written down.
+# Entry 1 clean, entry 2 reproducing. On entry 3 I have no prior worth stating:
+# the autosuspend delay is 50 ms and these are 200 submits back to back, so a
+# core should never idle that long -- which argues it is NOT power management,
+# and the honest thing is to measure rather than reason from the delay.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -163,50 +143,71 @@ arm() {
 	fi
 }
 
+# two concurrent probes, so the pair can be repeated without copy and paste
+pair() {
+	before=$(nbad)
+	log ""
+	log "  ---- $1"
+	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64 $2 $VD - "$WT" "$IN" 0 0 4096 > /tmp/vdA.txt 2>&1 &
+	pidA=$!
+	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64 $3 $VD - "$WT" "$IN" 0 0 4096 > /tmp/vdB.txt 2>&1 &
+	pidB=$!
+	wait "$pidA"
+	wait "$pidB"
+	log "    A:"
+	grep -E "M = |TIME:|baseline:|CONTROL repeat|VOID" /tmp/vdA.txt > "$C"
+	log "    B:"
+	grep -E "M = |TIME:|baseline:|CONTROL repeat|VOID" /tmp/vdB.txt > "$C"
+	after=$(nbad)
+	[ "$after" != "$before" ] && log "  !! POISONED: $((after - before)) new lines"
+	return 0
+}
+
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 358: the second NPU core has been idle the whole time #####"
+	log "##### round 359: the second core is real. is it correct?     #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 0) DOES ROCKET SEE TWO CORES NOW                        ====="
+	log "===== 0) both cores, and their power policy                   ====="
 	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
-	n=$(dmesg 2>/dev/null | grep -ci "NPU core")
-	log "  -> $n core line(s). anything but 2 and the rest is noise."
+	for d in /sys/devices/platform/2770*.npu/power/control; do
+		log "  $d = $(cat "$d" 2>/dev/null)"
+	done
 
 	log ""
-	log "===== 1) one job stream alone. the 275.9 us baseline.         ====="
-	arm "int4, alone" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	log "===== 1) CONTROL: ONE process, three times. must never differ. ====="
+	arm "solo 1" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64"
+	arm "solo 2" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64"
+	arm "solo 3" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 2) TWO AT ONCE, separate processes and so separate      ====="
-	log "  scheduler entities. near 275 each means two real cores;"
-	log "  near 550 each means they are sharing one."
-	before=$(nbad)
-	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 \
-		$VD - "$WT" "$IN" 0 0 4096 > /tmp/vdA.txt 2>&1 &
-	pidA=$!
-	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 \
-		$VD - "$WT" "$IN" 0 0 4096 > /tmp/vdB.txt 2>&1 &
-	pidB=$!
-	wait "$pidA"
-	wait "$pidB"
-	log "  -- process A"
-	grep -E "TIME:|CONTROL repeat|VOID" /tmp/vdA.txt > "$C"
-	log "  -- process B"
-	grep -E "TIME:|CONTROL repeat|VOID" /tmp/vdB.txt > "$C"
-	after=$(nbad)
-	[ "$after" != "$before" ] && log "  !! POISONED: $((after - before)) new lines"
+	log "===== 2) two at once, three times. reliable, or a one off?     ====="
+	pair "pair 1" "" ""
+	pair "pair 2" "" ""
+	pair "pair 3" "" ""
 
 	log ""
-	log "===== 3) and the int4 decode itself, in case it moved         ====="
-	rung "int4 g1024 decode" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
-		CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	log "===== 3) the same with runtime PM pinned on for both cores     ====="
+	for d in /sys/devices/platform/2770*.npu/power/control; do
+		echo on > "$d" 2>/dev/null
+		log "  $d = $(cat "$d" 2>/dev/null)"
+	done
+	pair "pair, PM on 1" "" ""
+	pair "pair, PM on 2" "" ""
+	for d in /sys/devices/platform/2770*.npu/power/control; do
+		echo auto > "$d" 2>/dev/null
+	done
 
 	log ""
-	log "===== 4) the anchor: int8 conv must still be exact            ====="
+	log "===== 4) two at DIFFERENT shapes. a swap shows in the counts.  ====="
+	log "  A is N=1024 and must show 1024 live; B is N=256."
+	pair "mixed shapes" "" "CHARSIU_N=256"
+
+	log ""
+	log "===== 5) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
