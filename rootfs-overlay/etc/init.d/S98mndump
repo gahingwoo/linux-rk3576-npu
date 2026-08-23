@@ -2,70 +2,79 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 366. THE SAME ROUND, WITH THE ACTIVATION IN BOTH DEVICES.
+# 2026-08-23 round 367. WHERE THE OTHER 41 MS GOES.
 #
-# ⛔ ROUND 365 PRODUCED WORD SALAD AND THE RULE CAUGHT IT. "Read the sentence
-# first, not the rate" was written into the round before it ran, and it is the
-# only reason the 10.13 tok/s was not reported as a result:
+# 🏁 ROUND 366: 9.71 tok/s, AND IT IS CORRECT THIS TIME.
 #
-#   int8, two devices    "soundingampedferballwick accompany gubit..."
-#   int4, two devices    "AN Aud Emer masterittleassandra mastersmerart..."
-#   int4, ONE device     "Paris. The Eiffel Tower is located in Paris..."
+#   int8, two cores          6.73 tok/s   fence 7367 ms   standing sentence
+#   int4 g1024, two devices  9.71 tok/s   fence 3977 ms   Louvre, and IDENTICAL
+#   int4 g1024, one device   8.53 tok/s   fence 5439 ms   to entry 2 word for word
 #
-# The one device control was perfect, so the slice split broke the arithmetic --
-# and it broke int8 as well, which had been fine on two devices in round 364.
+# Probe 1024 of 1024 at 0.00e+00, anchor clean. **1.52x over int8's 6.4.**
 #
-# ⛔ THE BUG WAS MINE AND IT WAS THE SAME ONE TWICE. The single projection path
-# packed the activation into ONE device's input buffer:
+# ⚠ Round 365's broken run read 10.13 and fence 3877; corrected it reads 9.71
+# and 3977, so about 4% of that was the unwritten activation -- which is the
+# caveat that round wrote down before it ran.
 #
-#     charsiu_bo_prep(g->dev[e->di], &g->in[e->di], ...);
-#         ... pack ...
-#     charsiu_bo_fini(g->dev[e->di], &g->in[e->di]);
+# 🔑 AND THE TWO CORE GAIN IS AT ITS CEILING, which is worth knowing because it
+# says where NOT to look next. The marginal fit is 42.5 ns of compute an element
+# and 37 ns of fetch a byte an element; int4 carries half a byte an element, so
 #
-# Round 365 spread a tensor's SLICES across both devices, so the slices on the
-# other device read an input buffer nobody had written. **The grouped path had
-# already been fixed for exactly this and the single path was not.**
+#     one core   42.5 + 0.5*37 = 61.00 ns      two cores  21.25 + 18.5 = 39.75
+#     ceiling 1.53x        measured on the fence 5439/3977 = 1.37x, 90% of it
 #
-# ⚠ AND IT COULD NOT HAVE BEEN CAUGHT ON THE HOST. There is no accel device
-# there, so npudev never runs. The board is the only test this code has, which
-# is an argument for auditing it rather than iterating on it: every place that
-# assumed one device per entry has now been walked, e->di is gone entirely, and
-# both accumulate loops read e->out[s->di] rather than an entry wide buffer.
+# The shortfall is plausibly load imbalance: the slices are not equal and the
+# last N slice of a tensor is short. **More parallelism cannot buy much more.
+# The lever is less memory traffic, or the CPU side.**
 #
 # ---------------------------------------------------------------------------
-# WHAT ROUND 365's NUMBERS ARE WORTH
+# WHERE A 103 MS TOKEN GOES
 # ---------------------------------------------------------------------------
 #
-#   int4, two devices, slices split   10.13 tok/s, fence 3877 ms, 9100 submits
-#   int4, one device                   8.45 tok/s, fence 5509 ms, 4550 submits
+#     fence (the NPU)                 62 ms
+#     readback                        13.4
+#     submitting                       3
+#     outside the NPU path            24     <- never itemised
 #
-# The hardware fetched the same weights and ran the same MACs either way, so
-# these are probably representative -- but they came out of a run that computed
-# nonsense, so they are a hint and not a measurement. This round measures them
-# again with the answer right.
+# ---------------------------------------------------------------------------
+# WHAT CHANGED, AND WHAT IS ONLY MEASURED
+# ---------------------------------------------------------------------------
+#
+# ONE FIX. Each entry's two output buffers were both allocated for ALL of a
+# tensor's slices, though the slices alternate and each device holds half.
+# charsiu_bo_prep and _fini work over a WHOLE buffer object, so the two device
+# build was paying twice the cache maintenance of the one device build -- and
+# the readback did go from 11.6 ms a token to 13.4. They are sized for what each
+# device actually gets now.
+#
+# ONE INSTRUMENT. CHARSIU_STAGES exists and has never been run on this
+# configuration. It costs two clock reads a stage, about 5 us a token, and it
+# itemises the 24 ms that has only ever been a subtraction.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 2 AND ENTRY 3 MUST BE THE SAME SENTENCE, word for word, and it must be
-# the Eiffel Tower and the Louvre. Anything else and the split is still wrong.
+# THE SENTENCE FIRST, as ever: buffer sizing cannot change arithmetic, so entry
+# 1 must still be the Louvre.
 #
-# Only then the rate, against entry 3 in the same boot. If it lands near 10 the
-# slice split is worth about 20%, and the remaining question is the submit
-# count: 9100 against 4550 is twice the submits for half the bytes each, which
-# is a lot of per submit cost to be paying for parallelism.
+# THEN THE READBACK LINE. 13.4 ms a token is what it was; near 7 would mean the
+# sizing was the whole of it, and unchanged would mean the cache maintenance is
+# not where that time goes.
 #
-# ENTRY 1 is int8, which also splits and which also produced salad last time.
+# THEN THE STAGE TABLE in entry 2, which is the only new information in this
+# round. ⚠ Round 327 was lost to a stage table that was 86% prompt and read as
+# though it were generation, so check that its total is near the GENERATION
+# time and not near the whole run before believing any row of it.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The sentence comes back and the rate stays near 10.1. If the sentence comes
-# back but the rate drops, then some of last round's speed was the broken input
-# -- an all zero activation is cheaper to multiply than a real one only if the
-# hardware short circuits, which it has never shown any sign of doing.
+# The readback drops by a few milliseconds, not to nothing: some of it is the
+# accumulate loop, which has twice as many slices to walk now and is not cache
+# maintenance at all. On the stage table I have no prior -- that is the point of
+# running it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -174,26 +183,27 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 366: the activation, into BOTH devices           #####"
+	log "##### round 367: where the other 41 ms goes                  #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) CONTROL: int8 decode. 6.4 tok/s, standing sentence.   ====="
-	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
-	rung "int8" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 2) int4 g1024, slices split. THE SENTENCE FIRST.        ====="
+	log "===== 1) int4 g1024, two devices. sized output buffers.        ====="
+	log "  the sentence must still be the Louvre; read the readback line."
 	rung "int4 g1024, two devices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the same on ONE device. the control.                 ====="
-	log "  the SAME sentence as entry 2, word for word."
+	log "===== 2) the same, with the STAGE TABLE                        ====="
+	log "  check its total is near the GENERATION time, not the whole"
+	log "  run: round 327 read a table that was 86% prompt."
+	rung "int4 g1024, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 3) one device, for the readback comparison               ====="
 	rung "int4 g1024, one device" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_ONEDEV=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the probe, still exact under the two device build     ====="
+	log "===== 4) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
