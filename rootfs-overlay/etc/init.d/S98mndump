@@ -2,73 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 364. BOTH CORES, IN THE DECODE.
+# 2026-08-23 round 365. SPLIT THE SLICES TOO, NOT JUST THE GROUPS.
 #
-# ✅✅✅ ROUND 363 CLOSED IT, INCLUDING THE HOLE ROUND 362 LEFT.
+# ✅ ROUND 364: THE SPLIT IS ARITHMETICALLY NEUTRAL, which was the first thing
+# to check. Two devices and one device produced the SAME SENTENCE word for word,
+# and the probe still verified 1024 of 1024 at worst 0.00e+00.
 #
-#   solo, window 0     1024 of 1024, worst 0.00e+00
-#   solo, window 1     1024 of 1024, worst 0.00e+00   <- the window is CORRECT,
-#                                                        not merely repeatable
-#   pair, same window  125 and 13 words differing     <- the fault reproduces
-#   pair, split, x3    six processes, EVERY one 0 words differing AND
-#                      1024 of 1024 exact
+#   int8, two cores          7.08 tok/s   fence 7171 ms   (6.4 on one core)
+#   int4 g1024, two devices  9.13 tok/s   fence 4788 ms
+#   int4 g1024, one device   8.52 tok/s   fence 5439 ms   same sentence
 #
-# **Two NPU cores, concurrent, repeatable and byte exact, as long as the two
-# jobs in flight carry different CBUF windows.** The CBUF is shared and charsiu
-# was handing both cores the same one.
+# ⚠ **THE GAIN WAS 7%, NOT THE 10 TO 12 I PREDICTED.** int8 got 11%, int4 7%.
+#
+# THE REASON IS IN THE SUBMIT COUNTS, and it is a limit of what round 364
+# actually did rather than a hardware one:
+#
+#   two devices  6790 submits, 6.37 MB a submit
+#   one device   4550 submits, 9.51 MB a submit
+#
+# Splitting a group into two joblists makes two submits where there was one, and
+# **only GROUPS were split**. q, k and v is three tensors going two against one,
+# worth 1.5x at best; gate and up is one each, worth 2x. But o_proj, down_proj
+# and the 128256 wide output head are grouped with nothing, so they went through
+# the single projection path, which submits and waits at once and never touched
+# core 1.
+#
+# The output head alone is 128256 by 2048, about 21% of the model's weights, and
+# down_proj across sixteen layers is another 21%. **More than 40% of the weight
+# traffic never saw the second core.**
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED IN THE CODE
+# WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# charsiu_npu opens the device TWICE. rocket gives every open DRM file its own
-# drm_sched_entity over the list of every core, and an entity runs one job at a
-# time, so one file never reaches more than one core however deep the queue.
-# Entries alternate between the two files, which puts a group -- q, k, v or
-# gate, up, consecutive adds -- on different devices, and each device's streams
-# carry its own CBUF window.
+# The SLICES of one tensor now alternate between devices, not just the members
+# of a group. An entry carries one output buffer per device, each slice knows
+# which device it is on, and both the single and the grouped paths build one
+# joblist per device and issue both before waiting on either.
 #
-# charsiu_npu_matvec_group builds ONE JOBLIST PER DEVICE and submits both
-# BEFORE waiting on either. Submitting is a queueing ioctl and the fence is
-# waited separately, so both cores run at once without a thread anywhere.
-#
-# The activation is packed into both devices' input buffers, because a group
-# shares one input vector but a buffer object belongs to the file that made it.
-# A few kilobytes against the megabytes of weights each submit fetches.
-#
-# CHARSIU_NPU_ONEDEV puts it back to one file, which is the control.
+# The output head's sixteen N slices become eight and eight, and every
+# projection splits rather than only the five that share an activation.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ THE TEXT IS THE FIRST THING TO READ, NOT THE RATE. Splitting a projection
-# across two files changes NOTHING arithmetically -- the same weights, the same
-# activation, the same registers apart from a CBUF base. **Entry 2 and entry 3
-# must produce the SAME SENTENCE, word for word.** If they do not, the split is
-# wrong and the rate does not matter.
+# ⚠ THE SENTENCE FIRST, AGAIN. Which device computes which slice cannot change
+# the arithmetic; the slices are summed on the CPU either way. **Entries 2 and 3
+# must be word for word identical, and identical to round 364's.** If not, the
+# slice split is wrong and no rate matters.
 #
-# Then the rate. Round 356 put 89 ms of a 117 ms token inside the fence, so a
-# perfect halving would be about 73 ms and 13.7 tok/s. Nothing will be perfect:
-# only the grouped projections split, the single ones still run on one device,
-# and a group of three splits two against one.
+# Then the rate against entry 3, which is this same build on one device.
 #
-#   entry 2 near 11 tok/s or better  -> the second core is in the decode
-#   entry 2 near entry 3's 8.5       -> the split is not reaching the hardware,
-#                                       and the next question is whether both
-#                                       files really landed on both cores
+#   entry 2 near 11 or better -> the tensors that were never grouped are using
+#                                core 1 now, which is where the 40% was
+#   entry 2 near 9.1          -> splitting the singles bought nothing and the
+#                                limit is somewhere other than which core the
+#                                work runs on
 #
-# ENTRY 1 is int8 and must still be 6.4 with the standing sentence. ENTRY 3 is
-# the one device control and must reproduce 8.5.
+# ENTRY 1 is int8 on the same build, since it splits too and it is the number
+# that was asked for.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# 10 to 12 tok/s. Not 13.7, because the single projections and the output head
-# do not split and a group of three cannot divide evenly. My predictions have
-# been wrong more often than right lately, so read entry 2 against entry 3 and
-# not against this paragraph.
+# 10 to 11. I said 10 to 12 last round and got 9.1, so treat that accordingly.
+# The submit count is the thing to watch: if it climbs again while the fence
+# barely moves, the cost of an extra submit is eating the parallelism, and the
+# next question becomes how few submits two cores can be fed with.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -177,7 +179,7 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 364: both cores, in the decode                   #####"
+	log "##### round 365: split the slices too, not just the groups   #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
@@ -187,11 +189,11 @@ start() {
 	rung "int8" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) int4 g1024 on BOTH cores. read the SENTENCE first.    ====="
+	log "===== 2) int4 g1024, slices split across both cores           ====="
 	rung "int4 g1024, two devices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the same on ONE device. must reproduce 8.5 tok/s AND  ====="
+	log "===== 3) the same on ONE device. the control.                 ====="
 	log "  the SAME sentence as entry 2, word for word."
 	rung "int4 g1024, one device" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_ONEDEV=1 "$CE" "$HEAD"
 
