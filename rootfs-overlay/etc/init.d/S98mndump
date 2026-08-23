@@ -12,20 +12,15 @@
 #
 # Probe 1024 of 1024 at 0.00e+00, anchor clean. **1.52x over int8's 6.4.**
 #
-# ⚠ Round 365's broken run read 10.13 and fence 3877; corrected it reads 9.71
-# and 3977, so about 4% of that was the unwritten activation -- which is the
-# caveat that round wrote down before it ran.
-#
-# 🔑 AND THE TWO CORE GAIN IS AT ITS CEILING, which is worth knowing because it
+# 🔑 THE TWO CORE GAIN IS AT ITS CEILING, which is worth knowing because it
 # says where NOT to look next. The marginal fit is 42.5 ns of compute an element
 # and 37 ns of fetch a byte an element; int4 carries half a byte an element, so
 #
 #     one core   42.5 + 0.5*37 = 61.00 ns      two cores  21.25 + 18.5 = 39.75
 #     ceiling 1.53x        measured on the fence 5439/3977 = 1.37x, 90% of it
 #
-# The shortfall is plausibly load imbalance: the slices are not equal and the
-# last N slice of a tensor is short. **More parallelism cannot buy much more.
-# The lever is less memory traffic, or the CPU side.**
+# **More parallelism cannot buy much more. The lever is less memory traffic, or
+# the CPU side.** So this round goes at the 41 ms a token that is NOT the fence.
 #
 # ---------------------------------------------------------------------------
 # WHERE A 103 MS TOKEN GOES
@@ -37,44 +32,76 @@
 #     outside the NPU path            24     <- never itemised
 #
 # ---------------------------------------------------------------------------
+# ⚠ AND THE FENCE NUMBER IS NOT PURE WAITING
+# ---------------------------------------------------------------------------
+#
+# rocket_ioctl_prep_bo is a dma_resv_wait_timeout FOLLOWED BY
+# dma_sync_sgtable_for_cpu, so the invalidate over every output buffer has
+# always been charged to the fence and never to the read back. Its pair,
+# fini_bo, is a dma_sync_sgtable_for_device -- an arm64 cache CLEAN over the
+# whole buffer -- and that one IS separable, so this build separates it.
+#
+# The geometry says how much cache those two walk. Per token the hardware
+# writes, and the CPU reads back:
+#
+#     16 layers x 59392 floats  +  the 128256 wide head x 2 k slices
+#     = 1206784 floats = 4.8 MB, invalidated once and cleaned once
+#
+# ---------------------------------------------------------------------------
 # WHAT CHANGED, AND WHAT IS ONLY MEASURED
 # ---------------------------------------------------------------------------
 #
 # ONE FIX. Each entry's two output buffers were both allocated for ALL of a
 # tensor's slices, though the slices alternate and each device holds half.
-# charsiu_bo_prep and _fini work over a WHOLE buffer object, so the two device
-# build was paying twice the cache maintenance of the one device build -- and
-# the readback did go from 11.6 ms a token to 13.4. They are sized for what each
-# device actually gets now.
+# prep and fini work over a WHOLE buffer object, so the two device build was
+# paying twice the cache maintenance of the one device build -- and the readback
+# did go from 11.6 ms a token to 13.4. They are sized for what each device
+# actually gets now.
 #
-# ONE INSTRUMENT. CHARSIU_STAGES exists and has never been run on this
-# configuration. It costs two clock reads a stage, about 5 us a token, and it
-# itemises the 24 ms that has only ever been a subtraction.
+# ONE ARGUMENT TO TEST. CHARSIU_NPU_NOFINI skips fini_bo on the OUTPUT buffers.
+# The CPU only reads those, so their lines are clean already and the clean walks
+# 4.8 MB to write nothing back; what makes skipping it safe is that the next
+# read is preceded by prep_bo, whose invalidate drops those stale clean lines
+# before the CPU can see them. That is an argument, not a measurement, and the
+# sentence entry 3 writes is the check on it.
+#
+# ONE SECOND FIX, free and unconditional. Every entry cleared BOTH accumulators
+# before summing, the int32 one and the float one, though a run uses exactly
+# one of them: 2 MB a token of writes to an array nothing reads, half a megabyte
+# of it in the output head alone. It also sat inside the read back timer, which
+# is the number this round exists to read.
+#
+# ONE INSTRUMENT. CHARSIU_STAGES has never been run on this configuration. It
+# costs two clock reads a stage, about 5 us a token, and it itemises the 24 ms
+# that has only ever been a subtraction.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE FIRST, as ever: buffer sizing cannot change arithmetic, so entry
-# 1 must still be the Louvre.
+# THE SENTENCE FIRST, as ever. Buffer sizing cannot change arithmetic, so
+# entries 1, 2 and 4 must still be the Louvre. **Entry 3 is the one allowed to
+# fail**: if skipping the clean is unsafe the words drift or go to salad, and
+# that kills the idea rather than the round.
 #
-# THEN THE READBACK LINE. 13.4 ms a token is what it was; near 7 would mean the
-# sizing was the whole of it, and unchanged would mean the cache maintenance is
-# not where that time goes.
+# THEN THE NEW STAT LINE, which now reads "summing the slices" and "in the
+# flush" where it used to say one "reading back" number. 13.4 ms was the two
+# together. If the flush is most of it, entry 3 is worth 10 ms a token; if the
+# sum is most of it, the flush is a rounding error and the loop is the target.
 #
-# THEN THE STAGE TABLE in entry 2, which is the only new information in this
-# round. ⚠ Round 327 was lost to a stage table that was 86% prompt and read as
-# though it were generation, so check that its total is near the GENERATION
-# time and not near the whole run before believing any row of it.
+# THEN THE STAGE TABLE in entry 2, the only genuinely new information here.
+# ⚠ Round 327 was lost to a stage table that was 86% prompt and read as though
+# it were generation, so check its total is near the GENERATION time and not
+# near the whole run before believing any row of it.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The readback drops by a few milliseconds, not to nothing: some of it is the
-# accumulate loop, which has twice as many slices to walk now and is not cache
-# maintenance at all. On the stage table I have no prior -- that is the point of
-# running it.
+# The readback splits maybe 9 summing and 4 flushing: 4.8 MB of scaled adds is
+# real work and a clean of the same 4.8 MB is a cache walk, and the walk is the
+# cheaper of the two. So entry 3 should be worth a few ms, not ten. On the stage
+# table I have no prior -- that is the point of running it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -199,15 +226,21 @@ start() {
 	rung "int4 g1024, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) one device, for the readback comparison               ====="
+	log "===== 3) the same, WITHOUT the flush on the output buffers     ====="
+	log "  this is the arm allowed to fail. read the SENTENCE: if the"
+	log "  words drift, the clean is load bearing and the idea dies."
+	rung "int4 g1024, no output flush" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_NOFINI=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 4) one device, for the readback comparison               ====="
 	rung "int4 g1024, one device" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_ONEDEV=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the probe, still exact                                ====="
+	log "===== 5) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 5) the anchor: int8 conv must still be exact            ====="
+	log "===== 6) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
