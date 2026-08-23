@@ -2,75 +2,78 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 356. FOUR PROMPTS, BECAUSE TWO ARE NOT A MEASUREMENT.
+# 2026-08-23 round 356. THE LOAD, AND FOUR PROMPTS.
 #
-# ✅✅ ROUND 355. THE HOIST WORKED AND ITS CONTROL HELD.
+# ⚠ FIRST, THE LOAD IS NOT AN int4 PROBLEM. Round 355's two columns:
 #
-#   int4 group 1024   20306 ms staging of which 4270 adding and 16036 quantising
-#                     (was 148428, of which 143978 quantising)
-#   int8              18368 ms of which 8858 adding and 9510 quantising
-#                     (was 9557 quantising -- UNCHANGED, as it must be)
+#   int4 group 1024   20.3 s = 4.3 adding + 16.0 quantising
+#   int8              18.4 s = 8.9 adding +  9.5 quantising
 #
-# Quantising 144 s to 16 s, nine times, and the prompt phase fell with it from
-# 189 s to 26 s. int8 never took that branch and did not move in either column.
+# **int8 takes 18 seconds too.** The vendor is fast because a .rkllm holds
+# weights that are ALREADY quantised and ALREADY laid out -- they mmap and DMA.
+# charsiu dequantises 1.24 billion Q8_0 weights to float and re-quantises them
+# at every start. That is an architectural difference, not a bug.
 #
-# And what must not move did not: **8.96 tok/s against 8.92, and the Louvre
-# sentence byte for byte.** Hoisting a getenv cannot change arithmetic, and now
-# there is evidence rather than an argument.
+# WHAT WAS FIXED, measured on the host over 440 million real weights with three
+# repeats each rather than guessed:
 #
-# The second prompt stands up too:
+#   int4, before          3.37 ns a weight
+#   int4, one pass        2.2  ns          <- this round
+#   int8                  1.85 ns
+#   of which dequant      0.32 ns          (15%, so NOT the bottleneck)
 #
-#   int4  "The color of the sky is blue because of the way that light interacts
-#          with the Earth's atmosphere. When sunlight enters the atmosphere of
-#          the Earth, it encounters"
-#   cpu   "The sky appears blue because of a phenomenon called Rayleigh
-#          scattering, which occurs when sunlight interacts with the tiny
-#          molecules of gases in the atmosphere."
+# The int4 branch walked each group a SECOND time to find the signed value of
+# largest magnitude, calling fabsf on the running maximum every iteration too.
+# The first pass now carries the signed extreme with it. **The generated text is
+# byte identical before and after, checked end to end on the host with the real
+# model** -- only the timing line differs.
 #
-# The CPU names Rayleigh scattering and int4 does not, but int4 is correct,
-# coherent and does not circle, at 8.82 tok/s.
+# ⚠ AND ONE GUESS OF MINE MEASURED AS WRONG, AGAIN. I wrote that the per weight
+# error accounting "costs a third of the load". Three repeats say 3.37 ns
+# against 3.46: it costs 3%. The comment is corrected in the source. It is
+# behind CHARSIU_NPU_RMS now anyway, because nothing in the decode reads it.
 #
-# ---------------------------------------------------------------------------
-# WHERE THIS STANDS
-# ---------------------------------------------------------------------------
-#
-#   int4, group 1024   8.96 tok/s   int8   6.53 tok/s   +37%
-#   CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024
+# ⛔ WHAT IS LEFT IS INHERENT. About 10 s of quantising, and the only thing that
+# removes it is a CACHE: quantise once, write q and the scales, mmap after.
+# That is what the vendor's file IS. It costs 620 MB on the card and a new
+# format, so it is a feature and not a patch, and it is not in this round.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ TWO SENTENCES ARE NOT AN ACCURACY MEASUREMENT AND I HAVE BEEN SAYING SO FOR
-# TWO ROUNDS. Four prompts are not either, but they are four, and they are
-# chosen to fail in different ways rather than to agree:
+# THE QUANTISING COLUMN should fall from 16.0 s to about 10, and int8's 9.5
+# must NOT move -- int8 never took the second pass, so it is the control for
+# this change as it was for the getenv hoist.
 #
-#   1  the standing one, so it can be compared with every round before this
+# **8.96 tok/s and the Louvre sentence must not move either.** The host says the
+# text is byte identical; the board is where that gets to be true.
+#
+# THEN THE ACCURACY, which two sentences have never established. Four prompts,
+# chosen to fail differently rather than to agree:
+#
+#   1  the standing one, comparable with every round before this
 #   2  an explanation, where being wrong is visible
 #   3  code, where being wrong is unambiguous
-#   4  arithmetic, which is the one a narrow quantiser fails first -- the GPTQ
-#      work found its worst KL on exactly this kind of prompt
+#   4  arithmetic, which is what a narrow quantiser fails first
 #
-# Each runs on int4 group 1024 and on the CPU. Sampling is greedy already
-# (temp defaults to 0), so the two are directly comparable and a divergence is
-# the model changing its mind, not a die roll.
+# Each on int4 group 1024 and on the CPU. Sampling is greedy already, so a
+# divergence is the model changing its mind and not a die roll. 64 tokens,
+# because 32 does not reach the answer to "17 times 24".
 #
-# READ THEM AS: does int4 say something TRUE, and does it stop circling. Word
-# for word agreement with the CPU is NOT the bar -- four bit weights are four
-# bit weights, and int8 is the arm that matches the CPU exactly.
-#
-# ENTRY 9 is int8 on prompt 1 as the control, and it must still be the standing
-# sentence at 6.5 tok/s.
+# ⚠ Word for word agreement with the CPU is NOT the bar. int8 is the arm that
+# matches the CPU exactly; four bit weights are four bit weights. The bar is
+# whether int4 says something TRUE and stops circling.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Prompts 1 and 2 fine, since they already ran. Code is the one I would bet
-# against: a wrong token in a Python function is not a paraphrase. If 3 or 4
-# come out wrong while 1 and 2 look fine, the honest summary of int4 is "good
-# for prose, not yet for code", and the next thing is GPTQ rather than a
-# smaller group.
+# Quantising near 10 s, everything else unchanged. On the prompts: 1 and 2 fine,
+# and code is the one I would bet against -- a wrong token in a Python function
+# is not a paraphrase. If 3 or 4 fail while 1 and 2 look fine, the honest
+# summary is "good for prose, not yet for code", and the next thing is GPTQ
+# rather than a smaller group.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
