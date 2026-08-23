@@ -2,7 +2,36 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 342. THE VENDOR'S OWN STREAM, PLAYED BACK.
+# 2026-08-23 round 343. THE VENDOR'S OWN STREAM, PLAYED BACK -- SECOND TRY.
+#
+# ⚠ ROUND 342 NEVER RAN THE VENDOR ARMS. My own script killed them: health()
+# set ABORT after the control arm poisoned the block, and every later arm
+# returned immediately -- while entry 5's health check then said the block had
+# recovered. The abort is now per arm, not per round.
+#
+# 🔑 WHAT THE CONTROL ARM DID SAY, and it is sharper than anything before it.
+# Twelve clean rows, all twelve fitting ONE expression to six figures:
+#
+#       effective weight = (int16) fp16bits(s),  s = the nibble as int4
+#
+#   v    1     2     4     5     6     7  |  8     11    12    13    14    15
+#   d 1920  2048  2176  2208  2240  2272  | -1792 -1888 -1920 -1984 -2048 -2176
+#   s    1     2     4     5     6     7  | -8    -5    -4    -3    -2    -1
+#
+# The negative half is the part that matters: fp16bits(-1) = 0xBC00 reads as
+# int16 -17408, and -2176/1920 * 15360 is exactly -17408. Sign, magnitude and
+# all sixteen codes are RIGHT.
+#
+# 🔑**So the int4 decode is not broken. The hardware reads the nibble as a
+# signed int4 and converts it to fp16 correctly. What is in the wrong domain is
+# the MULTIPLY -- it multiplies the two fp16 bit patterns as integers.** That is
+# a mode, not a limit, and 0x40b8 (vendor 0x60, charsiu 0x20) has never been run.
+#
+# ⚠ v = 3, 9 and 10 were DEAD ROWS: the job timed out and the tool subtracted
+# whatever was in the buffer, printing -461431 twice. The expression predicts
+# 2112, -1824 and -1856 there. The tool now prints the live count on every row,
+# retries a row that does not match the reference, and says DEAD ROW instead of
+# a number.
 #
 # THE CAPTURE WORKED. The vendor LLM runtime ran under the interposer and left
 # 835 MB on the card: the task array, the register command buffer, the weights
@@ -100,14 +129,13 @@ health() {
 	if grep -q "128/128 channels match" /tmp/hc.txt; then
 		log "  !! health OK, the block recovered, continuing"
 	else
-		log "  !! health FAILED, the block is gone. ABORTING the round."
+		log "  !! health FAILED, the block did not come back this time."
 		ABORT=1
 	fi
 }
 
 # arm: <label> <regcmd-or-dash> <byte> <high>
 arm() {
-	[ "$ABORT" = "1" ] && return 0
 	before=$(nbad)
 	log ""
 	log "  ---- $1"
@@ -118,38 +146,42 @@ arm() {
 	if [ "$after" != "$before" ]; then
 		log "  !! POISONED: $((after - before)) new fault or timeout lines"
 		health
+		# ⚠ NOT a round abort. Round 342 threw away every arm after the
+		# first poisoning and then measured the block healthy at the
+		# end. The block recovers; give it a moment and carry on.
+		ABORT=0
+		sleep 2
 	fi
 }
 
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 342: the vendor's own int4 stream, played back #####"
+	log "##### round 343: the vendor's own int4 stream, played back #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) CONTROL: charsiu's own stream, byte 0 low nibble    ====="
-	arm "control arm, this tree's stream" "-" 0 0
-
-	log ""
-	log "===== 2) the vendor's stream, byte 0 low nibble              ====="
+	log "===== 1) THE POINT OF THE ROUND: the vendor's stream          ====="
 	arm "vendor stream, byte 0 low" "$RGC" 0 0
 
 	log ""
-	log "===== 3) the vendor's stream, byte 0 HIGH nibble             ====="
-	log "  the same byte's other half. the two halves must give the same"
-	log "  curve if the nibbles are peers, and a different one if the"
-	log "  packing pairs them the way round 334 found."
+	log "===== 2) the vendor's stream, byte 0 HIGH nibble              ====="
+	log "  the same byte's other half. peers give the same curve."
 	arm "vendor stream, byte 0 high" "$RGC" 0 1
 
 	log ""
-	log "===== 4) the vendor's stream, byte 1024 and byte 100000      ====="
-	log "  a second and third position, so the curve is not a property"
-	log "  of one place in the buffer."
+	log "===== 3) the vendor's stream, two more positions              ====="
 	arm "vendor stream, byte 1024 low" "$RGC" 1024 0
 	arm "vendor stream, byte 100000 low" "$RGC" 100000 0
+
+	log ""
+	log "===== 4) CONTROL: charsiu's own stream, same byte             ====="
+	log "  must reproduce (int16)fp16bits(s): 1920 2048 2112 2176 2208"
+	log "  2240 2272 then -1792 -1824 -1856 -1888 -1920 -1984 -2048 -2176."
+	log "  if it does not, the tool changed and arm 1 means nothing."
+	arm "control arm, this tree's stream" "-" 0 0
 
 	log ""
 	log "===== 5) the anchor: int8 conv must still be exact           ====="
