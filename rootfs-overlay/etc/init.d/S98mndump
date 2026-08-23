@@ -151,6 +151,37 @@
 # instead and the pair does not mean what it says. Check that first.
 #
 # ---------------------------------------------------------------------------
+# AND THE KERNEL UNDER THIS ROUND IS NOW THE ONE v9 POSTS
+# ---------------------------------------------------------------------------
+#
+# An audit of v9 against the tree that actually gets flashed found three
+# things, and two of them were real:
+#
+#   ⚠ THE DTS TESTED WAS NOT THE DTS POSTED. v9's iommu binding introduces
+#     rockchip,rk3576-npu-iommu and gates the five clock form on it -- anything
+#     else is capped at two -- and v9's own DTS uses it. The tree still said
+#     rockchip,rk3576-iommu with five clocks, which v9's binding would reject.
+#     Inert in the driver, which matches only rockchip,iommu and
+#     rockchip,rk3568-iommu, so both bind through the fallback either way. The
+#     two nodes now say what v9 says.
+#
+#   ⚠ TWO PATCHES HAD NEVER RUN HERE. v9's 2/13, which masks the block before
+#     synchronize_irq, and 3/13, which lets the core suspend after a reset,
+#     were both absent from this tree. 3/13 was measured in round 246 and the
+#     log backs every row of the cover letter's table, but the tree did not
+#     carry it afterwards. Both are in now.
+#
+#   ✓ AND ONE THING THAT LOOKED WRONG AND IS NOT. The power domain binding
+#     posts maxItems: 1 for resets while the driver uses the array API, and
+#     this tree says maxItems: 30. The posted DTS puts exactly one reset in
+#     each domain, so 1 is the honest binding and the 30 is our own widening
+#     from an experiment. It stays local.
+#
+# None of the three touches a path a healthy run executes: no timeout, no
+# reset, and a compatible nothing matches on. **If the anchor in arm 8 is
+# clean, they cost nothing; if it is not, they are the first suspects.**
+#
+# ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
