@@ -2,74 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 357. WHICH REGISTERS CHANGE THE SPEED. NOBODY ASKED.
+# 2026-08-23 round 358. THE SECOND NPU CORE HAS BEEN IDLE THE WHOLE TIME.
 #
-# 🔑 ROUND 356 LOCATED THE WHOLE OF THE REMAINING GAP, once the submit count
-# was read correctly:
+# ⛔ ROUND 357'S MAIN ARMS COULD NOT ANSWER, AND THAT WAS MY FAULT. The merge
+# carries the vendor's M = 32 geometry and I ran it at M = 1: entry 7's verify
+# says 8 of 1024. Round 347 had already measured exactly that and I had written
+# it down. Entries 2, 3 and 5 are void.
 #
-#   4550 submits, 6460 ms busy = 142 submitting + 5696 fence + 620 readback
+# What survives is one clean negative and one number:
 #
-# It adds up, so there is no hidden CPU cost. Per token, of 117 ms: **89 ms is
-# the fence**, 9.7 readback, 2.2 submitting, 16 outside the NPU path.
+#   the five at 0x2810   270.1 us against a 275.9 baseline, controls clean
+#                        -> they do NOTHING for speed
+#   int8 at the shape    374.1 us for 2 MiB against int4's 275.9 for 1 MiB
 #
-# And 71 submits a token times 9.5 real MB is 620 MB -- **a token reads the
-# whole model once**, which at int4's 6.7 GB/s is 92 ms. That IS the 89.
+# ⚠ AND ROUND 357'S PREMISE IS RETRACTED. I argued that 620 MB a token at 6.7
+# GB/s is 92 ms and therefore the decode is bandwidth bound. **6.7 GB/s was
+# computed by dividing those bytes by that time.** Circular, and it proved
+# nothing.
 #
-# ⇒ **THE DECODE IS WEIGHT BANDWIDTH BOUND AT THE MODEL LEVEL.** The earlier
-# "MAC bound" reading came from a single job microbenchmark where the fixed
-# submit cost dominates; in the LLM the tasks are chained and it amortises away.
-# Both readings were of real data and only one of them describes the decode.
+# The marginal fit over round 351's four points, which is not circular:
 #
-# So the question is now exactly one line:
+#     per element   int4 61 ns      int8 79.5 ns
+#     solving       compute 42.5 ns an element, fetch 37 ns a byte an element
+#     check         42.5 + 0.5*37 = 61  ✓
 #
-#   ⚠ int8 fetches at 9.46 GB/s. int4 fetches at 6.7. WHY.
+# 🔑 **int4 is already getting the entire byte saving it is entitled to.** About
+# 53% of the marginal cost is COMPUTE, so 2x was never on the table and no
+# register was going to find it. The way out is not more int4.
 #
 # ---------------------------------------------------------------------------
-# THE THING NOBODY ASKED
+# THE THING THAT HAS BEEN SITTING THERE ALL ALONG
 # ---------------------------------------------------------------------------
 #
-# Round 345 bisected the vendor's twenty register values and asked **which of
-# them change the ARITHMETIC**. The answer was CORE's three, and the other
-# seventeen were set aside as "not the switch" -- which is true and was never
-# the same question as **which of them change the SPEED**.
+#     rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
 #
-# Those seventeen are all fetch geometry:
+# One line, one core. rk3576.dtsi carries rknn_core_0 at 0x27700000 AND
+# rknn_core_1 at 0x27708000, both `status = "disabled"`, and this board's dts
+# has only ever turned on core 0. **Every charsiu decode ever measured has used
+# half of this chip.**
 #
-#     0x103c  surf         charsiu 64        vendor 2048     <- a factor of 32
-#     0x1044  CBUF_CON1    (1<<16)|64        (32<<16)|2048
-#     0x1040  CBUF_CON0    10000000          differs
-#     0x2810..0x2820       NEVER WRITTEN     five registers, the CBUF split
-#
-# ⚠ AND THE NATIVE int4 PATH WRITES NONE OF THEM. job.c sets the three CORE
-# values and nothing else, so the five at 0x2810 and the CNA block have only
-# ever run inside the probe's merge, never in the decode.
+# This round turns core 1 on. Six lines of dts and not a line of charsiu.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# Entry 1 is charsiu's own stream and is the baseline. Entry 6 is int8 at the
-# same shape and is the target: if int4 with the vendor's values lands near
-# int8's us per MiB, the missing 30% is those registers and the decode goes from
-# 8.5 tok/s to about 12.
+# ENTRY 0 IS THE WHOLE POINT AND IT IS ONE LINE OF dmesg. rocket must now print
+# a core 1 as well as a core 0. If it does not, the rest is noise and the
+# question becomes why it did not probe.
 #
-# Entries 2 to 5 are the full merge and then CNA, the 0x2810 block and the DPU
-# on their own. **Read us per submit, not GB/s** -- the tool's GB/s divides by
-# the real int4 bytes now, but time is the thing that is not a derived quantity.
+# ENTRY 2 RUNS TWO JOB STREAMS AT ONCE in separate processes, which means
+# separate DRM files and so separate scheduler entities. rocket initialises each
+# file's entity with the list of EVERY core, so two entities can sit on two
+# cores where one entity cannot.
 #
-# Entry 7 verifies the merge still computes exactly. A faster stream that is
-# wrong is not a result, and round 345 only ever checked correctness on the
-# whole merge, not on each group alone.
+#   both still near 275 us  -> the cores are genuinely parallel, and charsiu's
+#                              decode has a factor of two waiting inside it
+#   both near 550 us        -> they are sharing one core and turning on the
+#                              second changed nothing that matters
+#
+# That is the entire question and it needs no charsiu change to answer.
+#
+# ENTRY 3 runs the decode itself, which should NOT move -- charsiu still opens
+# one device and waits on every submit, so a second core cannot help it yet.
+# If it moves anyway, something about the scheduling is not what I think.
+#
+# ENTRY 4 is the anchor. A second core and a second IOMMU is exactly the kind
+# of change that breaks the first one.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# CNA, and 0x103c inside it, because surf is a fetch stride and 64 against 2048
-# is not a rounding difference. If the whole merge is no faster than entry 1
-# then the deficit is in the layout itself -- sixteen channels and thirty-two k
-# a block against int8's contiguous rows -- and the way out is a different
-# packing, not a register.
+# It probes. Whether two processes then land on two cores I do not know:
+# drm_sched load balances across the scheduler list, but nothing here has ever
+# exercised that, and the dtsi chains both power domains into both cores in
+# opposite order for reasons nobody has written down.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -158,45 +166,47 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 357: which registers change the speed. nobody asked. #####"
+	log "##### round 358: the second NPU core has been idle the whole time #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) BASELINE: charsiu's own stream, int4, K2048 N1024    ====="
-	arm "int4 native" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	log "===== 0) DOES ROCKET SEE TWO CORES NOW                        ====="
+	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
+	n=$(dmesg 2>/dev/null | grep -ci "NPU core")
+	log "  -> $n core line(s). anything but 2 and the rest is noise."
 
 	log ""
-	log "===== 2) the FULL merge: all twenty vendor values             ====="
-	arm "int4 merge all" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	log "===== 1) one job stream alone. the 275.9 us baseline.         ====="
+	arm "int4, alone" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 3) CNA only. 0x103c surf is 64 here and 2048 there.     ====="
-	arm "int4 merge CNA" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=1"
+	log "===== 2) TWO AT ONCE, separate processes and so separate      ====="
+	log "  scheduler entities. near 275 each means two real cores;"
+	log "  near 550 each means they are sharing one."
+	before=$(nbad)
+	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 \
+		$VD - "$WT" "$IN" 0 0 4096 > /tmp/vdA.txt 2>&1 &
+	pidA=$!
+	env CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 \
+		$VD - "$WT" "$IN" 0 0 4096 > /tmp/vdB.txt 2>&1 &
+	pidB=$!
+	wait "$pidA"
+	wait "$pidB"
+	log "  -- process A"
+	grep -E "TIME:|CONTROL repeat|VOID" /tmp/vdA.txt > "$C"
+	log "  -- process B"
+	grep -E "TIME:|CONTROL repeat|VOID" /tmp/vdB.txt > "$C"
+	after=$(nbad)
+	[ "$after" != "$before" ] && log "  !! POISONED: $((after - before)) new lines"
 
 	log ""
-	log "===== 4) the five at 0x2810, which nothing here ever writes    ====="
-	arm "int4 merge 0x2810" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=2"
+	log "===== 3) and the int4 decode itself, in case it moved         ====="
+	rung "int4 g1024 decode" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
+		CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 5) DPU only                                             ====="
-	arm "int4 merge DPU" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=4"
-
-	log ""
-	log "===== 6) THE TARGET: int8 at the same shape                   ====="
-	arm "int8 native" "-" 0 0 "CHARSIU_M=1 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 7) and the merge must still compute exactly              ====="
-	arm "verify, merge" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 5) CONTROL: int8 on prompt 1. the standing sentence.    ====="
-	PROMPT="The capital of France is"
-	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 6) the anchor: int8 conv must still be exact           ====="
+	log "===== 4) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
