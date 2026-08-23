@@ -2,106 +2,109 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 367. WHERE THE OTHER 41 MS GOES.
+# 2026-08-23 round 368. THE CPU'S 37 MILLISECONDS.
 #
-# 🏁 ROUND 366: 9.71 tok/s, AND IT IS CORRECT THIS TIME.
+# 🏁 ROUND 367 ITEMISED THE TOKEN, and every prediction it wrote down held.
 #
-#   int8, two cores          6.73 tok/s   fence 7367 ms   standing sentence
-#   int4 g1024, two devices  9.71 tok/s   fence 3977 ms   Louvre, and IDENTICAL
-#   int4 g1024, one device   8.53 tok/s   fence 5439 ms   to entry 2 word for word
+#   int4 two devices, sized buffers   9.86 tok/s   sum 9.2 ms   flush 3.4 ms
+#   the same, no output flush        10.26 tok/s   sum 9.1      flush 0.02
+#   one device                        8.40 tok/s   sum 9.2      flush 3.2
 #
-# Probe 1024 of 1024 at 0.00e+00, anchor clean. **1.52x over int8's 6.4.**
+# All four sentences word for word identical, INCLUDING the arm that skipped
+# the cache clean. The prediction was "maybe 9 summing and 4 flushing"; it read
+# 9.2 and 3.4. **The flush is gone for good now -- default, and
+# CHARSIU_NPU_FINI puts it back.**
 #
-# 🔑 THE TWO CORE GAIN IS AT ITS CEILING, which is worth knowing because it
-# says where NOT to look next. The marginal fit is 42.5 ns of compute an element
-# and 37 ns of fetch a byte an element; int4 carries half a byte an element, so
+# AND THE STAGE TABLE RAN, its total 100.3 ms against the run's own 100.6, so
+# it is generation and not prompt (the round 327 trap, checked):
 #
-#     one core   42.5 + 0.5*37 = 61.00 ns      two cores  21.25 + 18.5 = 39.75
-#     ceiling 1.53x        measured on the fence 5439/3977 = 1.37x, 90% of it
+#   q k v 13.61   o proj 9.69   gate + up 26.89   down 26.36   head 10.41
+#   attention 7.67   silu * up 3.08   rope + kv copy 1.79   the rest 0.76
 #
-# **More parallelism cannot buy much more. The lever is less memory traffic, or
-# the CPU side.** So this round goes at the 41 ms a token that is NOT the fence.
+# Which splits a 97.5 ms token three ways:
 #
-# ---------------------------------------------------------------------------
-# WHERE A 103 MS TOKEN GOES
-# ---------------------------------------------------------------------------
+#     60.2  the fence            at 9.3 GB/s, which IS the measured ceiling
+#     23.5  npudev's own rest    sum 9.1, submit 3.2, and 11 ms of wrapper
+#     13.3  the pure CPU stages  attention 7.7, silu 3.1, rope 1.8
 #
-#     fence (the NPU)                 62 ms
-#     readback                        13.4
-#     submitting                       3
-#     outside the NPU path            24     <- never itemised
+# The fence is done. **This round goes after the other 37.**
 #
 # ---------------------------------------------------------------------------
-# ⚠ AND THE FENCE NUMBER IS NOT PURE WAITING
+# WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# rocket_ioctl_prep_bo is a dma_resv_wait_timeout FOLLOWED BY
-# dma_sync_sgtable_for_cpu, so the invalidate over every output buffer has
-# always been charged to the fence and never to the read back. Its pair,
-# fini_bo, is a dma_sync_sgtable_for_device -- an arm64 cache CLEAN over the
-# whole buffer -- and that one IS separable, so this build separates it.
+# EXACT, ON BY DEFAULT, NO SWITCH -- the arithmetic is unchanged, so the tokens
+# cannot move:
 #
-# The geometry says how much cache those two walk. Per token the hardware
-# writes, and the CPU reads back:
+#   1. ONE ROPE ANGLE TABLE A TOKEN. theta depends on the dimension pair and
+#      the position and on nothing else, so cosf and sinf were being asked for
+#      the same 32 numbers 640 times over: 40 head passes times 16 layers.
+#   2. EACH SLICE'S GROUP SCALES GATHERED CONTIGUOUSLY WHEN THE TENSOR IS
+#      STAGED. The sum walked scale[channel * ngroups + group], eight cache
+#      lines apart on the down projection and unvectorisable everywhere.
 #
-#     16 layers x 59392 floats  +  the 128256 wide head x 2 k slices
-#     = 1206784 floats = 4.8 MB, invalidated once and cleaned once
+# EXACT, ON BY DEFAULT, WITH A CONTROL:
 #
-# ---------------------------------------------------------------------------
-# WHAT CHANGED, AND WHAT IS ONLY MEASURED
-# ---------------------------------------------------------------------------
+#   3. ATTENTION OVER THE POOL. Each head writes its own slice of xb and its
+#      own row of att, and the sum over t inside a head keeps its order, so
+#      four threads change nothing but the wall clock. CHARSIU_CPU_PLAIN=1
+#      puts it back on the calling thread.
+#   4. NO CLEAN ON THE OUTPUT BUFFERS (round 367's result, now the default).
+#      CHARSIU_NPU_FINI=1 puts it back.
+#   5. NO PREP ON THE ACTIVATION BUFFER. The device only READS it, so there is
+#      no write fence to wait on, and the CPU is about to overwrite every byte
+#      the next job will read, so there is nothing stale worth dropping. Its
+#      fini stays. That is 130 ioctls and 130 cache walks a token.
+#      CHARSIU_NPU_INPREP=1 puts them back. ⚠ This one is an ARGUMENT, like the
+#      flush was, and the sentence is the check on it.
 #
-# ONE FIX. Each entry's two output buffers were both allocated for ALL of a
-# tensor's slices, though the slices alternate and each device holds half.
-# prep and fini work over a WHOLE buffer object, so the two device build was
-# paying twice the cache maintenance of the one device build -- and the readback
-# did go from 11.6 ms a token to 13.4. They are sized for what each device
-# actually gets now.
+# OPT IN, BECAUSE IT MOVES TOKENS:
 #
-# ONE ARGUMENT TO TEST. CHARSIU_NPU_NOFINI skips fini_bo on the OUTPUT buffers.
-# The CPU only reads those, so their lines are clean already and the clean walks
-# 4.8 MB to write nothing back; what makes skipping it safe is that the next
-# read is preceded by prep_bo, whose invalidate drops those stale clean lines
-# before the CPU can see them. That is an argument, not a measurement, and the
-# sentence entry 3 writes is the check on it.
+#   6. CHARSIU_FAST_SILU. A NEON exp, accurate to about one last bit where
+#      glibc's expf is correctly rounded -- so the vector path is the slightly
+#      WORSE of the two, and on the host it turned "Claude Monet painted the
+#      water lilies" into "Claude Monet was born in Paris" at token 25. Neither
+#      is wrong. What it costs is the anchor every round since 352 has quoted.
 #
-# ONE SECOND FIX, free and unconditional. Every entry cleared BOTH accumulators
-# before summing, the int32 one and the float one, though a run uses exactly
-# one of them: 2 MB a token of writes to an array nothing reads, half a megabyte
-# of it in the output head alone. It also sat inside the read back timer, which
-# is the number this round exists to read.
+# AND ONE QUESTION THIS RUNTIME HAS NEVER ASKED:
 #
-# ONE INSTRUMENT. CHARSIU_STAGES has never been run on this configuration. It
-# costs two clock reads a stage, about 5 us a token, and it itemises the 24 ms
-# that has only ever been a subtraction.
+#   7. CHARSIU_CPUS. RK3576 is four A53 at 0..3 and four A72 at 4..7. In NPU
+#      mode the pool is nearly idle -- every projection returns from the
+#      CALLING thread -- so the whole CPU side is ONE thread, and nothing has
+#      ever told the scheduler which core that thread deserves.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE FIRST, as ever. Buffer sizing cannot change arithmetic, so
-# entries 1, 2 and 4 must still be the Louvre. **Entry 3 is the one allowed to
-# fail**: if skipping the clean is unsafe the words drift or go to salad, and
-# that kills the idea rather than the round.
+# THE SENTENCE FIRST. Entries 1, 2 and 3 must be round 367's Louvre sentence
+# and must match EACH OTHER. **Entry 4 is expected to differ** -- that is what
+# the fast exp does, it is documented above, and it is a measurement rather
+# than a failure. Entry 3 is the control: if only 1 and 2 drift, the suspect is
+# the activation prep, which is the one argument in this round nobody has run.
 #
-# THEN THE NEW STAT LINE, which now reads "summing the slices" and "in the
-# flush" where it used to say one "reading back" number. 13.4 ms was the two
-# together. If the flush is most of it, entry 3 is worth 10 ms a token; if the
-# sum is most of it, the flush is a rounding error and the loop is the target.
+# THEN THE STAGE TABLE, entry 1 against round 367's rows quoted above.
+# ⚠ THE ROPE TABLE IS BUILT INSIDE THE TOKEN EMBEDDING WINDOW. So "rope + kv
+# copy" should collapse to the memcpy alone and "token embedding" should rise
+# off zero. Read the two together or the table will look like it lost time.
+# ⚠ AND CHECK THE TOTAL against the run's own generation time again first.
 #
-# THEN THE STAGE TABLE in entry 2, the only genuinely new information here.
-# ⚠ Round 327 was lost to a stage table that was 86% prompt and read as though
-# it were generation, so check its total is near the GENERATION time and not
-# near the whole run before believing any row of it.
+# THEN THE STAT LINE: summing was 9.1 ms a token, flush already 0.
+#
+# THEN ENTRY 2 AGAINST ENTRY 1. That is the only thing in this round that
+# could be large and is entirely outside my hands: if pinning to the four A72s
+# is worth several milliseconds, the CPU side has been running on a little
+# core all along and every CPU number this project has ever printed was taken
+# at half rate.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The readback splits maybe 9 summing and 4 flushing: 4.8 MB of scaled adds is
-# real work and a clean of the same 4.8 MB is a cache walk, and the walk is the
-# cheaper of the two. So entry 3 should be worth a few ms, not ten. On the stage
-# table I have no prior -- that is the point of running it.
+# rope to 0.05, attention to about a quarter of 7.67, the sum from 9.1 to
+# maybe 5, the wrapper down by a millisecond or two from the missing ioctls.
+# Call it 97.5 -> 85 ms, which is 11.7 tok/s. The A72 arm I have no prior on.
+# The fast exp should be worth 2.5 ms of the 3.08 and cost the anchor.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -210,30 +213,33 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 367: where the other 41 ms goes                  #####"
+	log "##### round 368: the CPU's 37 milliseconds                 #####"
 	log "###############################################################"
-	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
+	log "  the fence is at its ceiling. this round is everything else."
 
 	log ""
-	log "===== 1) int4 g1024, two devices. sized output buffers.        ====="
-	log "  the sentence must still be the Louvre; read the readback line."
-	rung "int4 g1024, two devices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	log "===== 1) everything on, with the stage table                   ====="
+	log "  sentence must be round 367's. check the table total against"
+	log "  the run's own generation time before reading a row."
+	rung "int4 g1024, two devices, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) the same, with the STAGE TABLE                        ====="
-	log "  check its total is near the GENERATION time, not the whole"
-	log "  run: round 327 read a table that was 86% prompt."
-	rung "int4 g1024, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
+	log "===== 2) the same, pinned to the four A72s                     ====="
+	log "  cores 0-3 are A53 and 4-7 are A72. nothing has ever said"
+	log "  which one the single CPU thread of a token should be on."
+	rung "int4 g1024, CPUS=4-7" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the same, WITHOUT the flush on the output buffers     ====="
-	log "  this is the arm allowed to fail. read the SENTENCE: if the"
-	log "  words drift, the clean is load bearing and the idea dies."
-	rung "int4 g1024, no output flush" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_NOFINI=1 "$CE" "$HEAD"
+	log "===== 3) THE CONTROL: the three switchable ones put back       ====="
+	log "  serial attention, the output clean, the activation prep."
+	log "  the rope table and the scale gather stay: they are exact."
+	rung "int4 g1024, round 367 behaviour" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPU_PLAIN=1 CHARSIU_NPU_FINI=1 CHARSIU_NPU_INPREP=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) one device, for the readback comparison               ====="
-	rung "int4 g1024, one device" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_ONEDEV=1 "$CE" "$HEAD"
+	log "===== 4) the fast exp. THIS ONE IS EXPECTED TO CHANGE WORDS.   ====="
+	log "  read the silu row, not the sentence. a different sentence"
+	log "  here is the documented cost, not a fault."
+	rung "int4 g1024, CPUS=4-7, fast silu" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 CHARSIU_FAST_SILU=1 "$CE" "$HEAD"
 
 	log ""
 	log "===== 5) the probe, still exact                                ====="
