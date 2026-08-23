@@ -2,71 +2,64 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 347. DOES IT SURVIVE M = 1, WHICH IS THE ONE WE NEED.
+# 2026-08-23 round 348. IT IS NATIVE NOW. IS IT FAST?
 #
-# 🔑🔑🔑 ROUND 346 VERIFIED THE WHOLE int4 PATH ON THE BOARD.
+# ✅✅ ROUND 347: int4 IS CORRECT AT M = 1, WHICH IS THE DECODE CASE.
 #
-#   VERIFY: 1275 of 1280 words within 1e-5 relative, worst 1.44e-05
+#   M = 1, charsiu's own stream plus THREE register values, nothing else:
+#     VERIFY 1024 of 1024 within 1e-4, 1017 within 1e-5, worst 5.46e-05
+#   M = 32 anchor, the merge:      1280 of 1280
+#   M = 1 with the M = 32 merge:   0 of 1024   (the contrast, wrong as designed)
+#   M = 8 with the three:          8 of 4096   (see below)
+#   control, this tree's stream:   the old sixteen values
 #
-# under the merge AND, identically, under the vendor's own 123 registers with
-# the three enables appended. Their registers, their weights, their
-# activations, our driver, every live word against a CPU reference.
+# ⚠ M > 1 IS NOT SOLVED and I am not going to pretend it is. At M = 8 the same
+# three registers give 8 of 4096, because the vendor puts M on the WIDTH axis
+# and this tree puts it on the height axis, and only at M = 1 do the two
+# collapse to the same thing. LLM decode is M = 1, so this is enough to be
+# useful and not enough to be called general.
 #
-# ⚠ The five that missed 1e-5 are not misses: the board and the reference agree
-# to every printed digit (+0.086638 against +0.086639). 1e-5 was too tight for a
-# float32 result summed against 2048 double terms with cancellation. The tool
-# now prints 1e-4 and 1e-5 side by side and 1e-4 is the one to read.
-#
-# A check I did not design and which passed anyway: **2816 words where the board
-# wrote zero are exactly the ones where the reference computes zero**, because
-# only 15% of the vendor's activation buffer is nonzero.
-#
-# THE BISECT, honestly: 0x3018 is the register that changes the arithmetic --
-# its baseline's first four words equal the merged ones exactly -- but alone it
-# wedged the block (19 fault lines), 0x301c alone was VOID, and 0x3020 alone
-# FAILED ITS REPEAT CONTROL so it is not readable at all. All three together is
-# clean and reproduces. So: 0x3018 switches, the other two are needed to run.
+# THE THREE REGISTERS ARE NOW IN job.c, not an override:
+#     0x3018 = 0x10000200        (this is the one that changes the arithmetic)
+#     0x301c = M-1 in the LOW half
+#     0x3020 = N-1, plainly
+# int8 is untouched, checked on the host. CHARSIU_W4_BITPAT restores the old
+# behaviour so the fault can be brought back on demand.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# EVERYTHING ABOVE IS AT M = 32, BECAUSE THAT IS WHAT THE VENDOR CAPTURED. The
-# decode loop charsiu actually needs is M = 1, and every stride in the decode
-# depends on M:
+# ENTRY 1 must reproduce 1024 of 1024 with NO override anywhere. That is the
+# whole point of making it native: if the value moved from the environment into
+# the file and the answer changed, the file is wrong.
 #
-#     input  slot (k,m) = 8*M*(k/8) + 8*m + k%8    ->  k     at M = 1
-#     output word (n,m) = 4*(M*(n/4) + m) + n%4    ->  n     at M = 1
-#     weight nibble(n,k)                            unchanged, no M in it
+# ENTRY 2 is the control that brings the fault back: CHARSIU_W4_BITPAT must
+# score 0 of 1024 and its sweep must show the old band. A fix whose control does
+# not reproduce the fault has not been shown to be the fix.
 #
-# So at M = 1 both surfaces collapse to plain order, which is either very
-# convenient or a sign that M = 1 takes a different path entirely.
+# ⚠⚠ ENTRIES 3 AND 4 ARE THE QUESTION THAT MATTERS NOW: SPEED. Every int4
+# timing this project has ever taken -- 661.5 us/MB, 1.51 GB/s, "6.2x slower
+# than int8" -- was taken on a configuration that did not compute a weighted
+# sum, so none of it is a measurement of this. Entry 3 times int4 and entry 4
+# times int8 at the SAME K and N through the SAME code in the SAME boot.
 #
-# ENTRY 1 is the anchor: the merge at M = 32, which must reproduce 1280 of 1280.
-# If it does not, the tool changed and nothing else counts.
+#   int4 above about 4.7 GB/s  -> it wins, because it moves half the bytes
+#   int4 below that            -> correctness bought nothing and the decode
+#                                 loop stays int8
 #
-# ENTRY 2 is the question: M = 1 with only the three CORE registers, which are
-# the ones that are M safe -- 0x3018 is constant, 0x301c is M-1 in the low half
-# and charsiu already writes 0 there at M = 1, 0x3020 is N-1.
+# The standing number to beat is int8 at 9.38 GB/s and 6.55 tok/s, of which
+# 132.1 ms of a 153 ms token is hardware.
 #
-# ENTRY 3 maps the layout at M = 1 whatever entry 2 says, so a failure is
-# located rather than just recorded.
-#
-# ENTRY 4 is the contrast: the FULL merge at M = 1, which carries M = 32
-# geometry and should therefore be wrong. If it passes anyway, the other
-# seventeen registers do not depend on M and I have the wrong model of them.
-#
-# ENTRY 5 is M = 8, so the M dependence is three points and not two.
+# ENTRY 5 is the anchor.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Entry 2 passes. The weight formula has no M in it, the two surfaces collapse
-# to the identity, and the three CORE registers carry no M except through a
-# field charsiu already computes. But the live word count moved between the
-# merge and CORE-only at M = 32 (1280 against 1756), so the extent is not
-# something I understand yet, and extent is exactly what M changes.
+# I genuinely do not know, and this is the first time the question can be asked
+# fairly. The old 1.51 GB/s was measured while half the buffer was dead and the
+# fetch pattern was whatever the wrong mode produced.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -119,41 +112,35 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 347: does it survive M = 1 #####"
+	log "##### round 348: it is native now. is it fast? #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) ANCHOR: the merge at M=32. must give 1280 of 1280.   ====="
+	log "===== 1) NATIVE: M=1, no override anywhere. 1024 of 1024.     ====="
+	arm "native int4, M=1" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1"
+
+	log ""
+	log "===== 2) CONTROL: bring the fault back. must be 0 of 1024.    ====="
+	arm "M=1, W4_BITPAT" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_W4_BITPAT=1"
+
+	log ""
+	log "===== 3) THE RATE: int4, K=2048 N=1024, 1 MiB of weights      ====="
+	arm "int4 time" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200"
+
+	log ""
+	log "===== 4) THE RATE: int8, same shape, same code, same boot     ====="
+	log "  2 MiB of weights against int4's 1 MiB, so int4 needs more"
+	log "  than HALF of int8's GB/s to finish a projection sooner."
+	arm "int8 time" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200 CHARSIU_W8=1"
+
+	log ""
+	log "===== 5) M=32 anchor, the merge. still 1280 of 1280?          ====="
 	arm "anchor, merge M=32" "+$RGC" 0 0 CHARSIU_VERIFY=1
 
 	log ""
-	log "===== 2) THE QUESTION: M=1, the three CORE registers          ====="
-	log "  0x301c is M-1 in the low half, so it is 0 at M=1."
-	arm "M=1, CORE three" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000000,0x3020=0x000003ff"
-
-	log ""
-	log "===== 3) the layout at M=1, 32 bytes, whatever entry 2 said   ====="
-	arm "M=1 slope map" "-" 0 0 "CHARSIU_M=1 CHARSIU_SLOPE_MAP=32 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000000,0x3020=0x000003ff"
-
-	log ""
-	log "===== 4) CONTRAST: the full merge at M=1. carries M=32 values ====="
-	log "  and should therefore be wrong. if it passes, my model of the"
-	log "  other seventeen registers is wrong."
-	arm "M=1, full merge" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1"
-
-	log ""
-	log "===== 5) M=8, so the M dependence is three points not two     ====="
-	log "  0x301c = M-1 = 7 here, NOT the 0x1f the M=32 capture carries."
-	arm "M=8, CORE three" "-" 0 0 "CHARSIU_M=8 CHARSIU_VERIFY=1 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x00000007,0x3020=0x000003ff"
-
-	log ""
-	log "===== 6) CONTROL: charsiu's own stream at M=32. old sixteen.  ====="
-	arm "control arm, this tree's stream" "-" 0 0
-
-	log ""
-	log "===== 8) the anchor: int8 conv must still be exact           ====="
+	log "===== 6) the anchor: int8 conv must still be exact           ====="
 	health
 
 	log ""
