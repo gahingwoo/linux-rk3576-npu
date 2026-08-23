@@ -2,64 +2,76 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 360. LATE DATA, OR DATA THAT WAS NEVER WRITTEN.
+# 2026-08-23 round 361. IS IT THE SECOND CORE AT ALL, OR THE SECOND DOMAIN?
 #
-# ✅ ROUND 359's CONTROL HELD AND THAT SETTLES THE FRAME. A solo process was
-# clean three times out of three, 0 words differing, so this IS about
-# concurrency and nothing else.
+# ⛔⛔ ROUND 360 REFUTED BOTH OF MY HYPOTHESES, AND ONE OF THEM WAS THE ROUND'S
+# WHOLE PREMISE.
 #
-# ⛔ AND THE FAILURE IS SPECIFIC. Across eight concurrent processes it hit five,
-# on A as often as on B, and the giveaway is in the live word counts:
+# 1. NOT LATE DATA. CHARSIU_REREAD took the output buffer through a second
+#    cache round trip on every one of six concurrent processes and printed
+#    **no REREAD line at all**. Each submit's output is stable once the fence
+#    fires. What differs is what two IDENTICAL submits COMPUTE.
 #
-#   solo, three times            1024 live, 0 differ, 0 differ, 0 differ
-#   pair 1   A 1024 live 0       B 1024 live  88 differ
-#   pair 2   A 1024 live 0       B **1022 live** 212 differ
-#   pair 3   A 1024 live 0       B 1024 live   0 differ
-#   pair 4   A **1022 live** 221 B 1024 live  97 differ
-#   pair 5   A 1024 live 385
-#   mixed    A **1020 live** 240 B (N=256) 256 live, 0 differ, clean
+#    I predicted "the reread finds them" and gave three reasons why. It found
+#    nothing.
 #
-# **Words that should be live come back ZERO.** That is a missing write, not
-# swapped data, and the small job at N = 256 was never once affected.
+# 2. NOT POWER MANAGEMENT. control=on, which stops runtime suspend outright,
+#    still gave 371, 426 and 39 words differing. autosuspend_delay_ms=60000
+#    still gave 499. Both sides of the hypothesis, both refuted.
 #
-# ⚠ ROUND 359's ENTRY 3 MEASURED NOTHING. The glob
-# /sys/devices/platform/2770*.npu/power/control matched no path, sh left it
-# literal, and the write failed with "nonexistent directory" -- which the log
-# printed and I should have caught before calling it a power management test.
-# The devices are under /sys/bus/platform/devices. So the power hypothesis is
-# still untested, not refuted.
+# So: two concurrent jobs compute DIFFERENT RESULTS FROM THE SAME INPUT, the
+# readback is innocent, and power is innocent.
+#
+# ---------------------------------------------------------------------------
+# THE ONE LINE IN THE DRIVER THAT FITS
+# ---------------------------------------------------------------------------
+#
+#     ret = iommu_attach_group(job->domain->domain, core->iommu_group);
+#     ...
+#     iommu_detach_group(NULL, iommu_group_get(core->dev));
+#
+# **Every job attaches its own IOMMU domain and detaches it when it finishes.**
+# One process has ONE domain, so re-attaching the same one is harmless even if
+# a translation lingers. TWO processes have TWO domains taking turns on the
+# same IOMMU, and a stale translation then points into the OTHER process's
+# pages: wrong data, no fault, intermittent, worse for the job that touches
+# more memory. That is every symptom.
+#
+# ⚠ AND IT PREDICTS SOMETHING THAT SEPARATES IT FROM "THE SECOND CORE IS BAD":
+# if this is domain switching, **two processes sharing ONE core corrupt just as
+# happily**, and the second core is innocent.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 2 IS THE QUESTION AND IT NEEDS NO TIMING GUESS. CHARSIU_REREAD takes the
-# output buffer through another cache round trip -- fini then prep, so the lines
-# are genuinely invalidated -- and reads it again:
+# ENTRY 1 UNBINDS CORE 1 before anything opens the device -- it has to be
+# before, because each open file's scheduler entity is built from the core list
+# as it stands at open time. rocket_remove handles one core going away and only
+# tears the DRM device down when the last one does.
 #
-#   the missing words are THERE the second time  -> the fence signalled before
-#       the NPU's writes had landed, and the fix is ordering in the driver
-#   they are still missing                       -> they were never written and
-#       the fix is somewhere else entirely
+# ENTRY 3 IS THE WHOLE ROUND: a pair of processes on ONE core.
 #
-# A plain second memcpy would have proved nothing, since the lines are in cache
-# by then and would read back exactly what the first read saw.
+#   it still corrupts  -> the second core is innocent, this is domain
+#                         switching, and the fix is an IOMMU flush in the
+#                         driver rather than anything about two cores
+#   it is clean        -> the two cores genuinely interfere and the second core
+#                         cannot be used until that is understood
 #
-# ENTRY 3 is the power management test done properly this time, at the path that
-# exists. ENTRY 4 raises the autosuspend delay instead of pinning, which is the
-# same hypothesis approached from the other side.
+# ENTRY 4 rebinds and reproduces with two cores, so the two configurations sit
+# in one boot rather than in two logs a round apart.
 #
-# ENTRY 1 is the solo control and must still be clean, or the whole frame moves.
+# ENTRY 2 is the solo control on one core and must be clean, as it has been
+# every time.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The reread finds them. A fence that signals early is the ordinary way to get
-# missing words with no fault and no error, it explains why only the bigger job
-# suffers -- more bytes still in flight when the IRQ arrives -- and it explains
-# why a solo run never sees it, because nothing else is competing for the write
-# path.
+# It corrupts on one core. Two of my last three predictions were wrong, so that
+# is worth exactly what it is worth -- but this one at least has a mechanism
+# behind it that explains why only the bigger job suffers and why a solo run
+# never does.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -168,50 +180,39 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 360: late data, or data never written?           #####"
+	log "##### round 361: the second core, or the second domain?      #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 0) the cores, and where their power knobs actually are   ====="
+	log "===== 1) UNBIND CORE 1, before anything opens the device       ====="
 	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
-	for d in /sys/bus/platform/devices/2770*.npu; do
-		log "  $d control=$(cat "$d/power/control" 2>/dev/null) delay=$(cat "$d/power/autosuspend_delay_ms" 2>/dev/null)"
-	done
+	echo 27708000.npu > /sys/bus/platform/drivers/rocket/unbind 2>/dev/null \
+		|| log "  !! unbind failed; the rest of this round is void"
+	sleep 1
+	log "  bound now:"
+	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
 
 	log ""
-	log "===== 1) CONTROL: one process. must still be clean.            ====="
-	arm "solo" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=60 CHARSIU_OUT_KB=64"
+	log "===== 2) CONTROL: one process on one core. must be clean.      ====="
+	arm "solo, one core" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=40 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 2) THE QUESTION: a pair, with the cache re-read on       ====="
-	log "  REREAD lines mean the data was still landing when the fence"
-	log "  said it was done. no REREAD line and a differing control"
-	log "  means it was never written."
-	pair "pair, reread 1" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
-	pair "pair, reread 2" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
-	pair "pair, reread 3" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
+	log "===== 3) THE WHOLE ROUND: a pair on ONE core                   ====="
+	log "  still corrupts -> the second core is innocent and this is"
+	log "  domain switching. clean -> the two cores interfere."
+	pair "pair, one core 1" "" ""
+	pair "pair, one core 2" "" ""
+	pair "pair, one core 3" "" ""
 
 	log ""
-	log "===== 3) runtime PM pinned on, at the path that exists         ====="
-	for d in /sys/bus/platform/devices/2770*.npu; do
-		echo on > "$d/power/control" 2>/dev/null
-		log "  $d control=$(cat "$d/power/control" 2>/dev/null)"
-	done
-	pair "pair, PM on 1" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
-	pair "pair, PM on 2" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
-
-	log ""
-	log "===== 4) the same hypothesis from the other side: a long delay ====="
-	for d in /sys/bus/platform/devices/2770*.npu; do
-		echo auto > "$d/power/control" 2>/dev/null
-		echo 60000 > "$d/power/autosuspend_delay_ms" 2>/dev/null
-		log "  $d control=$(cat "$d/power/control" 2>/dev/null) delay=$(cat "$d/power/autosuspend_delay_ms" 2>/dev/null)"
-	done
-	pair "pair, 60 s autosuspend" "CHARSIU_REREAD=1" "CHARSIU_REREAD=1"
-	for d in /sys/bus/platform/devices/2770*.npu; do
-		echo 50 > "$d/power/autosuspend_delay_ms" 2>/dev/null
-	done
+	log "===== 4) rebind, and reproduce with two cores in the same boot ====="
+	echo 27708000.npu > /sys/bus/platform/drivers/rocket/bind 2>/dev/null \
+		|| log "  !! rebind failed"
+	sleep 1
+	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
+	pair "pair, two cores 1" "" ""
+	pair "pair, two cores 2" "" ""
 
 	log ""
 	log "===== 5) the anchor: int8 conv must still be exact            ====="
