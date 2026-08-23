@@ -1,0 +1,2335 @@
+
+ Serial  Port opened
+DDR 9071d8ccd4 wesley.yao 25/11/13-19:06.13,fwver: v1.10
+In
+ch0 ttot6
+ch1 ttot6
+ch0 ttot8
+LPDDR5, 2736MHz
+channel[0] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+ch1 ttot8
+channel[1] BW=16 Col=10 Bk=16 CS0 Row=17 CS1 Row=17 CS=2 Die BW=8 Size=6144MB
+Manufacturer ID:0x13
+CH0 RX Vref:26.5%, RX DQS Vref:27.8%, TX Vref:20.0%,21.0%
+DQ roc:
+p5 n1, p3 n0, p1 n0, p5 n0, p1 n0, p5 n0, p0 n2, p2 n0, p4 n2, 
+p7 n0, p0 n0, p3 n0, p2 n0, p1 n0, p2 n0, p0 n3, p4 n1, p1 n3, 
+
+DQ rds:l0 h1 l0 l0 l0 h1 l0 l0, l0 l0 l0 l0 l0 l0 l0 l0 
+DQS roc: p3, n0, p2, n0
+
+CH1 RX Vref:28.6%, RX DQS Vref:30.0%, TX Vref:18.0%,21.0%
+DQ roc:
+p3 n0, p7 n0, p7 n0, p3 n0, p7 n0, p6 n0, p1 n3, p4 n1, p4 n0, 
+p2 n0, p5 n0, p5 n0, p2 n0, p7 n0, p5 n0, p1 n0, p0 n2, p5 n0, 
+
+DQ rds:h1 h1 l0 l0 l0 h1 l0 l0, h1 l0 h1 l0 l0 l0 h2 l0 
+DQS roc: p1, n0, p2, n0
+
+stride=0x3, ddr_config=0x6
+hash bank_mask0-3 0x0 0x2100 0x44200 0x88400, rank_mask0 0x800
+change to F1: 534MHz
+ch0 ttot6
+ch1 ttot6
+change to F2: 1320MHz
+ch0 ttot8
+ch1 ttot8
+change to F3: 1968MHz
+ch0 ttot7
+ch1 ttot7
+change to F0: 2736MHz
+ch0 ttot8
+ch1 ttot8
+out
+U-Boot SPL board init
+U-Boot SPL rk2410-2017.09-1-gcfdab2f #runner (Jun 04 2026 - 08:05:06)
+sfc cmd=03H(6BH-x4)
+0 50 dll training failed in 80000000MHz, reduce the speed
+unknown raw ID 25 38 c2
+Trying to boot from MMC2
+part_get_info_efi: *** ERROR: Invalid GPT ***
+part_get_info_efi: *** ERROR: Invalid Backup GPT ***
+part_get_info_efi: *** ERROR: Invalid GPT ***
+part_get_info_efi: *** ERROR: Invalid Backup GPT ***
+No misc partition
+part_get_info_efi: *** ERROR: Invalid GPT ***
+part_get_info_efi: *** ERROR: Invalid Backup GPT ***
+part_get_info_efi: *** ERROR: Invalid GPT ***
+part_get_info_efi: *** ERROR: Invalid Backup GPT ***
+spl: partition error
+Trying fit image at 0x4000 sector
+## Verified-boot: 0
+## Checking atf-1 0x3fe70000 ... sha256(8b5729c8c7...) + OK
+## Checking u-boot 0x40800000 ... sha256(e54de64b31...) + OK
+## Checking fdt-1 0x408dedd0 ... sha256(7162fbafae...) + OK
+## Checking atf-2 0x40060000 ... sha256(868eaf583a...) + OK
+## Checking atf-3 0x400f0000 ... sha256(8afb712810...) + OK
+Jumping to U-Boot(0x40800000) via ARM Trusted Firmware(0x40060000)
+Total: 286.210/589.460 ms
+
+INFO:    Preloader serial: 0
+NOTICE:  BL31: v2.3():v2.3-931-g4d7e811c6:derrick.huang, fwver: v1.20
+NOTICE:  BL31: Built : 19:19:38, May 26 2025
+INFO:    SOC (0x35760101)
+INFO:    spec: 0x1
+INFO:    test version: 0x0
+INFO:    soc cold boot
+INFO:    ARM GICv2 driver initialized
+INFO:    bypass memory repair
+INFO:    dfs DDR fsp_params[0].freq_mhz= 2736MHz
+INFO:    dfs DDR fsp_params[1].freq_mhz= 534MHz
+INFO:    dfs DDR fsp_params[2].freq_mhz= 1320MHz
+INFO:    dfs DDR fsp_params[3].freq_mhz= 1968MHz
+INFO:    Using opteed sec cpu_context!
+INFO:    boot cpu mask: 1
+INFO:    BL31: Initializing runtime services
+WARNING: No OPTEE provided by BL2 boot loader, Booting device without OPTEE initialization. SMC`s destined for OPTEE will return SMC_UNK
+ERROR:   Error initializing runtime service opteed_fast
+INFO:    BL31: Preparing for EL3 exit to normal world
+INFO:    Entry point address = 0x40800000
+INFO:    SPSR = 0x3c9
+
+
+U-Boot 2026.07-rc3-g08ad3cd574f0-dirty (Jun 14 2026 - 20:33:58 +1200)
+
+Model: ArmSoM CM5-IO
+SoC:   RK3576
+DRAM:  12 GiB
+PMIC:  RK806 (on=0x40, off=0x00)
+Core:  1062 devices, 31 uclasses, devicetree: separate
+MMC:   mmc@2a310000: 1, mmc@2a320000: 2, mmc@2a330000: 0
+Loading Environment from nowhere... OK
+In:    serial@2ad40000
+Out:   serial@2ad40000
+Err:   serial@2ad40000
+Net:   eth0: ethernet@2a220000
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Card did not respond to voltage select! : -110
+Card did not respond to voltage select! : -110
+Cannot persist EFI variables without system partition
+  0  efi_mgr      ready   (none)       0  <NULL>                    
+** Booting bootflow '<NULL>' with efi_mgr
+Loading Boot0000 'mmc 1' failed
+EFI boot manager: Cannot load any image
+Boot failed (err=-14)
+Scanning bootdev 'mmc@2a310000.bootdev':
+  1  extlinux     ready   mmc          1  mmc@2a310000.bootdev.part /extlinux/extlinux.conf
+** Booting bootflow 'mmc@2a310000.bootdev.part_1' with extlinux
+1:      linux
+Retrieving file: /Image
+append: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=PARTUUID=52524b33-02 rootfstype=ext4 rootwait rw log_buf_len=8M
+Retrieving file: /rk3576-rock-4d.dtb
+## Flattened Device Tree blob at 52000000
+   Booting using the fdt blob at 0x52000000
+Working FDT set to 52000000
+   Loading Device Tree to 00000000fce85000, end 00000000fcecb77f ... OK
+Working FDT set to fce85000
+
+Starting kernel ...
+
+[    9.463919] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    9.463960] Linux version 6.1.115-g4daa62ae1669-dirty (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, GNU ld (GNU Binutils for Ubuntu) 2.42) #24 SMP Sun Aug  9 21:02:24 NZST 2026
+[    9.477087] Machine model: ROCK 4D
+[    9.493862] earlycon: uart8250 at MMIO32 0x000000002ad40000 (options '')
+[    9.497424] printk: bootconsole [uart8250] enabled
+[    9.497983] efi: UEFI not found.
+[    9.504637] OF: fdt: Reserved memory: failed to reserve memory for node 'drm-logo@0': base 0x0000000000000000, size 0 MiB
+[    9.505719] OF: fdt: Reserved memory: failed to reserve memory for node 'drm-cubic-lut@0': base 0x0000000000000000, size 0 MiB
+[    9.922572] Zone ranges:
+[    9.922838]   DMA      [mem 0x0000000040200000-0x00000000ffffffff]
+[    9.923448]   DMA32    empty
+[    9.923733]   Normal   [mem 0x0000000100000000-0x000000033fffffff]
+[    9.924337] Movable zone start for each node
+[    9.924751] Early memory node ranges
+[    9.925098]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    9.925716] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    9.955613] On node 0, zone DMA: 512 pages in unavailable ranges
+[   10.043165] cma: Reserved 16 MiB at 0x00000000ff000000
+[   10.044515] psci: probing for conduit method from DT.
+[   10.045014] psci: PSCIv1.1 detected in firmware.
+[   10.045463] psci: Using standard PSCI v0.2 function IDs
+[   10.045970] psci: MIGRATE_INFO_TYPE not supported.
+[   10.046444] psci: SMC Calling Convention v1.2
+[   10.047468] percpu: Embedded 30 pages/cpu s84344 r8192 d30344 u122880
+[   10.048366] Detected VIPT I-cache on CPU0
+[   10.048837] CPU features: detected: ARM erratum 845719
+[   10.049338] alternatives: applying boot alternatives
+[   10.050056] Built 1 zonelists, mobility grouping on.  Total pages: 3096072
+[   10.050731] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=PARTUUID=52524b33-02 rootfstype=ext4 rootwait rw log_buf_len=8M
+[   10.063411] printk: log_buf_len: 8388608 bytes
+[   10.063846] printk: early log buf free: 260072(99%)
+[   10.067067] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[   10.069229] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[   10.070002] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[   10.070656] software IO TLB: area num 8.
+[   10.093825] software IO TLB: mapped [mem 0x00000000f8e85000-0x00000000fce85000] (64MB)
+[   10.345985] Memory: 12172952K/12580864K available (18816K kernel code, 4138K rwdata, 7948K rodata, 8192K init, 731K bss, 391528K reserved, 16384K cma-reserved)
+[   10.347612] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[   10.348316] ftrace: allocating 72957 entries in 285 pages
+[   10.553757] ftrace: allocated 285 pages with 5 groups
+[   10.554428] trace event string verifier disabled
+[   10.555223] rcu: Hierarchical RCU implementation.
+[   10.555683] rcu:     RCU event tracing is enabled.
+[   10.556124]  Rude variant of Tasks RCU enabled.
+[   10.556561]  Tracing variant of Tasks RCU enabled.
+[   10.557027] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[   10.573217] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[   10.579710] Root IRQ handler: gic_handle_irq
+[   10.580151] GIC: Using split EOI/Deactivate mode
+[   10.582784] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[   10.625420] arch_timer: cp15 timer(s) running at 1000.00MHz (phys).
+[   10.626033] clocksource: arch_sys_counter: mask: 0x1fffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+[   10.627061] sched_clock: 61 bits at 1000MHz, resolution 1ns, wraps every 4398046511103ns
+[   10.631212] Console: colour dummy device 80x25
+[   10.631704] Calibrating delay loop (skipped), value calculated using timer frequency.. 2000.00 BogoMIPS (lpj=4000000)
+[   10.632683] pid_max: default: 32768 minimum: 301
+[   10.633215] LSM: Security Framework initializing
+[   10.633863] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[   10.634613] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[   10.637199] cacheinfo: Unable to detect cache hierarchy for CPU 0
+[   10.638717] cblist_init_generic: Setting adjustable number of callback queues.
+[   10.639424] cblist_init_generic: Setting shift to 3 and lim to 1.
+[   10.640117] cblist_init_generic: Setting adjustable number of callback queues.
+[   10.640782] cblist_init_generic: Setting shift to 3 and lim to 1.
+[   10.641605] rcu: Hierarchical SRCU implementation.
+[   10.642048] rcu:     Max phase no-delay instances is 1000.
+[   10.646457] EFI services will not be available.
+[   10.647690] smp: Bringing up secondary CPUs ...
+[   10.648920] Detected VIPT I-cache on CPU1
+[   10.649048] cacheinfo: Unable to detect cache hierarchy for CPU 1
+[   10.649102] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[   10.649960] Detected VIPT I-cache on CPU2
+[   10.650061] cacheinfo: Unable to detect cache hierarchy for CPU 2
+[   10.650093] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[   10.650894] Detected VIPT I-cache on CPU3
+[   10.651003] cacheinfo: Unable to detect cache hierarchy for CPU 3
+[   10.651033] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[   10.651899] CPU features: detected: Spectre-BHB
+[   10.651912] CPU features: detected: ARM erratum 1742098
+[   10.651917] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[   10.651922] Detected PIPT I-cache on CPU4
+[   10.652024] cacheinfo: Unable to detect cache hierarchy for CPU 4
+[   10.652060] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[   10.652863] Detected PIPT I-cache on CPU5
+[   10.652949] cacheinfo: Unable to detect cache hierarchy for CPU 5
+[   10.652974] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[   10.653801] Detected PIPT I-cache on CPU6
+[   10.653894] cacheinfo: Unable to detect cache hierarchy for CPU 6
+[   10.653918] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[   10.654698] Detected PIPT I-cache on CPU7
+[   10.654790] cacheinfo: Unable to detect cache hierarchy for CPU 7
+[   10.654815] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[   10.654926] smp: Brought up 1 node, 8 CPUs
+[   10.667467] SMP: Total of 8 processors activated.
+[   10.667903] CPU features: detected: 32-bit EL0 Support
+[   10.668387] CPU features: detected: 32-bit EL1 Support
+[   10.668862] CPU features: detected: CRC32 instructions
+[   10.669458] CPU: All CPU(s) started at EL2
+[   10.669847] alternatives: applying system-wide alternatives
+[   10.674028] devtmpfs: initialized
+[   10.715120] Registered cp15_barrier emulation handler
+[   10.715617] Registered setend emulation handler
+[   10.716272] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[   10.717202] futex hash table entries: 2048 (order: 5, 131072 bytes, linear)
+[   10.718538] pinctrl core: initialized pinctrl subsystem
+[   10.719599] DMI not present or invalid.
+[   10.720679] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[   10.722991] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[   10.724344] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[   10.725934] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+[   10.733339] Registered FIQ tty driver
+[   10.734095] thermal_sys: Registered thermal governor 'fair_share'
+[   10.734103] thermal_sys: Registered thermal governor 'step_wise'
+[   10.734677] thermal_sys: Registered thermal governor 'user_space'
+[   10.735242] thermal_sys: Registered thermal governor 'power_allocator'
+[   10.735869] cpuidle: using governor menu
+[   10.737209] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[   10.738110] ASID allocator initialised with 65536 entries
+[   10.742649] ramoops: dmesg-0 0x18000@0x0000000040110000
+[   10.743153] ramoops: dmesg-1 0x18000@0x0000000040128000
+[   10.743673] ramoops: console 0x80000@0x0000000040140000
+[   10.744181] ramoops: pmsg    0x30000@0x00000000401c0000
+[   10.745147] printk: console [ramoops-1] enabled
+[   10.745580] pstore: Registered ramoops as persistent store backend
+[   10.746164] ramoops: using 0xe0000@0x40110000, ecc: 0
+[   10.771589] platform 27d00000.vop: Fixed dependency cycle(s) with /hdmi@27da0000
+[   10.772371] platform 27da0000.hdmi: Fixed dependency cycle(s) with /vop@27d00000
+[   10.820877] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[   10.822120] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[   10.823528] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[   10.824727] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[   10.825972] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[   10.826815] rockchip-pinctrl pinctrl: probed pinctrl
+[   10.850417] fiq_debugger fiq_debugger.0: error -ENXIO: IRQ fiq not found
+[   10.851074] fiq_debugger fiq_debugger.0: error -ENXIO: IRQ wakeup not found
+[   10.851773] fiq_debugger_probe: could not install nmi irq handler
+[    9.463919] Booting Linux on physical CPU 0x0000000000 [0x410fd034[   10.852851] printk: console [ttyFIQ0] enabled
+[   10.853565] Registered fiq debugger ttyFIQ0
+]
+[    9.463960] Linux version 6.1.115-g4daa62ae1669-dirty (parallels@ubuntu-gnu-linux-24-04-3) (aarch64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, GNU ld (GNU Binutils for Ubuntu) 2.42) #24 SMP Sun Aug  9 21:02:24 NZST 2026
+[    9.477087] Machine model: ROCK 4D
+[    9.493862] earlycon: uart8250 at MMIO32 0x000000002ad40000 (options '')
+[    9.497424] printk: bootconsole [uart8250] enabled
+[   [   10.876746] iommu: Default domain type: Translated 
+[   10.877221] iommu: DMA domain TLB invalidation policy: strict mode 
+[   10.878185] SCSI subsystem ini 9.497983] efi: UEFI not found.
+[    9.504637] OF: fdt: Reserved memtialized
+[   10.879271] usbcore: registered new interface driver usbfs
+[   10.879859] usbcore: registered new interface driver hub
+[   10.880402] usbcore: registered new device driver usb
+[   10.881041] mc: Linux media interface: v0.10
+[   10.881489] videodev: Linux video capture interface: v2.00
+[   10.882093] pps_core: LinuxPPS API ver. 1 rory: failed to reserve memory for node 'drm-logo@0': base 0x000000000egistered
+[   10.883086] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[   10.883973] PTP clock support registered
+[   10.884389] EDAC MC: Ver: 3.0.0
+[   10.885658] arm-scmi firmware:scmi: Enabled polling mode TX channel - prot_id:16
+0000000, size 0 MiB
+[    9.505719] OF: fdt: Rese[rved memory: failed   10.886493] arm-scmi firmware:scmi: SCMI Notifications - Core Enabled.
+[   10.887656] arm-scmi firmware:scmi: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+ to reserve memory for node 'drm-cubic-lut@0': base 0x000000000000000[   10.891376] Advanced Linux Sound Architecture Driver Initialized.
+[   10.892630] Bluetooth: Core ver 2.22
+[   10.893017] NET: Registered PF_BLUETOOTH protocol family
+[   10.893527] Bluetooth: HCI device and connection manager initialized
+[   10.894140] Bluetooth: HCI socket layer in0, size 0 MiB
+[    9.922572] Zone ranges:
+[    9.922838]   DMA     itialized
+[   10.895126] Bluetooth: L2CAP socket layer initialized
+[   10.895619] Bluetooth: SCO socket layer initialized
+[   10.897762] rockchip-cpuinfo cpuinfo: SoC            : 35760000
+[   10.898255] rockchip-cpuinfo  [mem 0x0000000040200000-0x00000000ffffffff]
+[    9.923448]   DMA32 cpuinfo: Serial          : f3991d3e8cf80894
+[   10.901858] clocksource: Switched to clocksource arch_sys_counter
+   empty
+[    9.923733]   Normal   [mem 0x0000000100000000-0x0000000[33fffffff]
+[    9.924337] Movable zone start for each node
+[    9.924751] Early memory node ranges
+[    9.925098]   node   0: [mem 0x0000000040200000-0x000000033fffffff]
+[    9.925716] Initmem setup node 0 [mem 0x0000000040200000-0x000000033fffffff]
+[    9.955613] On node 0, zone DMA: 512 pages in unavailable ranges
+[   10.043165] cma: Reserved 16 MiB at 0x00000000ff000000
+[   10.044515] psci: probing for conduit method from DT.
+[   10.045014] psci: PSCIv1.1 detected in firmware.
+[   10.045463] psci: Using standard PSCI v0.2 function IDs
+[   10.045970] psci: MIGRATE_INFO_TYPE not supported.
+[   10.046444] psci: SMC Calling Convention v1.2
+[   10.047468] percpu: Embedded 30 pages/cpu s84344 r8192 d30344 u122880
+[   10.048366] Detected VIPT I-cache on CPU0
+[   10.048837] CPU features: detected: ARM erratum 845719
+[   10.049338] alternatives: applying boot alternatives
+[   10.050056] Built 1 zonelists, mobility grouping on.  Total pages: 3096072
+[   10.050731] Kernel command line: console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=PARTUUID=52524b33-02 rootfstype=ext4 rootwait rw log_buf_len=8M
+[   10.063411] printk: log_buf_len: 8388608 bytes
+[   10.063846] printk: early log buf free: 260072(99%)
+[   10.067067] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[   10.069229] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[   10.070002] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[   10.070656] software IO TLB: area num 8.
+[   10.093825] software IO TLB: mapped [mem 0x00000000f8e85000-0x00000000fce85000] (64MB)
+[   10.345985] Memory: 12172952K/12580864K available (18816K kernel code, 4138K rwdata, 7948K rodata, 8192K init, 731K bss, 391528K reserved, 16384K cma-reserved)
+[   10.347612] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[   10.348316] ftrace: allocating 72957 entries in 285 pages
+[   10.553757] ftrace: allocated 285 pages with 5 groups
+[   10.554428] trace event string verifier disabled
+[   10.555223] rcu: Hierarchical RCU implementation.
+[   10.555683] rcu:     RCU event tracing is enabled.
+[   10.556124]  Rude variant of Tasks RCU enabled.
+[   10.556561]  Tracing variant of Tasks RCU enabled.
+[   10.557027] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[   10.573217] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[   10.579710] Root IRQ handler: gic_handle_irq
+[   10.580151] GIC: Using split EOI/Deactivate mode
+[   10.582784] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[   10.625420] arch_timer: cp15 timer(s) running at 1000.00MHz (phys).
+[   10.626033] clocksource: arch_sys_counter: mask: 0x1fffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+[   10.627061] sched_clock: 61 bits at 1000MHz, resolution 1ns, wraps every 4398046511103ns
+[   10.631212] Console: colour dummy device 80x25
+[   10.631704] Calibrating delay loop (skipped), value calculated using timer frequency.. 2000.00 BogoMIPS (lpj=4000000)
+[   10.632683] pid_max: default: 32768 minimum: 301
+[   10.633215] LSM: Security Framework initializing
+[   10.633863] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[   10.634613] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[   10.637199] cacheinfo: Unable to detect cache hierarchy for CPU 0
+[   10.638717] cblist_init_generic: Setting adjustable number of callback queues.
+[   10.639424] cblist_init_generic: Setting shift to 3 and lim to 1.
+[   10.640117] cblist_init_generic: Setting adjustable number of callback queues.
+[   10.640782] cblist_init_generic: Setting shift to 3 and lim to 1.
+[   10.641605] rcu: Hierarchical SRCU implementation.
+[   10.642048] rcu:     Max phase no-delay instances is 1000.
+[   10.646457] EFI services will not be available.
+[   10.647690] smp: Bringing up secondary CPUs ...
+[   10.648920] Detected VIPT I-cache on CPU1
+[   10.649048] cacheinfo: Unable to detect cache hierarchy for CPU 1
+[   10.649102] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[   10.649960] Detected VIPT I-cache on CPU2
+[   10.650061] cacheinfo: Unable to detect cache hierarchy for CPU 2
+[   10.650093] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[   10.650894] Detected VIPT I-cache on CPU3
+[   10.651003] cacheinfo: Unable to detect cache hierarchy for CPU 3
+[   10.651033] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[   10.651899] CPU features: detected: Spectre-BHB
+[   10.651912] CPU features: detected: ARM erratum 1742098
+[   10.651917] CPU features: detected: ARM errata 1165522, 1319367, or 1530923
+[   10.651922] Detected PIPT I-cache on CPU4
+[   10.652024] cacheinfo: Unable to detect cache hierarchy for CPU 4
+[   10.652060] CPU4: Booted secondary processor 0x0000000100 [0x411fd080]
+[   10.652863] Detected PIPT I-cache on CPU5
+[   10.652949] cacheinfo: Unable to detect cache hierarchy for CPU 5
+[   10.652974] CPU5: Booted secondary processor 0x0000000101 [0x411fd080]
+[   10.653801] Detected PIPT I-cache on CPU6
+[   10.653894] cacheinfo: Unable to detect cache hierarchy for CPU 6
+[   10.653918] CPU6: Booted secondary processor 0x0000000102 [0x411fd080]
+[   10.654698] Detected PIPT I-cache on CPU7
+[   10.654790] cacheinfo: Unable to detect cache hierarchy for CPU 7
+[   10.654815] CPU7: Booted secondary processor 0x0000000103 [0x411fd080]
+[   10.654926] smp: Brought up 1 node, 8 CPUs
+[   10.667467] SMP: Total of 8 processors activated.
+[   10.667903] CPU features: detected: 32-bit EL0 Support
+[   10.668387] CPU features: detected: 32-bit EL1 Support
+[   10.668862] CPU features: detected: CRC32 instructions
+[   10.669458] CPU: All CPU(s) started at EL2
+[   10.669847] alternatives: applying system-wide alternatives
+[   10.674028] devtmpfs: initialized
+[   10.715120] Registered cp15_barrier emulation handler
+[   10.715617] Registered setend emulation handler
+[   10.716272] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[   10.717202] futex hash table entries: 2048 (order: 5, 131072 bytes, linear)
+[   10.718538] pinctrl core: initialized pinctrl subsystem
+[   10.719599] DMI not present or invalid.
+[   10.720679] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[   10.722991] DMA: preallocated 2048 KiB GFP_KERNEL pool for atomic allocations
+[   10.724344] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[   10.725934] DMA: preallocated 2048 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+[   10.733339] Registered FIQ tty driver
+[   10.734095] thermal_sys: Registered thermal governor 'fair_share'
+[   10.734103] thermal_sys: Registered thermal governor 'step_wise'
+[   10.734677] thermal_sys: Registered thermal governor 'user_space'
+[   10.735242] thermal_sys: Registered thermal governor 'power_allocator'
+[   10.735869] cpuidle: using governor menu
+[   10.737209] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[   10.738110] ASID allocator initialised with 65536 entries
+[   10.742649] ramoops: dmesg-0 0x18000@0x0000000040110000
+[   10.743153] ramoops: dmesg-1 0x18000@0x0000000040128000
+[   10.743673] ramoops: console 0x80000@0x0000000040140000
+[   10.744181] ramoops: pmsg    0x30000@0x00000000401c0000
+[   10.745147] printk: console [ramoops-1] enabled
+[   10.745580] pstore: Registered ramoops as persistent store backend
+[   10.746164] ramoops: using 0xe0000@0x40110000, ecc: 0
+[   10.771589] platform 27d00000.vop: Fixed dependency cycle(s) with /hdmi@27da0000
+[   10.772371] platform 27da0000.hdmi: Fixed dependency cycle(s) with /vop@27d00000
+[   10.820877] rockchip-gpio 27320000.gpio: probed /pinctrl/gpio@27320000
+[   10.822120] rockchip-gpio 2ae10000.gpio: probed /pinctrl/gpio@2ae10000
+[   10.823528] rockchip-gpio 2ae20000.gpio: probed /pinctrl/gpio@2ae20000
+[   10.824727] rockchip-gpio 2ae30000.gpio: probed /pinctrl/gpio@2ae30000
+[   10.825972] rockchip-gpio 2ae40000.gpio: probed /pinctrl/gpio@2ae40000
+[   10.826815] rockchip-pinctrl pinctrl: probed pinctrl
+[   10.850417] fiq_debugger fiq_debugger.0: error -ENXIO: IRQ fiq not found
+[   10.851074] fiq_debugger fiq_debugger.0: error -ENXIO: IRQ wakeup not found
+[   10.851773] fiq_debugger_probe: could not install nmi irq handler
+[   10.852851] printk: console [ttyFIQ0] enabled
+[   10.853565] Registered fiq debugger ttyFIQ0
+[   10.876746] iommu: Default domain type: Translated 
+[   10.877221] iommu: DMA domain TLB invalidation policy: strict mode 
+[   10.878185] SCSI subsystem initialized
+[   10.879271] usbcore: registered new interface driver usbfs
+[   10.879859] usbcore: registered new interface driver hub
+[   10.880402] usbcore: registered new device driver usb
+[   10.881041] mc: Linux media interface: v0.10
+[   10.881489] videodev: Linux video capture interface: v2.00
+[   10.882093] pps_core: LinuxPPS API ver. 1 registered
+[   10.883086] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[   10.883973] PTP clock support registered
+[   10.884389] EDAC MC: Ver: 3.0.0
+[   10.885658] arm-scmi firmware:scmi: Enabled polling mode TX channel - prot_id:16
+[   10.886493] arm-scmi firmware:scmi: SCMI Notifications - Core Enabled.
+[   10.887656] arm-scmi firmware:scmi: SCMI Protocol v2.0 'rockchip:' Firmware version 0x0
+[   10.891376] Advanced Linux Sound Architecture Driver Initialized.
+[   10.892630] Bluetooth: Core ver 2.22
+[   10.893017] NET: Registered PF_BLUETOOTH protocol family
+[   10.893527] Bluetooth: HCI device and connection manager initialized
+[   10.894140] Bluetooth: HCI socket layer initialized
+[   10.895126] Bluetooth: L2CAP socket layer initialized
+[   10.895619] Bluetooth: SCO socket layer initialized
+[   10.897762] rockchip-cpuinfo cpuinfo: SoC            : 35760000
+[   10.898255] rockchip-cpuinfo cpuinfo: Serial         : f3991d3e8cf80894
+[   10.901858] clocksource: Switched to clocksource arch_sys_counter
+   10.902786] VFS: Disk quotas dquot_6.6.0
+[   10.979[   10.902786] VFS: Disk quotas dquot_6.6.0
+085] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[   10.979085] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[   10.991590] NET: Registered PF_INET protocol family
+[   10.991590] NET: Registered PF_INET protocol family
+[   10.992567] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[   10.992567] IP idents hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[   11.007235] tcp_listen_portaddr_hash hash table entries: 8192 (order: 6, 262144 bytes, linear)
+[   11.007235] tcp_listen_portaddr_hash hash table entries: 8192 (ord[er: 6, 262144 bytes, linear)
+   11.008232] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[   11.008232] Table-perturb hash table entries: 65536 (order: 6, 262[144 bytes, linear)
+   11.009614] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[   11.009614] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[   11.012007] TCP bind hash table entries: 65536 (order: 10, 4194304 bytes, linear)
+[   11.012007] TCP bind hash table entries: 65536 (order: 10, 4194304 bytes, linear)
+[   11.015602] TCP: Hash tables configured (established 131072 bind 65536)
+[   11.015602] TCP: Hash tables configured (established 131072 bind 6[5536)
+   11.016665] MPTCP token hash table entries: 16384 (order: 7, 786432 bytes, linear)
+[   11.016665] MPTCP token hash table entries: 16384 (order: 7, 78643[2 bytes, linear)
+   11.017948] UDP hash table entries: 8192 (order: 7, 786432 bytes, linear)
+[   11.017948] UDP hash table entries: 8192 (order: 7, 786432 bytes, [linear)
+   11.019435] UDP-Lite hash table entries: 8192 (order: 7, 786432 bytes, linear)
+[   11.019435] UDP-Lite hash table entries: 8192 (order: 7, 786432 bytes, linear)
+[   11.020987] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[   11.020987] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[   11.022117] RPC: Registered named UNIX socket transport module.
+[[   11.022117] RPC: Registered named UNIX socket transport module.
+   11.022944] RPC: Registered udp transport module.
+[ [   11.022944] RPC: Registered udp transport module.
+  11.023904] RPC: Registered tcp transport module.
+[   11.024758] R[   11.023904] RPC: Registered tcp transport module.
+PC: Registered tcp NFSv4.1 backchannel transport module.
+[   11.024758] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[   11.026786] PCI: CLS 0 bytes, default 64
+[   11.026786] PCI: CLS 0 bytes, default 64
+[   11.028534] rockchip-thermal 2ae70000.tsadc: Missing rockchip,grf property
+[   11.028534] rockchip-thermal 2ae70000.tsadc: Missing rockchip,grf property
+[   11.031638] thermal thermal_zone0: power_allocator: sustainable_power will be estimated
+[   11.031638] thermal thermal_zone0: power_allocator: sustainable_po[wer will be estimated
+   11.032597] thermal thermal_zone1: power_allocator: sustainable_power will be estimated
+[   11.032597] thermal thermal_zone1: power_allocator: sustainable_po[wer will be estimated
+   11.034276] thermal thermal_zone3: power_allocator: sustainable_power will be estimated
+[   11.034276] thermal thermal_zone3: power_allocator: sustainable_po[wer will be estimated
+   11.035517] thermal thermal_zone4: power_allocator: sustainable_power will be estimated
+[   11.035517] thermal thermal_zone4: power_allocator: sustainable_po[wer will be estimated
+   11.036969] thermal thermal_zone5: power_allocator: sustainable_power will be estimated
+[   11.036969] thermal thermal_zone5: power_allocator: sustainable_power will be estimated
+[   11.038836] rockchip-thermal 2ae70000.tsadc: tsadc is probed successfully!
+[   11.038836] rockchip-thermal 2ae70000.tsadc: tsadc is probed successfully!
+[   11.041585] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 counters available
+[   11.041585] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 counters available
+[   11.043140] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 counters available
+[   11.043140] hw perfevents: enabled with armv8_cortex_a72 PMU driver, 7 counters available
+[   11.044916] kvm [1]: IPA Size Limit: 40 bits
+[   11.044916] kvm [1]: IPA Size Limit: 40 bits
+[   11.047125] kvm [1]: vgic interrupt IRQ9
+[   11.047125] kvm [1]: vgic interrupt IRQ9
+[   11.047824] kvm [1]: Hyp mode initialized successfully
+[   11.047824] kvm [1]: Hyp mode initialized successfully
+[   12.074238] Initialise system trusted keyrings
+[   12.074238] Initialise system trusted keyrings
+[   12.074855] workingset: timestamp_bits=46 max_order=22 bucket_order=0
+[   12.074855] workingset: timestamp_bits=46 max_order=22 bucket_order=0
+[   12.083020] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[   12.083020] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[   12.084402] NFS: Registering the id_resolver key type
+[   12.084402] NFS: Registering the id_resolver key type[
+   12.084923] Key type id_resolver registered
+[   12.085733] K[   12.084923] Key type id_resolver registered
+ey type id_legacy registered
+[   12.086600] nfs4filelayo[   12.085733] Key type id_legacy registered
+ut_init: NFSv4 File Layout Driver Registering...
+[   12.087587] nfs4flexfi[   12.086600] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+lelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[   12.088900] ntfs: driver 2.1.32 [Fl[   12.087587] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+ags: R/W].
+[   12.088900] ntfs: driver [2.1.32 [Flags: R/W].
+   12.090162] jffs2: version 2.2. (NAND) (SUMMARY)  © 2001-2006 Red Hat, Inc.
+[   12.090162] jffs2: version 2.2. (NAND) (SUMMARY)  © 2001-2006 Red[ Hat, Inc.
+   12.091615] fuse: init (API version 7.38)
+[   12.092497] [   12.091615] fuse: init (API version 7.38)
+SGI XFS with ACLs, security attributes, realtime, verbose warnings, quota, no debug enabled
+[   12.092497] SGI XFS with ACLs, security attributes, realtime, verbose warnings, quota, no debug enabled
+[   12.142888] NET: Registered PF_ALG protocol family
+[   12.142888[] NET: Registered PF_ALG protocol family
+   12.143375] Key type asymmetric registered
+[   12.144180] Asymm[   12.143375] Key type asymmetric registered
+etric key parser 'x509' registered
+[   12.145066] Block layer SC[   12.144180] Asymmetric key parser 'x509' registered
+SI generic (bsg) driver version 0.4 loaded (major 242)
+[   1[2.145066] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 242)
+   12.146220] io scheduler mq-deadline registered
+[   12.147291] io scheduler kyber registered[   12.146220] io scheduler mq-deadline registered
+
+[   12.147291] io scheduler kyber registered
+[   12.150468] rockchip-csi2-dphy-hw 2b030000.csi2-dphy0-hw: csi2 dphy hw probe successfully!
+[   12.150468] rockchip-csi2-dphy-hw 2b030000.csi2-dphy0-hw: csi2 dph[y hw probe successfully!
+   12.151490] rockchip-csi2-dphy-hw 2b070000.csi2-dphy1-hw: csi2 dphy hw probe successfully!
+[   12.151490] rockchip-csi2-dphy-hw 2b070000.csi2-dphy1-hw: csi2 dphy hw probe successfully!
+[   12.155221] rockchip-usb2phy 2602e000.syscon:usb2-phy@0: error -ENXIO: IRQ index 0 not found
+[   12.155221] rockchip-usb2phy 2602e000.syscon:usb2-phy@0: error -EN[XIO: IRQ index 0 not found
+   12.156215] rockchip-usb2phy 2602e000.syscon:usb2-phy@0: refclk freq 24000000
+[   12.156215] rockchip-usb2phy 2602e000.syscon:usb2-phy@0: refclk freq 24000000
+[   12.159914] rockchip-usb2phy 2602e000.syscon:usb2-phy@2000: error -ENXIO: IRQ index 0 not found
+[   12.159914] rockchip-usb2phy 2602e000.syscon:usb2-phy@2000: error [-ENXIO: IRQ index 0 not found
+   12.160945] rockchip-usb2phy 2602e000.syscon:usb2-phy@2000: refclk freq 24000000
+[   12.160945] rockchip-usb2phy 2602e000.syscon:usb2-phy@2000: refclk freq 24000000
+[   12.171100] rockchip-hdptx-phy-hdmi 2b000000.hdmiphy: hdptx phy init success
+[   12.171100] rockchip-hdptx-phy-hdmi 2b000000.hdmiphy: hdptx phy init success
+[   12.177165] rk-pcie 2a200000.pcie: invalid prsnt-gpios property in node
+[   12.177675] iep: Module initialized.
+[   12.177165] rk-pcie 2a200000.pcie: invalid prsnt-gpios property in node
+[   12.177675] iep: Module initialized.
+[   12.178775] mpp_service mpp-srv: 
+[   12.179353] mpp_service mp[   12.178775] mpp_service mpp-srv: 
+p-srv: probe start
+[   12.179353] mpp_service mpp-srv: probe start
+[   12.184452] rk-pcie 2a200000.pcie: can't get current limit.
+[   12.184456] mpp_rkvenc2 rkvenc-ccu: probing start
+[   12.184873] rk-pcie 2a200000.pcie: max MSI vector is 32
+[   12.184985] mpp_rkvenc2 rkvenc-ccu: probing finish
+[[    12.184452] rk-pcie 2a200000.pcie: can't get current limit.
+  12.185488] rk-pcie 2a200000.pcie: host bridge /pcie@2a200000 ranges:
+[   12.186911] mpp_service mpp-srv: probe success
+[   12.187502] rk-pcie 2a200000.pcie:      err 0x0020000000..0x00200fffff -> 0x0020000000
+[   12.184456] mpp_rkvenc2 rkvenc-ccu: probing start
+[   12.184873] [rk-pcie 2a200000.pcie: max MSI vector is 32
+[   12.184985] mpp_rkvenc2 rkvenc-ccu: probing finish
+[   12.185488] rk-pcie 2a200000.pcie: host bridge /pcie@2a200000 ranges:
+[   12.186911] mpp_service mpp-srv: probe success
+[   12.187502] rk-pcie 2a200000.pcie:      err 0x0020000000..0x00200fffff -> 0x0020000000
+   12.188700] rk-pcie 2a200000.pcie:       IO 0x0020100000..0x00201fffff -> 0x0020100000
+[   12.192307[   12.188700] rk-pcie 2a200000.pcie:       IO 0x0020100000..0x00201fffff -> 0x0020100000
+] rk-pcie 2a200000.pcie:      MEM 0x0020200000..0x0020ffffff -> 0x0020200000
+[   12.1937[   12.192307] rk-pcie 2a200000.pcie:      MEM 0x0020200000..0x0020ffffff -> 0x0020200000
+44] rk-pcie 2a200000.pcie:      MEM 0x0900000000..0x097fffffff -> 0x0900000000
+[   12.193744] rk-pcie 2a200000.pcie:      MEM 0x0900000000..0x097fff[ffff -> 0x0900000000
+   12.195402] rk-pcie 2a200000.pcie: iATU unroll: enabled
+[   12.196459] rk-pcie 2a2000[   12.195402] rk-pcie 2a200000.pcie: iATU unroll: enabled
+00.pcie: iATU regions: 8 ob, 8 ib, align 64K, limit 8G
+[   12.196459] rk-pcie 2a200000.pcie: iATU regions: 8 ob, 8 ib, align 64K, limit 8G
+[   12.203387] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+[   12.20[3387] dma-pl330 2ab90000.dma-controller: Loaded driver for PL330 DMAC-241330
+   12.204089] dma-pl330 2ab90000.dma-controller:        DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.204089] dma-pl330 2ab90000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.206674] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[   12.2[06674] dma-pl330 2abb0000.dma-controller: Loaded driver for PL330 DMAC-241330
+   12.207371] dma-pl330 2abb0000.dma-controller:        DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.207371] dma-pl330 2abb0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.209970] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+[   12[.209970] dma-pl330 2abd0000.dma-controller: Loaded driver for PL330 DMAC-241330
+   12.210666] dma-pl330 2abd0000.dma-controller:        DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.210666] dma-pl330 2abd0000.dma-controller:       DBUFF-128x8bytes Num_Chans-8 Num_Peri-32 Num_Events-16
+[   12.213103] rockchip-system-monitor rockchip-system-monitor: system monitor probe
+[   12.213103] rockchip-system-monitor rockchip-system-monitor: syst[em monitor probe
+   12.214218] arm-scmi firmware:scmi: Failed. SCMI protocol 22 not active.
+[   12.2142[18] arm-scmi firmware:scmi: Failed. SCMI protocol 22 not active.
+   12.215172] Serial: 8250/16550 driver, 15 ports, IRQ sharing disabled
+[   12.215172] Serial: 8250/16550 driver, 15 ports, IRQ sharing disabled
+[   12.217489] random: crng init done
+[   12.217489] random: crng init done
+[   12.230308] cacheinfo: Unable to detect cache hierarchy for CPU 0
+[   12.230308] cacheinfo: Unable to detect cache hierarchy for CPU 0[
+   12.231304] brd: module loaded
+[   12.231304] brd: module loaded
+[   12.235006] loop: module loaded
+[   12.235006] loop: module loaded
+[   12.235516] zram: Added device: zram0
+[   12.236077] lkdtm:[   12.235516] zram: Added device: zram0
+ No crash points registered, enable through debugfs
+[   12.236077] lkdtm: No crash points registered, enable through debugfs
+[   12.239746] CAN device driver interface
+[   12.239746] CAN device driver interface
+[   12.241108] rk_gmac-dwmac 2a220000.ethernet: IRQ eth_lpi not found
+[   12.241108] rk_gmac-dwmac 2a220000.ethernet: IRQ eth_lpi not foun[d
+   12.241884] rk_gmac-dwmac 2a220000.ethernet: supply phy not found, using dummy regulator
+[   [   12.241884] rk_gmac-dwmac 2a220000.ethernet: supply phy not found, using dummy regulator
+12.243021] rk_gmac-dwmac 2a220000.ethernet: clock input or output? (output).
+[   12.24[   12.243021] rk_gmac-dwmac 2a220000.ethernet: clock input or output? (output).
+4372] rk_gmac-dwmac 2a220000.ethernet: TX delay(0x20).
+[   [12.244372] rk_gmac-dwmac 2a220000.ethernet: TX delay(0x20).
+   12.245508] rk_gmac-dwmac 2a220000.ethernet: Can not read property: rx_delay.
+[ [  12.245508] rk_gmac-dwmac 2a220000.ethernet: Can not read property: rx_delay.
+   12.246652] rk_gmac-dwmac 2a220000.ethernet: set rx_delay to 0xffffffff
+[   12.2479[   12.246652] rk_gmac-dwmac 2a220000.ethernet: set rx_delay to 0xffffffff
+54] rk_gmac-dwmac 2a220000.ethernet: integrated PHY? (no).
+[   12.249094] rk_gmac-dwmac 2a220000.eth[   12.247954] rk_gmac-dwmac 2a220000.ethernet: integrated PHY? (no).
+ernet: cannot get clock mac_clk_rx
+[   12.250244] rk_gmac-dwmac 2a220000.ethernet: cannot get clock mac_c[l   12.249094] rk_gmac-dwmac 2a220000.ethernet: cannot get clock mac_clk_rx
+k_tx
+[   12.251443] rk_gmac-dwmac 2a220000.ethernet: cannot get clock clk_mac_speed
+[   12.250244] rk_gmac-dwmac 2a220000.ethernet: cannot get clock mac[_clk_tx
+[   12.251443] rk_gmac-dwmac 2a220000.ethernet: cannot get clock clk_mac_speed
+   12.252299] rk_gmac-dwmac 2a220000.ethernet: init for RGMII_RXID
+[   12.252299] rk_gmac-d[wmac 2a220000.ethernet: init for RGMII_RXID
+   12.254021] rk_gmac-dwmac 2a220000.ethernet: User ID: 0x30, Synopsys ID: 0x51
+[   12.255181] rk_gmac-dwma[   12.254021] rk_gmac-dwmac 2a220000.ethernet: User ID: 0x30, Synopsys ID: 0x51
+c 2a220000.ethernet:    DWMAC4/5
+[   12.256267] rk_gmac-dwmac 2a220000.ethernet: DMA HW capability[   12.255181] rk_gmac-dwmac 2a220000.ethernet:        DWMAC4/5
+ register supported
+[   12.257386] rk_gmac-dwmac 2a220000.ethe[   12.256267] rk_gmac-dwmac 2a220000.ethernet: DMA HW capability register supported
+rnet: RX Checksum Offload Engine supported
+[   12.258723] rk_gmac-dwmac 2a220000.ethernet: [   12.257386] rk_gmac-dwmac 2a220000.ethernet: RX Checksum Offload Engine supported
+TX Checksum insertion supported
+[   12.260006] rk_gmac-dwmac 2a220000.ethernet: Wake-Up On La[   12.258723] rk_gmac-dwmac 2a220000.ethernet: TX Checksum insertion supported
+n supported
+[   12.261234] rk_gmac-dwmac 2a220000.ethernet: TSO supported
+[   12.261735] rk[   12.260006] rk_gmac-dwmac 2a220000.ethernet: Wake-Up On Lan supported
+[   12.261234] rk_gmac-dwmac 2a220000.ethernet: TSO supported
+_gmac-dwmac 2a220000.ethernet: Enable RX Mitigation via HW Watchdog Timer
+[   12.263495] rk_gmac-dwm[   12.261735] rk_gmac-dwmac 2a220000.ethernet: Enable RX Mitigation via HW Watchdog Timer
+ac 2a220000.ethernet: Enabled L3L4 Flow TC (entries=2)
+[   12.264833] rk_gmac-dwmac 2a2[   12.263495] rk_gmac-dwmac 2a220000.ethernet: Enabled L3L4 Flow TC (entries=2)
+20000.ethernet: Enabled RFS Flow TC (entries=10)
+[   12.266107] rk_gmac-dwmac 2a220000.ethernet[   12.264833] rk_gmac-dwmac 2a220000.ethernet: Enabled RFS Flow TC (entries=10)
+: TSO feature enabled
+[   12.267270] rk_gmac-dwmac 2a220000.ethernet: Using 40/40 bits DMA host/[d   12.266107] rk_gmac-dwmac 2a220000.ethernet: TSO feature enabled
+evice width
+[   12.267270] rk_gmac-dwmac 2a220000.ethernet: Using 40/40 bits DMA host/device width
+[   12.399773] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.399773] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.405440] usbcore: registered new interface driver rtl8150
+[   12.405440] usbcore: registere[d new interface driver rtl8150
+   12.405990] usbcore: registered new device driver r8152-cfgselector
+[   12.405990] usbcore: registered new device drive[r r8152-cfgselector
+   12.407062] usbcore: registered new interface driver r8152
+[   12.407062] usbcore: registered new interface driver r8152
+[   12.417366] phy phy-2602e000.syscon:usb2-phy@0.0: illegal mode
+[   12.417[366] phy phy-2602e000.syscon:usb2-phy@0.0: illegal mode
+   12.417927] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[   12.417927] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[   12.419030] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 1
+[   12.419030] xhci-hcd xhci-hcd.0.auto: new USB bus registered, ass[igned bus number 1
+   12.420188] xhci-hcd xhci-hcd.0.auto: hcc params 0x0220fe64 hci version 0x110 quirks 0x0002008002010010
+[   12.421329] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.421632] xhci-hcd xhci-hcd.0.auto: irq 55, io mem 0x23000000
+[   12.420188] xhci-hcd xhci-hcd.0.auto: hcc params 0x0220fe64 hci v[ersion 0x110 quirks 0x0002008002010010
+[   12.421329] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.421632] xhci-hcd xhci-hcd.0.auto: irq 55, io mem 0x23000000
+   12.422792] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[   12.422792] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[   12.425107] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 2
+[   12.425107] x[hci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 2
+   12.426215] xhci-hcd xhci-hcd.0.auto: Host supports USB 3.0 SuperSpeed
+[   1[   12.426215] xhci-hcd xhci-hcd.0.auto: Host supports USB 3.0 SuperSpeed
+2.427552] usb usb1: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.01
+[   12.428870[   12.427552] usb usb1: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.01
+] usb usb1: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[   12.430251][   12.428870] usb usb1: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+ usb usb1: Product: xHCI Host Controller
+[   12.431318] usb usb1: Manufacturer: Linux 6.1.115-g[   12.430251] usb usb1: Product: xHCI Host Controller
+4daa62ae1669-dirty xhci-hcd
+[   12.432396] usb usb1: SerialNumber[   12.431318] usb usb1: Manufacturer: Linux 6.1.115-g4daa62ae1669-dirty xhci-hcd
+: xhci-hcd.0.auto
+[   12.432396] usb usb1: SerialNumber: xhci-hcd.0.auto
+[   12.433723] hub 1-0:1.0: USB hub found
+[   12.434398] hub [   12.433723] hub 1-0:1.0: USB hub found
+1-0:1.0: 1 port detected
+[   12.435288] usb usb2: [   12.434398] hub 1-0:1.0: 1 port detected
+We don't know the algorithms for LPM for this host, disabling LPM.
+[   12.435288][ usb usb2: We don't know the algorithms for LPM for this host, disabling LPM.
+   12.436420] usb usb2: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 6.01
+[   [12.436420] usb usb2: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 6.01
+   12.437880] usb usb2: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[  [   12.437880] usb usb2: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+ 12.439245] usb usb2: Product: xHCI Host Controller
+[   12.440314] usb usb2: Manufacturer: Linux[   12.439245] usb usb2: Product: xHCI Host Controller
+ 6.1.115-g4daa62ae1669-dirty xhci-hcd
+[   12.441390] usb usb2: S[   12.440314] usb usb2: Manufacturer: Linux 6.1.115-g4daa62ae1669-dirty xhci-hcd
+erialNumber: xhci-hcd.0.auto
+[   12.441390] usb usb2: SerialNumber: xhci-hcd.0.auto
+[   12.442695] hub 2-0:1.0: USB hub found
+[   12.443164] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.443290] hub 2-0:1.0: 1 port detected
+[   12.442695] hub 2-0:1.0: USB hub found
+[   12.443164] rk-pcie 2a[200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.443290] hub 2-0:1.0: 1 port detected
+   12.444446] phy phy-2602e000.syscon:usb2-phy@2000.1: illegal mode
+[   12.445919[   12.444446] phy phy-2602e000.syscon:usb2-phy@2000.1: illegal mode
+] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+[   12.447030] xhci-hcd xhci-hcd.1.auto: new US[   12.445919] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+B bus registered, assigned bus number 3
+[   12.44[   12.447030] xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 3
+8267] xhci-hcd xhci-hcd.1.auto: hcc params 0x0220fe64 hci version 0x110 quirks 0x0002008002010010
+[   12.448267] xhci-hcd xhci-hcd.1.auto: hcc params[ 0x0220fe64 hci version 0x110 quirks 0x0002008002010010
+   12.449805] xhci-hcd xhci-hcd.1.auto: irq 56, io mem 0x23400000
+[   12.449805] xhci-hcd xhci-hcd.1.auto: irq 56, io mem 0x23400000
+[   12.451228] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+[   12.451228] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+[   12.452269] xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 4
+[   12.452269[] xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 4
+   12.453366] xhci-hcd xhci-hcd.1.auto: Host supports USB 3.0 SuperSpeed
+[   [   12.453366] xhci-hcd xhci-hcd.1.auto: Host supports USB 3.0 SuperSpeed
+12.454716] usb usb3: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.01
+[   12.45603[   12.454716] usb usb3: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.01
+5] usb usb3: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[   12.457406][   12.456035] usb usb3: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+ usb usb3: Product: xHCI Host Controller
+[   12.458486] usb usb3: Manufacturer: Linux 6.1.115-[   12.457406] usb usb3: Product: xHCI Host Controller
+g4daa62ae1669-dirty xhci-hcd
+[   12.459562] usb usb3: SerialNumbe[   12.458486] usb usb3: Manufacturer: Linux 6.1.115-g4daa62ae1669-dirty xhci-hcd
+r: xhci-hcd.1.auto
+[   12.459562] usb usb3: SerialNumber: xhci-hcd.1.auto
+[   12.460867] hub 3-0:1.0: USB hub found
+[   12.461538] hub 3-[   12.460867] hub 3-0:1.0: USB hub found
+0:1.0: 1 port detected
+[   12.462426] usb usb4: We[   12.461538] hub 3-0:1.0: 1 port detected
+ don't know the algorithms for LPM for this host, disabling LPM.
+[   12.462426] usb usb4: We don't know the algorithms for LPM for th[is host, disabling LPM.
+   12.463563] usb usb4: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 6.01
+[   12.464821] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.464942] usb usb4: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[   12.463563] us[b usb4: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 6.01
+[   12.464821] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.464942] usb usb4: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+   12.466146] usb usb4: Product: xHCI Host Controller
+[   [   12.466146] usb usb4: Product: xHCI Host Controller
+12.468430] usb usb4: Manufacturer: Linux 6.1.115-g4daa62ae1669-dirty xhci-hcd
+[[   12.468430] usb usb4: Manufacturer: Linux 6.1.115-g4daa62ae1669-dirty xhci-hcd
+   12.469507] usb usb4: SerialNumber: xhci-hcd.1.auto
+[   12.4708[   12.469507] usb usb4: SerialNumber: xhci-hcd.1.auto
+04] hub 4-0:1.0: USB hub found
+[   12.471585] hub 4-0:1.0: 1 po[   12.470804] hub 4-0:1.0: USB hub found
+rt detected
+[   12.471585] hub 4-0:1.0: 1 port detected
+[   12.472501] usbcore: registered new interface driver cdc_acm
+[[   12.472501] usbcore: registered new interface driver cdc_acm
+   12.473164] cdc_acm: USB Abstract Control Model driver for USB modems and ISDN adapters
+[   12.473164] cdc_acm: USB Abstract Control Model driver for USB mo[dems and ISDN adapters
+   12.474516] usbcore: registered new interface driver uas
+[   12.475611] usbcor[   12.474516] usbcore: registered new interface driver uas
+e: registered new interface driver usb-storage
+[   12.4[   12.475611] usbcore: registered new interface driver usb-storage
+76656] usbcore: registered new interface driver usbserial_generic
+[   12.476656] usbcore[: registered new interface driver usbserial_generic
+   12.477776] usbserial: USB Serial support registered for generic
+[   12.478906] usbcore: registe[   12.477776] usbserial: USB Serial support registered for generic
+red new interface driver aircable
+[   12.479954] usb[   12.478906] usbcore: registered new interface driver aircable
+serial: USB Serial support registered for aircable
+[ [   12.479954] usbserial: USB Serial support registered for aircable
+  12.481024] usbcore: registered new interface driver ark3116
+[   12.482079] usbserial: USB Serial suppor[   12.481024] usbcore: registered new interface driver ark3116
+t registered for ark3116
+[   12.483132] usbcore: regist[   12.482079] usbserial: USB Serial support registered for ark3116
+ered new interface driver belkin_sa
+[   12.484186] usbserial: USB Serial support registered for Belkin / P[   12.483132] usbcore: registered new interface driver belkin_sa
+eracom / GoHubs USB Serial Adapter
+[   12.485548] us[   12.484186] usbserial: USB Serial support registered for Belkin / Peracom / GoHubs USB Serial Adapter
+bcore: registered new interface driver ch341
+[   12.486486] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.486858] usbserial: USB Serial support registered for ch341-uart
+[   12.485548] usbcore: registered new interface driver ch341[
+[   12.486486] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.486858] usbserial: USB Serial support registered for ch341-uart
+   12.487965] usbcore: registered new interface driver cp210x
+[   12.489987] usbserial: USB Se[   12.487965] usbcore: registered new interface driver cp210x
+rial support registered for cp210x
+[   12.491041] usb[   12.489987] usbserial: USB Serial support registered for cp210x
+core: registered new interface driver cyberjack
+[   [   12.491041] usbcore: registered new interface driver cyberjack
+12.492096] usbserial: USB Serial support registered for Reiner SCT Cyberjack USB card reader
+[   12.492096] usbserial: USB Serial suppor[t registered for Reiner SCT Cyberjack USB card reader
+   12.493389] usbcore: registered new interface driver cypress_m8
+[   12.494660] u[   12.493389] usbcore: registered new interface driver cypress_m8
+sbserial: USB Serial support registered for DeLorme Earthmate USB
+[   12.494660] usbs[erial: USB Serial support registered for DeLorme Earthmate USB
+   12.495836] usbserial: USB Serial support registered for HID->COM RS232 Adapter
+[   12.49712[   12.495836] usbserial: USB Serial support registered for HID->COM RS232 Adapter
+0] usbserial: USB Serial support registered for Nokia CA-42 V2 Adapter
+[   12.498442] usbco[   12.497120] usbserial: USB Serial support registered for Nokia CA-42 V2 Adapter
+re: registered new interface driver usb_debug
+[   12.499614] usbserial: USB Serial support re[   12.498442] usbcore: registered new interface driver usb_debug
+gistered for debug
+[   12.500657] usbserial: USB Seria[   12.499614] usbserial: USB Serial support registered for debug
+l support registered for xhci_dbc
+[   12.501734] usb[   12.500657] usbserial: USB Serial support registered for xhci_dbc
+core: registered new interface driver digi_acceleport
+[   12.502852] usbserial: USB Serial support regist[   12.501734] usbcore: registered new interface driver digi_acceleport
+ered for Digi 2 port USB adapter
+[   12.504080] usbserial: USB Serial support registered for Digi 4 port[   12.502852] usbserial: USB Serial support registered for Digi 2 port USB adapter
+ USB adapter
+[   12.505410] usbcore: registered new interface driver io_edgeport
+[   1[   12.504080] usbserial: USB Serial support registered for Digi 4 port USB adapter
+[   12.505410] usbcore: registered new interface driver io_edgeport
+2.505975] usbserial: USB Serial support registered for Edgeport 2 port adapter
+[   12.[   12.505975] usbserial: USB Serial support registered for Edgeport 2 port adapter
+507809] usbserial: USB Serial support registered for Edgeport 4 port adapter
+[   12.508377] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.509118] usbserial: USB Serial support registered for Edgeport 8 port adapter
+[   12.507809] usbserial: USB Seria[l support registered for Edgeport 4 port adapter
+[   12.508377] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.509118] usbserial: USB Serial support registered for Edgeport 8 port adapter
+   12.510338] usbserial: USB Serial support registered for EPiC device
+[   12.510338] usbserial: USB Serial support registere[d for EPiC device
+   12.512711] usbcore: registered new interface driver io_ti
+[   12.513745] usbserial: USB Serial suppo[   12.512711] usbcore: registered new interface driver io_ti
+rt registered for Edgeport TI 1 port adapter
+[   12.5149[   12.513745] usbserial: USB Serial support registered for Edgeport TI 1 port adapter
+28] usbserial: USB Serial support registered for Edgeport TI 2 port adapter
+[   12.5163[   12.514928] usbserial: USB Serial support registered for Edgeport TI 2 port adapter
+12] usbcore: registered new interface driver empeg
+[   12.517480] usbserial: USB Serial su[   12.516312] usbcore: registered new interface driver empeg
+pport registered for empeg
+[   12.518515] usbcore: regi[   12.517480] usbserial: USB Serial support registered for empeg
+stered new interface driver f81534a_ctrl
+[   12.51958[   12.518515] usbcore: registered new interface driver f81534a_ctrl
+5] usbcore: registered new interface driver f81232
+[   12.520629] usbserial: USB Serial support registered[   12.519585] usbcore: registered new interface driver f81232
+ for f81232
+[   12.521654] usbserial: USB Serial support [   12.520629] usbserial: USB Serial support registered for f81232
+registered for f81534a
+[   12.522737] usbcore: reg[   12.521654] usbserial: USB Serial support registered for f81534a
+istered new interface driver f81534
+[   12.523772] usbserial: USB Serial support registered for Fintek F815[   12.522737] usbcore: registered new interface driver f81534
+32/F81534
+[   12.524923] usbcore: registered new inter[f   12.523772] usbserial: USB Serial support registered for Fintek F81532/F81534
+ace driver ftdi_sio
+[   12.526077] usbserial: USB Serial support registered for FTDI USB Seria[   12.524923] usbcore: registered new interface driver ftdi_sio
+l Device
+[   12.527302] usbcore: registered new[   12.526077] usbserial: USB Serial support registered for FTDI USB Serial Device
+ interface driver garmin_gps
+[   12.528480] usbserial: USB Serial support registered for Garm[   12.527302] usbcore: registered new interface driver garmin_gps
+in GPS usb/tty
+[   12.529644] usbcore: registered ne[   12.528480] usbserial: USB Serial support registered for Garmin GPS usb/tty
+w interface driver ipaq
+[   12.530652] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.530749] usbserial: USB Serial support registered for PocketPC PDA
+[   12.529644] usbcore: registered new interface driver ipaq
+[   12[.530652] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.530749] usbserial: USB Serial support registered for PocketPC PDA
+   12.531903] usbcore: registered new interface driver ipw
+[   12.533886] usbserial: USB Seri[   12.531903] usbcore: registered new interface driver ipw
+al support registered for IPWireless converter
+[   12.533886] usbserial: USB Serial support[ registered for IPWireless converter
+   12.535013] usbcore: registered new interface driver ir_usb
+[   12.536128] usbserial: USB Se[   12.535013] usbcore: registered new interface driver ir_usb
+rial support registered for IR Dongle
+[   12.537189] us[   12.536128] usbserial: USB Serial support registered for IR Dongle
+bcore: registered new interface driver iuu_phoenix
+[   12.538282] usbserial: USB Serial support registere[   12.537189] usbcore: registered new interface driver iuu_phoenix
+d for iuu_phoenix
+[   12.539397] usbcore: registered new interface driver keyspan
+[   12.539923] usbse[   12.538282] usbserial: USB Serial support registered for iuu_phoenix
+[   12.539397] usbcore: registered new interface driver keyspan
+rial: USB Serial support registered for Keyspan - (without firmware)
+[   12.541677] usbserial: USB S[   12.539923] usbserial: USB Serial support registered for Keyspan - (without firmware)
+erial support registered for Keyspan 1 port adapter
+[   12.543035] usbserial: USB Seri[   12.541677] usbserial: USB Serial support registered for Keyspan 1 port adapter
+al support registered for Keyspan 2 port adapter
+[   12.544339] usbserial: USB Serial support [   12.543035] usbserial: USB Serial support registered for Keyspan 2 port adapter
+registered for Keyspan 4 port adapter
+[   12.545652] usbcore: registered new interface drive[   12.544339] usbserial: USB Serial support registered for Keyspan 4 port adapter
+r keyspan_pda
+[   12.546846] usbserial: USB Serial support registered for Keyspan PDA
+[  [   12.545652] usbcore: registered new interface driver keyspan_pda
+[   12.546846] usbserial: USB Serial support registered for Keyspan PDA
+ 12.547433] usbserial: USB Serial support registered for Keyspan PDA - (prerenumeration)
+[   1[   12.547433] usbserial: USB Serial support registered for Keyspan PDA - (prerenumeration)
+2.549257] usbcore: registered new interface driver kl5kusb105
+[   12.550511] usbseri[   12.549257] usbcore: registered new interface driver kl5kusb105
+al: USB Serial support registered for KL5KUSB105D / PalmConnect
+[   12.550511] usbserial: USB Serial support register[ed for KL5KUSB105D / PalmConnect
+   12.551730] usbcore: registered new interface driver kobil_sct
+[   12.552275] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.552898] usbserial: USB Serial support registered for KOBIL USB smart card terminal
+[   12.551730] usbcore: registered new interface driver kobil_sc[t
+[   12.552275] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.552898] usbserial: USB Serial support registered for KOBIL USB smart card terminal
+   12.554175] usbcore: registered new interface driver mct_u232
+[   12.556[   12.554175] usbcore: registered new interface driver mct_u232
+377] usbserial: USB Serial support registered for MCT U232
+[   12.556377] usbserial: USB Serial support[ registered for MCT U232
+   12.557449] usbcore: registered new interface driver metro_usb
+[   12.558501] usbserial: USB Serial sup[   12.557449] usbcore: registered new interface driver metro_usb
+port registered for Metrologic USB to Serial
+[   12.[   12.558501] usbserial: USB Serial support registered for Metrologic USB to Serial
+559705] usbcore: registered new interface driver mos7720
+[   12.560874] usbserial: USB Seri[   12.559705] usbcore: registered new interface driver mos7720
+al support registered for Moschip 2 port adapter
+[   1[   12.560874] usbserial: USB Serial support registered for Moschip 2 port adapter
+2.562054] usbcore: registered new interface driver mos7840
+[   12.563208] usbserial: USB Seri[   12.562054] usbcore: registered new interface driver mos7840
+al support registered for Moschip 7840/7820 USB Serial Driver
+[   12.563208] usbserial: USB Serial support reg[istered for Moschip 7840/7820 USB Serial Driver
+   12.564484] usbcore: registered new interface driver mxuport
+[   12.564484] usbco[re: registered new interface driver mxuport
+   12.565716] usbserial: USB Serial support registered for MOXA UPort
+[   12.565716] usbserial: USB Serial support regi[stered for MOXA UPort
+   12.566795] usbcore: registered new interface driver navman
+[   12.567833] usbserial: USB Serial supp[   12.566795] usbcore: registered new interface driver navman
+ort registered for navman
+[   12.568869] usbcore: regist[   12.567833] usbserial: USB Serial support registered for navman
+ered new interface driver omninet
+[   12.569916] us[   12.568869] usbcore: registered new interface driver omninet
+bserial: USB Serial support registered for ZyXEL - omni.net usb
+[   12.569916] usbserial: USB Serial support r[egistered for ZyXEL - omni.net usb
+   12.571072] usbcore: registered new interface driver opticon
+[   12.572190] usbserial: USB Se[   12.571072] usbcore: registered new interface driver opticon
+rial support registered for opticon
+[   12.573243] usb[   12.572190] usbserial: USB Serial support registered for opticon
+core: registered new interface driver option
+[   12.574290] usbserial: USB Serial support registered for G[   12.573243] usbcore: registered new interface driver option
+SM modem (1-port)
+[   12.574433] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.575503] usbcore: registered new interface driver oti6858
+[   12.574290] usbserial: USB Serial[ support registered for GSM modem (1-port)
+[   12.574433] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.575503] usbcore: registered new interface driver oti6858
+   12.576462] usbserial: USB Serial support registered for oti6858
+[   12.578613] usb[   12.576462] usbserial: USB Serial support registered for oti6858
+core: registered new interface driver pl2303
+[   12.579650] usbserial: USB Serial support registered for p[   12.578613] usbcore: registered new interface driver pl2303
+l2303
+[   12.580695] usbcore: registered new interface [   12.579650] usbserial: USB Serial support registered for pl2303
+driver qcaux
+[   12.581710] usbserial: USB Serial sup[   12.580695] usbcore: registered new interface driver qcaux
+port registered for qcaux
+[   12.582739] usbcore: regist[   12.581710] usbserial: USB Serial support registered for qcaux
+ered new interface driver qcserial
+[   12.583773] usb[   12.582739] usbcore: registered new interface driver qcserial
+serial: USB Serial support registered for Qualcomm USB modem
+[   12.583773] usbserial: USB Serial support registered for Qualcomm USB modem
+   12.584931] usbcore: registered new interface driver quatech2
+[   12.586032] usbserial: USB Ser[   12.584931] usbcore: registered new interface driver quatech2
+ial support registered for Quatech 2nd gen USB to Serial Driver
+[   12.586032] usbserial: USB Serial support regist[ered for Quatech 2nd gen USB to Serial Driver
+   12.587325] usbcore: registered new interface driver safe_serial
+[   12.587325] usbco[re: registered new interface driver safe_serial
+   12.588596] usbserial: USB Serial support registered for safe_serial
+[   12.589701] usbcore: registered[   12.588596] usbserial: USB Serial support registered for safe_serial
+ new interface driver sierra
+[   12.590775] usbserial: USB Serial support registered for Sierra USB mod[   12.589701] usbcore: registered new interface driver sierra
+em
+[   12.590775] usbserial: USB Serial support registered for Sierra USB modem
+   12.591903] usbcore: registered new interface driver usb_serial_simple
+[   12.593052] usbserial: [   12.591903] usbcore: registered new interface driver usb_serial_simple
+USB Serial support registered for carelink
+[   12.593052] usbserial: U[SB Serial support registered for carelink
+   12.594185] usbserial: USB Serial support registered for flashloader
+[   12.595284] usbserial: USB Seri[   12.594185] usbserial: USB Serial support registered for flashloader
+al support registered for funsoft
+[   12.596386] usbserial: USB Serial support registered for google
+[   12.5[95284] usbserial: USB Serial support registered for funsoft
+[   12.596386] usbserial: USB Serial support registered for google
+   12.596930] usbserial: USB Serial support registered for hp4x
+[   12.596941] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.598488] usbserial: USB Serial support registered for kaufmann
+[   12.596930] usbserial: USB Seri[al support registered for hp4x
+[   12.596941] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   12.598488] usbserial: USB Serial support registered for kaufmann
+   12.599586] usbserial: USB Serial support registered for libtransistor
+[   12.601704] usbser[   12.599586] usbserial: USB Serial support registered for libtransistor
+ial: USB Serial support registered for moto_modem
+[   12.602853] usbserial: USB Serial support regist[   12.601704] usbserial: USB Serial support registered for moto_modem
+ered for motorola_tetra
+[   12.604005] usbserial: USB Serial support registered for nokia
+[   12.6045[   12.602853] usbserial: USB Serial support registered for motorola_tetra
+[   12.604005] usbserial: USB Serial support registered for nokia
+44] usbserial: USB Serial support registered for novatel_gps
+[   12.606209] usbserial: USB Ser[   12.604544] usbserial: USB Serial support registered for novatel_gps
+ial support registered for siemens_mpi
+[   12[   12.606209] usbserial: USB Serial support registered for siemens_mpi
+.607347] usbserial: USB Serial support registered for suunto
+[   12.608438] usbserial: USB Serial suppo[   12.607347] usbserial: USB Serial support registered for suunto
+rt registered for vivopay
+[   12.609503] usbserial: U[   12.608438] usbserial: USB Serial support registered for vivopay
+SB Serial support registered for zio
+[   12.610573] usbcore: registered new interface driver spcp8x5
+[   12.609503] usbseri[al: USB Serial support registered for zio
+[   12.610573] usbcore: registered new interface driver spcp8x5
+   12.611098] usbserial: USB Serial support registered for SPCP8x5
+[   12.612632] usbcore: registered new[   12.611098] usbserial: USB Serial support registered for SPCP8x5
+ interface driver ssu100
+[   12.613667] usbserial[   12.612632] usbcore: registered new interface driver ssu100
+: USB Serial support registered for Quatech SSU-100 USB to Serial Driver
+[   12.613667] usbserial: USB Serial support registere[d for Quatech SSU-100 USB to Serial Driver
+   12.614951] usbcore: registered new interface driver symbolserial
+[   12.614951] usbcor[e: registered new interface driver symbolserial
+   12.616229] usbserial: USB Serial support registered for symbol
+[   12.617304] usbcore: registered new[   12.616229] usbserial: USB Serial support registered for symbol
+ interface driver ti_usb_3410_5052
+[   12.618439][   12.617304] usbcore: registered new interface driver ti_usb_3410_5052
+ usbserial: USB Serial support registered for TI USB 3410 1 port adapter
+[   12.619699] usbserial: USB[   12.618439] usbserial: USB Serial support registered for TI USB 3410 1 port adapter
+ Serial support registered for TI USB 5052 2 port adapter
+[   12.621078] usbcore: regist[   12.619699] usbserial: USB Serial support registered for TI USB 5052 2 port adapter
+ered new interface driver upd78f0730
+[   12.622295] usbserial: USB Serial support registe[   12.621078] usbcore: registered new interface driver upd78f0730
+red for upd78f0730
+[   12.623395] usbcore: register[   12.622295] usbserial: USB Serial support registered for upd78f0730
+ed new interface driver visor
+[   12.624444] usbserial: USB Serial support registered for Handspring Vis[   12.623395] usbcore: registered new interface driver visor
+or / Palm OS
+[   12.625624] usbserial: USB Serial support[   12.624444] usbserial: USB Serial support registered for Handspring Visor / Palm OS
+ registered for Sony Clie 5.0
+[[   12.625624] usbserial: USB Serial support registered for Sony Clie 5.0
+   12.626895] usbserial: USB Serial support registered for Sony Clie 3.5
+[   12.628074] usbcore: re[   12.626895] usbserial: USB Serial support registered for Sony Clie 3.5
+gistered new interface driver wishbone_serial
+[   12.629224] usbserial: USB Serial support registered[   12.628074] usbcore: registered new interface driver wishbone_serial
+ for wishbone_serial
+[   12.630410] usbcore: registered new interface driver whiteheat
+[   12.6309[   12.629224] usbserial: USB Serial support registered for wishbone_serial
+[   12.630410] usbcore: registered new interface driver whiteheat
+51] usbserial: USB Serial support registered for Connect Tech - WhiteHEAT - (prerenumeration)
+[   12[.630951] usbserial: USB Serial support registered for Connect Tech - WhiteHEAT - (prerenumeration)
+   12.632874] usbserial: USB Serial support registered for Connect Tech - WhiteHEAT
+[   12.632874] usbserial: USB Serial support regi[stered for Connect Tech - WhiteHEAT
+   12.634377] usbcore: registered new interface driver xr_serial
+[   12.635543] usbserial: [   12.634377] usbcore: registered new interface driver xr_serial
+USB Serial support registered for xr_serial
+[   12.6[   12.635543] usbserial: USB Serial support registered for xr_serial
+36626] usbcore: registered new interface driver xsens_mt
+[   12.637696] usbserial: USB Serial support reg[   12.636626] usbcore: registered new interface driver xsens_mt
+istered for xsens_mt
+[   12.637696] usbserial: USB Serial support registered for xsens_mt[
+   12.639457] usbcore: registered new interface driver usbtouchscreen
+[   12.639457] usbcore: registered new interface driver usbtouchscre[en
+   12.640558] i2c_dev: i2c /dev entries driver
+[   12.640558] i2c_dev: i2c /dev entries driver
+[   12.641959] i2c 1-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs1_pwrdn
+[   12.641959] i2c 1-0023:[ Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs1_pwrdn
+   12.642859] i2c 1-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs3_null
+[   12.642859] i2c 1[-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs3_null
+   12.644572] i2c 1-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs2_null
+[   12.644572] i2c 1-0[023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs2_null
+   12.646288] i2c 1-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs1_null
+[   12.646288] i2c 1-0023: Fixed dependency cycle(s) with /i2c@2ac40000/pmic@23/pinctrl_rk806/rk806_dvs1_null
+[   12.649919] rk806 1-0023: chip id: RK806,ver:0xa, 0x5
+[   12.649919] rk806 1-0023: chip id: RK806,ver:0xa, 0x5
+[   12.651283] rk806 1-0023: ON: 0x40 OFF:0x0
+[   12.651283] rk806 1-0023: ON: 0x40 OFF:0x0
+[   12.652442] rk806 1-0023: dvs-suspend-control-by missing!
+[   12.652442] rk806 1-0023: dvs-suspend-control-by missing!
+[   12.662946] input: rk805 pwrkey as /devices/platform/2ac40000.i2c/i2c-1/1-0023/rk805-pwrkey.3.auto/input/input0
+[   12.662946] input: rk805 pwrkey as /devices/platform/2ac40000.i2c/i2c-1/1-0023/rk805-pwrkey.3.auto/input/input0
+[   12.700550] vdda0v75_hdmi_s0: Bringing 750000uV into 837500-837500uV
+[   12.700550] vdda0v75_hdmi_s0: Bringing 750000uV into 837500-837500uV
+[   12.721870] usb 3-1: new high-speed USB device number 2 using xhci-hcd
+[   12.721992] rk806 1-0023: no sleep-setting state
+[   12.721870[] usb 3-1: new high-speed USB device number 2 using xhci-hcd
+[   12.721992] rk806 1-0023: no sleep-setting state
+   12.722910] rk806 1-0023: no reset-setting pinctrl state
+[[   12.722910] rk806 1-0023: no reset-setting pinctrl state
+   12.724350] rk806 1-0023: no dvs-setting pinctrl state
+[   12.724350] rk806 1-0023: no dvs-setting pinctrl state
+[   12.746713] rtc-hym8563 2-0051: rtc information is invalid
+[   12.746713] rtc-hym8563 2-0051: rtc information is invalid
+[   12.755739] rtc-hym8563 2-0051: registered as rtc0
+[   12.755739] rtc-hym8563 2-0051: registered as rtc0
+[   12.757185] rtc-hym8563 2-0051: setting system clock to 2021-01-01T12:00:00 UTC (1609502400)
+[   12.757185] rtc-hym8563 2-0051: setting system clock to 2021-01-01T12:00:00 UTC (1609502400)
+[   12.759545] at24 6-0050: supply vcc not found, using dummy regulator
+[   12.759545] at24 6-0050: supply vcc not found, using dummy regulator
+[   12.761078] at24 6-0050: 2048 byte 24c16 EEPROM, writable, 16 bytes/write
+[   12.761078] at24 6-0050: 2048 byte 24c16 EEPROM, writable, 16 bytes/write
+[   12.762818] rockchip-mipi-csi2-hw 27c80000.mipi0-csi2-hw: enter mipi csi2 hw probe!
+[   12.762818] rockchip-mipi-csi2-hw 27c80000.mipi0-csi2-hw: enter m[ipi csi2 hw probe!
+   12.763668] rockchip-mipi-csi2-hw 27c80000.mipi0-csi2-hw: probe success, v4l2_dev:mipi0-csi2-hw!
+[   12.763668] rockchip-mipi-csi2-hw 27c80000.mipi0-csi2-hw: probe s[uccess, v4l2_dev:mipi0-csi2-hw!
+   12.765029] rockchip-mipi-csi2-hw 27c90000.mipi1-csi2-hw: enter mipi csi2 hw probe!
+[   12.765029] rockchip-mipi-csi2-hw 27c90000.mipi1-csi2-hw: enter m[ipi csi2 hw probe!
+   12.766543] rockchip-mipi-csi2-hw 27c90000.mipi1-csi2-hw: probe success, v4l2_dev:mipi1-csi2-hw!
+[   12.766543] rockchip-mipi-csi2-hw 27c90000.mipi1-csi2-hw: probe s[uccess, v4l2_dev:mipi1-csi2-hw!
+   12.767942] rockchip-mipi-csi2-hw 27ca0000.mipi2-csi2-hw: enter mipi csi2 hw probe!
+[   12.767942] rockchip-mipi-csi2-hw 27ca0000.mipi2-csi2-hw: enter m[ipi csi2 hw probe!
+   12.769454] rockchip-mipi-csi2-hw 27ca0000.mipi2-csi2-hw: probe success, v4l2_dev:mipi2-csi2-hw!
+[   12.769454] rockchip-mipi-csi2-hw 27ca0000.mipi2-csi2-hw: probe s[uccess, v4l2_dev:mipi2-csi2-hw!
+   12.770866] rockchip-mipi-csi2-hw 27cb0000.mipi3-csi2-hw: enter mipi csi2 hw probe!
+[   12.770866] rockchip-mipi-csi2-hw 27cb0000.mipi3-csi2-hw: enter m[ipi csi2 hw probe!
+   12.772378] rockchip-mipi-csi2-hw 27cb0000.mipi3-csi2-hw: probe success, v4l2_dev:mipi3-csi2-hw!
+[   12.772378] rockchip-mipi-csi2-hw 27cb0000.mipi3-csi2-hw: probe s[uccess, v4l2_dev:mipi3-csi2-hw!
+   12.773785] rockchip-mipi-csi2-hw 27cc0000.mipi4-csi2-hw: enter mipi csi2 hw probe!
+[   12.773785] rockchip-mipi-csi2-hw 27cc0000.mipi4-csi2-hw: enter m[ipi csi2 hw probe!
+   12.775309] rockchip-mipi-csi2-hw 27cc0000.mipi4-csi2-hw: probe success, v4l2_dev:mipi4-csi2-hw!
+[   12.775309] rockchip-mipi-csi2-hw 27cc0000.mipi4-csi2-hw: probe success, v4l2_dev:mipi4-csi2-hw!
+[   12.778789] usbcore: registered new interface driver uvcvideo
+[   12.778789] usbcore: registered new interface driver uvcvideo
+[   12.781070] Bluetooth: HCI UART driver ver 2.3
+[   12[.781070] Bluetooth: HCI UART driver ver 2.3
+   12.781485] Bluetooth: HCI UART protocol H4 registered
+[   12.782[   12.781485] Bluetooth: HCI UART protocol H4 registered
+350] Bluetooth: HCI UART protocol ATH3K registered
+[   12.7[82350] Bluetooth: HCI UART protocol ATH3K registered
+   12.783368] Bluetooth: HCI UART protocol Intel registered
+[   12.783368] Bluetooth: HCI UART protocol Intel registered
+[   12.784395] Bluetooth: HCI UART protocol Broadcom registered
+[   12.784395] Bluetooth: HCI UART protocol Broadcom registered
+[   12.785343] usbcore: registered new interface driver bfusb
+[   12.785343] usbcore: registered new interface driver bfusb
+[   12.786331] usbcore: registered new interface driver btusb
+[   12.786331] usbcore: registered new interface driver btusb
+[   12.788826] cpu cpu0: bin=0
+[   12.788826] cpu cpu0: bin=0
+[   12.789269] cpu cpu0: leakage=4
+[   12.789269] cpu cpu0: leakage=4
+[   12.791835] cpu cpu0: pvtm=1966
+[   12.791835] cpu cpu0: pvtm=1966
+[   12.792678] cpu cpu0: pvtm-volt-sel=7
+[   12.792678] cpu cpu0: pvtm-volt-sel=7
+[   12.793035] cpu cpu0: soc version=0, speed=7
+[   12.793035] cpu cpu0: soc version=0, speed=7
+[   12.795306] cpu cpu4: bin=0
+[   12.795306] cpu cpu4: bin=0
+[   12.795746] cpu cpu4: leakage=5
+[   12.795746] cpu cpu4: leakage=5
+[   12.798300] cpu cpu4: pvtm=2090
+[   12.798300] cpu cpu4: pvtm=2090
+[   12.799142] cpu cpu4: pvtm-volt-sel=6
+[   12.799142] cpu cpu4: pvtm-volt-sel=6
+[   12.799499] cpu cpu4: soc version=0, speed=6
+[   12.799499] cpu cpu4: soc version=0, speed=6
+[   12.801866] cpu cpu0: avs=0
+[   12.801866] cpu cpu0: avs=0
+[   12.803181] cpu cpu4: avs=0
+[   12.803181] cpu cpu4: avs=0
+[   12.803554] cpu cpu0: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   12.803554] cpu cpu0: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   12.805495] cpu cpu0: EM: created perf domain
+[   12.805495] cpu cpu0: EM: created perf domain
+[   12.806535] cpu cpu4: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   12.806535] cpu cpu4: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   12.808440] cpu cpu4: EM: created perf domain
+[   12.808440] cpu cpu4: EM: created perf domain
+[   12.810712] sdhci: Secure Digital Host Controller Interface driver
+[ [   12.810712] sdhci: Secure Digital Host Controller Interface driver
+  12.811285] sdhci: Copyright(c) Pierre Ossman
+[   12[   12.811285] sdhci: Copyright(c) Pierre Ossman
+.812212] Synopsys Designware Multimedia Card Interface Driver
+[   12.812212] Synopsys Designware Multimedia Card Interface Driver
+[   12.813731] sdhci-pltfm: SDHCI platform and OF driver helper
+[   12.814094] dwmmc_rockchip 2a310000.mmc: No normal pinctrl state
+[   12.8148[   12.813731] sdhci-pltfm: SDHCI platform and OF driver helper
+[   12.814094] dwmmc_rockchip 2a310000.mmc: No normal pinctrl state
+22] dwmmc_rockchip 2a310000.mmc: No idle pinctrl state
+[   12.815678] ufshcd-rockchip 2a2d0000.ufs: fr[   12.814822] dwmmc_rockchip 2a310000.mmc: No idle pinctrl state
+eq-table-hz property not specified
+[   12.815683] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+[   12.815687] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[   12.815691] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+[   12.815694] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vccq2-supply regulator, assuming enabled
+[   12.816533] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[   12.818605] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[[   12.815678] ufshcd-rockchip 2a2d0000.ufs: freq-table-hz property not specified
+   12.819856] scsi host0: ufshcd
+[   12.820481] dwmmc_rockchip 2a310000.mmc: Version ID is 270[   12.815683] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vdd-hba-supply regulator, assuming enabled
+a
+[   12.822123] dwmmc_rockchip 2a310000.mmc: DW MMC cont[   12.815687] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vcc-supply regulator, assuming enabled
+[   12.815691] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Unable to find vccq-supply regulator, assuming enabled
+roller at irq 75,32 bit host data width,256 deep fifo
+[   12.815694] ufshcd-rockchip 2a2d0000.ufs: ufshcd_populate_vreg: Un[able to find vccq2-supply regulator, assuming enabled
+[   12.816533] dwmmc_rockchip 2a310000.mmc: IDMAC supports 32-bit address mode.
+[   12.818605] dwmmc_rockchip 2a310000.mmc: Using internal DMA controller.
+[   12.819856] scsi host0: ufshcd
+[   12.820481] dwmmc_rockchip 2a310000.mmc: Version ID is 270a
+[   12.822123] dwmmc_rockchip 2a310000.mmc: DW MMC controller at irq 75,32 bit host data width,256 deep fifo
+   12.827893] mmc0: CQHCI version 5.10
+[   12.827893] mmc0: CQHCI version 5.10
+[   12.832020] ledtrig-cpu: registered to indicate activity on CPUs
+[   12.832020] ledtrig-cpu: registered to indicate activity on CPUs
+[   12.833055] arm-scmi firmware:scmi: Failed. SCMI protocol 17 not active.
+[ [   12.833055] arm-scmi firmware:scmi: Failed. SCMI protocol 17 not active.
+  12.834032] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[   12.834032] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping [....
+   12.835591] rk-crypto 2a400000.crypto: invalid resource
+[   12.835591] rk-crypto 2a400000.crypto: [invalid resource
+   12.836823] rk-crypto 2a400000.crypto: register to cryptodev ok!
+[   12.8368[23] rk-crypto 2a400000.crypto: register to cryptodev ok!
+   12.837817] rk-crypto 2a400000.crypto: CRYPTO V3.0.0.0 multi Accelerator successfully registered
+[   12.837817] rk-crypto 2a400000.crypto: CRYPTO V3.0.0.0 multi Accelerator successfully registered
+[   12.839685] cryptodev: driver 1.12 loaded.
+[   12.840355] hid: raw HID e[   12.839685] cryptodev: driver 1.12 loaded.
+vents driver (C) Jiri Kosina
+[   12.841[4   12.840355] hid: raw HID events driver (C) Jiri Kosina
+31] usbcore: registered new interface driver usbhid
+[   12[   12.841431] usbcore: registered new interface driver usbhid
+.842404] usbhid: USB HID core driver
+[   12.842404] usbhid: USB HID core driver
+[   12.847048] mmc_host mmc1: Bus speed (slot 0) = 400000Hz (slot req 400000Hz, actual 400000HZ div = 0)
+[   12.847836] optee: probing for conduit method.
+[   1[   12.847048] mmc_host mmc1: Bus speed (slot 0) = 400000Hz (slot req 400000Hz, actual 400000HZ div = 0)
+[   12.847836] optee: probing for conduit method.
+2.848320] optee: api uid mismatch
+[   12.849816] optee: probe of firmware:optee fai[   12.848320] optee: api uid mismatch
+led with error -22
+[   12.849816] optee: probe of firmware:optee failed with error -22
+[   12.851315] usbcore: registered new interface driver snd-usb-audio
+[   12.851315] usbcore: registered new interface driver snd-usb-audio
+[   12.858191] rk-multicodecs es8388-sound: keymap is missing
+[   12.[858191] rk-multicodecs es8388-sound: keymap is missing
+   12.858711] rk-multicodecs es8388-sound: Has no input keys
+[   12.858711] rk-multicodecs es8388-sound: Has no input keys
+[   12.862031] mmc0: SDHCI controller on 2a330000.mmc [2a330000.mmc] using ADMA 64-bit
+[   12.862031] mmc0: SDHCI controller on 2a330000.mmc [2a330000.mmc] using ADMA 64-bit
+[   12.870107] usb 3-1: New USB device found, idVendor=1a40, idProduct=0101, bcdDevice= 1.11
+[   1[   12.870107] usb 3-1: New USB device found, idVendor=1a40, idProduct=0101, bcdDevice= 1.11
+2.870890] usb 3-1: New USB device strings: Mfr=0, Product=1, SerialNumber=0
+[   12.[   12.870890] usb 3-1: New USB device strings: Mfr=0, Product=1, SerialNumber=0
+872267] usb 3-1: Product: USB 2.0 Hub
+[   12.872267] usb 3-1: Product: USB 2.0 Hub
+[   12.912520] mmc_host mmc1: Bus speed (slot 0) = 198000000Hz (slot req 200000000Hz, actual 198000000HZ div = 0)
+[   12.9[   12.912520] mmc_host mmc1: Bus speed (slot 0) = 198000000Hz (slot req 200000000Hz, actual 198000000HZ div = 0)
+13550] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase to 0
+[   12.913550] dwmmc_rockchip 2a310000.mmc: Successfully tuned phase t[o 0
+   12.915405] mmc1: new ultra high speed SDR104 SDXC card at address 5048
+[   12.915405] mmc1: new ultra high speed SDR104 SDXC card at address 5048
+[   12.917893] mmcblk1: mmc1:5048 SD64G 58.0 GiB 
+[   12.917893] mmcblk1: mmc1:5048 SD64G 58.0 GiB 
+[   12.920343] rk-multicodecs es8388-sound: Don't need to map headset detect gpio to irq
+[   12.920343] rk-multicodecs es8388-sound: Don't need to map headset detect gpio to irq
+[   12.921798]  mmcblk1: p1 p2
+[   12.921798]  mmcblk1: p1 p2
+[   12.930333] Initializing XFRM netlink socket
+[   12.930333] Initializing XFRM netlink socket
+[   12.931754] NET: Registered PF_INET6 protocol family
+[   12.931754] NET: Registered PF_INET6 protocol family
+[   12.934228] Segment Routing with IPv6
+[   1[   12.934228] Segment Routing with IPv6
+2.934590] In-situ OAM (IOAM) with IPv6
+[   12.935028] hub 3-1:1.0: USB hub found
+[   12.935299] NET: Registered PF_PACKET protocol family
+[   12.935672] hub 3-1:1.0: 4 ports detected
+[   12.936074] NET: Registered PF_KEY protocol family
+[   1[   12.934590] In-situ OAM (IOAM) with IPv6
+[   12.935028] hub 3-1:1.0: USB hub found
+[   12.935299] NET: Registered PF_PACKET protocol family
+[   12.935672] hub 3-1:1.0: 4 ports detected
+[   12.936074] NET: Registered PF_KEY protocol family
+2.936895] can: controller area network core
+[  [   12.936895] can: controller area network core
+ 12.939232] NET: Registered PF_CAN protocol family
+[   12.940054] can:[   12.939232] NET: Registered PF_CAN protocol family
+ raw protocol
+[   12.940745] can: broadcast manager protocol
+[[   12.940054] can: raw protocol
+[   12.940745] can: broadcast manager protocol
+   12.941136] can: netlink gateway - max_hops=1
+[   12[   12.941136] can: netlink gateway - max_hops=1
+.942485] Bluetooth: RFCOMM TTY layer initialized
+[   12.943322] Bluet[   12.942485] Bluetooth: RFCOMM TTY layer initialized
+ooth: RFCOMM socket layer initialized
+[   12.944232] Bluetooth: [   12.943322] Bluetooth: RFCOMM socket layer initialized
+RFCOMM ver 1.11
+[   12.945027] Bluetooth: BNEP (Ethernet Emul[   12.944232] Bluetooth: RFCOMM ver 1.11
+ation) ver 1.3
+[   12.945855] Bluetooth: BNEP filters: protocol multicast
+[   12.945027] Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+[   12.946798] Bluetooth: BNEP socket layer initialized
+[ [   12.945855] Bluetooth: BNEP filters: protocol multicast
+[   12.946798] Bluetooth: BNEP socket layer initialized
+  12.947255] Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+[[   12.947255] Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+   12.948674] Bluetooth: HIDP socket layer initialized
+[   12.948674] Bluetooth: HIDP socket layer initialized
+[   12.949884] [BT_RFKILL]: Enter rfkill_rk_init
+[   12[   12.949884] [BT_RFKILL]: Enter rfkill_rk_init
+.950467] [WLAN_RFKILL]: Enter rfkill_wlan_init
+[   12.950467] [WLAN_RFKILL]: Enter rfkill_wlan_init
+[   12.951649] NET: Registered PF_CAIF protocol family
+[   12.95[   12.951649] NET: Registered PF_CAIF protocol family
+2321] Key type dns_resolver registered
+[   12.953143] Key type [   12.952321] Key type dns_resolver registered
+ceph registered
+[   12.954119] lib[   12.953143] Key type ceph registered
+ceph: loaded (mon/osd proto 15/24)
+[   12.954119] libceph: loaded (mon/osd proto 15/24)
+[   12.956218] registered taskstats version 1
+[ [   12.956218] registered taskstats version 1
+  12.956634] Loading compiled-in X.509 certificates
+[   12.956634] Loading compiled-in X.509 certificates
+[   12.958792] pstore: Using crash dump compression: deflate
+[   12.958792] pstore: Using crash dump compression: deflate
+[   12.966068] rga2 27920000.rga: Adding to iommu group 2
+[   12.966068] rga2 27920000.rga: Adding to iommu group 2
+[   12.966973] rga2 27920000.rga: probe successfully, irq = 46, hw_version:3.e.19357
+[   12.966973] rga2 27920000.rga: probe successfully, irq = 46, hw_v[ersion:3.e.19357
+   12.967910] rga2 27930000.rga: Adding to iommu group 3
+[   12.967910] rga2 27930000.rga: Adding to iommu group 3
+[   12.969364] rga2 27930000.rga: probe successfully, irq = 47, hw_version:3.e.19357
+[   12.969364] rga2 27930000.rga: probe successfully, irq = 47, hw_ve[rsion:3.e.19357
+   12.970627] rga: IOMMU binding successfully, default mapping core[0x4]
+[   12.970627] rga: IOMMU binding successfully, default mapping core[[0x4]
+   12.971865] rga: Module initialized. v1.3.7
+[   12.971865] rga: Module initialized. v1.3.7
+[   12.992507] mpp-iep2 27960000.iep: Adding to iommu group 4
+[   12.992507] mpp-iep2 27960000.iep: Adding to iommu group 4
+[   12.993222] mpp-iep2 27960000.iep: probe device
+[   12.993222] mpp-iep2 27960000.iep: probe device
+[   12.994137] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+[   [   12.994137] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+12.994921] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+[   1[   12.994921] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+2.995923] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+[   12.995923] mpp-iep2 27960000.iep: reset_group->rw_sem_on=0
+[   12.997140] mpp-iep2 27960000.iep: probing finish
+[   12.997140] mpp-iep2 27960000.iep: probing finish
+[   12.998116] mpp_jpgdec 27910000.jpegd: Adding to iommu group 1
+[   12.998116] mpp_jpgdec 27910000.jpegd: Adding to iommu group 1
+[   12.999064] mpp_jpgdec 27910000.jpegd: probe device
+[   12.999064] mpp_jpgdec 27910000.jpegd: probe device
+[   12.999968] mpp_jpgdec 27910000.jpegd: reset_group->rw_sem_on=0
+[   12.999968][ mpp_jpgdec 27910000.jpegd: reset_group->rw_sem_on=0
+   13.000794] mpp_jpgdec 27910000.jpegd: reset_group->rw_sem_on=0
+[   13.001973] mpp_jpgde[   13.000794] mpp_jpgdec 27910000.jpegd: reset_group->rw_sem_on=0
+c 27910000.jpegd: probing finish
+[   13.001973] mpp_jpgdec 27910000.jpegd: probing finish
+[   13.003165] mpp_jpgenc 27910800.jpege: Adding to iommu group 1
+[   13.003165] mpp_jpgenc 27910800.jpege: Adding to iommu group 1
+[   13.004151] mpp_jpgenc 27910800.jpege: probe device
+[   13.004151] mpp_jpgenc 27910800.jpege: probe device
+[   13.005192] mpp_jpgenc 27910800.jpege: reset_group->rw_sem_on=0
+[   1[   13.005192] mpp_jpgenc 27910800.jpege: reset_group->rw_sem_on=0
+3.006098] mpp_jpgenc 27910800.jpege: reset_group->rw_sem_on=0
+[[   13.006098] mpp_jpgenc 27910800.jpege: reset_group->rw_sem_on=0
+   13.007185] mpp_jpgenc 27910800.jpege: probe finish
+[   13.007185] mpp_jpgenc 27910800.jpege: probe finish
+[   13.008387] mpp_rkvdec2 27b00100.rkvdec: Adding to iommu group 7
+[   13.008387] mpp_rkvdec2 27b00100.rkvdec: Adding to iommu group 7
+    13.009348] mpp_rkvdec2 27b00100.rkvdec: rkvdec, probing start
+[   13.01039[   13.009348] mpp_rkvdec2 27b00100.rkvdec: rkvdec, probing start
+0] mpp_rkvdec2 27b00100.rkvdec: shared_niu_a is not found!
+[ [  13.010390] mpp_rkvdec2 27b00100.rkvdec: shared_niu_a is not found!
+   13.011470] rkvdec2_init:1198: No niu aclk reset resource define
+[   13.012560] mpp_rkvdec2 27b00100.[   13.011470] rkvdec2_init:1198: No niu aclk reset resource define
+rkvdec: shared_niu_h is not found!
+[   13.013648] rkv[   13.012560] mpp_rkvdec2 27b00100.rkvdec: shared_niu_h is not found!
+dec2_init:1201: No niu hclk reset resource define
+[   13.014748] mpp_rkvdec2 27b00100.rkvdec: shared_vid[   13.013648] rkvdec2_init:1201: No niu hclk reset resource define
+eo_cabac is not found!
+[   13.015882] rkvdec2_init:1207: No cabac reset resource define
+[   13.01645[   13.014748] mpp_rkvdec2 27b00100.rkvdec: shared_video_cabac is not found!
+[   13.015882] rkvdec2_init:1207: No cabac reset resource define
+2] mpp_rkvdec2 27b00100.rkvdec: no regulator, devfreq is disabled
+[   13.01[   13.016452] mpp_rkvdec2 27b00100.rkvdec: no regulator, devfreq is disabled
+8300] mpp_rkvdec2 27b00100.rkvdec: sram_start 0x000000003ff88000
+[   13.019495] mpp_rkvdec2 27b00[   13.018300] mpp_rkvdec2 27b00100.rkvdec: sram_start 0x000000003ff88000
+100.rkvdec: rcb_iova 0x0000000010000000
+[   13.020642] mpp_rkvdec2 27b00100.rkvdec: sram_size 491520[   13.019495] mpp_rkvdec2 27b00100.rkvdec: rcb_iova 0x0000000010000000
+
+[   13.021687] mpp_rkvdec2 27b00100.rkvdec: rcb_size 491520
+[   13.022182] mpp_rkvdec2 27b00100.rkv[   13.020642] mpp_rkvdec2 27b00100.rkvdec: sram_size 491520
+[   13.021687] mpp_rkvdec2 27b00100.rkvdec: rcb_size 491520
+dec: min_width 512
+[   13.023598] mpp_rkvdec2 27b00100[.   13.022182] mpp_rkvdec2 27b00100.rkvdec: min_width 512
+rkvdec: link mode probe finish
+[   13.024619] mpp_rkvdec[   13.023598] mpp_rkvdec2 27b00100.rkvdec: link mode probe finish
+2 27b00100.rkvdec: probing finish
+[   13.025620] mp[   13.024619] mpp_rkvdec2 27b00100.rkvdec: probing finish
+p_rkvdec2 27b00100.rkvdec: probing finish
+[   13.025620] mpp_rkvdec2 27b00100.rkvdec: probing finish
+[   13.026811] mpp_rkvenc2 27a00000.rkvenc-core: Adding to iommu group 5
+[   13.026811] mpp_rkvenc2 27a00000.rkvenc-core: Adding to iommu gro[up 5
+   13.027971] mpp_rkvenc2 27a00000.rkvenc-core: probing start
+[   13.028976] mpp[   13.027971] mpp_rkvenc2 27a00000.rkvenc-core: probing start
+_rkvenc2 27a00000.rkvenc-core: failed to init opp info
+[[   13.028976] mpp_rkvenc2 27a00000.rkvenc-core: failed to init opp info
+   13.030065] mpp_rkvenc2 27a00000.rkvenc-core: failed to init_opp_table
+[   13.031220] rkvenc_init:2[   13.030065] mpp_rkvenc2 27a00000.rkvenc-core: failed to init_opp_table
+220: failed to add venc devfreq
+[   13.032315] mpp_rkvenc2 27a00000.rkvenc-core: attach ccu as [   13.031220] rkvenc_init:2220: failed to add venc devfreq
+core 0
+[   13.033368] mpp_rkvenc2 27a00000.rkvenc-core: [   13.032315] mpp_rkvenc2 27a00000.rkvenc-core: attach ccu as core 0
+probing finish
+[   13.034638] mpp_rkvenc2 27a10000.rkvenc-core: Adding to io[   13.033368] mpp_rkvenc2 27a00000.rkvenc-core: probing finish
+mmu group 6
+[   13.035916] mpp_[   13.034638] mpp_rkvenc2 27a10000.rkvenc-core: Adding to iommu group 6
+rkvenc2 27a10000.rkvenc-core: probing start
+[   13.035916] mpp_rkvenc2 27a10000.rkvenc-core: probing start
+[   13.037143] mpp_rkvenc2 27a10000.rkvenc-core: failed to init opp info
+[   [13.037143] mpp_rkvenc2 27a10000.rkvenc-core: failed to init opp info
+   13.038080] mpp_rkvenc2 27a10000.rkvenc-core: failed to init_opp_table
+[   13.039234] rkvenc_init:2[   13.038080] mpp_rkvenc2 27a10000.rkvenc-core: failed to init_opp_table
+220: failed to add venc devfreq
+[   13.040338] mpp_rkvenc2 27a10000.rkvenc-core: attach ccu as[   13.039234] rkvenc_init:2220: failed to add venc devfreq
+ core 1
+[   13.041397] mpp_rkvenc2 27a10000.rkvenc-core[   13.040338] mpp_rkvenc2 27a10000.rkvenc-core: attach ccu as core 1
+: probing finish
+[   13.041397] m[pp_rkvenc2 27a10000.rkvenc-core: probing finish
+   13.042685] rockchip-vop2 27d00000.vop: Adding to iommu group 8
+[   13.042685] rockchip-vop2 27d00000.vop: Adding to iommu group 8
+[   13.044138] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp0 assign plane mask: Cluster0 | Esmart0[0x5], primary plane phy id: Cluster0[0]
+[   1[   13.044138] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp0 assign plane mask: Cluster0 | Esmart0[0x5], primary plane phy id: Cluster0[0]
+3.045361] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp1 assign plane mask: Cluster1 | Esmart1[0xa], primary plane phy id: Cluster1[1]
+[   13[   13.045361] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp1 assign plane mask: Cluster1 | Esmart1[0xa], primary plane phy id: Cluster1[1]
+.047576] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp2 assign plane mask: Esmart2 | Esmart3[0x300], primary plane phy id: Esmart2[8]
+[[    13.047576] rockchip-vop2 27d00000.vop: [drm:vop2_bind] vp2 assign plane mask: Esmart2 | Esmart3[0x300], primary plane phy id: Esmart2[8]
+  13.049813] [drm] unsupported AFBC format NV12 little-endian (0x3231564e)
+[   13.049813] [drm] unsupported AFBC format NV12 little-endi[an (0x3231564e)
+   13.051580] rockchip-vop2 27d00000.vop: [drm:vop2_bind] Esmart0-win0 as cursor plane for vp0
+[   13.[051580] rockchip-vop2 27d00000.vop: [drm:vop2_bind] Esmart0-win0 as cursor plane for vp0
+   13.052936] [drm] Esmart1-win0(possible_vp_mask = 0x00000006) has no possible crtcs
+[ [   13.052936] [drm] Esmart1-win0(possible_vp_mask = 0x00000006) has no possible crtcs
+  13.054400] [drm] Esmart3-win0(possible_vp_mask = 0x00000006) has no possible crtcs
+[ [   13.054400] [drm] Esmart3-win0(possible_vp_mask = 0x00000006) has no possible crtcs
+  13.055780] [drm] failed to init overlay plane Cluster0-win1
+[   13.056995] [drm] fa[   13.055780] [drm] failed to init overlay plane Cluster0-win1
+iled to init overlay plane Cluster1-win1
+[   13.056995] [drm] failed to init overlay plane Cluster1-win1
+[   13.058267] rockchip-vop2 27d00000.vop: bin=0
+[   13.058267] rockchip-vop2 27d00000.vop: bin=0
+[   13.059172] rockchip-vop2 27d00000.vop: leakage=13
+[   13.059874] [   13.059172] rockchip-vop2 27d00000.vop: leakage=13
+rockchip-vop2 27d00000.vop: leakage-volt-sel=1
+[   13.060796] ro[   13.059874] rockchip-vop2 27d00000.vop: leakage-volt-sel=1
+ckchip-vop2 27d00000.vop: soc version=0, speed=1
+[   13.060796] rockchip-vop2 27d00000.vop: soc version=0, speed=1
+[   13.062659] rockchip-vop2 27d00000.vop: avs=0
+[   13.062659] rockchip-vop2 27d00000.vop: avs=0
+[   13.063138] rockchip-vop2 27d00000.vop: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   13.063138] rockchip-vop2 27d00000.vo[p: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+   13.064299] debugfs: Directory 'vdd_logic_s0' with parent 'vdd_logic_s0' already present!
+[   13.064299] debugfs: Directory 'vdd_logic_s0' with parent 'vdd_logic_s0' already present!
+[   13.066903] rockchip-vop2 27d00000.vop: Supported VOP aclk dvfs, normal mode:500000000, reset mode:594000000, advanced mode:702000000
+[   13.066903] rockchip-vop2 27d00000.vop: Supported VOP [aclk dvfs, normal mode:500000000, reset mode:594000000, advanced mode:702000000
+   13.068079] rockchip-drm display-subsystem: bound 27d00000.vop (ops 0xffffffc00939e558)
+[   13.068079] rockchip-drm display-subsystem: bound 27d00000.vop (ops 0xffffffc00939e558)
+[   13.070957] dwhdmi-rockchip 27da0000.hdmi: registered ddc I2C bus driver
+[   13.070957] dwhdmi-rockchip 27da0000.hdmi: registered ddc I2C bus driver
+[   13.072565] rockchip-drm display-subsystem: bound 27da0000.hdmi (ops 0xffffffc0093b7d88)
+[   13.072565] rockchip-drm display-subsystem: bound 27da0000.hdmi (ops 0xffffffc0093b7d88)
+[   13.075328] dw-hdmi-qp-hdcp dw-hdmi-qp-hdcp.9.auto: dw_hdcp_qp_hdcp_probe success
+[   13.075328] dw-hdmi-qp-hdcp dw-hdmi-qp-hdcp.9.auto: dw_hdcp_qp_hdc[p_probe success
+   13.076148] [drm] Initialized rockchip 4.0.0 20140818 for display-subsystem on minor 0
+[   13.076148] [[drm] Initialized rockchip 4.0.0 20140818 for display-subsystem on minor 0
+   13.077465] rockchip-drm display-subsystem: failed to parse loader memory
+[  [   13.077465] rockchip-drm display-subsystem: failed to parse loader memory
+ 13.078824] rockchip-drm display-subsystem: [drm] Cannot find any crtc or sizes
+[   13.080132[   13.078824] rockchip-drm display-subsystem: [drm] Cannot find any crtc or sizes
+] rockchip-drm display-subsystem: [drm] Cannot find any crtc or sizes
+[   13.080132] rockchip-drm display[-subsystem: [drm] Cannot find any crtc or sizes
+   13.081631] rockchip-drm display-subsystem: [drm] run display error_event monitor
+[   13.081631] rockchip-drm display-subsystem: [drm] run display error_event monitor
+[   13.083963] rockchip-dmc dmc: bin=0
+[   13.083963] rockchip-dmc dmc: bin=0
+[   13.084377] mali 27800000.gpu: Kernel DDK version g25p0-00eac0
+[   13.084456] rockchip-dmc dmc: leakage=13
+[   13.085139] mali 27800000.gpu: error -ENXIO: IRQ JOB not found
+[   13.085492] rockchip-dmc dmc: leakage-volt-sel=1
+[   13.086104] mali 27800000.gpu: error -ENXIO: IRQ MMU not found
+[   13.086450] rockchip-dmc dmc: soc version=0, speed=1
+[   13.087006] mali 27800000.gpu: error -ENXIO: IRQ GPU not found
+[[   13.084377] mali 27800000.gpu: Kernel DDK version g25p0-00eac0
+[   13.084456] rockchip-dmc dmc: leakage=13
+[   13.085139] mali 27800000.gpu: error -ENXIO: IRQ JOB not found
+[   13.085492] rockchip-dmc dmc: leakage-volt-sel=1
+[   13.086104] mali 27800000.gpu: error -ENXIO: IRQ MMU not found
+[   13.086450] rockchip-dmc dmc: soc version=0, speed=1
+[   13.087006] mali 27800000.gpu: error -ENXIO: IRQ GPU not found
+   13.088004] mali 27800000.gpu: GPU metrics tracepoint support enabled
+[   13.088004] mali 27800000.gpu: GPU metrics tracepoint support enabled
+[   13.092822] mali 27800000.gpu: bin=0
+[   13.092822] mali 27800000.gpu: bin=0
+[   13.093272] rockchip-dmc dmc: avs=0
+[   13.093415] mali 27800000.gpu: leakage=5
+[   13.093806] rockchip-dmc dmc: current ATF version 0x100
+[   13.093272] rockchip-dmc dmc: avs=0
+[   13.093415] mali 27800000[.gpu: leakage=5
+[   13.093806] rockchip-dmc dmc: current ATF version 0x100
+   13.094797] debugfs: Directory '27800000.gpu-mali' with parent 'vdd_gpu_s0' already present!
+[   13.094806] rockchip-dmc dmc: normal_rate = 1968000000
+[   13[   13.094797] debugfs: Directory '27800000.gpu-mali' with parent 'vdd_gpu_s0' already present!
+.097033] rockchip-dmc dmc: reboot_rate = 2736000000
+[   13.097039] rockchip-dmc dm[   13.094806] rockchip-dmc dmc: normal_rate = 1968000000
+c: suspend_rate = 534000000
+[   13.099073] mali 27800000.gpu: pvtm=0
+[   13.099160] rockchip-dmc dmc: video_4k_rate = 1968000000
+[   [   13.097033] rockchip-dmc dmc: reboot_rate = 2736000000
+[   13.097039] rockchip-dmc dmc: suspend_rate = 534000000
+[   13.099073] mali 27800000.gpu: pvtm=0
+[   13.099160] rockchip-dmc dmc: video_4k_rate = 1968000000
+13.099992] rockchip-dmc dmc: video_4k_10b_rate = 1968000000
+[   13.100004] mali 27800000.gpu: soc version=0, speed=0
+[   13.102172] rockchip-dmc dmc: video_svep_rate = 1968000000
+[[   13.099992] rockchip-dmc dmc: video_4k_10b_rate = 1968000000
+   13.103128] rockchip-dmc dmc: boost_rate = 2736000000
+[   13.103148] debugfs: Directory '27800000.gpu-mali' with parent 'vdd_gpu_s0' already present!
+[   13.104077] rockchip-dmc dmc: fixed_rate(isp|cif0|cif1|dualview) = 2736000000
+[   13.104083] rockchip-dmc dmc: performance_rate = 2736000000
+[   13.1[   13.100004] mali 27800000.gpu: soc version=0, speed=0
+05498] rockchip-dmc dmc: hdmirx_rate = 2736000000
+[   13.105502] rockchip-dmc dmc: deep_suspend_rate = 2736000000
+[   13.106039] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.106945] rockchip-dmc dmc: failed to get vop pn to msch rl
+[   13.107442] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.108486] rockchip-dmc dmc: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   13.108695] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.109457] debugfs: Directory 'vdd_logic_s0' with parent 'vdd_logic_s0' already present!
+[   13.110187] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.[   13.102172] rockchip-dmc dmc: video_svep_rate = 1968000000
+111674] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.103128] rockchip-dmc dmc: boost_rate = 273600[0000
+[   13.103148] debugfs: Directory '27800000.gpu-mali' with parent 'vdd_gpu_s0' already present!
+[   13.104077] rockchip-dmc dmc: fixed_rate(isp|cif0|cif1|dualview) = 2736000000
+[   13.104083] rockchip-dmc dmc: performance_rate = 2736000000
+[   13.105498] rockchip-dmc dmc: hdmirx_rate = 2736000000
+[   13.105502] rockchip-dmc dmc: deep_suspend_rate = 2736000000
+[   13.106039] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.106945] rockchip-dmc dmc: failed to get vop pn to msch rl
+[   13.107442] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.108486] rockchip-dmc dmc: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   13.108695] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.109457] debugfs: Directory 'vdd_logic_s0' with parent 'vdd_logic_s0' already present!
+[   13.110187] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.111674] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+   13.113713] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[   13.113713] mali 278[00000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+   13.123081] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+[  [   13.123081] mali 27800000.gpu: _opp_is_supported: Invalid opp-supported-hw property (-22)
+ 13.124551] mali 27800000.gpu: _of_add_opp_table_v2: no supported OPPs
+[   13.1258[   13.124551] mali 27800000.gpu: _of_add_opp_table_v2: no supported OPPs
+69] mali 27800000.gpu: failed to add opp table
+[   13.125869] mali 27800000.gpu: failed to add opp table
+[   13.128940] mali 27800000.gpu: Failed to init_opp_table (-2)
+[   13.128940] mali 27800000.gpu: Failed to init_opp_table (-2)
+[   13.129603] W : [File] : drivers/gpu/arm/bifrost/platform/rk/mali_kbase_config_rk.c; [Line] : 144; [Func] : kbase_platform_rk_init(); power-off-delay-ms not available.
+[   13.129603] W : [File] : drivers/gpu/arm/bifrost/platform/rk/mali_kbase_config_rk.c; [Line] : 144; [Func] : kbase_platform_rk_init(); power-off-delay-ms not available.
+[   13.133098] mali 27800000.gpu: Register LUT 00070200 initialized for GPU arch 0x00070400
+[   13.133098] mali 27800000.gpu: Register LUT 00070200 initialized f[or GPU arch 0x00070400
+   13.134002] mali 27800000.gpu: GPU identified as 0x2 arch 7.4.0 r1p0 status 0
+[[   13.134002] mali 27800000.gpu: GPU identified as 0x2 arch 7.4.0 r1p0 status 0
+   13.135397] mali 27800000.gpu: _find_key: OPP table not found (-19)
+[   13.136591] mali 278000[   13.135397] mali 27800000.gpu: _find_key: OPP table not found (-19)
+00.gpu: No OPPs found in device tree! Scaling timeouts using 100000 kHz
+[   13.138018] mali 2[   13.136591] mali 27800000.gpu: No OPPs found in device tree! Scaling timeouts using 100000 kHz
+7800000.gpu: No priority control manager is configured
+[   13.139379] mali 278000[   13.138018] mali 27800000.gpu: No priority control manager is configured
+00.gpu: Large page allocation set to false after hardware feature check
+[   13.139398] input: rockchip-hdmi0 rockchip-hdmi0 as /devices/platform/hdmi-sound/sound/card1/input1
+[   13.141068] mali 27800000.gpu: No memory group manager is configured
+[   13.139379] mali 27800000.gpu: Large page allocation set to false after hardware feature check
+[   13.139398] input: rockchip-hdmi0 rockchip-hdmi0 as /devices/platform/hdmi-sound/sound/ca[rd1/input1
+[   13.141068] mali 27800000.gpu: No memory group manager is configured
+   13.143584] mali 27800000.gpu: _find_key: OPP table not found (-19)
+[   13.144909][   13.143584] mali 27800000.gpu: _find_key: OPP table not found (-19)
+ mali 27800000.gpu: Continuing without devfreq
+[   13.145421] RKNPU 27700000.npu: Adding to iommu group 0
+[   13.144909] mali 27800000.gpu: Continuing without devfreq
+[   13.[145421] RKNPU 27700000.npu: Adding to iommu group 0
+   13.146754] RKNPU 27700000.npu: RKNPU: rknpu iommu is enabled, using iommu mode
+[   13.146930] mali 27800000.gpu: * MALI kbase_mmap_min_addr compiled to CONFIG_DEFAULT_MMAP_MIN_ADDR, no runtime update possible! *
+[   13.1491[   13.146754] RKNPU 27700000.npu: RKNPU: rknpu iommu is enabled, using iommu mode
+98] mali 27800000.gpu: Probed as mali0
+[   13.150350] RKNPU 27700000.npu: can't re[   13.146930] mali 27800000.gpu: * MALI kbase_mmap_min_addr compiled to CONFIG_DEFAULT_MMAP_MIN_ADDR, no runtime update possible! *
+[   13.149198] mali 27800000.gpu: Probed as mali0
+quest region for resource [mem 0x27700000-0x27707fff]
+[ [   13.150350] RKNPU 27700000.npu: can't request region for resource [mem 0x27700000-0x27707fff]
+  13.152541] RKNPU 27700000.npu: can't request region for resource [mem 0x27708000-0x2770ffff]
+[   13.152541] RKNPU 27700000.npu: can't request region for resource [mem 0x27708000-0x2770ffff]
+[   13.154740] [drm] Initialized rknpu 0.9.8 20240828 for 27700000.npu on minor 1
+[   13.154740] [drm] Initialized rknpu 0.9.8 20240828 for 27700000.npu on minor 1
+[   13.159144] RKNPU 27700000.npu: bin=0
+[   13.159144] RKNPU 27700000.npu: bin=0
+[   13.159690] RKNPU 27700000.npu: leakage=5
+[   13.160328] debugfs:[   13.159690] RKNPU 27700000.npu: leakage=5
+ Directory '27700000.npu-rknpu' with parent 'vdd_npu_s0' already present!
+[   13.160328] debugfs: Directory '27700000.npu-rknpu' with parent 'vdd_npu_s0' already present!
+[   13.163294] RKNPU 27700000.npu: pvtm=816
+[   13.163294] RKNPU 27700000.npu: pvtm=816
+[   13.164272] RKNPU 27700000.npu: pvtm-volt-sel=5
+[   13.[   13.164272] RKNPU 27700000.npu: pvtm-volt-sel=5
+164700] RKNPU 27700000.npu: soc version=0, speed=5
+[   13.1656[   13.164700] RKNPU 27700000.npu: soc version=0, speed=5
+12] debugfs: Directory '27700000.npu-rknpu' with parent 'vdd_npu_s0' already present!
+[   13.165612] debugfs: Directory '27700000.npu-rknpu' with parent 'vdd_npu_s0' already present!
+[   13.167916] RKNPU 27700000.npu: avs=0
+[   13.167916] RKNPU 27700000.npu: avs=0
+[   13.168612] RKNPU 27700000.npu: EM: created perf domain
+[   13.168612] RKNPU 27700000.npu: EM: created perf domain
+[   13.169464] RKNPU 27700000.npu: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   13.169464] RKNPU 27700000.npu: l=15000 h=2147483647 hyst=5000 l_limit=0 h_limit=0 h_table=0
+[   13.172069] RKNPU 27700000.npu: RKNPU: nbuf region: [0x000000003fe80000, 0x000000003ff80000), nbuf size: 0x100000
+[   13.172069] RKNPU 27700000.npu: RKNPU: nbuf region: [0x000000003fe80000, 0x000000003ff80000), nbuf size: 0x100000
+[   13.174816] cfg80211: Loading compiled-in X.509 certificates for regulatory database
+[   13.174816] cfg80211: Loading compiled-in X.509 certificates for regulatory database
+[   13.177793] cfg80211: Loaded X.509 cert 'sforshee: 00b28ddf47aef9cea7'
+[   13.177793] cfg80211: Loaded X.509 cert 'sforshee: 00b28ddf47aef9c[ea7'
+   13.178800] cfg80211: Loaded X.509 cert 'wens: 61c038651aabdcf94bd0ac7ff06c7248db18c600'
+[   13.178800] cfg80211: Loaded[ X.509 cert 'wens: 61c038651aabdcf94bd0ac7ff06c7248db18c600'
+   13.179899] platform regulatory.0: Direct firmware load for regulatory.db failed with error -2
+[   13[.179899] platform regulatory.0: Direct firmware load for regulatory.db failed with error -2
+   13.181386] cfg80211: failed to load regulatory.db
+[   13.182657] cl[   13.181386] cfg80211: failed to load regulatory.db
+k: Disabling unused clocks
+[   13.182657] clk: Disabling unused clocks
+[   13.184699] rockchip-pm rockchip-suspend: not set pwm-regulator-config
+[   13.184699] rockchip-pm rockchip-suspend: not set pwm-regulator-config
+[   13.186235] rockchip-suspend not set sleep-mode-config for mem-lite
+[   13.18[   13.186235] rockchip-suspend not set sleep-mode-config for mem-lite
+6829] rockchip-suspend not set wakeup-config for mem-lite
+[   13.187919] rockchip-suspend not set sleep-[   13.186829] rockchip-suspend not set wakeup-config for mem-lite
+mode-config for mem-ultra
+[   13.189015] rockchip-suspe[   13.187919] rockchip-suspend not set sleep-mode-config for mem-ultra
+nd not set wakeup-config for mem-ultra
+[   13.189015] rockchip-suspend not set wakeup-config for mem-ultra
+[   13.190928] I : [File] : drivers/gpu/arm/mali400/mali/linux/mali_kernel_linux.c; [Line] : 407; [Func] : mali_module_init(); svn_rev_string_from_arm of this mali_ko is '', rk_ko_ver is '5', built at '18:47:11', on 'Jul 20 2026'.
+[   13.190928] I : [File] : drivers/gpu/arm/mali400/mali/linux/mali_[kernel_linux.c; [Line] : 407; [Func] : mali_module_init(); svn_rev_string_from_arm of this mali_ko is '', rk_ko_ver is '5', built at '18:47:11', on 'Jul 20 2026'.
+   13.193068] Mali: 
+[   13.193070] Mali device driver loaded
+[   13.193068] Mali: 
+[   13.193070] Mali device driver loaded
+[   13.195224] ALSA device list:
+[   13.195847]   #0: r[   13.195224] ALSA device list:
+ockchip-es8388
+[   13.196412]   #1: rockchip-hdmi0
+[   13.195847]   #0: rockchip-es8388
+[   13.196412]   #1: rockchip-hdmi0
+[   13.245483] ufshcd-rockchip 2a2d0000.ufs: link startup failed 1
+[   13[   13.245483] ufshcd-rockchip 2a2d0000.ufs: link startup failed 1
+.246085] ufshcd-rockchip 2a2d0000.ufs: UFS Host state=0
+[ [   13.246085] ufshcd-rockchip 2a2d0000.ufs: UFS Host state=0
+  13.247106] ufshcd-rockchip 2a2d0000.ufs: outstanding reqs=0x0 tasks=0x0
+[   13.24[   13.247106] ufshcd-rockchip 2a2d0000.ufs: outstanding reqs=0x0 tasks=0x0
+8201] ufshcd-rockchip 2a2d0000.ufs: saved_err=0x0, saved_uic_err=0x0
+[   13.249414] ufshcd-rockchip [   13.248201] ufshcd-rockchip 2a2d0000.ufs: saved_err=0x0, saved_uic_err=0x0
+2a2d0000.ufs: Device power mode=1, UIC link state=0
+[   13.250689] ufshcd-rockchip 2a2d0000.ufs: P[   13.249414] ufshcd-rockchip 2a2d0000.ufs: Device power mode=1, UIC link state=0
+M in progress=0, sys. suspended=0
+[   13.251971] ufshcd-rockchip 2a2d0000.ufs: Auto BKOPS=0, H[   13.250689] ufshcd-rockchip 2a2d0000.ufs: PM in progress=0, sys. suspended=0
+ost self-block=0
+[   13.253206] ufshcd-rockchip 2a2d0000.ufs: Clk gate=1
+[   13.253668] ufshc[d   13.251971] ufshcd-rockchip 2a2d0000.ufs: Auto BKOPS=0, Host self-block=0
+[   13.253206] ufshcd-rockchip 2a2d0000.ufs: Clk gate=1
+-rockchip 2a2d0000.ufs: last_hibern8_exit_tstamp at 0 us, hibern8_exit_cnt=0
+[   13.255481] ufshcd-rock[   13.253668] ufshcd-rockchip 2a2d0000.ufs: last_hibern8_exit_tstamp at 0 us, hibern8_exit_cnt=0
+chip 2a2d0000.ufs: last intr at 2618379 us, last intr status=0x404
+[   13.256977[   13.255481] ufshcd-rockchip 2a2d0000.ufs: last intr at 2618379 us, last intr status=0x404
+] ufshcd-rockchip 2a2d0000.ufs: error handling flags=0x0, req. abort count=0
+[   13.2[   13.256977] ufshcd-rockchip 2a2d0000.ufs: error handling flags=0x0, req. abort count=0
+58420] ufshcd-rockchip 2a2d0000.ufs: hba->ufs_version=0x200, Host capabilities=0x187011f, caps=0x488
+[   13.2[5   13.258420] ufshcd-rockchip 2a2d0000.ufs: hba->ufs_version=0x200, Host capabilities=0x187011f, caps=0x488
+9983] ufshcd-rockchip 2a2d0000.ufs: quirks=0x2100, dev. quirks=0x0
+[   13.259983] ufshcd-rockchip 2a2d0000.ufs: quirks=0x21[00, dev. quirks=0x0
+   13.261448] host_regs: 00000000: 0187011f 00000000 00000200 00000000
+[   13.262599] host_regs: 00[   13.261448] host_regs: 00000000: 0187011f 00000000 00000200 00000000
+000010: 00000000 000005e6 00000000 00000000
+[   13.263734] host_regs: 00000020: 00000000 00000470 000000[   13.262599] host_regs: 00000010: 00000000 000005e6 00000000 00000000
+00 00000000
+[   13.264871] host_regs: 00000030: 00000008 00000001 00000000 00000000
+[   13.265459] h[   13.263734] host_regs: 00000020: 00000000 00000470 00000000 00000000
+[   13.264871] host_regs: 00000030: 00000008 00000001 00000000 00000000
+ost_regs: 00000040: 00000000 00000000 00000000 00000000
+[   13.267149] host_regs: 00000050: 0[   13.265459] host_regs: 00000040: 00000000 00000000 00000000 00000000
+0000000 00000000 00000000 00000000
+[   13.268284] host_regs: 00000060: 00000000 00000000 00000000 000000[   13.267149] host_regs: 00000050: 00000000 00000000 00000000 00000000
+00
+[   13.269420] host_regs: 00000070: 00000000 00000000 00000000 00000000
+[   13.270017] host_regs:[   13.268284] host_regs: 00000060: 00000000 00000000 00000000 00000000
+[   13.269420] host_regs: 00000070: 00000000 00000000 00000000 00000000
+ 00000080: 00000000 00000000 00000000 00000000
+[   13.271701] host_regs: 00000090: 00000016 0[   13.270017] host_regs: 00000080: 00000000 00000000 00000000 00000000
+0000000 00000001 00000000
+[   13.272838] ufshcd-rockchip 2a2d0000.ufs: No record of pa_err
+[   13.273[   13.271701] host_regs: 00000090: 00000016 00000000 00000001 00000000
+[   13.272838] ufshcd-rockchip 2a2d0000.ufs: No record of pa_err
+372] ufshcd-rockchip 2a2d0000.ufs: No record of dl_err
+[   13.274955] ufshcd-rockchip 2a2d0000.ufs:[   13.273372] ufshcd-rockchip 2a2d0000.ufs: No record of dl_err
+ No record of nl_err
+[   13.275983] ufshcd-rockchip 2a2[   13.274955] ufshcd-rockchip 2a2d0000.ufs: No record of nl_err
+d0000.ufs: No record of tl_err
+[   13.277011] ufshcd-ro[   13.275983] ufshcd-rockchip 2a2d0000.ufs: No record of tl_err
+ckchip 2a2d0000.ufs: No record of dme_err
+[   13.27805[   13.277011] ufshcd-rockchip 2a2d0000.ufs: No record of dme_err
+5] ufshcd-rockchip 2a2d0000.ufs: No record of auto_hibern8_err
+[   13.27805[5] ufshcd-rockchip 2a2d0000.ufs: No record of auto_hibern8_err
+   13.279171] ufshcd-rockchip 2a2d0000.ufs: No record of fatal_err
+[   13.2[   13.279171] ufshcd-rockchip 2a2d0000.ufs: No record of fatal_err
+80293] ufshcd-rockchip 2a2d0000.ufs: link_startup_fail[0] = 0x1 at 2618415 us
+[   13.281510] ufshcd-rockchi[   13.280293] ufshcd-rockchip 2a2d0000.ufs: link_startup_fail[0] = 0x1 at 2618415 us
+p 2a2d0000.ufs: link_startup_fail: total cnt=1
+[   13.2[   13.281510] ufshcd-rockchip 2a2d0000.ufs: link_startup_fail: total cnt=1
+82792] ufshcd-rockchip 2a2d0000.ufs: No record of resume_fail
+[   13.283943] ufshcd-rockchip 2a2d000[   13.282792] ufshcd-rockchip 2a2d0000.ufs: No record of resume_fail
+0.ufs: No record of suspend_fail
+[   13.285056] ufshcd-rockchip 2a2d0000.ufs: dev_reset[0] = 0x0 at 2193[   13.283943] ufshcd-rockchip 2a2d0000.ufs: No record of suspend_fail
+012 us
+[   13.286240] ufshcd-rockchip 2a2d0000.ufs: dev_reset: total cnt=1
+[   13.286797] ufshcd-rock[   13.285056] ufshcd-rockchip 2a2d0000.ufs: dev_reset[0] = 0x0 at 2193012 us
+[   13.286240] ufshcd-rockchip 2a2d0000.ufs: dev_reset: total cnt=1
+chip 2a2d0000.ufs: No record of host_reset
+[   13.288470] ufshcd-rockchip 2a2d0000.ufs: No r[   13.286797] ufshcd-rockchip 2a2d0000.ufs: No record of host_reset
+ecord of task_abort
+[   13.289686] ufshcd-rockchip 2a2d0000.ufs: ufshcd_async_scan failed:[   13.288470] ufshcd-rockchip 2a2d0000.ufs: No record of task_abort
+ 1
+[   13.289686] ufshcd-rockchip 2a2d0000.ufs: ufshcd_async_scan failed: 1
+[   13.297735] EXT4-fs (mmcblk1p2): warning: mounting unchecked fs, running e2fsck is recommended
+[   13.297735] EXT4-fs (mmcblk1p2): warning: mounting unchecked fs, running e2fsck is recommended
+[   13.301011] EXT4-fs (mmcblk1p2): mounted filesystem without journal. Quota mode: none.
+[  [   13.301011] EXT4-fs (mmcblk1p2): mounted filesystem without journal. Quota mode: none.
+ 13.301829] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[   13.301829] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[   13.303856] devtmpfs: mounted
+[   13.303856] devtmpfs: mounted
+[   13.310488] Freeing unused kernel memory: 8192K
+[   13.310488] Freeing unused kernel memory: 8192K
+[   13.311118] Run /sbin/init as init process
+[   13.311118] Run /sbin/init as init process
+[   13.322030] usb 3-1.4: new high-speed USB device number 3 using xhci-hcd
+[   13.322030] usb 3-1.4: new high-speed USB device number 3 using xhci-hcd
+[   13.397207] EXT4-fs (mmcblk1p2): re-mounted. Quota mode: none.
+[   13.397207] EXT4-fs (mmcblk1p2): re-mounted. Quota mode: none.
+Seeding 256 bits and crediting
+Saving 256 bits of creditable seed for next boot
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting network: [   13.527241] usb 3-1.4: New USB device found, idVendor=a69c, idProduct=8d80, bcdDevice= 1.00
+[   13.5[   13.527241] usb 3-1.4: New USB device found, idVendor=a69c, idProduct=8d80, bcdDevice= 1.00
+28066] usb 3-1.4: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+[   13.[   13.528066] usb 3-1.4: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+529471] usb 3-1.4: Product: AIC Wlan
+[   13.530537] usb 3-1.4: Manufacturer: aicsem[   13.529471] usb 3-1.4: Product: AIC Wlan
+i
+[   13.531290] usb 3-1.4: SerialNumber: 20220103
+[   13.530537] usb 3-1.4: Manufacturer: aicsemi
+[   13.531290] usb 3-1.4: SerialNumber: 20220103
+[   13.582705] rk_gmac-dwmac 2a220000.ethernet eth0: Register MEM_TYPE_PAGE_POOL RxQ-0
+[   13.582705] rk_gmac-dwmac 2a220000.ethernet eth0: Register MEM_TYPE_PAGE_POOL RxQ-0
+[   13.698102] rk_gmac-dwmac 2a220000.ethernet eth0: PHY [stmmac-0:01] driver [RTL8211F Gigabit Ethernet] (irq=POLL)
+[   13.698102] rk_gmac-dwmac 2a220000.ethernet eth0: PHY [stmmac-0:01][ driver [RTL8211F Gigabit Ethernet] (irq=POLL)
+   13.699720] dwmac4: Master AXI performs any burst length
+[   13.700720] [   13.699720] dwmac4: Master AXI performs any burst length
+rk_gmac-dwmac 2a220000.ethernet eth0: No Safety Features support found
+[   13.70202[   13.700720] rk_gmac-dwmac 2a220000.ethernet eth0: No Safety Features support found
+2] rk_gmac-dwmac 2a220000.ethernet eth0: IEEE 1588-2008 Advanced Timestamp supported
+[   13.702022] rk_gmac-dwmac 2a220000.ethernet eth0: IEEE 1588-2008 A[dvanced Timestamp supported
+   13.703928] rk_gmac-dwmac 2a220000.ethernet eth0: registered PTP clock
+[   13.703928] rk_gmac-dwmac 2a220000.ethernet eth0: registered PTP clock
+[   13.705617] rk_gmac-dwmac 2a220000.ethernet eth0: FPE workqueue start
+[   13.706254][   13.705617] rk_gmac-dwmac 2a220000.ethernet eth0: FPE workqueue start
+ rk_gmac-dwmac 2a220000.ethernet eth0: configuring for phy/rgmii-rxid link mode
+[   13.706254] rk_gmac-dwmac 2a220000.ethernet eth0: configuring for phy/rgmii-rxid link mode
+udhcpc: started, v1.36.1
+udhcpc: broadcasting discover
+[   14.515589] rk-pcie 2a200000.pcie: PCIe Link Fail, LTSSM is 0x3, hw_retries=0
+[   14.515589] rk-pcie 2a200000.pcie: PCIe Link Fail, LTSSM is 0x3, hw_retries=0
+[   15.982102] vendor storage:20190527 ret = -1
+[   15.982102] vendor storage:20190527 ret = -1
+udhcpc: no lease, forking to background
+OK
+Starting dropbear sshd: OK
+[   17.403360] rk_pcie_establish_link: 169 callbacks suppressed
+[   17.403392] rk-p[   17.403360] rk_pcie_establish_link: 169 callbacks suppressed
+cie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.403392] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.426281] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.426281] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.448090] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.448090] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.469950] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.469950] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.491803] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.491803] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.513658] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.513658] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.535557] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.535557] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.557413] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.557413] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.579308] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.579308] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.601163] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.601163] rk-pcie 2a200000.pcie: PCIe Linking... LTSSM is 0x3
+[   17.856428] rk-pcie 2a200000.pcie: PCIe Link Fail, LTSSM is 0x3, hw_retries=1
+[   17.856428] rk-pcie 2a200000.pcie: PCIe Link Fail, LTSSM is 0x3, hw_retries=1
+[   18.887442] rk-pcie 2a200000.pcie: failed to initialize host
+[   18.887442] rk-pcie 2a200000.pcie: failed to initialize host
+[   23.395230] platform mtd_vendor_storage: deferred probe pending
+[   23.395230] platform mtd_vendor_storage: deferred probe pending
+no accel device
+
+##### VENDOR CAPTURE: one int4 op, with its buffers          #####
+ls: /dev/rknpu: No such file or directory
+/dev/dri:
+total 0
+crw-------    1 root     root      226,   0 Jan  1 12:00 card0
+crw-------    1 root     root      226,   1 Jan  1 12:00 card1
+crw-------    1 root     root      226, 128 Jan  1 12:00 renderD128
+crw-------    1 root     root      226, 129 Jan  1 12:00 renderD129
+[   12.243021] rk_gmac-dwmac 2a220000.ethernet: clock input or output? (output).
+[   12.662946] input: rk805 pwrkey as /devices/platform/2ac40000.i2c/i2c-1/1-0023/rk805-pwrkey.3.auto/input/input0
+[   12.668678] vdd_npu_s0: supplied by vcc_sys
+[   12.671651] vdd_npu_s0: 550 <--> 950 mV at 750 mV at 5000 mA, enabled
+[   12.858711] rk-multicodecs es8388-sound: Has no input keys
+[   13.139398] input: rockchip-hdmi0 rockchip-hdmi0 as /devices/platform/hdmi-sound/sound/card1/input1
+[   13.145421] RKNPU 27700000.npu: Adding to iommu group 0
+[   13.146754] RKNPU 27700000.npu: RKNPU: rknpu iommu is enabled, using iommu mode
+[   13.148216] RKNPU 27700000.npu: Looking up rknpu-supply from device tree
+[   13.149459] RKNPU 27700000.npu: Looking up mem-supply from device tree
+[   13.150281] RKNPU 27700000.npu: Looking up mem-supply property in node /npu@27700000 failed
+[   13.150350] RKNPU 27700000.npu: can't request region for resource [mem 0x27700000-0x27707fff]
+[   13.152541] RKNPU 27700000.npu: can't request region for resource [mem 0x27708000-0x2770ffff]
+[   13.154740] [drm] Initialized rknpu 0.9.8 20240828 for 27700000.npu on minor 1
+[   13.155874] rockchip-pm-domain 27380000.power-management:power-controller: Looking up npu0-supply from device tree
+[   13.155898] rockchip-pm-domain 27380000.power-management:power-controller: Looking up npu0-supply property in node /power-management@27380000/power-controller failed
+[   13.156124] rockchip-pm-domain 27380000.power-management:power-controller: Looking up npu1-supply from device tree
+[   13.156144] rockchip-pm-domain 27380000.power-management:power-controller: Looking up npu1-supply property in node /power-management@27380000/power-controller failed
+[   13.156174] rockchip-pm-domain 27380000.power-management:power-controller: Looking up nputop-supply from device tree
+[   13.156191] rockchip-pm-domain 27380000.power-management:power-controller: Looking up nputop-supply property in node /power-management@27380000/power-controller failed
+=== capturing one submit from the vendor LLM runtime ===
+rkllm init start
+I rkllm: rkllm-runtime version: 1.2.0, rknpu driver version: 0.9.8, platform: RK3576
+I rkllm: loading rkllm model from /opt/vendor/model/Llama-3.2-1B-Instruct-rk3576-w4a16.rkllm
+[   27.198281] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 270336 bytes), total 32768 (slots), used 129 (slots)
+[   27.198281] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 270336 bytes), total 32768 (slots), used 129 (slots)
+[   27.201896] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 270336 bytes), total 32768 (slots), used 65 (slots)
+[   27.201896] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 270336 bytes), total 32768 (slots), used 65 (slots)
+I rkllm: rkllm-toolkit version: unknown, max_context_limit: 4096, npu_core_num: 2, target_platform: RK3576
+[   28.594236] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 524288 bytes), total 32768 (slots), used 1 (slots)
+[   28.594236] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 524288 bytes), total 32768 (slots), used 1 (slots)
+[   28.596443] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 524288 bytes), total 32768 (slots), used 1 (slots)
+[   28.596836] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 557056 bytes), total 32768 (slots), used 1 (slots)
+[   28.596443] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 524288 bytes), total 32768 (slots), used 1 (slots)
+[   28.596836] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 557056 bytes), total 32768 (slots), used 1 (slots)
+[   28.641886] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 557056 bytes), total 32768 (slots), used 1 (slots)
+[   28.641886] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 557056 bytes), total 32768 (slots), used 1 (slots)
+[   28.779953] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 565248 bytes), total 32768 (slots), used 1 (slots)
+[   28.779953] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 565248 bytes), total 32768 (slots), used 1 (slots)
+[   28.781664] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 565248 bytes), total 32768 (slots), used 1 (slots)
+[   28.782086] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 434176 bytes), total 32768 (slots), used 1 (slots)
+[   28.781664] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 565248 bytes), total 32768 (slots), used 1 (slots)
+[   28.782086] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 434176 bytes), total 32768 (slots), used 1 (slots)
+[   28.830843] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 434176 bytes), total 32768 (slots), used 1 (slots)
+[   28.830843] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 434176 bytes), total 32768 (slots), used 1 (slots)
+[   32.240746] swiotlb_tbl_map_single: 66 callbacks suppressed
+[   32.241358][   32.240746] swiotlb_tbl_map_single: 66 callbacks suppressed
+ dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.241358] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.245021] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 962560 bytes), total 32768 (slots), used 43 (slots)
+[   32.245021] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 962560 bytes), total 32768 (slots), used 43 (slots)
+[   32.326237] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 962560 bytes), total 32768 (slots), used 43 (slots)
+[   32.326237] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (s[z: 962560 bytes), total 32768 (slots), used 43 (slots)
+   32.327683] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.327683] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.411241] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.411241] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.494959] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 274432 bytes), total 32768 (slots), used 3 (slots)
+[   32.494959] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full ([sz: 274432 bytes), total 32768 (slots), used 3 (slots)
+   32.496206] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 3 (slots)
+[   32.496309] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 274432 bytes), total 32768 (slots), used 3 (slots)
+[   32.496206] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 3 (slots)
+[   32.496309] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 274432 bytes), total 32768 (slots), used 3 (slots)
+[   32.522912] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   32.523389] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   32.522912] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   32.523389] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   37.247616] swiotlb_tbl_map_single: 130 callbacks suppressed
+[   37.24825[   37.247616] swiotlb_tbl_map_single: 130 callbacks suppressed
+4] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   37.248254] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   37.253089] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 884736 bytes), total 32768 (slots), used 81 (slots)
+[   37.253089] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 884736 bytes), total 32768 (slots), used 81 (slots)
+[   37.332888] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 884736 bytes), total 32768 (slots), used 81 (slots)
+[   37.332888] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 884736 bytes), total 32768 (slots), used 81 (slots)
+[   37.417512] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   37.417512] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   37.421600] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   37.421600] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   37.424590] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   37.424590] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   37.485565] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 3 (slots)
+[   37.485565] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 3 (slots)
+[   37.571899] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 901120 bytes), total 32768 (slots), used 77 (slots)
+[   37.571899] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full ([sz: 901120 bytes), total 32768 (slots), used 77 (slots)
+   37.573238] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 73 (slots)
+[   37.573354] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 901120 bytes), total 32768 (slots), used 73 (slots)
+[   37.573238] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 73 (slots)
+[   37.573354] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 901120 bytes), total 32768 (slots), used 73 (slots)
+[   42.317449] swiotlb_tbl_map_single: 127 callbacks suppressed
+[   42.317468[   42.317449] swiotlb_tbl_map_single: 127 callbacks suppressed
+] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   42.317468] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   42.321593] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 921600 bytes), total 32768 (slots), used 63 (slots)
+[   42.321834] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 63 (slots)
+[   42.321593] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 921600 bytes), total 32768 (slots), used 63 (slots)
+[   42.321834] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 63 (slots)
+[   42.385226] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 921600 bytes), total 32768 (slots), used 63 (slots)
+[   42.385226] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full ([sz: 921600 bytes), total 32768 (slots), used 63 (slots)
+   42.386527] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   42.386527] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   42.469251] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   42.469251] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   42.471357] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   42.471357] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   42.553055] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   42.553055] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   42.637400] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   42.637400] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   42.639312] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   42.639312] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   47.391628] swiotlb_tbl_map_single: 135 callbacks suppressed
+[   47.392246][   47.391628] swiotlb_tbl_map_single: 135 callbacks suppressed
+ dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.392246] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.397048] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   47.397048] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   47.476733] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   47.476733] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   47.561400] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   47.561400] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   47.565427] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   47.565427] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   47.568470] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.568470] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.637044] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.638064] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.637044] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.638064] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.721289] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.721289] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   47.723148] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 876544 bytes), total 32768 (slots), used 85 (slots)
+[   47.723148] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 876544 bytes), total 32768 (slots), used 85 (slots)
+[   52.393980] swiotlb_tbl_map_single: 121 callbacks suppressed
+[   52.3940[   52.393980] swiotlb_tbl_map_single: 121 callbacks suppressed
+14] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   52.394014] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   52.397114] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   52.397211] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   52.397114] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   52.397211] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   52.422873] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 958464 bytes), total 32768 (slots), used 45 (slots)
+[   52.423004] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 45 (slots)
+[   52.422873] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 958464 bytes), total 32768 (slots), used 45 (slots)
+[   52.423004] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 45 (slots)
+[   52.486333] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 958464 bytes), total 32768 (slots), used 45 (slots)
+[   52.486333] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 958464 bytes), total 32768 (slots), used 45 (slots)
+[   52.490447] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   52.490447] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   52.570980] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   52.570980] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   52.574088] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 827392 bytes), total 32768 (slots), used 109 (slots)
+[   52.574088] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 827392 bytes), total 32768 (slots), used 109 (slots)
+[   52.655157] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 827392 bytes), total 32768 (slots), used 111 (slots)
+[   52.655157] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 827392 bytes), total 32768 (slots), used 111 (slots)
+[   57.441951] swiotlb_tbl_map_single: 127 callbacks suppressed
+[   57.4425[   57.441951] swiotlb_tbl_map_single: 127 callbacks suppressed
+70] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 954368 bytes), total 32768 (slots), used 47 (slots)
+[   57.442570] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 954368 bytes), total 32768 (slots), used 47 (slots)
+[   57.446890] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.446890] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.530359] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.530359] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.616171] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   57.616171] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   57.620155] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   57.620155] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   57.623262] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.623262] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.682524] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   57.682524] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full ([sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+   57.683884] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 987136 bytes), total 32768 (slots), used 31 (slots)
+[   57.683884] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 987136 bytes), total 32768 (slots), used 31 (slots)
+[   57.766360] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 987136 bytes), total 32768 (slots), used 31 (slots)
+[   57.766360] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 987136 bytes), total 32768 (slots), used 31 (slots)
+[   57.768587] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 892928 bytes), total 32768 (slots), used 77 (slots)
+[   57.768587] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 892928 bytes), total 32768 (slots), used 77 (slots)
+[   62.479096] swiotlb_tbl_map_single: 125 callbacks suppressed
+[   62.479[   62.479096] swiotlb_tbl_map_single: 125 callbacks suppressed
+128] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   62.479128] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   62.483073] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   62.483073] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   62.487391] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.487391] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.546198] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.546198] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.548789] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.548789] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.633644] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.633644] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.638888] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.638888] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.717722] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.717722] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   62.803324] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   62.803324] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   62.805023] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   62.805023] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   67.554470] swiotlb_tbl_map_single: 127 callbacks suppressed
+[   67[   67.554470] swiotlb_tbl_map_single: 127 callbacks suppressed
+.555071] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   67.555071] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   67.640292] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   67.640292] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   67.644295] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   67.644753] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   67.644295] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   67.644753] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   67.712021] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   67.712021] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (s[z: 1048576 bytes), total 32768 (slots), used 1 (slots)
+   67.713325] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   67.713325] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   67.796261] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   67.796261] dwmmc_r[   67.801107] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 929792 bytes), total 32768 (slots), used 59 (slots)
+ockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   67.801107] dwmmc_rockchip 2a3100[00.mmc: swiotlb buffer is full (sz: 929792 bytes), total 32768 (slots), used 59 (slots)
+   67.880258] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 929792 bytes), total 32768 (slots), used 59 (slots)
+[   67.880258] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 929792 bytes), total 32768 (slots), used 59 (slots)
+[   67.966252] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   67.966252] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   72.595945] swiotlb_tbl_map_single: 128 callbacks suppressed
+[   72.595978] dwmmc[   72.595945] swiotlb_tbl_map_single: 128 callbacks suppressed
+_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.595978] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.599313] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   72.599313] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   72.682082] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   72.682082] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 860160 bytes), total 32768 (slots), used 93 (slots)
+[   72.686878] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.686878] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.765850] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.765850] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   72.850426] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   72.850426] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   72.852125] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   72.852150] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   72.852125] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   72.852150] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   72.876378] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1007616 bytes), total 32768 (slots), used 21 (slots)
+[   72.876516] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 21 (slots)
+[   72.876378] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1007616 bytes), total 32768 (slots), used 21 (slots)
+[   72.876516] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 21 (slots)
+[   77.632675] swiotlb_tbl_map_single: 126 callbacks suppressed
+[   77.632713] dwmmc_rockch[   77.632675] swiotlb_tbl_map_single: 126 callbacks suppressed
+ip 2a310000.mmc: swiotlb buffer is full (sz: 839680 bytes), total 32768 (slots), used 103 (slots)
+[   77.632713] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 839680 bytes), total 32768 (slots), used 103 (slots)
+[   77.720977] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   77.720977] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   77.724767] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   77.724767] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   77.726667] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.726667] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.789160] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.79[   77.789160] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (0264] dwsz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+mmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.790264] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.873240] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.873240] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   77.878498] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   77.878498] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   77.958471] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   77.958471] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 872448 bytes), total 32768 (slots), used 87 (slots)
+[   78.043160] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   78.043160] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 278528 bytes), total 32768 (slots), used 1 (slots)
+[   82.641142] swiotlb_tbl_map_single: 126 callbacks suppressed
+[   82.641186] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   82.641290] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   82.641142] swiotlb_tbl_map_single: 126 callbacks suppressed
+[   82.641186] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   82.641290] dwmmc_rockchip 2a310000.mmc: swiotlb buf[fer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+   82.705609] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   82.705609] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1048576 bytes), total 32768 (slots), used 1 (slots)
+[   82.710244] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   82.710244] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   82.790157] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   82.790157] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   82.791946] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   82.791946] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   82.873878] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   82.873878] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1019904 bytes), total 32768 (slots), used 15 (slots)
+[   82.958653] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   82.958653] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   82.962780] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+[   82.962780] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full ([sz: 770048 bytes), total 32768 (slots), used 1 (slots)
+   82.964129] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 794624 bytes), total 32768 (slots), used 125 (slots)
+[   82.964129] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 794624 bytes), total 32768 (slots), used 125 (slots)
+[   87.705664] swiotlb_tbl_map_single: 129 callbacks suppressed
+[   87.706298] dwmmc_ro[   87.705664] swiotlb_tbl_map_single: 129 callbacks suppressed
+ckchip 2a310000.mmc: swiotlb buffer is full (sz: 1040384 bytes), total 32768 (slots), used 5 (slots)
+[   87.706298] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 1040384 bytes), total 32768 (slots), used 5 (slots)
+[   87.711180] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   87.711180] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   87.803525] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   87.803525] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   87.899746] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   87.899746] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 137 (slots)
+[   87.904055] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 770048 bytes), total 32768 (slots), used 57 (slots)
+[   87.904197] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   87.904055] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (s[   87.975901] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   87.9765z: 770048 bytes), total 32768 (slots), used 57 (slots)
+[   87.904197] dwmmc_rockchip 2a310000.mmc: swiotlb buf98] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 167 (slots)
+fer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   87.975901] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 933888 bytes), total 32768 (slots), used 57 (slots)
+[   87.976598] d[wmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 167 (slots)
+   88.063636] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   88.063636] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 823296 bytes), total 32768 (slots), used 111 (slots)
+[   88.068600] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 798720 bytes), total 32768 (slots), used 123 (slots)
+[   88.068600] dwmmc_rockchip 2a310000.mmc: swiotlb buffer is full (sz: 798720 bytes), total 32768 (slots), used 123 (slots)
+I rkllm: Enabled cpus: [4, 5, 6, 7]
+I rkllm: Enabled cpus num: 4
+I rkllm: system_prompt: 
+I rkllm: prompt_prefix: 
+I rkllm: prompt_postfix: 
+rkllm init success
+
+**********************可输入以下问题对应序号获取回答/或自定义输入********************
+
+[0] 现有一笼子，里面有鸡和兔子若干只，数一数，共有头14个，腿38条，求鸡和兔子各有多少只？
+[1] 有28位小朋友排成一行,从左边开始数第10位是学豆,从右边开始数他是第几位?
+
+*************************************************************************
+
+I rkllm: reset chat template:
+I rkllm: system_prompt: 
+I rkllm: prompt_prefix: <｜User｜>
+I rkllm: prompt_postfix: <｜Assistant｜>
+
+user: robot: [   89.503466] rknpu armdbg pre-arm PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=00000001 14=00000000 18=8000000f 1c=00000000 20=800fffff 24=00000000 28=00000000 2c=30000000 30=00000000 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+[   89.5[   89.503466] rknpu armdbg pre-arm PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=00000001 14=00000000 18=8000000f 1c=00000000 20=800fffff 24=00000000 28=00000000 2c=30000000 30=00000000 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+05882] rknpu armdbg pre-arm UNIT cna_sp=00000000 cna_oe=00000000 core_sp=00000000 core_oe=00000000 dpu_sp=00000000 dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+[   89.505882] rknpu armdbg pre-arm UNI[T cna_sp=00000000 cna_oe=00000000 core_sp=00000000 core_oe=00000000 dpu_sp=00000000 dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+   89.509488] rknpu armdbg post-arm PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=00000001 14=00000000 18=8000000f 1c=00000000 20=800fffff 24=00000000 28=00000000 2c=30000000 30=00000000 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+[   89.5131[   89.509488] rknpu armdbg post-arm PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=00000001 14=00000000 18=8000000f 1c=00000000 20=800fffff 24=00000000 28=00000000 2c=30000000 30=00000000 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+51] rknpu armdbg post-arm UNIT cna_sp=1000000e cna_oe=00000000 core_sp=1000000e core_oe=00000000 dpu_sp=00000000 dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+[   89.51677[   89.513151] rknpu armdbg post-arm UNIT cna_sp=1000000e cna_oe=00000000 core_sp=1000000e core_oe=00000000 dpu_sp=00000000 dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+6] rknpu cap: SUBMIT core=1 task_start=17 task_number=1 task_end=17
+[   89.5187[   89.516776] rknpu cap: SUBMIT core=1 task_start=17 task_number=1 task_end=17
+60] rknpu cap: PCDISP regcmd_addr=0xffffffffff3c7400 regcfg_amount=123 pc_data_amount=63 int_mask=0x300 first_int_mask=0x300 task_con=0x70001 task_base_addr=0x0 enable_mask=0xd pc_dma_ctrl=1 pc_task_number_bits=16 task_pp_en=1
+[   89.518760] rknpu cap: PCDISP[ regcmd_addr=0xffffffffff3c7400 regcfg_amount=123 pc_data_amount=63 int_mask=0x300 first_int_mask=0x300 task_con=0x70001 task_base_addr=0x0 enable_mask=0xd pc_dma_ctrl=1 pc_task_number_bits=16 task_pp_en=1
+   89.521279] rknpu cap: ==== BO DUMP #1 (task_start=17 task_number=1) ====
+[  [   89.521279] rknpu cap: ==== BO DUMP #1 (task_start=17 task_number=1) ====
+ 89.523773] rknpu cap: BO weights iova=0xd2a43000 phys=0x10cd18000 len=16384 distinct=186 nonzero=15186
+[   89.523773] r[knpu cap: BO weights iova=0xd2a43000 phys=0x10cd18000 len=16384 distinct=186 nonzero=15186
+   89.525224] rknpu cap: BO weights +0000: 1f 0d 12 11 f0 dd 01 31 e0 d1 13 3f f2 1f 12 e0
+[   89.5267[   89.525224] rknpu cap: BO weights +0000: 1f 0d 12 11 f0 dd 01 31 e0 d1 13 3f f2 1f 12 e0
+93] rknpu cap: BO weights +0010: 1f 05 12 00 0e 21 d0 1f 60 12 11 00 0f 2f f0 11
+[   [   89.526793] rknpu cap: BO weights +0010: 1f 05 12 00 0e 21 d0 1f 60 12 11 00 0f 2f f0 11
+89.528234] rknpu cap: BO weights +0020: 12 0e ff 1e d3 f4 12 e3 b0 00 d0 12 21 cf e2 e1
+[   89.528234[] rknpu cap: BO weights +0020: 12 0e ff 1e d3 f4 12 e3 b0 00 d0 12 21 cf e2 e1
+   89.529673] rknpu cap: BO weights +0030: d0 1e 12 33 11 1f 04 f1 d1 2e df 0f 1f f2 d0 2e
+[   89.5311[   89.529673] rknpu cap: BO weights +0030: d0 1e 12 33 11 1f 04 f1 d1 2e df 0f 1f f2 d0 2e
+27] rknpu cap: BO weights +0040: 0e f1 f1 cd de 1e 01 0d 3f e2 1f ce 2f 1d ef ff
+[   [   89.531127] rknpu cap: BO weights +0040: 0e f1 f1 cd de 1e 01 0d 3f e2 1f ce 2f 1d ef ff
+89.532568] rknpu cap: BO weights +0050: f0 03 00 fe 2e 0f ef 01 10 eb 1e 01 ff fd 1e ef
+[   89.534[   89.532568] rknpu cap: BO weights +0050: f0 03 00 fe 2e 0f ef 01 10 eb 1e 01 ff fd 1e ef
+023] rknpu cap: BO weights +0060: 00 04 f1 e0 1f 11 0f 1f 50 01 30 1e ef 30 20 12
+[ [   89.534023] rknpu cap: BO weights +0060: 00 04 f1 e0 1f 11 0f 1f 50 01 30 1e ef 30 20 12
+  89.535467] rknpu cap: BO weights +0070: fe f3 0f df 0d 0f ff 0e 2f 1d 0d de 0c f0 ff 1e
+[   89.5369[   89.535467] rknpu cap: BO weights +0070: fe f3 0f df 0d 0f ff 0e 2f 1d 0d de 0c f0 ff 1e
+08] rknpu cap: BO weights +0080: d0 f1 de 0b 1f ed 1b 0a 2f 11 1e ef 0e f0 0f 1e
+[[   89.536908] rknpu cap: BO weights +0080: d0 f1 de 0b 1f ed 1b 0a 2f 11 1e ef 0e f0 0f 1e
+   89.538363] rknpu cap: BO weights +0090: e0 0c 0f f0 f0 0f 23 e1 e0 de ef 20 f3 d0 01 d0
+[   89.[538363] rknpu cap: BO weights +0090: e0 0c 0f f0 f0 0f 23 e1 e0 de ef 20 f3 d0 01 d0
+   89.539810] rknpu cap: BO weights +00a0: f1 04 21 10 20 0e fc 2f 50 3f fe 2f fe 32 1e 4d
+[   89.5[39810] rknpu cap: BO weights +00a0: f1 04 21 10 20 0e fc 2f 50 3f fe 2f fe 32 1e 4d
+   89.541250] rknpu cap: BO weights +00b0: 02 00 10 00 0f f4 11 10 c0 2d ed 12 02 c1 d1 fd
+[   89.542[   89.541250] rknpu cap: BO weights +00b0: 02 00 10 00 0f f4 11 10 c0 2d ed 12 02 c1 d1 fd
+708] rknpu cap: BO weights +00c0: f2 1f 10 22 21 00 1f 03 01 2e d0 21 ff 02 f1 20
+[ [   89.542708] rknpu cap: BO weights +00c0: f2 1f 10 22 21 00 1f 03 01 2e d0 21 ff 02 f1 20
+  89.544154] rknpu cap: BO weights +00d0: d0 fb ef 0f d0 ff f0 e1 bf c1 df d2 1f c2 00 d2
+[   89.5[44154] rknpu cap: BO weights +00d0: d0 fb ef 0f d0 ff f0 e1 bf c1 df d2 1f c2 00 d2
+   89.545597] rknpu cap: BO weights +00e0: 41 00 22 32 02 1e 31 02 e0 0b 23 df 6b f3 f1 d2
+[   89.545597] rknpu cap: B[O weights +00e0: 41 00 22 32 02 1e 31 02 e0 0b 23 df 6b f3 f1 d2
+   89.547053] rknpu cap: BO weights +00f0: 00 0e 10 10 02 ff 00 01 d0 f0 f1 02 20 e1 1f f2
+[   89[.547053] rknpu cap: BO weights +00f0: 00 0e 10 10 02 ff 00 01 d0 f0 f1 02 20 e1 1f f2
+   89.548487] rknpu cap: BO weights +0100: d0 00 ec 12 10 1e 32 1e df 22 20 1f ff 02 2f 1d
+[   89.548487] rknpu cap: [BO weights +0100: d0 00 ec 12 10 1e 32 1e df 22 20 1f ff 02 2f 1d
+   89.549951] rknpu cap: BO weights +0110: 10 00 f2 2f 32 f0 0e 03 50 1d f3 11 0e 0d 0e 32
+[   89.5[49951] rknpu cap: BO weights +0110: 10 00 f2 2f 32 f0 0e 03 50 1d f3 11 0e 0d 0e 32
+   89.551388] rknpu cap: BO weights +0120: f0 00 00 02 ee 00 0e d1 d0 f1 e0 31 00 02 f0 10
+[   89.5[51388] rknpu cap: BO weights +0120: f0 00 00 02 ee 00 0e d1 d0 f1 e0 31 00 02 f0 10
+   89.552828] rknpu cap: BO weights +0130: 11 12 43 32 ff 1f e4 c3 c1 20 f0 21 32 10 f2 13
+[   89.552828] rknpu cap:[ BO weights +0130: 11 12 43 32 ff 1f e4 c3 c1 20 f0 21 32 10 f2 13
+   89.554282] rknpu cap: BO weights +0140: ef ff b2 0f 2f f0 de ef 2f 1c b1 e0 e0 fd e0 f1
+[   8[9.554282] rknpu cap: BO weights +0140: ef ff b2 0f 2f f0 de ef 2f 1c b1 e0 e0 fd e0 f1
+   89.555716] rknpu cap: BO weights +0150: 30 01 f1 e0 12 01 01 03 31 f0 01 d1 f1 0f 2f fe
+[   89[.555716] rknpu cap: BO weights +0150: 30 01 f1 e0 12 01 01 03 31 f0 01 d1 f1 0f 2f fe
+   89.557156] rknpu cap: BO weights +0160: 00 00 02 fe 21 00 0e 00 40 1f 11 f0 fe 00 1e 11
+[   89.557156] rknpu cap: [BO weights +0160: 00 00 02 fe 21 00 0e 00 40 1f 11 f0 fe 00 1e 11
+   89.558611] rknpu cap: BO weights +0170: 0f ff e3 0e 00 f0 ef 01 1f 0c d0 fe f0 fd ef 01
+[   89.558[611] rknpu cap: BO weights +0170: 0f ff e3 0e 00 f0 ef 01 1f 0c d0 fe f0 fd ef 01
+   89.560047] rknpu cap: BO weights +0180: 2f ff d0 fd 10 ef cc f1 0f 0e e1 ef f2 fd df e1
+[   89.5[60047] rknpu cap: BO weights +0180: 2f ff d0 fd 10 ef cc f1 0f 0e e1 ef f2 fd df e1
+   89.561486] rknpu cap: BO weights +0190: 00 03 2f d3 f2 10 21 df c1 00 e0 31 01 01 01 00
+[   89.561486] rknpu c[ap: BO weights +0190: 00 03 2f d3 f2 10 21 df c1 00 e0 31 01 01 01 00
+   89.562940] rknpu cap: BO weights +01a0: 10 0d f2 2d 10 f0 df 21 3f 1f 3e ef ef 0e 1e f0
+[   89[.562940] rknpu cap: BO weights +01a0: 10 0d f2 2d 10 f0 df 21 3f 1f 3e ef ef 0e 1e f0
+   89.564377] rknpu cap: BO weights +01b0: 00 02 2f 21 f1 00 0f f2 df f0 e0 4e 34 01 f2 00
+[   89.[564377] rknpu cap: BO weights +01b0: 00 02 2f 21 f1 00 0f f2 df f0 e0 4e 34 01 f2 00
+   89.565817] rknpu cap: BO weights +01c0: 21 11 40 11 1f 21 13 23 f2 03 2f 21 22 11 11 22
+[   89.565817] rknpu ca[p: BO weights +01c0: 21 11 40 11 1f 21 13 23 f2 03 2f 21 22 11 11 22
+   89.567271] rknpu cap: BO weights +01d0: ef f1 0d f2 ee 0f de cd c0 f0 dd 01 01 f0 df e0
+[   89.567[271] rknpu cap: BO weights +01d0: ef f1 0d f2 ee 0f de cd c0 f0 dd 01 01 f0 df e0
+   89.568705] rknpu cap: BO weights +01e0: e0 0f bd 22 0f 10 00 3d 00 12 cb 03 ee 01 e0 11
+[   89.568705] rknpu cap:[ BO weights +01e0: e0 0f bd 22 0f 10 00 3d 00 12 cb 03 ee 01 e0 11
+   89.570160] rknpu cap: BO weights +01f0: f0 01 0e 11 00 0f 00 0e d0 10 ee f1 01 00 e0 fe
+[   89.570160] rknpu cap: BO weights +01f0: f0 01 0e 11 00 0f 00 0e [d0 10 ee f1 01 00 e0 fe
+   89.571620] rknpu cap: BO input   iova=0xd0673000 phys=0x13c192000 len=4096 distinct=224 nonzero=1279
+[   89.5[71620] rknpu cap: BO input   iova=0xd0673000 phys=0x13c192000 len=4096 distinct=224 nonzero=1279
+   89.573136] rknpu cap: BO input   +0000: 45 20 09 21 91 a7 43 a4 01 a0 56 94 05 9b ce a3
+[   89.573136] rknpu cap: [BO input   +0000: 45 20 09 21 91 a7 43 a4 01 a0 56 94 05 9b ce a3
+   89.574692] rknpu cap: BO input   +0010: aa aa 34 29 4d 28 e9 21 db 2c 3c 2b ad 2a e2 af
+[   89.5[74692] rknpu cap: BO input   +0010: aa aa 34 29 4d 28 e9 21 db 2c 3c 2b ad 2a e2 af
+   89.576127] rknpu cap: BO input   +0020: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+[   89.5[76127] rknpu cap: BO input   +0020: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+   89.577566] rknpu cap: BO input   +0030: 9e ad 6b 27 df 32 2f 1f 80 26 30 27 70 29 b9 a8
+[   89.577566] rknpu cap:[ BO input   +0030: 9e ad 6b 27 df 32 2f 1f 80 26 30 27 70 29 b9 a8
+   89.579022] rknpu cap: BO input   +0040: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+[   89.[579022] rknpu cap: BO input   +0040: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+   89.580456] rknpu cap: BO input   +0050: e4 aa ac a9 c8 ae 69 a2 84 2e df af 28 30 2d 95
+[   89.580456] rknpu cap[: BO input   +0050: e4 aa ac a9 c8 ae 69 a2 84 2e df af 28 30 2d 95
+   89.581914] rknpu cap: BO input   +0060: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+[   89.5[81914] rknpu cap: BO input   +0060: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+   89.583345] rknpu cap: BO input   +0070: 0f 91 4c a8 40 a8 bb 9d cf 27 15 30 a5 a7 50 1f
+[   89.5[83345] rknpu cap: BO input   +0070: 0f 91 4c a8 40 a8 bb 9d cf 27 15 30 a5 a7 50 1f
+   89.584781] rknpu cap: BO input   +0080: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+[   89.584781] rknpu ca[p: BO input   +0080: 70 18 56 27 fe ac 92 99 36 a4 bd a0 1f a7 f1 ae
+   89.586238] rknpu cap: BO input   +0090: 7b a6 80 2d 4c 30 77 1d 14 25 a7 a6 a5 ac da a0
+[   89.58[6238] rknpu cap: BO input   +0090: 7b a6 80 2d 4c 30 77 1d 14 25 a7 a6 a5 ac da a0
+   89.587671] rknpu cap: BO input   +00a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.[587671] rknpu cap: BO input   +00a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.589106] rknpu cap: BO input   +00b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.589106] rknpu c[ap: BO input   +00b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.590559] rknpu cap: BO input   +00c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.59[0559] rknpu cap: BO input   +00c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.591990] rknpu cap: BO input   +00d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.5[91990] rknpu cap: BO input   +00d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.593425] rknpu cap: BO input   +00e0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.593425] rkn[pu cap: BO input   +00e0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.594879] rknpu cap: BO input   +00f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.594[879] rknpu cap: BO input   +00f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.596313] rknpu cap: BO bias    iova=0x00000000 <no domain/addr>
+[   89.59759[   89.596313] rknpu cap: BO bias    iova=0x00000000 <no domain/addr>
+7] rknpu cap: BO output  iova=0xd09f3000 phys=0x13c512000 len=4096 distinct=1 nonzero=0
+[   89.598951[   89.597597] rknpu cap: BO output  iova=0xd09f3000 phys=0x13c512000 len=4096 distinct=1 nonzero=0
+] rknpu cap: BO output  +0000: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.59[8951] rknpu cap: BO output  +0000: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.600453] rknpu cap: BO output  +0010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.600453] rknpu[ cap: BO output  +0010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.601907] rknpu cap: BO output  +0020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.[601907] rknpu cap: BO output  +0020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.603339] rknpu cap: BO output  +0030: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.[603339] rknpu cap: BO output  +0030: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.604775] rknpu cap: BO output  +0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.604775] rkn[pu cap: BO output  +0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.606224] rknpu cap: BO output  +0050: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89[.606224] rknpu cap: BO output  +0050: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.607656] rknpu cap: BO output  +0060: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89[.607656] rknpu cap: BO output  +0060: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.609091] rknpu cap: BO output  +0070: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.609091] rknpu cap[: BO output  +0070: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.610543] rknpu cap: BO output  +0080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.61[0543] rknpu cap: BO output  +0080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.611977] rknpu cap: BO output  +0090: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.6[11977] rknpu cap: BO output  +0090: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.613412] rknpu cap: BO output  +00a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.613412] rknpu[ cap: BO output  +00a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.614864] rknpu cap: BO output  +00b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89[.614864] rknpu cap: BO output  +00b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.616296] rknpu cap: BO output  +00c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.6[16296] rknpu cap: BO output  +00c0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.617734] rknpu cap: BO output  +00d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.617734] rknpu ca[p: BO output  +00d0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.619188] rknpu cap: BO output  +00e0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.619[188] rknpu cap: BO output  +00e0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   89.620621] rknpu cap: BO output  +00f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.620621] rknpu cap: BO output  +00f0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[   89.622701] rknpu cap: /proc/rknpu_cap ready, 410624 bytes (regfg=123 in=d0673000 wt=d2a43000 bs=00000000 out=d09f3000)
+[   89.622701] rknpu cap: /proc/rknpu_cap ready, 410624 bytes (regfg=[123 in=d0673000 wt=d2a43000 bs=00000000 out=d09f3000)
+   89.623764] rknpu armdbg post-op1 PC 00=46495245 04=00010002 08=00000001 0c=00000000 10=ff3c7400 14=0000003f 18=8000000f 1c=00000000 20=80000300 24=00000000 28=00000000 2c=20000000 30=00010001 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+[   89.623764] rknpu armdbg po[st-op1 PC 00=46495245 04=00010002 08=00000001 0c=00000000 10=ff3c7400 14=0000003f 18=8000000f 1c=00000000 20=80000300 24=00000000 28=00000000 2c=20000000 30=00010001 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+   89.627046] rknpu armdbg post-op1 UNIT cna_sp=0001000f cna_oe=00000000 core_sp=0001000f core_oe=00000000 dpu_sp=0001000f dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+[   89.6306[   89.627046] rknpu armdbg post-op1 UNIT cna_sp=0001000f cna_oe=00000000 core_sp=0001000f core_oe=00000000 dpu_sp=0001000f dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+69] rknpu armdbg post-op0 PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=ff3c7400 14=0000003f 18=8000000f 1c=00000000 20=80000300 24=00000000 28=00000000 2c=30000000 30=00010001 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+[   89.63434[   89.630669] rknpu armdbg post-op0 PC 00=46495245 04=00010002 08=00000000 0c=00000000 10=ff3c7400 14=0000003f 18=8000000f 1c=00000000 20=80000300 24=00000000 28=00000000 2c=30000000 30=00010001 34=00000000 38=00000000 3c=00000000 40=00000000 44=00000000 48=00000000 4c=00000000 f008=00000000
+0] rknpu armdbg post-op0 UNIT cna_sp=0001000f cna_oe=00000000 core_sp=0001000f core_oe=00000000 dpu_sp=0001000f dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+[   89.634340] rknpu ar[mdbg post-op0 UNIT cna_sp=0001000f cna_oe=00000000 core_sp=0001000f core_oe=00000000 dpu_sp=0001000f dpu_oe=00000000 rdma_sp=00000000 rdma_oe=00000000
+   89.637964] rknpu est[0] TASK ts=0: cna sp=0001000f st=0000000c | core sp=0001000f st=0000000c | dpu sp=0001000f st=0000000c | rdma sp=00000000 st=00000000
+[   89.64053[   89.637964] rknpu est[0] TASK ts=0: cna sp=0001000f st=0000000c | core sp=0001000f st=0000000c | dpu sp=0001000f st=0000000c | rdma sp=00000000 st=00000000
+8] rknpu est[0] rawor=0x30000000 [FEAT0=0 FEAT1=0 WT0=0 WT1=0 CSC0=0 CSC1=0 CORE0=0 CORE1=0 DPU0=0 DPU1=0 RDERR=0 WRERR=0]
+[   89.640538] rknpu est[0[] rawor=0x30000000 [FEAT0=0 FEAT1=0 WT0=0 WT1=0 CSC0=0 CSC1=0 CORE0=0 CORE1=0 DPU0=0 DPU1=0 RDERR=0 WRERR=0]
+   89.642839] rknpu est[0]: ever_bit16=0x7 samples=0 PC_RAW=0x30000000 | CNA_STAT=0xc SPTR=0x1000f | CORE_STAT=0xc SPTR=0x1000f | DPU_STAT=0xc SPTR=0x1000f OP_EN=0x0
+[   89.642839[] rknpu est[0]: ever_bit16=0x7 samples=0 PC_RAW=0x30000000 | CNA_STAT=0xc SPTR=0x1000f | CORE_STAT=0xc SPTR=0x1000f | DPU_STAT=0xc SPTR=0x1000f OP_EN=0x0
+   89.645187] rknpu est[0] CNA: SPTR=0x1000f G0_DS0=0x0 G0_FDA=0x0 G1_DS0=0x0 G1_FDA=0x0 | CNA_OPEN=0x0 CORE_OPEN=0x0
+[   89.645187] rknpu est[0] CNA: SPTR=0x1000f G0_DS0=0x0 G0_FDA=0x0 G1_DS0=0x0 G1_FDA=0x0 | CNA_OPEN=0x0 CORE_OPEN=0x0

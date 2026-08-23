@@ -1,8 +1,15 @@
 #!/bin/sh
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
-# Run the vendor LLM capture at boot and put everything on the console, so the
-# capture image reads the same way every other round does.
+#
+# Run the vendor LLM capture at boot and get the dump OFF the board.
+#
+# ⚠ THE FIRST ATTEMPT LOOKED HUNG AND WAS NOT. The capture worked on the first
+# try -- rkllm loaded the 1.3 GB model, the driver submitted, and
+# /proc/rknpu_cap came up with 410624 bytes -- and then the vendor kernel's
+# armdbg instrumentation hexdumped whole buffers to dmesg, twice per line, and
+# the console never caught up. So: silence printk BEFORE the run, and take the
+# dump out of /proc rather than off the console.
 C=/dev/console
 case "$1" in
 start)
@@ -12,9 +19,34 @@ start)
 	while [ ! -e /dev/dri/card0 ] && [ ! -e /dev/rknpu ] && [ "$i" -lt 20 ]; do
 		sleep 0.5; i=$((i + 1))
 	done
-	ls -l /dev/dri /dev/rknpu 2>&1 > "$C" 2>&1
-	dmesg | grep -i "rknpu\|npu" | head -20 > "$C" 2>&1
-	/opt/vendor/run-llm-capture.sh > "$C" 2>&1
+	# the whole point of this line: the vendor kernel prints per-task state
+	# and full buffer hexdumps, and at that rate the console is the bottleneck
+	dmesg -n 1 2>/dev/null || true
+	echo "  printk quieted; running the vendor runtime" > "$C"
+
+	/opt/vendor/run-llm-capture.sh > /tmp/cap.log 2>&1 || true
+	tail -20 /tmp/cap.log > "$C" 2>&1
+
+	if [ -f /proc/rknpu_cap ]; then
+		# ⚠ WRITE IT TO THE ROOTFS, not just the console. The card comes
+		# back to the host between runs, so a file on it is a better
+		# channel than 561 KB of base64 through a serial port that is
+		# already the bottleneck. The base64 stays as the fallback for
+		# when the card is not to hand.
+		cat /proc/rknpu_cap > /rknpu_cap.bin 2>/dev/null || true
+		sync
+		sz=$(wc -c < /rknpu_cap.bin)
+		md=$(md5sum < /rknpu_cap.bin | cut -d" " -f1)
+		echo "" > "$C"
+		echo "##### RKNPU_CAP saved to /rknpu_cap.bin bytes=$sz md5=$md" > "$C"
+		if [ -n "${CAP_B64:-}" ]; then
+			echo "##### RKNPU_CAP BEGIN" > "$C"
+			base64 -w 120 < /rknpu_cap.bin > "$C" 2>&1
+			echo "##### RKNPU_CAP END" > "$C"
+		fi
+	else
+		echo "  !! /proc/rknpu_cap is not there; the capture patch did not fire" > "$C"
+	fi
 	echo "##### capture done                                            #####" > "$C"
 	sync
 	;;
