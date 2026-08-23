@@ -2,109 +2,115 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 368. THE CPU'S 37 MILLISECONDS.
+# 2026-08-24 round 369. THE 10.6 MS NOBODY HAD MEASURED.
 #
-# 🏁 ROUND 367 ITEMISED THE TOKEN, and every prediction it wrote down held.
+# ROUND 368: 10.53 tok/s exact, and ONE OF ITS FOUR IDEAS WAS A REGRESSION.
 #
-#   int4 two devices, sized buffers   9.86 tok/s   sum 9.2 ms   flush 3.4 ms
-#   the same, no output flush        10.26 tok/s   sum 9.1      flush 0.02
-#   one device                        8.40 tok/s   sum 9.2      flush 3.2
+#   1 everything on, unpinned    9.11 tok/s  109.5 ms   attention 22.70
+#   2 the same, pinned to A72   10.53         94.6      attention  7.42
+#   3 CONTROL, r367 behaviour   10.10         98.6      attention  7.75
+#   4 pinned + fast exp         10.69         93.2      silu 1.95 not 2.96
 #
-# All four sentences word for word identical, INCLUDING the arm that skipped
-# the cache clean. The prediction was "maybe 9 summing and 4 flushing"; it read
-# 9.2 and 3.4. **The flush is gone for good now -- default, and
-# CHARSIU_NPU_FINI puts it back.**
+# All four sentences identical, probe 1024/1024 at 0.00e+00, anchor clean.
+# **Entry 4 did NOT move a token on the board** where it moved one on the host
+# -- luck on this prompt, not a guarantee, so the fast exp stays opt in.
 #
-# AND THE STAGE TABLE RAN, its total 100.3 ms against the run's own 100.6, so
-# it is generation and not prompt (the round 327 trap, checked):
+# 🔑 THREADING ATTENTION COST 15 MS AND BOUGHT 0.33.
 #
-#   q k v 13.61   o proj 9.69   gate + up 26.89   down 26.36   head 10.41
-#   attention 7.67   silu * up 3.08   rope + kv copy 1.79   the rest 0.76
+# Left where the scheduler put it, splitting 32 heads over four threads ran
+# 22.70 ms a token against 7.75 serial. Pinned to the four A72s it ran 7.42
+# against 7.75 -- a 4% gain for a fan out and fan in around two milliseconds of
+# work. **It is serial again**; CHARSIU_ATTN_POOL keeps the path, because
+# attention grows with the context and 38 positions is not where that question
+# gets settled.
 #
-# Which splits a 97.5 ms token three ways:
+# WHAT EACH IDEA ACTUALLY BOUGHT, against what I wrote down before the run:
 #
-#     60.2  the fence            at 9.3 GB/s, which IS the measured ceiling
-#     23.5  npudev's own rest    sum 9.1, submit 3.2, and 11 ms of wrapper
-#     13.3  the pure CPU stages  attention 7.7, silu 3.1, rope 1.8
+#   rope angle table      1.79 -> 0.16 ms      predicted 1.7   ✓
+#   attention on the pool     -15 / +0.33      predicted -5.7  ✗✗
+#   contiguous scales      9.1 -> 8.5          predicted -4    ✗
+#   130 ioctls dropped          about 0.2      predicted -1.5  ✗
+#   pinning to the A72s         about 0.3      no prior
 #
-# The fence is done. **This round goes after the other 37.**
+# Three of four were optimistic. The one that paid was the one where the work
+# itself disappeared rather than moving.
+#
+# ---------------------------------------------------------------------------
+# AND A 10.6 MS HOLE, IN EVERY ARM
+# ---------------------------------------------------------------------------
+#
+# Sum the stage table's five NPU rows and subtract what npudev measures inside
+# them and 10.6 ms a token is left over, in every arm of round 368. It is the
+# work npudev does BEFORE its own timer starts: packing the activation.
+#
+# A token packs about 463 thousand halves -- every K slice of every projection,
+# into both devices -- and it was doing it with a function call and two byte
+# stores per element, out of a scratch buffer that had just been filled by a
+# float copy per element, plus a double add per element for a grid that is off
+# by default.
 #
 # ---------------------------------------------------------------------------
 # WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# EXACT, ON BY DEFAULT, NO SWITCH -- the arithmetic is unchanged, so the tokens
-# cannot move:
+#   1. THE HALF CONVERSION IS VECTORISED. ⚠ NOT with vcvt_f16_f32: that rounds
+#      to nearest and this project's converter TRUNCATES, which is a different
+#      number by up to 5e-4 relative -- four thousand times the gap that moved
+#      a token in the SiLU experiment. It is hand written from the same shifts
+#      and masks, and checked against the scalar one over 464 million float bit
+#      patterns spanning the whole 32 bit space: zero differ. The packer as a
+#      whole was then compared byte for byte at thirteen shapes including the
+#      odd tails.
+#   2. NO SCRATCH COPY. At m = 1 the packer reads src[kk], so it can be handed
+#      the activation where it already lives. The running total it was also
+#      computing belongs to the midrise grid, which is off by default and
+#      measured worse when it was on.
+#   3. THE SUM LANDS IN THE CALLER'S BUFFER. A grouped int4 tensor applies its
+#      scale per slice on the way in, so the last step was y[i] = accf[i]: a
+#      staging buffer written and read for nothing, half a megabyte a token on
+#      the output head alone.
+#   4. ATTENTION IS SERIAL AGAIN (above).
+#   5. AND THE PACKING IS TIMED, so the hole stops being a subtraction. ⚠ The
+#      new line is ON TOP of the hardware path, not inside it.
 #
-#   1. ONE ROPE ANGLE TABLE A TOKEN. theta depends on the dimension pair and
-#      the position and on nothing else, so cosf and sinf were being asked for
-#      the same 32 numbers 640 times over: 40 head passes times 16 layers.
-#   2. EACH SLICE'S GROUP SCALES GATHERED CONTIGUOUSLY WHEN THE TENSOR IS
-#      STAGED. The sum walked scale[channel * ngroups + group], eight cache
-#      lines apart on the down projection and unvectorisable everywhere.
-#
-# EXACT, ON BY DEFAULT, WITH A CONTROL:
-#
-#   3. ATTENTION OVER THE POOL. Each head writes its own slice of xb and its
-#      own row of att, and the sum over t inside a head keeps its order, so
-#      four threads change nothing but the wall clock. CHARSIU_CPU_PLAIN=1
-#      puts it back on the calling thread.
-#   4. NO CLEAN ON THE OUTPUT BUFFERS (round 367's result, now the default).
-#      CHARSIU_NPU_FINI=1 puts it back.
-#   5. NO PREP ON THE ACTIVATION BUFFER. The device only READS it, so there is
-#      no write fence to wait on, and the CPU is about to overwrite every byte
-#      the next job will read, so there is nothing stale worth dropping. Its
-#      fini stays. That is 130 ioctls and 130 cache walks a token.
-#      CHARSIU_NPU_INPREP=1 puts them back. ⚠ This one is an ARGUMENT, like the
-#      flush was, and the sentence is the check on it.
-#
-# OPT IN, BECAUSE IT MOVES TOKENS:
-#
-#   6. CHARSIU_FAST_SILU. A NEON exp, accurate to about one last bit where
-#      glibc's expf is correctly rounded -- so the vector path is the slightly
-#      WORSE of the two, and on the host it turned "Claude Monet painted the
-#      water lilies" into "Claude Monet was born in Paris" at token 25. Neither
-#      is wrong. What it costs is the anchor every round since 352 has quoted.
-#
-# AND ONE QUESTION THIS RUNTIME HAS NEVER ASKED:
-#
-#   7. CHARSIU_CPUS. RK3576 is four A53 at 0..3 and four A72 at 4..7. In NPU
-#      mode the pool is nearly idle -- every projection returns from the
-#      CALLING thread -- so the whole CPU side is ONE thread, and nothing has
-#      ever told the scheduler which core that thread deserves.
+# CHARSIU_NPU_PLAIN puts 1, 2 and 3 back together. All three are provably
+# neutral, so that control is not about whether they are right -- it is so a
+# slower round can say which one did it, which is what round 368 taught.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE FIRST. Entries 1, 2 and 3 must be round 367's Louvre sentence
-# and must match EACH OTHER. **Entry 4 is expected to differ** -- that is what
-# the fast exp does, it is documented above, and it is a measurement rather
-# than a failure. Entry 3 is the control: if only 1 and 2 drift, the suspect is
-# the activation prep, which is the one argument in this round nobody has run.
+# THE SENTENCE FIRST. All three decode arms must be the Louvre sentence and
+# must match each other. Nothing in this round is allowed to change a word:
+# the packer is byte identical and the rest is where a number is stored.
 #
-# THEN THE STAGE TABLE, entry 1 against round 367's rows quoted above.
-# ⚠ THE ROPE TABLE IS BUILT INSIDE THE TOKEN EMBEDDING WINDOW. So "rope + kv
-# copy" should collapse to the memcpy alone and "token embedding" should rise
-# off zero. Read the two together or the table will look like it lost time.
-# ⚠ AND CHECK THE TOTAL against the run's own generation time again first.
+# THEN THE NEW PACKING LINE, which is the whole point. It is the first direct
+# measurement of a cost this project has only ever inferred.
 #
-# THEN THE STAT LINE: summing was 9.1 ms a token, flush already 0.
+# THEN THE FIVE NPU ROWS of the stage table against round 368's
+# (q k v 12.24, o proj 9.56, gate + up 25.86, down 25.47, head 10.18 pinned).
+# ⚠ Recompute the hole: those five rows, minus the hardware path, minus the
+# new packing number. If packing is small AND the hole is still ten
+# milliseconds, then packing was never the cost and it is somewhere I have not
+# looked -- say so rather than reading the drop as a win.
+# ⚠ And check the table total against the run's own generation time first, as
+# ever.
 #
-# THEN ENTRY 2 AGAINST ENTRY 1. That is the only thing in this round that
-# could be large and is entirely outside my hands: if pinning to the four A72s
-# is worth several milliseconds, the CPU side has been running on a little
-# core all along and every CPU number this project has ever printed was taken
-# at half rate.
+# THEN ARM 2 AGAINST ARM 1, which is the A72 question asked cleanly this time:
+# same build, serial attention in both, only the pin differs. Round 368 could
+# only answer it by subtracting a flush.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# rope to 0.05, attention to about a quarter of 7.67, the sum from 9.1 to
-# maybe 5, the wrapper down by a millisecond or two from the missing ioctls.
-# Call it 97.5 -> 85 ms, which is 11.7 tok/s. The A72 arm I have no prior on.
-# The fast exp should be worth 2.5 ms of the 3.08 and cost the anchor.
+# Packing between 1 and 2 ms where the hole was 10.6, the five NPU rows down 5
+# to 7 ms between them, and the run near 11.3 tok/s. The pin worth about 0.3 ms
+# again, which would mean the CPU thread was never on a little core and that
+# question can be closed.
+#
+# ⚠ I have been optimistic three rounds running. Read the control.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -213,40 +219,33 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 368: the CPU's 37 milliseconds                 #####"
+	log "##### round 369: the 10.6 ms nobody had measured           #####"
 	log "###############################################################"
-	log "  the fence is at its ceiling. this round is everything else."
+	log "  attention is serial again. the packing is timed."
 
 	log ""
-	log "===== 1) everything on, with the stage table                   ====="
-	log "  sentence must be round 367's. check the table total against"
-	log "  the run's own generation time before reading a row."
+	log "===== 1) everything on, where the scheduler puts it            ====="
+	log "  read the PACKING line. the hole was 10.6 ms a token."
 	rung "int4 g1024, two devices, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
 
 	log ""
 	log "===== 2) the same, pinned to the four A72s                     ====="
-	log "  cores 0-3 are A53 and 4-7 are A72. nothing has ever said"
-	log "  which one the single CPU thread of a token should be on."
+	log "  the A72 question asked cleanly: same build, serial"
+	log "  attention in both, only the pin differs."
 	rung "int4 g1024, CPUS=4-7" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) THE CONTROL: the three switchable ones put back       ====="
-	log "  serial attention, the output clean, the activation prep."
-	log "  the rope table and the scale gather stay: they are exact."
-	rung "int4 g1024, round 367 behaviour" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPU_PLAIN=1 CHARSIU_NPU_FINI=1 CHARSIU_NPU_INPREP=1 "$CE" "$HEAD"
+	log "===== 3) THE CONTROL: the scalar packer, the scratch copy,     ====="
+	log "=====    and the staging accumulator, all three back          ====="
+	log "  same pin as arm 2, so the pair differ in one thing."
+	rung "int4 g1024, CPUS=4-7, NPU_PLAIN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 CHARSIU_NPU_PLAIN=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the fast exp. THIS ONE IS EXPECTED TO CHANGE WORDS.   ====="
-	log "  read the silu row, not the sentence. a different sentence"
-	log "  here is the documented cost, not a fault."
-	rung "int4 g1024, CPUS=4-7, fast silu" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 CHARSIU_FAST_SILU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 5) the probe, still exact                                ====="
+	log "===== 4) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 6) the anchor: int8 conv must still be exact            ====="
+	log "===== 5) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
