@@ -2,64 +2,61 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 350. THE PRODUCTION PACKERS, AND THE RATE AS A SLOPE.
+# 2026-08-23 round 351. THE SAME ROUND, WITH MY TWO BUGS OUT OF IT.
 #
-# ROUND 349, and my own instrument check failed for a reason that was my fault:
+# ⛔ ROUND 350 HAD TWO FAULTS AND BOTH WERE MINE. Neither is a hardware result.
 #
-#   int8  349.7 us/submit   2 MiB   6.00 GB/s
-#   int4  277.6 us/submit   1 MiB   3.78 GB/s
-#   int8 with the 4 MiB buffer back  1163.2 us  1.80 GB/s  (the fix's control)
-#   correctness 1024 of 1024, W4_BITPAT 0 of 1024
+# 1. CHARSIU_N DID NOTHING. Two lines below the ones that read the environment
+#    reassigned k and n to 2048 and 1024, so **the whole N sweep ran four times
+#    at the same shape** and printed four nearly equal times as if they were a
+#    slope. int4 read 230.2, 222.5, 227.6, 217.2 us at "N = 256, 512, 1024,
+#    2048" -- all of them N = 1024.
 #
-# I had written "int8 must land near 9.4 GB/s". **9.38 is a MARGINAL rate, fitted
-# as a slope with the fixed submit cost excluded, and what entry 1 measures is
-# TOTAL time per submit with roughly 160 us of fixed cost inside it.** Comparing
-# a total against a marginal is a mis-specified check, not a broken harness.
+# 2. THE REFERENCE WAS WRONG, NOT THE BOARD. The generated activations were
+#    multiples of 0.05, which fp16 cannot represent. charsiu_pack_input_f16
+#    rounds them, so the hardware multiplied by the rounded value while the
+#    reference multiplied by the float:
 #
-# What can be said without any fit or subtraction, and it is the answer:
+#        board -45.989502   ref -46.000001    rel 2.28e-04
+#        board  -2.000488   ref  -2.000000    rel 2.44e-04
 #
-#   🔑 SAME SHAPE, SAME BOOT, SAME CODE: int4 277.6 us against int8's 349.7.
-#      **A projection finishes 1.26x sooner in int4.** Not 2x, because the fixed
-#      cost per submit does not shrink.
+#    **The board is right in both.** 256 of 1024 "passed" only where the
+#    rounding happened to cancel. The activations are now exact sixteenths and
+#    the reference rounds through fp16 anyway, so neither can drift again.
 #
-# To know the MARGINAL rate the shape has to be swept, which entries 4 and 5 do,
-# and then the slope is the rate and the intercept is the fixed cost -- with no
-# single point standing in for either.
+# ✅ WHAT ROUND 350 DID ESTABLISH, because its controls held:
+#    - the packers run on the board and the block computes with what they write
+#    - CHARSIU_W4_BITPAT, reverting registers AND layout together, gives 0 of
+#      1024 with nan and zero in the output, so the control still fails
+#    - every repeat and restore control passed in all eleven arms
 #
-# 🔑 AND THE PACKER IS WRITTEN AND UNIT CHECKED ON THE HOST. Fed the values
-# decoded out of the vendor's own 1 MiB weight buffer, charsiu_pack_weights now
-# reproduces that buffer **byte for byte, 0 of 1048576 different**.
+# ⚠ AND ONE THING WORTH CARRYING: int4 at this shape read 277.6 us in round 349
+# and 217 to 230 us in round 350. **A single shape timing moves 20% between
+# boots**, which is one more reason to read a slope and not a row.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRIES 1 AND 2 ARE A DIFFERENT CLAIM FROM EVERY ROUND SO FAR. Up to now the
-# operands were the vendor's captured buffers, which proved the HARDWARE.
-# CHARSIU_GEN builds them with charsiu_pack_weights and charsiu_pack_input_f16,
-# **the same two the LLM path calls**, which proves the CODE THAT WILL FEED IT.
-# The reference is computed from the source arrays and not from the packed ones,
-# so a packer that is wrong in the same way as the reference cannot pass.
-# Entry 2 is a second shape so it is not one point.
+# ENTRY 1 must now print N = 256 for the N = 256 arm. If the header line still
+# says 1024, the fix did not land and nothing else in the round counts.
 #
-# ENTRIES 4 AND 5 sweep N at fixed K for both precisions. Read the SLOPE, in
-# us per MiB, not any single row.
+# ENTRIES 1 TO 3 are correctness through charsiu_pack_weights and
+# charsiu_pack_input_f16, the two the LLM path calls, at three shapes. With the
+# reference honest about fp16 these should be **all of N within 1e-5**, not 256
+# of 1024. Entry 4 is the control that must still score 0.
 #
-# ENTRY 3 is the control that must fail: the same generated operands with
-# CHARSIU_W4_BITPAT, which reverts both the registers and the layout together.
+# ENTRIES 5 AND 6 are the sweep, now at four genuinely different shapes.
+# **Read the SLOPE in us per MiB of weights**, and the intercept is the fixed
+# submit cost. A single row means nothing, as round 350 just demonstrated.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Entry 1 passes: the packer already reproduces the vendor's bytes exactly on
-# the host, and the input packer at M = 1 collapses to plain order. If it does
-# NOT pass, the difference is the input or the output reading and not the
-# weights, because the weights are the part that is already checked.
-#
-# For the slope I expect int4's to be about half of int8's per MiB and the two
-# intercepts to be the same, which would make int4 worth roughly 2x on a job
-# large enough to hide the submit -- and 1.26x on this one.
+# Correctness clean at all three shapes. For the slope, int4 about half of
+# int8's us per MiB with the same intercept -- which would put int4 near 2x on
+# a job big enough to hide the submit, against the 1.26x measured at one shape.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -112,39 +109,41 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 350: the production packers, and the rate as a slope #####"
+	log "##### round 351: the same round, with my two bugs out of it #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) OUR OWN PACKERS: generated operands, M=1, N=1024      ====="
-	log "  charsiu_pack_weights + charsiu_pack_input_f16, the two the"
-	log "  LLM path calls. reference from the SOURCE arrays."
-	arm "generated, N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 2) the same at N=256, so it is not one shape             ====="
+	log "===== 1) correctness through our packers, N=256               ====="
+	log "  the header MUST print N = 256. if it says 1024, stop here."
 	arm "generated, N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 3) CONTROL: W4_BITPAT reverts registers AND layout       ====="
-	log "  must be 0 of 1024."
+	log "===== 2) correctness, N=1024                                  ====="
+	arm "generated, N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+
+	log ""
+	log "===== 3) correctness, N=2048 and K=1024                       ====="
+	arm "generated, N=2048 K=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_K=1024 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+
+	log ""
+	log "===== 4) CONTROL: W4_BITPAT, registers and layout both back    ====="
 	arm "generated, W4_BITPAT" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_W4_BITPAT=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 4) int4 rate against N. read the SLOPE, us per MiB.      ====="
-	arm "int4 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_GEN=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int4 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_GEN=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int4 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_GEN=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int4 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_GEN=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
+	log "===== 5) int4 rate against N. READ THE SLOPE, us per MiB.      ====="
+	arm "int4 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int4 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int4 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int4 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 5) int8 rate against N, same four points                 ====="
-	arm "int8 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_W8=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int8 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_W8=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int8 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_W8=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
-	arm "int8 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_W8=1 CHARSIU_TIME=100 CHARSIU_OUT_KB=64"
+	log "===== 6) int8 rate against N, the same four shapes             ====="
+	arm "int8 N=256" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=256 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int8 N=512" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=512 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int8 N=1024" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=1024 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+	arm "int8 N=2048" "-" 0 0 "CHARSIU_M=1 CHARSIU_N=2048 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
 
 	log ""
 	log "===== 6) the anchor: int8 conv must still be exact           ====="
