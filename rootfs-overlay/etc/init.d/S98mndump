@@ -2,71 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 355. GROUP 1024 IS THE ANSWER. AND THE LOAD WAS getenv.
+# 2026-08-23 round 356. FOUR PROMPTS, BECAUSE TWO ARE NOT A MEASUREMENT.
 #
-# 🔑 ROUND 354. GROUP 1024, WHICH NOBODY HAD RUN, IS THE ONE.
+# ✅✅ ROUND 355. THE HOIST WORKED AND ITS CONTROL HELD.
 #
-#   int4 group 1024   8.92 tok/s  "The Eiffel Tower is located in Paris. The
-#                                  Louvre Museum is also located in Paris. The
-#                                  famous painting "The Mona Lisa" is on"
-#   int4 group 512    7.51 tok/s  the tower, a thousand feet, the late 19th
-#   int4 one scale   10.13 tok/s  circling
-#   int8 standing     6.53 tok/s  the standing sentence
+#   int4 group 1024   20306 ms staging of which 4270 adding and 16036 quantising
+#                     (was 148428, of which 143978 quantising)
+#   int8              18368 ms of which 8858 adding and 9510 quantising
+#                     (was 9557 quantising -- UNCHANGED, as it must be)
 #
-# **37% faster than int8, and the same content the CPU arm gives.** All three
-# repeats reproduced their round 353 numbers (7.51 against 7.50, 10.13 against
-# 10.09, 6.53 exactly), so the boot to boot spread is small here.
+# Quantising 144 s to 16 s, nine times, and the prompt phase fell with it from
+# 189 s to 26 s. int8 never took that branch and did not move in either column.
 #
-# 🔑🔑 AND THE HEARTBEAT SPLIT SETTLED THE LOAD IN ONE LINE.
+# And what must not move did not: **8.96 tok/s against 8.92, and the Louvre
+# sentence byte for byte.** Hoisting a getenv cannot change arithmetic, and now
+# there is evidence rather than an argument.
 #
-#   int4 group 1024   148428 ms of which   4450 adding and 143978 quantising
-#   int4 group 512    136727 ms of which   5180 adding and 131547 quantising
-#   int4 one scale    118535 ms of which   3964 adding and 114571 quantising
-#   int8               18436 ms of which   8879 adding and   9557 quantising
+# The second prompt stands up too:
 #
-# It was never the packer. int4's ADDING is FASTER than int8's -- half the bytes
-# -- and all of the loss is in npu_tensor_build.
+#   int4  "The color of the sky is blue because of the way that light interacts
+#          with the Earth's atmosphere. When sunlight enters the atmosphere of
+#          the Earth, it encounters"
+#   cpu   "The sky appears blue because of a phenomenon called Rayleigh
+#          scattering, which occurs when sunlight interacts with the tiny
+#          molecules of gases in the atmosphere."
 #
-# ⛔ THE CAUSE: **getenv() inside the loop over every weight.**
+# The CPU names Rayleigh scattering and int4 does not, but int4 is correct,
+# coherent and does not circle, at 8.82 tok/s.
 #
-#     if (bits == 4 && !getenv("CHARSIU_NPU_W4_SYM"))
+# ---------------------------------------------------------------------------
+# WHERE THIS STANDS
+# ---------------------------------------------------------------------------
 #
-# getenv walks the environment with a strcmp an entry, and this ran 1.24 BILLION
-# times. int8 never noticed because "bits == 4 &&" short circuits before the
-# call, which is exactly why it read as an int4 problem for two rounds. I
-# guessed a strided write to the buffer object twice and was wrong twice; the
-# split heartbeat found it without a guess.
-#
-# Three of them hoisted in npuquant.c, and one more in charsiu_build_coefs that
-# ran once an output channel rather than once a call.
+#   int4, group 1024   8.96 tok/s   int8   6.53 tok/s   +37%
+#   CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1 IS THE FIX AND ITS NUMBER IS THE QUANTISING COLUMN. int8 quantises
-# 113 tensors in 9.6 s and int4 should now be in the same country. If it is
-# still over a minute there is a second one of these and the split will say so
-# again.
+# ⚠ TWO SENTENCES ARE NOT AN ACCURACY MEASUREMENT AND I HAVE BEEN SAYING SO FOR
+# TWO ROUNDS. Four prompts are not either, but they are four, and they are
+# chosen to fail in different ways rather than to agree:
 #
-# ENTRY 1'S SENTENCE AND RATE MUST NOT MOVE: 8.92 tok/s and the Louvre. Hoisting
-# a getenv cannot change arithmetic, so if either moved, something else in this
-# change did.
+#   1  the standing one, so it can be compared with every round before this
+#   2  an explanation, where being wrong is visible
+#   3  code, where being wrong is unambiguous
+#   4  arithmetic, which is the one a narrow quantiser fails first -- the GPTQ
+#      work found its worst KL on exactly this kind of prompt
 #
-# ENTRY 2 is int8, which must still be 6.53 and about 9.6 s quantising -- it is
-# the control for the hoist, since int8 never took that branch and must be
-# unaffected in both columns.
+# Each runs on int4 group 1024 and on the CPU. Sampling is greedy already
+# (temp defaults to 0), so the two are directly comparable and a divergence is
+# the model changing its mind, not a die roll.
 #
-# ENTRY 3 is group 1024 with a DIFFERENT PROMPT, because four sentences about
-# Paris are not an accuracy measurement and one about something else is at
-# least a second draw from the same urn.
+# READ THEM AS: does int4 say something TRUE, and does it stop circling. Word
+# for word agreement with the CPU is NOT the bar -- four bit weights are four
+# bit weights, and int8 is the arm that matches the CPU exactly.
+#
+# ENTRY 9 is int8 on prompt 1 as the control, and it must still be the standing
+# sentence at 6.5 tok/s.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Quantising near 10 s and everything else unchanged. The prompt phase should
-# fall with it: 189 s of "prompt" in round 354 was mostly this.
+# Prompts 1 and 2 fine, since they already ran. Code is the one I would bet
+# against: a wrong token in a Python function is not a paraphrase. If 3 or 4
+# come out wrong while 1 and 2 look fine, the honest summary of int4 is "good
+# for prose, not yet for code", and the next thing is GPTQ rather than a
+# smaller group.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -80,6 +84,8 @@ RUN=/opt/charsiu/charsiu_run
 M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
 PROMPT="The capital of France is"
 LIMIT=420
+# 32 tokens does not reach the answer to "17 times 24, show your working"
+NGEN=64
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
 ABORT=0
@@ -117,7 +123,7 @@ rung() {
 	log ""
 	log "  -- $lbl"
 	sleep 1
-	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 \
+	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n "${NGEN:-32}" \
 		--ignore-eos -q -c 512 -t 4 > "$C" 2>&1
 	rc=$?
 	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
@@ -153,35 +159,35 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 355: group 1024 is the answer, and the load was getenv #####"
+	log "##### round 356: four prompts, because two are not a measurement #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) int4 group 1024. read the QUANTISING column.         ====="
-	log "  8.92 tok/s and the Louvre must not move; the load should."
-	rung "int4, group 1024" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
-		CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
-
+	log "===== 1) the standing one                    ====="
+	PROMPT="The capital of France is"
+	rung "int4 g1024: the standing one" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	rung "cpu:       the standing one" CHARSIU_NO_NPU=1
 	log ""
-	log "===== 2) CONTROL: int8. never took that branch, must not move. ====="
-	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 3) group 1024 on a DIFFERENT PROMPT                     ====="
-	log "  one sentence about Paris is not an accuracy measurement."
-	# ⚠ set it and put it back. "PROMPT=... rung ..." is an assignment before
-	# a FUNCTION call and whether it survives the call is unspecified.
-	P0="$PROMPT"
+	log "===== 2) an explanation                    ====="
 	PROMPT="Explain in one paragraph why the sky is blue"
-	rung "int4, group 1024, second prompt" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
-		CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 \
-		"$CE" "$HEAD"
+	rung "int4 g1024: an explanation" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	rung "cpu:       an explanation" CHARSIU_NO_NPU=1
+	log ""
+	log "===== 3) code                    ====="
+	PROMPT="Write a Python function that reverses a string:"
+	rung "int4 g1024: code" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	rung "cpu:       code" CHARSIU_NO_NPU=1
+	log ""
+	log "===== 4) arithmetic                    ====="
+	PROMPT="What is 17 times 24? Show your working."
+	rung "int4 g1024: arithmetic" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
+	rung "cpu:       arithmetic" CHARSIU_NO_NPU=1
 
 	log ""
-	log "===== 4) the same prompt on the CPU, to face it with          ====="
-	rung "cpu, second prompt" CHARSIU_NO_NPU=1
-	PROMPT="$P0"
+	log "===== 5) CONTROL: int8 on prompt 1. the standing sentence.    ====="
+	PROMPT="The capital of France is"
+	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
 	log "===== 6) the anchor: int8 conv must still be exact           ====="
