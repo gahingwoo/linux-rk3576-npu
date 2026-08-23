@@ -2,67 +2,73 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 363. THE CBUF IS SHARED. IS THE SECOND WINDOW CORRECT?
+# 2026-08-23 round 364. BOTH CORES, IN THE DECODE.
 #
-# 🔑🔑 ROUND 362 ANSWERED IT, AND THE CONTROL IS WHAT MAKES IT AN ANSWER.
+# ✅✅✅ ROUND 363 CLOSED IT, INCLUDING THE HOLE ROUND 362 LEFT.
 #
-#   one core, a pair                       2 of 2 CLEAN
-#   two cores, both core-0 CBUF values     3 of 4 CORRUPT  361, 462, 699
-#   two cores, A core-0 and B core-1       **4 of 4 CLEAN**
-#   two cores, BOTH core-1 values          4 of 4 CORRUPT  405, 96, 270, 101
+#   solo, window 0     1024 of 1024, worst 0.00e+00
+#   solo, window 1     1024 of 1024, worst 0.00e+00   <- the window is CORRECT,
+#                                                        not merely repeatable
+#   pair, same window  125 and 13 words differing     <- the fault reproduces
+#   pair, split, x3    six processes, EVERY one 0 words differing AND
+#                      1024 of 1024 exact
 #
-# The last line is the control and it failed as it had to. If core 1's numbers
-# were simply kinder, giving them to both would have been clean too. It was not.
-# The only thing separating the clean arm from the two dirty ones is whether the
-# two concurrent jobs carry DIFFERENT CBUF configurations.
-#
-# ⇒ **THE CBUF IS SHARED BETWEEN THE TWO NPU CORES, and charsiu was handing both
-# of them the same window.**
-#
-# 🔑 And better than expected: it does not matter WHICH core gets which window,
-# only that two jobs in flight together do not collide. **So this needs no core
-# selection in the uapi**, which is the thing I thought it would need.
-#
-# CHARSIU_CBUF_WINDOW=1 is a first class switch now and produces exactly the
-# seven entries the vendor's two captured streams differ in -- 0x1038 twice,
-# 0x1018, 0x103c, 0x1040, 0x2818, 0x2820. 0x1040 is taken literally rather than
-# derived: both its halves change and one capture cannot say what either means.
+# **Two NPU cores, concurrent, repeatable and byte exact, as long as the two
+# jobs in flight carry different CBUF windows.** The CBUF is shared and charsiu
+# was handing both cores the same one.
 #
 # ---------------------------------------------------------------------------
-# ⚠ THE HOLE IN ROUND 362, WHICH THIS ROUND EXISTS TO CLOSE
+# WHAT CHANGED IN THE CODE
 # ---------------------------------------------------------------------------
 #
-# **The pair helper only ran the repeat control. It never ran VERIFY.** So the
-# clean arm proves the two jobs were REPEATABLE, not that either was CORRECT.
-# A job that is stably wrong passes a repeat control every time.
+# charsiu_npu opens the device TWICE. rocket gives every open DRM file its own
+# drm_sched_entity over the list of every core, and an entity runs one job at a
+# time, so one file never reaches more than one core however deep the queue.
+# Entries alternate between the two files, which puts a group -- q, k, v or
+# gate, up, consecutive adds -- on different devices, and each device's streams
+# carry its own CBUF window.
+#
+# charsiu_npu_matvec_group builds ONE JOBLIST PER DEVICE and submits both
+# BEFORE waiting on either. Submitting is a queueing ioctl and the fence is
+# waited separately, so both cores run at once without a thread anywhere.
+#
+# The activation is packed into both devices' input buffers, because a group
+# shares one input vector but a buffer object belongs to the file that made it.
+# A few kilobytes against the megabytes of weights each submit fetches.
+#
+# CHARSIU_NPU_ONEDEV puts it back to one file, which is the control.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 2 IS THE ROUND. One process, alone, on window 1, with VERIFY. If window
-# 1 does not compute 1024 of 1024 against the CPU reference then the second
-# window is not usable and round 362's clean arm was two processes agreeing with
-# themselves rather than with arithmetic.
+# ⚠ THE TEXT IS THE FIRST THING TO READ, NOT THE RATE. Splitting a projection
+# across two files changes NOTHING arithmetically -- the same weights, the same
+# activation, the same registers apart from a CBUF base. **Entry 2 and entry 3
+# must produce the SAME SENTENCE, word for word.** If they do not, the split is
+# wrong and the rate does not matter.
 #
-# ENTRY 1 is the same on window 0 and must be 1024 of 1024, as it always has
-# been.
+# Then the rate. Round 356 put 89 ms of a 117 ms token inside the fence, so a
+# perfect halving would be about 73 ms and 13.7 tok/s. Nothing will be perfect:
+# only the grouped projections split, the single ones still run on one device,
+# and a group of three splits two against one.
 #
-# ENTRY 4 is the pair on different windows WITH VERIFY on both, which is the
-# claim in full: two cores, concurrent, repeatable AND correct.
+#   entry 2 near 11 tok/s or better  -> the second core is in the decode
+#   entry 2 near entry 3's 8.5       -> the split is not reaching the hardware,
+#                                       and the next question is whether both
+#                                       files really landed on both cores
 #
-# ENTRY 3 reproduces the corruption with both on window 0, so the round carries
-# its own before and after.
+# ENTRY 1 is int8 and must still be 6.4 with the standing sentence. ENTRY 3 is
+# the one device control and must reproduce 8.5.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Window 1 verifies. The seven registers look like a base offset into a buffer
-# rather than an arithmetic mode, and the arithmetic registers -- CORE 0x3018,
-# 0x301c, 0x3020 -- are untouched by the window. But that is reasoning from what
-# registers look like, which is exactly what this project keeps punishing, so
-# entry 2 is the one to read first.
+# 10 to 12 tok/s. Not 13.7, because the single projections and the output head
+# do not split and a group of three cannot divide evenly. My predictions have
+# been wrong more often than right lately, so read entry 2 against entry 3 and
+# not against this paragraph.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -171,32 +177,27 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 363: the CBUF is shared. is window 1 correct?    #####"
+	log "##### round 364: both cores, in the decode                   #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) CONTROL: solo on window 0. must be 1024 of 1024.      ====="
+	log "===== 1) CONTROL: int8 decode. 6.4 tok/s, standing sentence.   ====="
 	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
-	arm "solo, window 0" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+	rung "int8" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) THE ROUND: solo on window 1. is it CORRECT?           ====="
-	log "  round 362 proved the pair was repeatable, never that it was"
-	log "  right. a stably wrong job passes a repeat control every time."
-	arm "solo, window 1" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
+	log "===== 2) int4 g1024 on BOTH cores. read the SENTENCE first.    ====="
+	rung "int4 g1024, two devices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) the pair, BOTH on window 0. must reproduce the fault. ====="
-	pair "pair, same window 1" "" ""
-	pair "pair, same window 2" "" ""
+	log "===== 3) the same on ONE device. must reproduce 8.5 tok/s AND  ====="
+	log "  the SAME sentence as entry 2, word for word."
+	rung "int4 g1024, one device" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_ONEDEV=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the pair on DIFFERENT windows, with VERIFY on both    ====="
-	log "  the claim in full: two cores, concurrent, repeatable AND right."
-	pair "pair, split 1" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
-	pair "pair, split 2" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
-	pair "pair, split 3" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
+	log "===== 4) the probe, still exact under the two device build     ====="
+	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
 	log "===== 5) the anchor: int8 conv must still be exact            ====="
