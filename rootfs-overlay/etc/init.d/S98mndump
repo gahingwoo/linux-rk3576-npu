@@ -2,61 +2,64 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 344. THE VENDOR'S VALUES, FROM THE SIDE THAT RUNS.
+# 2026-08-23 round 345. int4 IS A WEIGHTED SUM. WHICH REGISTER, AND WHAT LAYOUT.
 #
-# ROUND 343 SETTLED THE ARITHMETIC AND FAILED THE REPLAY, both cleanly.
+# 🔑🔑🔑 ROUND 344 SETTLED IT. With the vendor's twenty register values in
+# place, one nibble's contribution to the output is EXACTLY s times a constant,
+# s being the nibble read as a signed int4, at three independent byte positions
+# with three different constants:
 #
-# 🔑 THE ARITHMETIC. Sixteen rows of sixteen, all 1764 live, restore clean, and
-# every one of them fits ONE expression:
+#   byte 0 low    8744*s      v=1..7 -> 8744..61208, v=8..15 -> -69952..-8744
+#   byte 0 high  10312*s
+#   byte 1024    3532*s
 #
-#       effective weight = (int16) fp16bits(s),  s = the nibble as int4
+# All fifteen rows exact at all three. **That is the pre declared criterion for
+# a real int4 multiplier, and it means the 1.00 to 1.18 band was OUR
+# configuration and never the silicon.**
 #
-#   v   1    2    3    4    5    6    7  |  8    9    10   11   12   13   14   15
-#   d 1920 2048 2112 2176 2208 2240 2272 |-1792-1824-1856-1888-1920-1984-2048-2176
+# The output is float32, not the raw accumulator: the first eight words decode
+# as +11.38 -5.16 -1.79 +3.14 -35.38 +56.29 -38.33 -36.35.
 #
-# Round 342 fitted that on twelve rows and PREDICTED 2112, -1824 and -1856 for
-# the three that had died. All three landed. **So the hardware reads the nibble
-# as a signed int4 and converts it to fp16 correctly -- sign, magnitude, all
-# sixteen codes. The only thing in the wrong domain is the MULTIPLY: it
-# multiplies the two fp16 bit patterns as integers.**
-#
-# ⛔ THE REPLAY. The vendor's 123 registers, submitted verbatim, TIMED OUT on
-# all four arms with 0 live words. Almost certainly because nothing turns the
-# units on: mainline rocket's drm_rocket_task has only regcmd and regcmd_count,
-# so the vendor's enable_mask = 0xd has nowhere to go, and their stream carries
-# no 0x1d trailer of its own. Two ways at it, and this round runs both.
+# And the four arms bracket each other properly:
+#   MERGE (our stream, their values)                straight line, fp32
+#   verbatim replay + the three 0x1d enables        output BYTE IDENTICAL to it
+#   verbatim replay without them                    still timed out
+#   plain control                                   all sixteen old values
+# So the DPU_RDMA block is irrelevant, the missing enable was the whole reason
+# round 343 timed out, and **the twenty registers are the entire story**.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ARM 1, MERGE, is the one that matters: charsiu's stream carrying the vendor's
-# values. Host-checked, it applies **15 vendor values and inserts 5 registers**,
-# exactly the diff, and keeps only what the vendor does not write at all -- the
-# DPU_RDMA block and the enable trailer. If those twenty registers are what puts
-# the multiply in the integer domain, this arm's curve is NOT the table above.
+# TWO QUESTIONS, and the round is split between them.
 #
-# ARM 2 is the verbatim replay with the trailer appended. If it now runs, the
-# missing enable was the whole reason 343 timed out, and its curve is the
-# vendor's stream as nearly as this driver can submit it.
+# WHICH REGISTERS. CHARSIU_MERGE_UNITS narrows the merge to one range, host
+# checked: "1" = CNA, eight values; "2" = the five inserted at 0x2810; "3" =
+# CORE, three; "4" = DPU, four. Entries 2 to 5 run one group each at byte 0.
+#   a group that alone gives 8744*s      -> that group is sufficient
+#   a group that alone gives the old band -> that group is not it
+#   several groups needed                 -> the sum of the ones that move it
+# Entry 1 is the full merge and must reproduce 8744*s, or the groups mean
+# nothing.
 #
-# ARM 3 is the verbatim replay again, unchanged, which MUST time out. A fix
-# whose control does not bring the fault back has not been shown to be the fix.
+# WHAT LAYOUT. The slope IS the activation the nibble meets. So sweeping the
+# BYTE instead of the value maps the weight layout directly: entry 6 walks the
+# first 64 bytes, both halves, and prints slope and the output word it lands in.
+# Two submits a byte. **A byte whose slope is 0 is not fetched at all**, which
+# is the half width question asked in one line.
 #
-# ARM 4 is the plain control and MUST reproduce the sixteen values above. If it
-# does not, the tool changed and nothing above it means anything.
-#
-# Every arm carries the tool's own two controls -- a repeat must be byte
-# identical, a restore must return the baseline -- a per row live count, and a
-# VOID gate on an all zero output.
+# Every arm keeps the tool's controls: repeat must be byte identical, restore
+# must return the baseline, per row live counts, VOID on an all zero output.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Arm 3 times out, arm 4 reproduces. Between arms 1 and 2 I have no prediction,
-# and the one I would least like to be true is that both run and both give the
-# same table, because that puts the multiply mode outside all 123 registers.
+# DPU, on 0x40b8 going from our 0x20 to their 0x60 -- it is the output stage
+# register, and the output changed from int32 to float32 at the same time. If a
+# CNA value turns out to be needed as well I would not be surprised, because
+# the fetch geometry differs too (surf 64 against their 2048).
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -109,35 +112,44 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 344: the vendor's values, from the side that runs #####"
+	log "##### round 345: which register, and what layout #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) MERGE: our stream, the vendor's 15 values + 5 regs   ====="
-	log "  the point of the round. it should RUN, because our stream does."
-	arm "merge, byte 0 low" "+$RGC" 0 0
-	arm "merge, byte 0 high" "+$RGC" 0 1
-	arm "merge, byte 1024 low" "+$RGC" 1024 0
+	log "===== 1) the full merge. MUST give 8744*s, or nothing below   ====="
+	log "  it means anything."
+	arm "full merge, byte 0 low" "+$RGC" 0 0
 
 	log ""
-	log "===== 2) the verbatim replay, WITH the 0x1d enable trailer    ====="
-	log "  if 343 only timed out for want of an enable, this runs."
-	arm "verbatim + trailer, byte 0 low" "$RGC" 0 0 CHARSIU_VENDOR_TRAILER=1
+	log "===== 2) CNA only, eight values                               ====="
+	arm "merge units=1 (CNA)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=1
 
 	log ""
-	log "===== 3) the verbatim replay, unchanged. MUST time out.       ====="
-	arm "verbatim, byte 0 low" "$RGC" 0 0
+	log "===== 3) the five inserted at 0x2810                          ====="
+	arm "merge units=2 (0x2810 block)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=2
 
 	log ""
-	log "===== 4) CONTROL: charsiu's own stream, same byte             ====="
-	log "  must reproduce 1920 2048 2112 2176 2208 2240 2272 then"
-	log "  -1792 -1824 -1856 -1888 -1920 -1984 -2048 -2176."
+	log "===== 4) CORE only, three values                              ====="
+	arm "merge units=3 (CORE)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=3
+
+	log ""
+	log "===== 5) DPU only, four values. my guess is that this is it.  ====="
+	arm "merge units=4 (DPU)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=4
+
+	log ""
+	log "===== 6) THE LAYOUT: slope per byte, first 64, both halves    ====="
+	log "  the slope is the activation that nibble meets. slope 0 means"
+	log "  the byte is not fetched at all."
+	arm "slope map, 64 bytes" "+$RGC" 0 0 CHARSIU_SLOPE_MAP=64
+
+	log ""
+	log "===== 7) CONTROL: charsiu's own stream. the old sixteen.      ====="
 	arm "control arm, this tree's stream" "-" 0 0
 
 	log ""
-	log "===== 5) the anchor: int8 conv must still be exact           ====="
+	log "===== 8) the anchor: int8 conv must still be exact           ====="
 	health
 
 	log ""
