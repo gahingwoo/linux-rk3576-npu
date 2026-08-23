@@ -2,76 +2,78 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 361. IS IT THE SECOND CORE AT ALL, OR THE SECOND DOMAIN?
+# 2026-08-23 round 362. TWO CORES, ONE CBUF CONFIGURATION.
 #
-# ⛔⛔ ROUND 360 REFUTED BOTH OF MY HYPOTHESES, AND ONE OF THEM WAS THE ROUND'S
-# WHOLE PREMISE.
+# 🔑 ROUND 361 IS AS CLEAN A SPLIT AS THIS PROJECT HAS PRODUCED, and it refutes
+# my hypothesis rather than confirming it.
 #
-# 1. NOT LATE DATA. CHARSIU_REREAD took the output buffer through a second
-#    cache round trip on every one of six concurrent processes and printed
-#    **no REREAD line at all**. Each submit's output is stable once the fence
-#    fires. What differs is what two IDENTICAL submits COMPUTE.
+#   ONE core, a pair of processes, three times   6 of 6 CLEAN, 0 words differ
+#   rebind core 1, SAME BOOT, same binaries      3 of 4 CORRUPT: 183, 113, 281
+#                                                and one baseline at 1022 live
 #
-#    I predicted "the reread finds them" and gave three reasons why. It found
-#    nothing.
+# ⛔ **The domain switching theory is dead**, and it died on its own strongest
+# case: two processes on ONE core put TWO domains on the SAME iommu, taking
+# turns every job, which is the most stress that theory could ask for. Six for
+# six clean.
 #
-# 2. NOT POWER MANAGEMENT. control=on, which stops runtime suspend outright,
-#    still gave 371, 426 and 39 words differing. autosuspend_delay_ms=60000
-#    still gave 499. Both sides of the hypothesis, both refuted.
-#
-# So: two concurrent jobs compute DIFFERENT RESULTS FROM THE SAME INPUT, the
-# readback is innocent, and power is innocent.
+# 🔑 **So the second core is the variable. Two NPU cores interfere in hardware.**
 #
 # ---------------------------------------------------------------------------
-# THE ONE LINE IN THE DRIVER THAT FITS
+# WHAT POINTS AT THE CBUF
 # ---------------------------------------------------------------------------
 #
-#     ret = iommu_attach_group(job->domain->domain, core->iommu_group);
-#     ...
-#     iommu_detach_group(NULL, iommu_group_get(core->dev));
+# rocket's own uapi says a job's tasks run "sequentially on the same core, to
+# benefit from memory residency in SRAM". The cores have SRAM, the driver keeps
+# a job on one core because of it, and NOTHING partitions it between the two.
 #
-# **Every job attaches its own IOMMU domain and detaches it when it finishes.**
-# One process has ONE domain, so re-attaching the same one is harmless even if
-# a translation lingers. TWO processes have TWO domains taking turns on the
-# same IOMMU, and a stale translation then points into the OTHER process's
-# pages: wrong data, no fault, intermittent, worse for the job that touches
-# more memory. That is every symptom.
+# And the vendor's capture has the same op prepared for both cores. The two
+# streams differ in exactly seven entries and every one is CBUF:
 #
-# ⚠ AND IT PREDICTS SOMETHING THAT SEPARATES IT FROM "THE SECOND CORE IS BAD":
-# if this is domain switching, **two processes sharing ONE core corrupt just as
-# happily**, and the second core is innocent.
+#            task 16 (core 0)   task 17 (core 1)
+#   0x1038     00000007           0000010e
+#   0x1018     40000404           4000040b
+#   0x103c     08000000           08001c00
+#   0x1040     10000000           2c001c00
+#   0x2818     00000000           1c000000
+#   0x2820     00000000           00000038
+#
+# 0x1c00 is 7168 and reads like a base offset: each core is told where ITS part
+# of the buffer begins. **charsiu gives both cores the same configuration**, so
+# they use the same part.
+#
+# The five at 0x2810 are emitted natively now, all zero, which is what the
+# vendor writes on core 0 -- so nothing changes today and they can finally be
+# overridden. Round 357 measured inserting them at 270.1 us against 275.9.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1 UNBINDS CORE 1 before anything opens the device -- it has to be
-# before, because each open file's scheduler entity is built from the core list
-# as it stands at open time. rocket_remove handles one core going away and only
-# tears the DRM device down when the last one does.
+# ⚠ NOTHING HERE CHOOSES WHICH CORE A PROCESS LANDS ON. The uapi has no such
+# field and the scheduler decides. So entry 3 gives ONE of the two processes the
+# vendor's core 1 CBUF values and hopes the scheduler separates them, which it
+# has no obligation to do. That makes entry 3 suggestive at best:
 #
-# ENTRY 3 IS THE WHOLE ROUND: a pair of processes on ONE core.
+#   corruption clearly drops -> the CBUF configuration is the variable and the
+#       real fix is per core streams, which needs a core field in the uapi
+#   no change -> either the scheduler did not separate them, or the CBUF is not
+#       it. **This arm cannot tell those apart**, which is why entry 4 exists.
 #
-#   it still corrupts  -> the second core is innocent, this is domain
-#                         switching, and the fix is an IOMMU flush in the
-#                         driver rather than anything about two cores
-#   it is clean        -> the two cores genuinely interfere and the second core
-#                         cannot be used until that is understood
+# ENTRY 4 gives BOTH processes core 1's values. If matching the core is what
+# matters, this should be as bad as entry 2 or worse. If it is BETTER, then it
+# is not about matching a core and something in those values is simply kinder.
 #
-# ENTRY 4 rebinds and reproduces with two cores, so the two configurations sit
-# in one boot rather than in two logs a round apart.
-#
-# ENTRY 2 is the solo control on one core and must be clean, as it has been
-# every time.
+# ENTRY 1 is the one core control and must be clean again; entry 2 is two cores
+# unchanged and must reproduce.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# It corrupts on one core. Two of my last three predictions were wrong, so that
-# is worth exactly what it is worth -- but this one at least has a mechanism
-# behind it that explains why only the bigger job suffers and why a solo run
-# never does.
+# Honestly, not much from entry 3: a coin flip on core assignment halves
+# whatever signal is there. The value of this round is entry 4 and the
+# reproduction. My last three predictions were wrong and I am not going to
+# dress this one up.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -180,39 +182,39 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 361: the second core, or the second domain?      #####"
+	log "##### round 362: two cores, one CBUF configuration           #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) UNBIND CORE 1, before anything opens the device       ====="
+	log "===== 1) CONTROL: a pair on ONE core. must be clean again.     ====="
 	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
 	echo 27708000.npu > /sys/bus/platform/drivers/rocket/unbind 2>/dev/null \
-		|| log "  !! unbind failed; the rest of this round is void"
+		|| log "  !! unbind failed; this round is void"
 	sleep 1
-	log "  bound now:"
 	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
+	pair "pair, one core" "" ""
 
 	log ""
-	log "===== 2) CONTROL: one process on one core. must be clean.      ====="
-	arm "solo, one core" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=40 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 3) THE WHOLE ROUND: a pair on ONE core                   ====="
-	log "  still corrupts -> the second core is innocent and this is"
-	log "  domain switching. clean -> the two cores interfere."
-	pair "pair, one core 1" "" ""
-	pair "pair, one core 2" "" ""
-	pair "pair, one core 3" "" ""
-
-	log ""
-	log "===== 4) rebind, and reproduce with two cores in the same boot ====="
-	echo 27708000.npu > /sys/bus/platform/drivers/rocket/bind 2>/dev/null \
-		|| log "  !! rebind failed"
+	log "===== 2) rebind. two cores, unchanged. must reproduce.         ====="
+	echo 27708000.npu > /sys/bus/platform/drivers/rocket/bind 2>/dev/null
 	sleep 1
 	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
 	pair "pair, two cores 1" "" ""
 	pair "pair, two cores 2" "" ""
+
+	log ""
+	log "===== 3) B carries the vendor's CORE 1 CBUF values             ====="
+	log "  suggestive only: nothing here picks which core B runs on."
+	pair "pair, B core-1 cbuf 1" "" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
+	pair "pair, B core-1 cbuf 2" "" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
+
+	log ""
+	log "===== 4) BOTH carry core 1's values. the control for entry 3.  ====="
+	log "  as bad as entry 2 means matching a core is what matters."
+	log "  better means those values are simply kinder, core or not."
+	pair "pair, both core-1 cbuf 1" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
+	pair "pair, both core-1 cbuf 2" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
 
 	log ""
 	log "===== 5) the anchor: int8 conv must still be exact            ====="
