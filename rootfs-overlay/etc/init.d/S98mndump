@@ -119,6 +119,38 @@
 # deliberately rather than let the sentence drift in some later round.
 #
 # ---------------------------------------------------------------------------
+# AND THE QUESTION BEHIND CPU + GPU + NPU TOGETHER
+# ---------------------------------------------------------------------------
+#
+# The board is LPDDR5 at 2736 MHz over two 16 bit channels: about 21.9 GB/s of
+# bus. The NPU alone pulls 9.63 of it, and the CPU decoding Q8_0 on its own
+# managed about 4.5 (round 356, 3.41 tok/s at 1.32 GB a token). So on paper
+# there is room -- IF the controller will actually give it out.
+#
+# That matters because decode is a strict DEPENDENCY CHAIN. Every projection
+# feeds the next, so there is nothing for a second engine to run in parallel:
+# it has to take part of the SAME tensor and read the SAME weights from the
+# SAME DRAM at the same moment. If the controller has nothing spare, the split
+# is zero sum however it is scheduled, and no amount of GPU is going to help.
+#
+# Arms 5 and 6 ask exactly that, and need no GPU stack to do it:
+#
+#   ⚠ IF THE DECODE'S gen 128 IS UNCHANGED and the reader got several GB/s,
+#     there is spare bandwidth and a CPU/NPU row split is worth building. The
+#     cheap version costs NO extra scheduling at all: submit the NPU's rows,
+#     compute the CPU's rows on the calling thread in the time we currently
+#     spend BLOCKED in prep_bo, then wait. npu_matvec already takes a row
+#     range.
+#
+#   ⚠ IF THE DECODE SLOWS BY ROUGHLY WHAT THE READER GAINED, the controller is
+#     the wall, and the whole heterogeneous idea is dead for decode -- say so
+#     and stop, rather than spending a fortnight on Mesa to find out.
+#
+# ⚠ THE READER STARTS 7 SECONDS IN, to be past staging and inside generation.
+# If the staging heartbeat says otherwise, its window overlapped the load
+# instead and the pair does not mean what it says. Check that first.
+#
+# ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
@@ -231,6 +263,28 @@ pair() {
 	return 0
 }
 
+BW=/opt/charsiu/charsiu_membw
+DEC="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024"
+
+# decode and a memory reader at the same time, both numbers kept
+squeeze() {
+	log ""
+	log "  ---- $1"
+	sleep 1
+	env $DEC "$CE" "$HEAD" "$RUN" "$M8" -p "$PROMPT" -n 128 --ignore-eos \
+		-q -c 512 -t 4 > /tmp/dec.txt 2>&1 &
+	dpid=$!
+	# past staging and into generation before the reader starts
+	sleep "$2"
+	if [ -n "$3" ]; then
+		env CHARSIU_THREADS=4 CHARSIU_SECONDS="$3" $BW > /tmp/bw.txt 2>&1
+	fi
+	wait "$dpid"
+	grep -E "tensors staged|gen 128|GB/s of weights|of that," /tmp/dec.txt > "$C"
+	[ -n "$3" ] && cat /tmp/bw.txt > "$C"
+	return 0
+}
+
 start() {
 	log ""
 	log "###############################################################"
@@ -260,11 +314,31 @@ start() {
 	rung "int4 g1024, FAST_ATTN + FAST_SILU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_FAST_ATTN=1 CHARSIU_FAST_SILU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 5) the probe, still exact                                ====="
+	log "===== 5) WHAT THE MEMORY CONTROLLER HAS LEFT                   ====="
+	log "  LPDDR5 2736 MHz over two 16 bit channels is about 21.9"
+	log "  GB/s of bus, and the NPU alone pulls 9.63. Everything"
+	log "  about CPU+GPU+NPU together turns on whether the rest of"
+	log "  that is REACHABLE, because decode is a dependency chain:"
+	log "  a second engine can only take part of the SAME tensor,"
+	log "  from the SAME DRAM, at the SAME time."
+	for n in 1 2 4; do
+		log ""
+		log "  ---- memory read alone, $n thread(s)"
+		env CHARSIU_THREADS=$n CHARSIU_SECONDS=5 $BW > "$C" 2>&1
+	done
+
+	log ""
+	log "===== 6) the same decode alone, then under memory pressure     ====="
+	log "  compare gen 128 in the two, and read what the reader got."
+	squeeze "int4 g1024, 128 tokens, NOTHING ELSE RUNNING" 0 ""
+	squeeze "int4 g1024, 128 tokens, WITH four threads reading DRAM" 7 9
+
+	log ""
+	log "===== 7) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 6) the anchor: int8 conv must still be exact            ====="
+	log "===== 8) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
