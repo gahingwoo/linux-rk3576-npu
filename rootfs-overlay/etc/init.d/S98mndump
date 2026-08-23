@@ -66,6 +66,33 @@
 # CHARSIU_CPU_PLAIN and CHARSIU_NPU_PLAIN now also switch off 2 and 1.
 #
 # ---------------------------------------------------------------------------
+# AND THE COLD START, WHICH NEEDED NO BOARD TO FIX
+# ---------------------------------------------------------------------------
+#
+# Round 369's own heartbeat says a cold start is 4.4 seconds "adding" and 7.9
+# "quantising", and BOTH ran on one core while three sat idle. Both split
+# cleanly by output channel:
+#
+#   QUANTISING. Each row writes its own k bytes of q, its own scales and its
+#   own wsum, and reads the weight file through gguf_row_f32, which only writes
+#   the buffer it is handed. On the host it went 3.65 s to 0.93 with four
+#   threads, and 1, 2, 4 and 6 threads give the SAME 64 tokens.
+#   ⚠ The one thing that crosses rows is the squared error --info accumulates,
+#   so a run that asks for it stays serial.
+#
+#   ADDING. The gather and the weight packer both index by output channel and
+#   write disjoint bytes. Checked byte for byte against the whole matrix call
+#   at nine shapes and five split counts, int4 and int8, odd channel counts
+#   included. ⚠ The legacy bit pattern layout accumulates with |= and cannot be
+#   split, so CHARSIU_W4_BITPAT forces the serial packer.
+#
+# ⚠ AND IT MAY HAVE OBSOLETED --cache. On the host, staging with the cache now
+# costs 930 ms against 799 without it: reading 620 MB back is slower than
+# quantising it on four cores. The board has slower storage AND slower cores,
+# so the answer there is genuinely unknown -- read the heartbeat, do not
+# assume the cache is still a win.
+#
+# ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
@@ -80,6 +107,11 @@
 # and no arrangement of multiplies makes a cache miss faster. If it barely
 # moves, that is the answer -- it is memory, not arithmetic -- and NOT a reason
 # to try again with wider vectors.
+#
+# AND THE STAGING HEARTBEAT, free in every arm: "N tensors staged, X ms of
+# which Y adding and Z quantising". Round 369 read 4375 adding and 7871
+# quantising at 112 tensors. Arm 3 is the control for BOTH halves, since
+# CHARSIU_NPU_PLAIN serialises the packer too.
 #
 # THEN ARM 2'S attention ROW against arm 1'S. That number is what the anchor
 # would cost. Below about 2 ms it is not worth a re-baseline; above 3 it
