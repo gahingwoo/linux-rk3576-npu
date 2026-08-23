@@ -2,84 +2,68 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 353. THE SENTENCE, NOT THE RATE. THE RATE IS DONE.
+# 2026-08-23 round 354. THE MIDDLE OF THE GROUP SWEEP, AND WHERE THE LOAD GOES.
 #
-# ✅✅✅ ROUND 352: int4 DECODES, AND IT IS 55% FASTER.
+# 🔑 ROUND 353: GROUPING FIXES THE SENTENCE AND int4 STILL WINS.
 #
-#   int8   gen 32 tok in 4897 ms,  6.53 tok/s   5028 ms hardware, 2036 us/submit
-#   int4   gen 32 tok in 3163 ms, 10.12 tok/s   3052 ms hardware, 1235 us/submit
+#   int4, one scale a row   10.09 tok/s  "Paris. Paris is the most populous
+#                                         city... most famous... most beautiful"
+#   int4, group 512          7.50 tok/s  "The Eiffel Tower is a famous landmark
+#                                         in Paris. The tower is over 1,000 feet
+#                                         tall and was built in the late 19"
+#   int4, group 128          3.51 tok/s  "known for its beautiful architecture,
+#                                         art museums, and fashion industry..."
+#   int8, KMAX 512           5.26 tok/s  the standing sentence
+#   int8, standing           6.53 tok/s  the standing sentence
 #
-# 10.12 against 6.53, and the bounded estimate written before the run was 8.8 to
-# 10.6. The hardware path is 1.65x faster, which is what the shape sweep said.
+# **Group 512 is 15% faster than int8 AND says true things**: the tower, a
+# thousand feet, the late nineteenth century. Group 128 reads better still and
+# is slower than int8, so it is not the answer.
 #
-# ✅ AND THE BLOCK IS NOT THE PROBLEM: entry 4 verified the matmul under the
-# decode's OWN packers at 1024 of 1024, worst 0.00e+00.
+# WHAT GROUPING COSTS, and it is not submits. All three int4 arms made 2470
+# submits. The SLICES went 144, 704, 2816 and with them the hardware path
+# (3051, 4361, 10060 ms) and the read back (153, 670, 4360 ms). The cost is a
+# task and a CPU accumulate per slice, so the sweep between 2048 and 512 has
+# never been looked at -- 1024 would be 288 slices.
 #
-# ⚠ TWO FAULTS, AND THE HEARTBEAT EARNED ITS PLACE BY TELLING THEM APART.
-#
-# 1. STAGING TOOK 101 SECONDS. Steady, about a second a tensor -- 64 at 50.6 s,
-#    80 at 65.4, 96 at 82.5, 112 at 101.0 -- so it was slow work and not a
-#    wedge, which is exactly what the heartbeat was added to distinguish.
-#    **The int4 layout writes STRIDED into the buffer object: sixteen
-#    consecutive bytes, then a jump of 256.** A buffer object's mapping does
-#    not absorb that the way it absorbs int8's nearly sequential write. It now
-#    packs into ordinary memory and copies once, sequentially.
-#
-# 2. THE SENTENCE IS REPETITIVE.
-#
-#      int8  "Paris. The Eiffel Tower is located in Paris. The Eiffel Tower is
-#             one of the most famous landmarks in the world. It was built for"
-#      int4  "Paris. Paris is the most populous city in France. Paris is the
-#             most famous city in the world. Paris is the most beautiful city"
-#
-#    English, on topic, grammatical, and stuck in one frame. That is not a
-#    hardware fault and not a layout fault -- the matmul is byte exact. **It is
-#    ONE absmax scale for a whole 2048 long row**, which is measured offline at
-#    0.1067 relative error against group 32's 0.0666.
-#
-# ---------------------------------------------------------------------------
-# WHAT IS NEW IN THE CODE
-# ---------------------------------------------------------------------------
-#
-# GROUPED SCALES FOR FREE. charsiu already cuts K into slices and sums their
-# accumulators, so if a slice IS a quantisation group, the group's scale can be
-# applied to that slice on the way in and NOTHING extra runs on the hardware.
-# Set CHARSIU_NPU_KMAX and CHARSIU_NPU_W4_GROUP to the same value. The
-# condition is strict on purpose: the slice must BE the group, because a slice
-# covering part of a group would need a scale per part and there is nowhere to
-# put one.
-#
-# ⚠ IT IS NOT FREE IN SUBMITS. K = 2048 in one slice is one job; at KMAX = 512
-# it is four, and each pays the fixed submit cost. Entry 4 is int8 at the same
-# KMAX so the cost of the slicing is separated from the cost of int4.
+# ⚠ AND MY STAGING FIX DID NOT WORK. Arm 1 still took 102 s. I also had the
+# comparison wrong last round: int8's staging is 16 s, not 303 ms -- the 303 ms
+# line is the gguf mmap, and the heartbeat shows int8's real staging. So int4 is
+# SIX times slower to stage, not three hundred, and packing into ordinary memory
+# and copying did not move it. That was my only guess, so this round measures
+# rather than guessing again: the heartbeat now splits the time into what is
+# spent inside charsiu_npu_add and what is left over, which is the quantiser.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1: int4 as round 352 ran it, which must reproduce 10.12 tok/s and the
-# same repetitive sentence, and whose STAGING should now be seconds rather than
-# 101 of them. If the sentence changed without the quantiser changing, the
-# staging fix touched something it should not have.
+# THE HEARTBEAT SPLIT IS THE DIAGNOSTIC AND IT IS FREE. If "adding" carries the
+# time, it is the packer or the buffer objects; if "quantising" carries it, it
+# is npu_tensor_build and the packer was never the problem. The two are far
+# enough apart that one line settles it.
 #
-# ENTRIES 2 AND 3 are the answer: group 512 and group 128. Read the SENTENCE
-# first and the rate second. A sentence that stops circling is the result; a
-# rate that falls below 6.53 means the extra submits ate the win.
+# ENTRY 1 is group 1024, the point nobody has run: 288 slices, half the extra
+# cost of 512. If its sentence is as good as 512's it is the answer.
 #
-# ENTRY 4 is int8 at KMAX 512, which separates "slicing costs submits" from
-# "int4 costs accuracy".
+# ENTRIES 2 AND 3 reproduce 512 and 2048 so the three sit in one boot with one
+# thermal state. ⚠ Round 349 to 350 showed a single shape timing moving 20%
+# between boots, and a tok/s is a single measurement too.
 #
-# ENTRY 5 is the int8 control and must still be 6.53 tok/s.
+# ENTRY 4 is the int8 control, which must still be 6.53.
+#
+# ⚠ FOUR SENTENCES ARE NOT AN ACCURACY MEASUREMENT. They are enough to tell
+# circling from not circling and nothing more. If group 1024 lands between the
+# two, that is a judgement call and it should be made against KL over several
+# prompts, not against one sentence about Paris.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Group 512 helps a little and group 128 helps more, and the rate drops toward
-# int8's as the submits multiply -- so the useful answer is probably the
-# largest group that fixes the text. If group 128 still circles, the scale is
-# not what is wrong and the next thing is the quantiser itself, not its
-# granularity.
+# Group 1024 near 8.7 tok/s, and the sentence is the coin flip. On the load, I
+# expect the quantiser rather than the packer, because the packer got faster
+# twice and the number did not move.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -166,31 +150,27 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 353: the sentence, not the rate. the rate is done. #####"
+	log "##### round 354: the middle of the group sweep, and where the load goes #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) int4 as round 352 ran it. 10.12 tok/s, same sentence. ====="
-	log "  staging should be seconds now, not 101 of them."
-	rung "int4, one scale a row" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
+	log "===== 1) int4, group 1024. THE POINT NOBODY HAS RUN.          ====="
+	log "  288 slices, half of 512's extra cost. read the sentence."
+	rung "int4, group 1024" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
+		CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) int4 with a scale every 512. READ THE SENTENCE.       ====="
+	log "===== 2) int4, group 512. must reproduce 7.50 and the tower.   ====="
 	rung "int4, group 512" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
 		CHARSIU_NPU_KMAX=512 CHARSIU_NPU_W4_GROUP=512 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) int4 with a scale every 128                           ====="
-	rung "int4, group 128" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
-		CHARSIU_NPU_KMAX=128 CHARSIU_NPU_W4_GROUP=128 "$CE" "$HEAD"
+	log "===== 3) int4, one scale a row. must reproduce 10.09, circling. ====="
+	rung "int4, one scale a row" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) int8 at KMAX 512: what the SLICING alone costs        ====="
-	rung "int8, KMAX 512" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_KMAX=512 "$CE" "$HEAD"
-
-	log ""
-	log "===== 5) CONTROL: the standing int8 decode, 6.53 tok/s        ====="
+	log "===== 4) CONTROL: the standing int8 decode, 6.53 tok/s        ====="
 	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
