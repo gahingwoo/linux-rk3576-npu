@@ -2,61 +2,55 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 340. RE-READ THE MAP IN THE MODE THAT MIGHT BE A MATMUL.
+# 2026-08-23 round 341. THE LAST TWO REGISTERS, THEN THE CAPTURE.
 #
-# ⚠ ROUND 339 CONTAINED A CHECK THAT COULD NOT FAIL, AND IT PASSED. Arm 3d
-# printed "PLAIN WEIGHTED SUM: 64 of 64" with a fitted scale of 0.000000: the
-# job TIMED OUT, every output word was zero, and every channel was trivially
-# within one percent of zero. The tool now refuses that: it counts the live
-# words and prints VOID when there are none. My own rule, broken by my own
-# metric, one round after writing it down.
+# ROUND 340's CONTROLS BOTH REPRODUCED, so what it says can be trusted.
 #
-# WHAT 339 DID SETTLE:
+#   the map, both modes    w = 32*floor(s/K) + (s mod 32), unchanged
+#   the k, 16 bit mode     byte j of a slot carries k = 2j and 2j+1
+#   the k, A8_STRIDE1      byte j carries k = 4j+1 and 4j+3, and the SECOND
+#                          slot of every word is dead: bytes 256, 260, 264 and
+#                          1280 pair with nothing at all
 #
-#   3b  force 0x100c = 0x00600120        output IDENTICAL to the control,
-#                                        old reference 64 of 64, scale 0.308023
-#   3a  the emitter's A8_STRIDE1 hatch   both references 0, and the header says
-#                                        "1 entries per row" against 2
+# ⚠ **Odd k, spaced two apart, is what reading the HIGH BYTE of a two byte pair
+# looks like.** The hatch changed OUR packing and the hardware kept its two byte
+# activation stride, so that mode reaches a quarter of the k and is not a
+# different arithmetic, it is the same arithmetic reading half a vector.
 #
-# **So bit 29 is not the switch.** Clearing it changed nothing at all. What
-# changes the arithmetic is the hatch, and the hatch changes the input STRIDE,
-# which is the activation atom: 8 for a two byte type, 16 for one byte.
+# Which leaves the register story short of two entries. The 117 register diff
+# against the vendor's own int4 op has five differences and three are settled:
+# 0x3020 and 0x40b8 are the pair that makes the write work, and 0x100c bit 29
+# changes NOTHING, output identical to six digits. The other two have never been
+# run with the packing right:
 #
-# ---------------------------------------------------------------------------
-# WHICH MAKES 3a AND 3c INCONCLUSIVE BY CONSTRUCTION, NOT NEGATIVE
-# ---------------------------------------------------------------------------
+#     CNA  0x1098   vendor 00000001   charsiu 00000004
+#     CORE 0x3018   vendor 10000200   charsiu 10000001
 #
-# The paired packing is built from a map measured with the SIXTEEN BIT atom:
-#
-#     w = 32*floor(s/K) + (s mod 32),   k = 16*(w mod 2) + 32*j + 2*byte + nib
-#
-# Change the atom and there is no reason for that to hold, so in 3a the weights
-# the hardware read were not the weights the packer meant. Neither reference
-# could match and neither failing says anything about the arithmetic.
-#
-# So do what worked twice before: READ THE MAP IN THE NEW MODE, then pack for
-# it, then ask about the arithmetic. --map gives which word a byte feeds and
-# --kpair gives which k it multiplies with, and both have a control at the
-# settings where their answer is already known.
+# 0x1098 was tried in round 329 with the old packing and 0x3018's only arm in
+# round 339 timed out and returned zeros, which my metric then scored as a pass.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# 1) ENTRY 2 IS THE CONTROL: both probes at today's settings must reproduce
-#    w = 32*floor(s/K) + s mod 32, and byte j of a slot carrying k = 2j and
-#    2j+1. If they do not, the probes moved and nothing below counts.
-# 2) ENTRY 3 IS THE ROUND: the same two probes with A8_STRIDE1. Read the block
-#    length, how many words before the base steps, and the k a byte pairs with.
-# 3) A DEAD ARM IS NOT A RESULT. Every line has a live-word count now.
+# THE PLAIN WEIGHTED SUM LINE, and it prints a live word count now, so a dead
+# arm says VOID instead of scoring. Entry 2 is the control and must print the
+# old reference at 64 of 64 with the plain sum at 0.
+#
+# ⚠ IF NOTHING HERE MOVES IT, the register surface is exhausted and the next
+# thing is a vendor capture: run their stack, take the register stream AND the
+# buffers it points at, and replay the bytes rather than reasoning about them.
+# That is the method that settled the dispatch wall, and it is the honest next
+# step rather than a ninth guess.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The map changes, because the atom is in every formula that produced it. What
-# I cannot predict is whether the arithmetic in that mode is a weighted sum, and
-# that is the question this round is clearing the way for rather than answering.
+# Neither of these is it. 0x1098 is a rounded-up row count and 0x3018 sits with
+# the other CORE geometry, and neither has the shape of something that picks an
+# arithmetic. I am running them because they are the last two and because "we
+# never tried it with the packing right" has already been the answer once.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -178,7 +172,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "##### ROUND 340: re-read the map in the int8-activation mode      #####"
+	log "##### ROUND 341: the last two registers, then the capture         #####"
 
 	log ""
 	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
@@ -191,27 +185,21 @@ start() {
 	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
 
 	log ""
-	log "===== 2) CONTROL: both probes where the answer is known.           ====="
-	log "===== 2a the map today: w = 32*floor(s/K) + s mod 32"
-	c "CHARSIU_W4=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --map 16
-	log "===== 2b the k today: byte j of a slot carries k = 2j and 2j+1"
-	c "CHARSIU_W4=1 CHARSIU_KPAIR_BYTES=0,4,8,256,260,264,1024,1280" \
-	  "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --kpair
-
-	log ""
-	log "===== 3) THE ROUND: the same two probes with an int8 activation.   ====="
-	log "===== 3a the map with A8_STRIDE1"
-	c "CHARSIU_W4=1 CHARSIU_A8_STRIDE1=1" "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --map 16
-	log "===== 3b the k with A8_STRIDE1"
-	c "CHARSIU_W4=1 CHARSIU_A8_STRIDE1=1 CHARSIU_KPAIR_BYTES=0,4,8,256,260,264,1024,1280" \
-	  "CHARSIU_OVERRIDE=0x40b8=3,0x3020=0x7f" $I4 1 64 64 --kpair
-	log "===== 3c and the map with A8_STRIDE1 and no register override"
-	c "CHARSIU_W4=1 CHARSIU_A8_STRIDE1=1" $I4 1 64 64 --map 16
-
-	log ""
-	log "===== 4) the matmul arms again, with a live-word count this time.  ====="
+	log "===== 2) CONTROL: old reference 64 of 64, plain sum 0 of 64.       ====="
 	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $MM 1 64 64
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_A8_STRIDE1=1" "$CE" $MM 1 64 64
+
+	log ""
+	log "===== 3) the last two differences, with the packing right.        ====="
+	log "===== 3a CNA 0x1098 = 1, the vendor's value"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "$CE" $MM 1 64 64
+	log "===== 3b CORE 0x3018 = 0x10000200"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "CHARSIU_OVERRIDE=0x3018=0x10000200" "$CE" $MM 1 64 64
+	log "===== 3c both"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200" "$CE" $MM 1 64 64
+	log "===== 3d and the vendor's complete set, all five at once"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200,0x100c=0x00600120" "$CE" $MM 1 64 64
+	log "===== 3e the complete set at a bigger shape"
+	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200,0x100c=0x00600120" "$CE" $MM 1 2048 256
 
 	log ""
 	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
@@ -222,7 +210,7 @@ start() {
 	w conv2d-cal.tflite ""
 
 	log ""
-	log "===== 2 is the control; 3 is the map; a dead arm is not a result.  ====="
+	log "===== the plain sum line, and VOID means the arm died.             ====="
 	sync
 }
 case "$1" in
