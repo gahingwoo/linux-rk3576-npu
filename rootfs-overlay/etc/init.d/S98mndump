@@ -2,115 +2,98 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 369. THE 10.6 MS NOBODY HAD MEASURED.
+# 2026-08-24 round 370. THE LAST TWO CPU LOOPS.
 #
-# ROUND 368: 10.53 tok/s exact, and ONE OF ITS FOUR IDEAS WAS A REGRESSION.
+# 🏁 ROUND 369: 11.62 tok/s, AND THE HOLE IS CLOSED.
 #
-#   1 everything on, unpinned    9.11 tok/s  109.5 ms   attention 22.70
-#   2 the same, pinned to A72   10.53         94.6      attention  7.42
-#   3 CONTROL, r367 behaviour   10.10         98.6      attention  7.75
-#   4 pinned + fast exp         10.69         93.2      silu 1.95 not 2.96
+#   1 everything on, unpinned   11.56 tok/s   86.2 ms   packing 2.75 ms
+#   2 the same, pinned to A72   11.62          85.7     packing 2.73
+#   3 CONTROL, all three back   10.57          94.2     packing 8.47
 #
-# All four sentences identical, probe 1024/1024 at 0.00e+00, anchor clean.
-# **Entry 4 did NOT move a token on the board** where it moved one on the host
-# -- luck on this prompt, not a guarantee, so the fast exp stays opt in.
+# All three sentences identical, probe 1024/1024 at 0.00e+00, anchor clean.
 #
-# 🔑 THREADING ATTENTION COST 15 MS AND BOUGHT 0.33.
+# 🔑 THE 10.6 MS HOLE WAS THE PACKING, and the pre-declared test for being
+# WRONG about that did not fire. Recomputed as the round asked:
 #
-# Left where the scheduler put it, splitting 32 heads over four threads ran
-# 22.70 ms a token against 7.75 serial. Pinned to the four A72s it ran 7.42
-# against 7.75 -- a 4% gain for a fan out and fan in around two milliseconds of
-# work. **It is serial again**; CHARSIU_ATTN_POOL keeps the path, because
-# attention grows with the context and 38 positions is not where that question
-# gets settled.
+#   arm 1    five NPU rows 74.62 - hardware 70.20 - packing 2.75 = 1.67 left
+#   control  five NPU rows 82.62 - hardware 71.98 - packing 8.47 = 2.17 left
 #
-# WHAT EACH IDEA ACTUALLY BOUGHT, against what I wrote down before the run:
+# So packing accounts for it: 8.47 ms a token became 2.75, and summing into the
+# caller's buffer took the read back from 8.5 to 7.0. **10.57 -> 11.62 tok/s.**
 #
-#   rope angle table      1.79 -> 0.16 ms      predicted 1.7   ✓
-#   attention on the pool     -15 / +0.33      predicted -5.7  ✗✗
-#   contiguous scales      9.1 -> 8.5          predicted -4    ✗
-#   130 ioctls dropped          about 0.2      predicted -1.5  ✗
-#   pinning to the A72s         about 0.3      no prior
-#
-# Three of four were optimistic. The one that paid was the one where the work
-# itself disappeared rather than moving.
+# And pinning to the A72s is worth 0.06 tok/s with attention serial, which
+# CLOSES that question: the CPU thread was never on a little core.
 #
 # ---------------------------------------------------------------------------
-# AND A 10.6 MS HOLE, IN EVERY ARM
+# WHERE AN 86 MS TOKEN GOES NOW
 # ---------------------------------------------------------------------------
 #
-# Sum the stage table's five NPU rows and subtract what npudev measures inside
-# them and 10.6 ms a token is left over, in every arm of round 368. It is the
-# work npudev does BEFORE its own timer starts: packing the activation.
+#     60.0  the fence          9.63 GB/s, the measured ceiling. done.
+#      7.75 attention          scalar C, one element at a time
+#      7.03 summing the slices 1.2 M scaled adds over 4.8 MB
+#      3.14 submitting
+#      2.93 silu               1.0 ms of it is the exp, opt in since 368
+#      2.75 packing
+#      1.67 what is left of the wrapper
+#      0.9  everything else
 #
-# A token packs about 463 thousand halves -- every K slice of every projection,
-# into both devices -- and it was doing it with a function call and two byte
-# stores per element, out of a scratch buffer that had just been filled by a
-# float copy per element, plus a double add per element for a grid that is off
-# by default.
+# Two loops are 15 ms of that and both were still scalar. This round is them.
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED
+# WHAT CHANGED, AND WHY ONLY ONE PIECE NEEDS A SWITCH
 # ---------------------------------------------------------------------------
 #
-#   1. THE HALF CONVERSION IS VECTORISED. ⚠ NOT with vcvt_f16_f32: that rounds
-#      to nearest and this project's converter TRUNCATES, which is a different
-#      number by up to 5e-4 relative -- four thousand times the gap that moved
-#      a token in the SiLU experiment. It is hand written from the same shifts
-#      and masks, and checked against the scalar one over 464 million float bit
-#      patterns spanning the whole 32 bit space: zero differ. The packer as a
-#      whole was then compared byte for byte at thirteen shapes including the
-#      odd tails.
-#   2. NO SCRATCH COPY. At m = 1 the packer reads src[kk], so it can be handed
-#      the activation where it already lives. The running total it was also
-#      computing belongs to the midrise grid, which is off by default and
-#      measured worse when it was on.
-#   3. THE SUM LANDS IN THE CALLER'S BUFFER. A grouped int4 tensor applies its
-#      scale per slice on the way in, so the last step was y[i] = accf[i]: a
-#      staging buffer written and read for nothing, half a megabyte a token on
-#      the output head alone.
-#   4. ATTENTION IS SERIAL AGAIN (above).
-#   5. AND THE PACKING IS TIMED, so the hole stops being a subtraction. ⚠ The
-#      new line is ON TOP of the hardware path, not inside it.
+# BIT IDENTICAL, ON BY DEFAULT:
 #
-# CHARSIU_NPU_PLAIN puts 1, 2 and 3 back together. All three are provably
-# neutral, so that control is not about whether they are right -- it is so a
-# slower round can say which one did it, which is what round 368 taught.
+#   1. THE SLICE SUM. acc[j] += fo[j] * sc[j] is not a reduction -- each j has
+#      its own accumulator -- and the product of two floats has at most 48
+#      significant bits, so the double the scalar loop formed it in was exact
+#      and the cast back was the correctly rounded float product.
+#   2. ATTENTION'S SECOND HALF, out[i] += a * vt[i], for the same reason.
+#
+#      ⚠ AND BOTH NEEDED A COMPILER BARRIER. Left alone, gcc fuses the multiply
+#      and the add into fmla, which rounds ONCE where the source rounds twice:
+#      460190 of 20.5 million accumulations came out different in the host
+#      check. With the barrier, zero do, and there is no fmla in the built
+#      object.
+#
+# OPT IN, BECAUSE IT REORDERS A REDUCTION:
+#
+#   3. CHARSIU_FAST_ATTN vectorises the q.k dot product, which four lanes add
+#      up in a different order. On the host that moved a token -- and it halved
+#      attention, 0.78 ms to 0.39.
+#
+# CHARSIU_CPU_PLAIN and CHARSIU_NPU_PLAIN now also switch off 2 and 1.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE FIRST. All three decode arms must be the Louvre sentence and
-# must match each other. Nothing in this round is allowed to change a word:
-# the packer is byte identical and the rest is where a number is stored.
+# THE SENTENCE FIRST. **Arms 1 and 3 must be the Louvre sentence and match each
+# other**: the default path is bit identical by construction and by host check.
+# **Arms 2 and 4 are expected to differ** -- and if they do not, that is luck on
+# this prompt rather than evidence, because round 368's fast exp differed on the
+# host and not on the board.
 #
-# THEN THE NEW PACKING LINE, which is the whole point. It is the first direct
-# measurement of a cost this project has only ever inferred.
+# THEN THE TWO ROWS, against round 369: attention 7.75 and summing 7.03.
+# ⚠ The sum is partly reading 4.8 MB out of memory that was just invalidated,
+# and no arrangement of multiplies makes a cache miss faster. If it barely
+# moves, that is the answer -- it is memory, not arithmetic -- and NOT a reason
+# to try again with wider vectors.
 #
-# THEN THE FIVE NPU ROWS of the stage table against round 368's
-# (q k v 12.24, o proj 9.56, gate + up 25.86, down 25.47, head 10.18 pinned).
-# ⚠ Recompute the hole: those five rows, minus the hardware path, minus the
-# new packing number. If packing is small AND the hole is still ten
-# milliseconds, then packing was never the cost and it is somewhere I have not
-# looked -- say so rather than reading the drop as a win.
-# ⚠ And check the table total against the run's own generation time first, as
-# ever.
-#
-# THEN ARM 2 AGAINST ARM 1, which is the A72 question asked cleanly this time:
-# same build, serial attention in both, only the pin differs. Round 368 could
-# only answer it by subtracting a flush.
+# THEN ARM 2'S attention ROW against arm 1'S. That number is what the anchor
+# would cost. Below about 2 ms it is not worth a re-baseline; above 3 it
+# probably is, and the honest way to take it is to say so and re-anchor
+# deliberately rather than let the sentence drift in some later round.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Packing between 1 and 2 ms where the hole was 10.6, the five NPU rows down 5
-# to 7 ms between them, and the run near 11.3 tok/s. The pin worth about 0.3 ms
-# again, which would mean the CPU thread was never on a little core and that
-# question can be closed.
-#
-# ⚠ I have been optimistic three rounds running. Read the control.
+# Summing 7.0 -> 4, attention 7.75 -> 6.5, so about 83 ms and 12.0 tok/s, and
+# arm 2 near 3 ms below that. ⚠ Four rounds of predictions: rope was right, the
+# packing was right, the pool and the scale gather were badly wrong. The ones
+# that were right removed work; the ones that were wrong moved it.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -219,33 +202,37 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 369: the 10.6 ms nobody had measured           #####"
+	log "##### round 370: the last two CPU loops                    #####"
 	log "###############################################################"
-	log "  attention is serial again. the packing is timed."
+	log "  the fence is 60 of 86 ms. attention and the sum are 15."
 
 	log ""
-	log "===== 1) everything on, where the scheduler puts it            ====="
-	log "  read the PACKING line. the hole was 10.6 ms a token."
+	log "===== 1) everything on                                         ====="
+	log "  read the attention and summing rows against 7.75 and 7.03."
 	rung "int4 g1024, two devices, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) the same, pinned to the four A72s                     ====="
-	log "  the A72 question asked cleanly: same build, serial"
-	log "  attention in both, only the pin differs."
-	rung "int4 g1024, CPUS=4-7" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 "$CE" "$HEAD"
+	log "===== 2) the vectorised dot product. EXPECTED TO CHANGE WORDS. ====="
+	log "  a reduction added up in a different order. read the"
+	log "  attention row: that is what the anchor would cost."
+	rung "int4 g1024, FAST_ATTN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_FAST_ATTN=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) THE CONTROL: the scalar packer, the scratch copy,     ====="
-	log "=====    and the staging accumulator, all three back          ====="
-	log "  same pin as arm 2, so the pair differ in one thing."
-	rung "int4 g1024, CPUS=4-7, NPU_PLAIN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPUS=4-7 CHARSIU_NPU_PLAIN=1 "$CE" "$HEAD"
+	log "===== 3) THE CONTROL: both vector paths off                    ====="
+	rung "int4 g1024, CPU_PLAIN + NPU_PLAIN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPU_PLAIN=1 CHARSIU_NPU_PLAIN=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) the probe, still exact                                ====="
+	log "===== 4) and everything at once, for the best number it has    ====="
+	log "  fast exp and fast dot together. both move tokens, both"
+	log "  are documented, and this is what the runtime COULD do."
+	rung "int4 g1024, FAST_ATTN + FAST_SILU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_FAST_ATTN=1 CHARSIU_FAST_SILU=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 5) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 5) the anchor: int8 conv must still be exact            ====="
+	log "===== 6) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
