@@ -2,111 +2,74 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 356. THE LOAD, AND FOUR PROMPTS.
+# 2026-08-23 round 357. WHICH REGISTERS CHANGE THE SPEED. NOBODY ASKED.
 #
-# ⚠ FIRST, THE LOAD IS NOT AN int4 PROBLEM. Round 355's two columns:
+# 🔑 ROUND 356 LOCATED THE WHOLE OF THE REMAINING GAP, once the submit count
+# was read correctly:
 #
-#   int4 group 1024   20.3 s = 4.3 adding + 16.0 quantising
-#   int8              18.4 s = 8.9 adding +  9.5 quantising
+#   4550 submits, 6460 ms busy = 142 submitting + 5696 fence + 620 readback
 #
-# **int8 takes 18 seconds too.** The vendor is fast because a .rkllm holds
-# weights that are ALREADY quantised and ALREADY laid out -- they mmap and DMA.
-# charsiu dequantises 1.24 billion Q8_0 weights to float and re-quantises them
-# at every start. That is an architectural difference, not a bug.
+# It adds up, so there is no hidden CPU cost. Per token, of 117 ms: **89 ms is
+# the fence**, 9.7 readback, 2.2 submitting, 16 outside the NPU path.
 #
-# WHAT WAS FIXED, measured on the host over 440 million real weights with three
-# repeats each rather than guessed:
+# And 71 submits a token times 9.5 real MB is 620 MB -- **a token reads the
+# whole model once**, which at int4's 6.7 GB/s is 92 ms. That IS the 89.
 #
-#   int4, before          3.37 ns a weight
-#   int4, one pass        2.2  ns          <- this round
-#   int8                  1.85 ns
-#   of which dequant      0.32 ns          (15%, so NOT the bottleneck)
+# ⇒ **THE DECODE IS WEIGHT BANDWIDTH BOUND AT THE MODEL LEVEL.** The earlier
+# "MAC bound" reading came from a single job microbenchmark where the fixed
+# submit cost dominates; in the LLM the tasks are chained and it amortises away.
+# Both readings were of real data and only one of them describes the decode.
 #
-# The int4 branch walked each group a SECOND time to find the signed value of
-# largest magnitude, calling fabsf on the running maximum every iteration too.
-# The first pass now carries the signed extreme with it. **The generated text is
-# byte identical before and after, checked end to end on the host with the real
-# model** -- only the timing line differs.
+# So the question is now exactly one line:
 #
-# ⚠ AND ONE GUESS OF MINE MEASURED AS WRONG, AGAIN. I wrote that the per weight
-# error accounting "costs a third of the load". Three repeats say 3.37 ns
-# against 3.46: it costs 3%. The comment is corrected in the source. It is
-# behind CHARSIU_NPU_RMS now anyway, because nothing in the decode reads it.
+#   ⚠ int8 fetches at 9.46 GB/s. int4 fetches at 6.7. WHY.
 #
-# ⛔ WHAT IS LEFT IS INHERENT. About 10 s of quantising, and the only thing that
-# removes it is a CACHE: quantise once, write q and the scales, mmap after.
-# That is what the vendor's file IS. It costs 620 MB on the card and a new
-# format, so it is a feature and not a patch, and it is not in this round.
+# ---------------------------------------------------------------------------
+# THE THING NOBODY ASKED
+# ---------------------------------------------------------------------------
+#
+# Round 345 bisected the vendor's twenty register values and asked **which of
+# them change the ARITHMETIC**. The answer was CORE's three, and the other
+# seventeen were set aside as "not the switch" -- which is true and was never
+# the same question as **which of them change the SPEED**.
+#
+# Those seventeen are all fetch geometry:
+#
+#     0x103c  surf         charsiu 64        vendor 2048     <- a factor of 32
+#     0x1044  CBUF_CON1    (1<<16)|64        (32<<16)|2048
+#     0x1040  CBUF_CON0    10000000          differs
+#     0x2810..0x2820       NEVER WRITTEN     five registers, the CBUF split
+#
+# ⚠ AND THE NATIVE int4 PATH WRITES NONE OF THEM. job.c sets the three CORE
+# values and nothing else, so the five at 0x2810 and the CNA block have only
+# ever run inside the probe's merge, never in the decode.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ ENTRY 0 NO LONGER DECIDES ANYTHING -- it is kept because it characterises
-# the test rig, not because it settles the design. The card's bandwidth stopped
-# mattering the moment the deployment target turned out to be a PCIe SSD, where
-# 596 MB reads in about a second against 10 s of quantising.
+# Entry 1 is charsiu's own stream and is the baseline. Entry 6 is int8 at the
+# same shape and is the target: if int4 with the vendor's values lands near
+# int8's us per MiB, the missing 30% is those registers and the decode goes from
+# 8.5 tok/s to about 12.
 #
-# THE CACHE IS BUILT AND HOST VERIFIED, and it is NOT in this round on purpose:
-# writing 596 MB on the first rung and reading it on every rung after would
-# destroy the very measurement this round is for. It also does not fit in the
-# 3.5 GiB rootfs beside 2.7 GB of models, and growing that needs host disk this
-# machine does not have at 98% full.
+# Entries 2 to 5 are the full merge and then CNA, the 0x2810 block and the DPU
+# on their own. **Read us per submit, not GB/s** -- the tool's GB/s divides by
+# the real int4 bytes now, but time is the thing that is not a derived quantity.
 #
-#   charsiu_run --cache, on the host, with the real model:
-#     cold, writes   prompt 4886 ms, wall 5.64 s, cache 596 MB
-#     warm, reads    prompt 1188 ms, wall 1.90 s
-#     the generated text is IDENTICAL, and peak RSS falls 2497 to 1363 MB
-#
-#   All five staleness guards behave: the model's mtime, the group size and the
-#   bit width each force a rebuild, a settled cache reads back, and without
-#   --cache nothing is written at all.
-#
-# ORIGINAL NOTE, kept because the inference in it is still how the card was
-# characterised without measuring it: A weight cache -- quantise once,
-# write the PACKED bytes, mmap after -- would take the load from 20 s to the
-# time it takes to read 620 MB plus the 4.3 s of copying into buffer objects,
-# and the user never converts anything: the first run is what it is today and
-# writes a sidecar. Whether that is worth building depends entirely on what the
-# card reads at. Two inferences already point at "yes": the quantising column
-# FALLS across a boot (143978, 131547, 114571 in round 354; 16036 then 10659 in
-# 355) which is the page cache warming and says CPU is about 80% of it, and the
-# 18 s staging already reads the whole 1.3 GB gguf, which puts the card at 72
-# MB/s or better. Entry 0 measures it instead of inferring it. Below about 70
-# MB/s the cache is not worth building.
-#
-# THE QUANTISING COLUMN should fall from 16.0 s to about 10, and int8's 9.5
-# must NOT move -- int8 never took the second pass, so it is the control for
-# this change as it was for the getenv hoist.
-#
-# **8.96 tok/s and the Louvre sentence must not move either.** The host says the
-# text is byte identical; the board is where that gets to be true.
-#
-# THEN THE ACCURACY, which two sentences have never established. Four prompts,
-# chosen to fail differently rather than to agree:
-#
-#   1  the standing one, comparable with every round before this
-#   2  an explanation, where being wrong is visible
-#   3  code, where being wrong is unambiguous
-#   4  arithmetic, which is what a narrow quantiser fails first
-#
-# Each on int4 group 1024 and on the CPU. Sampling is greedy already, so a
-# divergence is the model changing its mind and not a die roll. 64 tokens,
-# because 32 does not reach the answer to "17 times 24".
-#
-# ⚠ Word for word agreement with the CPU is NOT the bar. int8 is the arm that
-# matches the CPU exactly; four bit weights are four bit weights. The bar is
-# whether int4 says something TRUE and stops circling.
+# Entry 7 verifies the merge still computes exactly. A faster stream that is
+# wrong is not a result, and round 345 only ever checked correctness on the
+# whole merge, not on each group alone.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Quantising near 10 s, everything else unchanged. On the prompts: 1 and 2 fine,
-# and code is the one I would bet against -- a wrong token in a Python function
-# is not a paraphrase. If 3 or 4 fail while 1 and 2 look fine, the honest
-# summary is "good for prose, not yet for code", and the next thing is GPTQ
-# rather than a smaller group.
+# CNA, and 0x103c inside it, because surf is a fetch stride and 64 against 2048
+# is not a rounding difference. If the whole merge is no faster than entry 1
+# then the deficit is in the layout itself -- sixteen channels and thirty-two k
+# a block against int8's contiguous rows -- and the way out is a different
+# packing, not a register.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -195,46 +158,37 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 356: four prompts, because two are not a measurement #####"
+	log "##### round 357: which registers change the speed. nobody asked. #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 0) WHAT THE CARD ACTUALLY READS AT                       ====="
-	log "  the whole weight cache question turns on this one number."
-	log "  a packed cache would be 620 MB; below about 70 MB/s reading"
-	log "  it back is no faster than re-quantising and the cache is not"
-	log "  worth building."
-	sync
-	echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || \
-		log "  (could not drop caches; the figure below will be warm)"
-	log "  -- cold, 512 MB of the model file"
-	dd if=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
-		of=/dev/null bs=1M count=512 2>&1 | tail -1 > "$C"
-	log "  -- warm, the same 512 MB again"
-	dd if=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
-		of=/dev/null bs=1M count=512 2>&1 | tail -1 > "$C"
+	log "===== 1) BASELINE: charsiu's own stream, int4, K2048 N1024    ====="
+	arm "int4 native" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 1) the standing one                    ====="
-	PROMPT="The capital of France is"
-	rung "int4 g1024: the standing one" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
-	rung "cpu:       the standing one" CHARSIU_NO_NPU=1
+	log "===== 2) the FULL merge: all twenty vendor values             ====="
+	arm "int4 merge all" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+
 	log ""
-	log "===== 2) an explanation                    ====="
-	PROMPT="Explain in one paragraph why the sky is blue"
-	rung "int4 g1024: an explanation" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
-	rung "cpu:       an explanation" CHARSIU_NO_NPU=1
+	log "===== 3) CNA only. 0x103c surf is 64 here and 2048 there.     ====="
+	arm "int4 merge CNA" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=1"
+
 	log ""
-	log "===== 3) code                    ====="
-	PROMPT="Write a Python function that reverses a string:"
-	rung "int4 g1024: code" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
-	rung "cpu:       code" CHARSIU_NO_NPU=1
+	log "===== 4) the five at 0x2810, which nothing here ever writes    ====="
+	arm "int4 merge 0x2810" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=2"
+
 	log ""
-	log "===== 4) arithmetic                    ====="
-	PROMPT="What is 17 times 24? Show your working."
-	rung "int4 g1024: arithmetic" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
-	rung "cpu:       arithmetic" CHARSIU_NO_NPU=1
+	log "===== 5) DPU only                                             ====="
+	arm "int4 merge DPU" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64 CHARSIU_MERGE_UNITS=4"
+
+	log ""
+	log "===== 6) THE TARGET: int8 at the same shape                   ====="
+	arm "int8 native" "-" 0 0 "CHARSIU_M=1 CHARSIU_W8=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
+
+	log ""
+	log "===== 7) and the merge must still compute exactly              ====="
+	arm "verify, merge" "+$RGC" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
 	log "===== 5) CONTROL: int8 on prompt 1. the standing sentence.    ====="
