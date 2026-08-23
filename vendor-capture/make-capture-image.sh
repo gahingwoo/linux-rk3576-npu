@@ -19,7 +19,8 @@ for f in "$UBOOT" "$KERNEL" "$DTB" "$ROOTFS"; do
   [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
 done
 
-UBOOT_MB=16; BOOT_MB=128; TOTAL_MB=$((UBOOT_MB+BOOT_MB+512))
+# the vendor .rkllm is 1.3 GB, so the rootfs partition is 3 GB here
+UBOOT_MB=16; BOOT_MB=128; ROOT_MB=3072; TOTAL_MB=$((UBOOT_MB+BOOT_MB+ROOT_MB))
 truncate -s "${TOTAL_MB}M" "$OUT"
 dd if="$UBOOT" of="$OUT" bs=1M conv=notrunc status=none
 
@@ -31,7 +32,7 @@ label-id: 0x52524b33
 unit: sectors
 
 start=32768,  size=262144, type=c
-start=294912, size=1048576, type=83
+start=294912, size=6291456, type=83
 SFDISK
 
 BOOT_FAT="$(mktemp /tmp/bootcap.XXXXXX.fat)"
