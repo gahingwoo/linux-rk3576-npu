@@ -2,64 +2,66 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 345. int4 IS A WEIGHTED SUM. WHICH REGISTER, AND WHAT LAYOUT.
+# 2026-08-23 round 346. THE WHOLE THING IS DECODED. NOW CHECK IT PROPERLY.
 #
-# 🔑🔑🔑 ROUND 344 SETTLED IT. With the vendor's twenty register values in
-# place, one nibble's contribution to the output is EXACTLY s times a constant,
-# s being the nibble read as a signed int4, at three independent byte positions
-# with three different constants:
+# 🔑🔑🔑 ROUND 345 GAVE THE LAYOUT, AND IT CHECKS OUT ON THE HOST.
 #
-#   byte 0 low    8744*s      v=1..7 -> 8744..61208, v=8..15 -> -69952..-8744
-#   byte 0 high  10312*s
-#   byte 1024    3532*s
+# The bisect said CORE, not DPU -- I guessed DPU and was wrong. CNA's eight
+# values, the five inserted at 0x2810 and the DPU's four all leave the old
+# fp16bits band in place. **CORE's three, alone, give 8744*s and a float32
+# output.** They are
 #
-# All fifteen rows exact at all three. **That is the pre declared criterion for
-# a real int4 multiplier, and it means the 1.00 to 1.18 band was OUR
-# configuration and never the silicon.**
+#     0x3018   charsiu 10000001   vendor 10000200
+#     0x301c   charsiu 001f0000   vendor 0000001f
+#     0x3020   charsiu 000007ef   vendor 000003ff
 #
-# The output is float32, not the raw accumulator: the first eight words decode
-# as +11.38 -5.16 -1.79 +3.14 -35.38 +56.29 -38.33 -36.35.
+# ⚠ 0x3018 was judged "hangs" in rounds 339 and 341. It was tried alone, at a
+# different shape, without the other two.
 #
-# And the four arms bracket each other properly:
-#   MERGE (our stream, their values)                straight line, fp32
-#   verbatim replay + the three 0x1d enables        output BYTE IDENTICAL to it
-#   verbatim replay without them                    still timed out
-#   plain control                                   all sixteen old values
-# So the DPU_RDMA block is irrelevant, the missing enable was the whole reason
-# round 343 timed out, and **the twenty registers are the entire story**.
+# THE SLOPE MAP DECODED THE LAYOUT. The slope is the activation the nibble
+# meets, once it is divided by the right ulp -- and the ulp is PER OUTPUT WORD,
+# because the output is float32, and it changes SIGN for a negative word.
+# 122 of 128 nibbles then land on k = i mod 32 with the channel = i / 32, the
+# six misses being small activations lost to fp32 rounding. Extrapolating that
+# and checking against the eight words the log printed:
+#
+#     out[n][m] = sum_k s(n,k) * a(k,m), in float
+#     weight nibble(n,k) = 32*16*(K/32)*(n/16) + 512*(k/32) + 32*(n%16) + k%32
+#     activation (k,m)   = fp16 slot 8*M*(k/8) + 8*m + (k%8)
+#     output word (n,m)  = 4*(M*(n/4) + m) + (n%4)
+#
+# **All eight words match to one fp32 ulp, worst relative error 1.04e-07.**
+# Blocks of 32 k for each of SIXTEEN channels, which is the feature atom this
+# project has met before.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# TWO QUESTIONS, and the round is split between them.
+# ENTRIES 1 AND 2 ARE THE CLAIM. CHARSIU_VERIFY computes that reference on the
+# board for EVERY live word, not the eight I could read off a log, and prints
+# how many are within one part in 1e-5. Entry 1 does it under the merge, entry 2
+# under the vendor's own stream with the three enables appended. A pass in
+# entry 2 is the strongest form: their registers, their weights, their
+# activations, our driver.
 #
-# WHICH REGISTERS. CHARSIU_MERGE_UNITS narrows the merge to one range, host
-# checked: "1" = CNA, eight values; "2" = the five inserted at 0x2810; "3" =
-# CORE, three; "4" = DPU, four. Entries 2 to 5 run one group each at byte 0.
-#   a group that alone gives 8744*s      -> that group is sufficient
-#   a group that alone gives the old band -> that group is not it
-#   several groups needed                 -> the sum of the ones that move it
-# Entry 1 is the full merge and must reproduce 8744*s, or the groups mean
-# nothing.
+# ⚠ ONE THING I CANNOT PREDICT: the baseline has **1280 live words of 4096**,
+# and the reference expects a value in every one of the 4096. So either the
+# block writes only part of the buffer or my extent is wrong. The verify prints
+# both counts and the first four mismatches, which is what will say which.
 #
-# WHAT LAYOUT. The slope IS the activation the nibble meets. So sweeping the
-# BYTE instead of the value maps the weight layout directly: entry 6 walks the
-# first 64 bytes, both halves, and prints slope and the output word it lands in.
-# Two submits a byte. **A byte whose slope is 0 is not fetched at all**, which
-# is the half width question asked in one line.
+# ENTRIES 3 TO 6 finish the bisect: each CORE register alone on charsiu's own
+# stream, then all three. The reading is not the constant -- the geometry
+# differs -- it is LINEAR IN s against the 1.00 to 1.18 band.
 #
-# Every arm keeps the tool's controls: repeat must be byte identical, restore
-# must return the baseline, per row live counts, VOID on an all zero output.
+# ENTRY 7 is the control and must still give the old sixteen values.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# DPU, on 0x40b8 going from our 0x20 to their 0x60 -- it is the output stage
-# register, and the output changed from int32 to float32 at the same time. If a
-# CNA value turns out to be needed as well I would not be surprised, because
-# the fetch geometry differs too (surf 64 against their 2048).
+# 0x3018, on its own, is the switch, and the other two are extent. I said DPU
+# last round and was wrong, so this is a guess and nothing more.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -112,37 +114,35 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 345: which register, and what layout #####"
+	log "##### round 346: verify the decode, and finish the bisect #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) the full merge. MUST give 8744*s, or nothing below   ====="
-	log "  it means anything."
-	arm "full merge, byte 0 low" "+$RGC" 0 0
+	log "===== 1) VERIFY the decode under the merge, every live word   ====="
+	arm "verify, merge" "+$RGC" 0 0 CHARSIU_VERIFY=1
 
 	log ""
-	log "===== 2) CNA only, eight values                               ====="
-	arm "merge units=1 (CNA)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=1
+	log "===== 2) VERIFY under the VENDOR'S OWN stream + the enables    ====="
+	log "  their registers, their weights, their activations, our driver."
+	arm "verify, verbatim + trailer" "$RGC" 0 0 "CHARSIU_VERIFY=1 CHARSIU_VENDOR_TRAILER=1"
 
 	log ""
-	log "===== 3) the five inserted at 0x2810                          ====="
-	arm "merge units=2 (0x2810 block)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=2
+	log "===== 3) CORE bisect: 0x3018 alone                            ====="
+	arm "0x3018 alone" "-" 0 0 CHARSIU_OVERRIDE=0x3018=0x10000200
 
 	log ""
-	log "===== 4) CORE only, three values                              ====="
-	arm "merge units=3 (CORE)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=3
+	log "===== 4) CORE bisect: 0x301c alone                            ====="
+	arm "0x301c alone" "-" 0 0 CHARSIU_OVERRIDE=0x301c=0x0000001f
 
 	log ""
-	log "===== 5) DPU only, four values. my guess is that this is it.  ====="
-	arm "merge units=4 (DPU)" "+$RGC" 0 0 CHARSIU_MERGE_UNITS=4
+	log "===== 5) CORE bisect: 0x3020 alone                            ====="
+	arm "0x3020 alone" "-" 0 0 CHARSIU_OVERRIDE=0x3020=0x000003ff
 
 	log ""
-	log "===== 6) THE LAYOUT: slope per byte, first 64, both halves    ====="
-	log "  the slope is the activation that nibble meets. slope 0 means"
-	log "  the byte is not fetched at all."
-	arm "slope map, 64 bytes" "+$RGC" 0 0 CHARSIU_SLOPE_MAP=64
+	log "===== 6) CORE bisect: all three                               ====="
+	arm "all three CORE" "-" 0 0 CHARSIU_OVERRIDE=0x3018=0x10000200,0x301c=0x0000001f,0x3020=0x000003ff
 
 	log ""
 	log "===== 7) CONTROL: charsiu's own stream. the old sixteen.      ====="
