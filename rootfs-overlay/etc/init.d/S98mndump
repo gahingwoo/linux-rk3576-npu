@@ -2,78 +2,67 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 362. TWO CORES, ONE CBUF CONFIGURATION.
+# 2026-08-23 round 363. THE CBUF IS SHARED. IS THE SECOND WINDOW CORRECT?
 #
-# 🔑 ROUND 361 IS AS CLEAN A SPLIT AS THIS PROJECT HAS PRODUCED, and it refutes
-# my hypothesis rather than confirming it.
+# 🔑🔑 ROUND 362 ANSWERED IT, AND THE CONTROL IS WHAT MAKES IT AN ANSWER.
 #
-#   ONE core, a pair of processes, three times   6 of 6 CLEAN, 0 words differ
-#   rebind core 1, SAME BOOT, same binaries      3 of 4 CORRUPT: 183, 113, 281
-#                                                and one baseline at 1022 live
+#   one core, a pair                       2 of 2 CLEAN
+#   two cores, both core-0 CBUF values     3 of 4 CORRUPT  361, 462, 699
+#   two cores, A core-0 and B core-1       **4 of 4 CLEAN**
+#   two cores, BOTH core-1 values          4 of 4 CORRUPT  405, 96, 270, 101
 #
-# ⛔ **The domain switching theory is dead**, and it died on its own strongest
-# case: two processes on ONE core put TWO domains on the SAME iommu, taking
-# turns every job, which is the most stress that theory could ask for. Six for
-# six clean.
+# The last line is the control and it failed as it had to. If core 1's numbers
+# were simply kinder, giving them to both would have been clean too. It was not.
+# The only thing separating the clean arm from the two dirty ones is whether the
+# two concurrent jobs carry DIFFERENT CBUF configurations.
 #
-# 🔑 **So the second core is the variable. Two NPU cores interfere in hardware.**
+# ⇒ **THE CBUF IS SHARED BETWEEN THE TWO NPU CORES, and charsiu was handing both
+# of them the same window.**
+#
+# 🔑 And better than expected: it does not matter WHICH core gets which window,
+# only that two jobs in flight together do not collide. **So this needs no core
+# selection in the uapi**, which is the thing I thought it would need.
+#
+# CHARSIU_CBUF_WINDOW=1 is a first class switch now and produces exactly the
+# seven entries the vendor's two captured streams differ in -- 0x1038 twice,
+# 0x1018, 0x103c, 0x1040, 0x2818, 0x2820. 0x1040 is taken literally rather than
+# derived: both its halves change and one capture cannot say what either means.
 #
 # ---------------------------------------------------------------------------
-# WHAT POINTS AT THE CBUF
+# ⚠ THE HOLE IN ROUND 362, WHICH THIS ROUND EXISTS TO CLOSE
 # ---------------------------------------------------------------------------
 #
-# rocket's own uapi says a job's tasks run "sequentially on the same core, to
-# benefit from memory residency in SRAM". The cores have SRAM, the driver keeps
-# a job on one core because of it, and NOTHING partitions it between the two.
-#
-# And the vendor's capture has the same op prepared for both cores. The two
-# streams differ in exactly seven entries and every one is CBUF:
-#
-#            task 16 (core 0)   task 17 (core 1)
-#   0x1038     00000007           0000010e
-#   0x1018     40000404           4000040b
-#   0x103c     08000000           08001c00
-#   0x1040     10000000           2c001c00
-#   0x2818     00000000           1c000000
-#   0x2820     00000000           00000038
-#
-# 0x1c00 is 7168 and reads like a base offset: each core is told where ITS part
-# of the buffer begins. **charsiu gives both cores the same configuration**, so
-# they use the same part.
-#
-# The five at 0x2810 are emitted natively now, all zero, which is what the
-# vendor writes on core 0 -- so nothing changes today and they can finally be
-# overridden. Round 357 measured inserting them at 270.1 us against 275.9.
+# **The pair helper only ran the repeat control. It never ran VERIFY.** So the
+# clean arm proves the two jobs were REPEATABLE, not that either was CORRECT.
+# A job that is stably wrong passes a repeat control every time.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ NOTHING HERE CHOOSES WHICH CORE A PROCESS LANDS ON. The uapi has no such
-# field and the scheduler decides. So entry 3 gives ONE of the two processes the
-# vendor's core 1 CBUF values and hopes the scheduler separates them, which it
-# has no obligation to do. That makes entry 3 suggestive at best:
+# ENTRY 2 IS THE ROUND. One process, alone, on window 1, with VERIFY. If window
+# 1 does not compute 1024 of 1024 against the CPU reference then the second
+# window is not usable and round 362's clean arm was two processes agreeing with
+# themselves rather than with arithmetic.
 #
-#   corruption clearly drops -> the CBUF configuration is the variable and the
-#       real fix is per core streams, which needs a core field in the uapi
-#   no change -> either the scheduler did not separate them, or the CBUF is not
-#       it. **This arm cannot tell those apart**, which is why entry 4 exists.
+# ENTRY 1 is the same on window 0 and must be 1024 of 1024, as it always has
+# been.
 #
-# ENTRY 4 gives BOTH processes core 1's values. If matching the core is what
-# matters, this should be as bad as entry 2 or worse. If it is BETTER, then it
-# is not about matching a core and something in those values is simply kinder.
+# ENTRY 4 is the pair on different windows WITH VERIFY on both, which is the
+# claim in full: two cores, concurrent, repeatable AND correct.
 #
-# ENTRY 1 is the one core control and must be clean again; entry 2 is two cores
-# unchanged and must reproduce.
+# ENTRY 3 reproduces the corruption with both on window 0, so the round carries
+# its own before and after.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Honestly, not much from entry 3: a coin flip on core assignment halves
-# whatever signal is there. The value of this round is entry 4 and the
-# reproduction. My last three predictions were wrong and I am not going to
-# dress this one up.
+# Window 1 verifies. The seven registers look like a base offset into a buffer
+# rather than an arithmetic mode, and the arithmetic registers -- CORE 0x3018,
+# 0x301c, 0x3020 -- are untouched by the window. But that is reasoning from what
+# registers look like, which is exactly what this project keeps punishing, so
+# entry 2 is the one to read first.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -171,9 +160,9 @@ pair() {
 	wait "$pidA"
 	wait "$pidB"
 	log "    A:"
-	grep -E "M = |TIME:|baseline:|CONTROL repeat|VOID|REREAD" /tmp/vdA.txt > "$C"
+	grep -E "M = |TIME:|baseline:|VERIFY:|CONTROL repeat|VOID|REREAD" /tmp/vdA.txt > "$C"
 	log "    B:"
-	grep -E "M = |TIME:|baseline:|CONTROL repeat|VOID|REREAD" /tmp/vdB.txt > "$C"
+	grep -E "M = |TIME:|baseline:|VERIFY:|CONTROL repeat|VOID|REREAD" /tmp/vdB.txt > "$C"
 	after=$(nbad)
 	[ "$after" != "$before" ] && log "  !! POISONED: $((after - before)) new lines"
 	return 0
@@ -182,39 +171,32 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 362: two cores, one CBUF configuration           #####"
+	log "##### round 363: the CBUF is shared. is window 1 correct?    #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) CONTROL: a pair on ONE core. must be clean again.     ====="
+	log "===== 1) CONTROL: solo on window 0. must be 1024 of 1024.      ====="
 	dmesg 2>/dev/null | grep -i "NPU core" > "$C"
-	echo 27708000.npu > /sys/bus/platform/drivers/rocket/unbind 2>/dev/null \
-		|| log "  !! unbind failed; this round is void"
-	sleep 1
-	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
-	pair "pair, one core" "" ""
+	arm "solo, window 0" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 2) rebind. two cores, unchanged. must reproduce.         ====="
-	echo 27708000.npu > /sys/bus/platform/drivers/rocket/bind 2>/dev/null
-	sleep 1
-	ls /sys/bus/platform/drivers/rocket/ 2>/dev/null | grep npu > "$C"
-	pair "pair, two cores 1" "" ""
-	pair "pair, two cores 2" "" ""
+	log "===== 2) THE ROUND: solo on window 1. is it CORRECT?           ====="
+	log "  round 362 proved the pair was repeatable, never that it was"
+	log "  right. a stably wrong job passes a repeat control every time."
+	arm "solo, window 1" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
 
 	log ""
-	log "===== 3) B carries the vendor's CORE 1 CBUF values             ====="
-	log "  suggestive only: nothing here picks which core B runs on."
-	pair "pair, B core-1 cbuf 1" "" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
-	pair "pair, B core-1 cbuf 2" "" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
+	log "===== 3) the pair, BOTH on window 0. must reproduce the fault. ====="
+	pair "pair, same window 1" "" ""
+	pair "pair, same window 2" "" ""
 
 	log ""
-	log "===== 4) BOTH carry core 1's values. the control for entry 3.  ====="
-	log "  as bad as entry 2 means matching a core is what matters."
-	log "  better means those values are simply kinder, core or not."
-	pair "pair, both core-1 cbuf 1" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
-	pair "pair, both core-1 cbuf 2" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038" "CHARSIU_OVERRIDE=0x1038=0x0000010e,0x1018=0x4000040b,0x103c=0x08001c00,0x1040=0x2c001c00,0x2818=0x1c000000,0x2820=0x00000038"
+	log "===== 4) the pair on DIFFERENT windows, with VERIFY on both    ====="
+	log "  the claim in full: two cores, concurrent, repeatable AND right."
+	pair "pair, split 1" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
+	pair "pair, split 2" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
+	pair "pair, split 3" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64" "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64 CHARSIU_CBUF_WINDOW=1"
 
 	log ""
 	log "===== 5) the anchor: int8 conv must still be exact            ====="
