@@ -2,71 +2,95 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 341. THE LAST TWO REGISTERS, THEN THE CAPTURE.
+# 2026-08-23 round 342. THE VENDOR'S OWN STREAM, PLAYED BACK.
 #
-# ROUND 340's CONTROLS BOTH REPRODUCED, so what it says can be trusted.
+# THE CAPTURE WORKED. The vendor LLM runtime ran under the interposer and left
+# 835 MB on the card: the task array, the register command buffer, the weights
+# and the activations of a real int4 projection. It looked like a hang and was
+# a slow write.
 #
-#   the map, both modes    w = 32*floor(s/K) + (s mod 32), unchanged
-#   the k, 16 bit mode     byte j of a slot carries k = 2j and 2j+1
-#   the k, A8_STRIDE1      byte j carries k = 4j+1 and 4j+3, and the SECOND
-#                          slot of every word is dead: bytes 256, 260, 264 and
-#                          1280 pair with nothing at all
+# What came out of it, before any board time:
 #
-# ⚠ **Odd k, spaced two apart, is what reading the HIGH BYTE of a two byte pair
-# looks like.** The hatch changed OUR packing and the hardware kept its two byte
-# activation stride, so that mode reaches a quarter of the k and is not a
-# different arithmetic, it is the same arithmetic reading half a vector.
+#  1. THE VENDOR'S int4 GRID HAS NO ZERO. The nibble histogram over 1 MB of
+#     their weights is symmetric under u -> ~u, and reading the code as two's
+#     complement s gives mean -0.5 while reading it as s + 0.5 gives mean
+#     -0.026. Three separate megabytes agree. Their levels are +-0.5, +-1.5 ...
+#     +-7.5 times a per channel step. A midrise grid, sixteen levels, no code
+#     for zero.
 #
-# Which leaves the register story short of two entries. The 117 register diff
-# against the vendor's own int4 op has five differences and three are settled:
-# 0x3020 and 0x40b8 are the pair that makes the write work, and 0x100c bit 29
-# changes NOTHING, output identical to six digits. The other two have never been
-# run with the packing right:
+#  2. THEIR PROJECTION IS K=2048 N=1024, 1 MiB of weights, NO bias buffer, and
+#     the DPU output stage is identity (0x40ac=0, 0x40b0=1, 0x40b4=0) -- they
+#     read the RAW accumulator and dequantise off the NPU, which is what
+#     charsiu already does.
 #
-#     CNA  0x1098   vendor 00000001   charsiu 00000004
-#     CORE 0x3018   vendor 10000200   charsiu 10000001
+#  3. THE STREAM DIFF, at the vendor's own shape, is 15 registers plus three
+#     whole groups:
+#         charsiu sets 0x100c bit 29, the vendor does not
+#         0x3018   charsiu 10000001   vendor 10000200
+#         0x40b8   charsiu 00000020   vendor 00000060
+#         0x103c   charsiu surf=64    vendor surf=2048
+#         five registers at 0x2810..0x2820 that NOTHING in this tree has ever
+#           written -- and they are the two that differ between the two
+#           subcores, so that block is the CBUF split
+#         the whole DPU_RDMA block, which charsiu writes and the vendor does not
+#         the 0x1d enable trailer, which charsiu writes and the vendor does not
+#     and five more where charsiu and the vendor put the SAME 0x1f in OPPOSITE
+#     HALVES of the word: charsiu's matmul is the transpose of theirs.
 #
-# 0x1098 was tried in round 329 with the old packing and 0x3018's only arm in
-# round 339 timed out and returned zeros, which my metric then scored as a pass.
+# Every int4 round so far changed one of those at a time. This one changes all
+# of them by deciding none of them: the stream submitted IS the captured one,
+# with three addresses substituted and nothing else touched.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE PLAIN WEIGHTED SUM LINE, and it prints a live word count now, so a dead
-# arm says VOID instead of scoring. Entry 2 is the control and must print the
-# old reference at 64 of 64 with the plain sum at 0.
+# THE MEASUREMENT HAS NO FITTED REFERENCE. Submit, keep the output, change ONE
+# nibble of the weight buffer, submit again, subtract. The difference is that
+# nibble's contribution and nothing else. Sweeping it 0..15 gives the value the
+# hardware assigns each code, up to one common activation factor.
 #
-# ⚠ IF NOTHING HERE MOVES IT, the register surface is exhausted and the next
-# thing is a vendor capture: run their stack, take the register stream AND the
-# buffers it points at, and replay the bytes rather than reasoning about them.
-# That is the method that settled the dispatch wall, and it is the honest next
-# step rather than a ninth guess.
+#   a STRAIGHT LINE in v, or a straight line with a step at v=8 (two's
+#   complement), means the block is a real int4 multiplier and the 1.00 to 1.18
+#   band was a configuration fault of ours;
+#
+#   the SAME BAND again -- deltas whose ratios are 1.067, 1.100, 1.133 -- under
+#   the vendor's own stream means it is the silicon, and int4 is closed.
+#
+# TWO CONTROLS, BOTH OF WHICH CAN FAIL, and they are inside the tool:
+#   CONTROL repeat   the same job twice must be byte identical, or the board is
+#                    not repeatable and nothing under it can be read;
+#   CONTROL restore  putting the nibble back must return the baseline, which
+#                    catches a stale buffer or a job that stopped running.
+# A POISON GATE: an all zero baseline prints VOID and the arm scores nothing.
+# Round 339 printed "64 of 64" on a job that timed out and returned zeros.
+#
+# THE CONTROL ARM is the first entry: a regcmd of "-" runs the identical
+# measurement under the stream THIS TREE emits, same buffers, same board, same
+# code, so the only difference between the two curves is the 123 registers.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Neither of these is it. 0x1098 is a rounded-up row count and 0x3018 sits with
-# the other CORE geometry, and neither has the shape of something that picks an
-# arithmetic. I am running them because they are the last two and because "we
-# never tried it with the packing right" has already been the answer once.
+# I do not know, and that is why it is worth a round. The one thing I will
+# predict is that the CONTROL arm reproduces the band, because that is the
+# configuration every previous round measured. If the control does NOT
+# reproduce it, the tool is the thing that changed and the vendor arm means
+# nothing either.
+#
+# The vendor arm may simply hang: it carries no DPU_RDMA and no enable trailer,
+# and this tree has never submitted a stream without them. A hang is a result
+# too, and it is the one that says the trailer is load bearing.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
 WORK=/usr/lib/libteflon-working.so
-RUN=/opt/charsiu/charsiu_run
-BE=/opt/charsiu/charsiu_bench
-MM=/opt/charsiu/charsiu_matmul
-I4=/opt/charsiu/charsiu_int4
-M4="CHARSIU_W4=1 CHARSIU_W4_HALFK=1"
-M8=/opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf
-PROMPT="The capital of France is"
-LIMIT=420
-ARMCAP=240
-CE=CHARSIU_COEF_ELEMS=65536
-HEAD=CHARSIU_NPU_MAXN=131072
-B8="CHARSIU_OVERRIDE=0x40b8=3"
+VD=/opt/charsiu/charsiu_vendor
+V=/opt/charsiu/vendor
+RGC=$V/vendor-int4-k2048-n1024.regcmd
+WT=$V/vendor-wt-1M.bin
+IN=$V/vendor-in.bin
 ABORT=0
 log() { echo "$@" > "$C"; }
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
@@ -81,136 +105,58 @@ health() {
 	fi
 }
 
-w() {
+# arm: <label> <regcmd-or-dash> <byte> <high>
+arm() {
 	[ "$ABORT" = "1" ] && return 0
 	before=$(nbad)
 	log ""
-	log "  -- $1   $2"
+	log "  ---- $1"
 	sleep 1
-	env TEFLON_LIB=$WORK MESA_LOG_LEVEL=info $2 \
-		python3 "$NPU_DIR/perch.py" "$NPU_DIR/$1" > "$C" 2>&1
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This entry is VOID."; health; }
-	return 0
-}
-
-# Igor's scorer, not ours: it compares against the RAW cpu output and prints
-# the constant-reference-channel guard on every model.
-ocp() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
-	before=$(nbad)
-	log ""
-	log "  -- $1"
-	sleep 1
-	capped "$ARMCAP" env TEFLON_LIB=$WORK python3 "$NPU_DIR/oc_perch.py" \
-		"$NPU_DIR/$1" > "$C" 2>&1
-	rc=$?
-	[ "$rc" != "0" ] && log "  !! the arm exited $rc (124 is the wall clock limit)"
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
-	return 0
-}
-
-capped() {
-	lim="$1"; shift
-	"$@" &
-	pid=$!
-	i=0
-	while [ "$i" -lt "$lim" ]; do
-		kill -0 "$pid" 2>/dev/null || { wait "$pid"; return $?; }
-		sleep 1
-		i=$((i + 1))
-	done
-	kill -9 "$pid" 2>/dev/null
-	wait "$pid" 2>/dev/null
-	return 124
-}
-
-c() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $*"; return 0; }
-	before=$(nbad)
-	sleep 1
-	capped "$ARMCAP" env $1 $2 $3 $4 $5 $6 $7 $8 $9 > "$C" 2>&1
-	rc=$?
-	[ "$rc" != "0" ] && log "  !! the arm exited $rc (124 is the wall clock limit)"
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This arm is VOID."; health; }
-	return 0
-}
-
-rung() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
-	lbl="$1"; shift
-	before=$(nbad)
-	log ""
-	log "  -- $lbl"
-	sleep 1
-	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 \
-		--ignore-eos -q -c 512 -t 4 > "$C" 2>&1
-	rc=$?
-	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
-	return 0
+	$VD "$2" "$WT" "$IN" "$3" "$4" 4096 > /tmp/vd.txt 2>&1
+	cat /tmp/vd.txt > "$C"
+	after=$(nbad)
+	if [ "$after" != "$before" ]; then
+		log "  !! POISONED: $((after - before)) new fault or timeout lines"
+		health
+	fi
 }
 
 start() {
-	i=0
-	while [ ! -c /dev/accel/accel0 ] && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-	[ -c /dev/accel/accel0 ] || { log "no accel device"; return 0; }
-	dmesg -n 4 2>/dev/null
-	[ -w /sys/module/rocket/parameters/reset_autosuspend ] && \
-		echo 1 > /sys/module/rocket/parameters/reset_autosuspend
+	log ""
+	log "###############################################################"
+	log "##### round 342: the vendor's own int4 stream, played back #####"
+	log "###############################################################"
+	log "  no fitted reference. one nibble changes, the output difference"
+	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 0) the limit's own control. expect rc 124 after ~3s.         ====="
-	t0=$(cut -d. -f1 /proc/uptime)
-	capped 3 sleep 60
-	rc=$?
-	t1=$(cut -d. -f1 /proc/uptime)
-	log "  -- capped 3 sleep 60  ->  rc $rc after $((t1 - t0))s"
-	[ "$rc" = "124" ] || log "  !! THE LIMIT DID NOT FIRE. Nothing below can be trusted to end."
+	log "===== 1) CONTROL: charsiu's own stream, byte 0 low nibble    ====="
+	arm "control arm, this tree's stream" "-" 0 0
 
 	log ""
-	log "===== 1) the anchor                                                ====="
-	w conv2d-cal.tflite ""
+	log "===== 2) the vendor's stream, byte 0 low nibble              ====="
+	arm "vendor stream, byte 0 low" "$RGC" 0 0
 
 	log ""
-	log "##### ROUND 341: the last two registers, then the capture         #####"
+	log "===== 3) the vendor's stream, byte 0 HIGH nibble             ====="
+	log "  the same byte's other half. the two halves must give the same"
+	log "  curve if the nibbles are peers, and a different one if the"
+	log "  packing pairs them the way round 334 found."
+	arm "vendor stream, byte 0 high" "$RGC" 0 1
 
 	log ""
-	log "===== 2) THE MEASUREMENT. every stage of the forward pass, NPU on. ====="
-	log "=====    matmul stages minus the hardware path = the quantise.     ====="
-	rung "the decode loop on the NPU, stages on" \
-		CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+	log "===== 4) the vendor's stream, byte 1024 and byte 100000      ====="
+	log "  a second and third position, so the curve is not a property"
+	log "  of one place in the buffer."
+	arm "vendor stream, byte 1024 low" "$RGC" 1024 0
+	arm "vendor stream, byte 100000 low" "$RGC" 100000 0
 
 	log ""
-	log "===== 2b) the same stages with the NPU off, one boot apart.        ====="
-	rung "the CPU path, stages on" CHARSIU_STAGES=1 CHARSIU_NPU_QUANT=1
+	log "===== 5) the anchor: int8 conv must still be exact           ====="
+	health
 
 	log ""
-	log "===== 2) CONTROL: old reference 64 of 64, plain sum 0 of 64.       ====="
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "$CE" $MM 1 64 64
-
-	log ""
-	log "===== 3) the last two differences, with the packing right.        ====="
-	log "===== 3a CNA 0x1098 = 1, the vendor's value"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "$CE" $MM 1 64 64
-	log "===== 3b CORE 0x3018 = 0x10000200"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1" "CHARSIU_OVERRIDE=0x3018=0x10000200" "$CE" $MM 1 64 64
-	log "===== 3c both"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200" "$CE" $MM 1 64 64
-	log "===== 3d and the vendor's complete set, all five at once"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200,0x100c=0x00600120" "$CE" $MM 1 64 64
-	log "===== 3e the complete set at a bigger shape"
-	c "CHARSIU_W4=1 CHARSIU_W4_PAIRED=1 CHARSIU_CNA_1098=1" "CHARSIU_OVERRIDE=0x3018=0x10000200,0x100c=0x00600120" "$CE" $MM 1 2048 256
-
-	log ""
-	log "===== 5) the standing number, no timers, so they cannot be blamed  ====="
-	rung "the decode loop on the NPU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== the anchor again                                             ====="
-	w conv2d-cal.tflite ""
-
-	log ""
-	log "===== the plain sum line, and VOID means the arm died.             ====="
+	log "===== read the CONTROL lines first. VOID means the arm died. ====="
 	sync
 }
 case "$1" in
