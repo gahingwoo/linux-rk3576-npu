@@ -2,64 +2,62 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 348. IT IS NATIVE NOW. IS IT FAST?
+# 2026-08-23 round 349. THE RATE, WITH AN INSTRUMENT THAT CAN BE CHECKED.
 #
-# ✅✅ ROUND 347: int4 IS CORRECT AT M = 1, WHICH IS THE DECODE CASE.
+# ✅ ROUND 348's FIRST TWO ARMS ARE CLEAN AND SAY WHAT THEY WERE ASKED TO SAY.
 #
-#   M = 1, charsiu's own stream plus THREE register values, nothing else:
-#     VERIFY 1024 of 1024 within 1e-4, 1017 within 1e-5, worst 5.46e-05
-#   M = 32 anchor, the merge:      1280 of 1280
-#   M = 1 with the M = 32 merge:   0 of 1024   (the contrast, wrong as designed)
-#   M = 8 with the three:          8 of 4096   (see below)
-#   control, this tree's stream:   the old sixteen values
+#   native int4 at M=1, NOTHING in the environment   1024 of 1024 within 1e-4
+#   CHARSIU_W4_BITPAT, the fault brought back        0 of 1024, and its sweep
+#                                                    is the old band 1920, 2176,
+#                                                    -1792, -2176
 #
-# ⚠ M > 1 IS NOT SOLVED and I am not going to pretend it is. At M = 8 the same
-# three registers give 8 of 4096, because the vendor puts M on the WIDTH axis
-# and this tree puts it on the height axis, and only at M = 1 do the two
-# collapse to the same thing. LLM decode is M = 1, so this is enough to be
-# useful and not enough to be called general.
+# So the three registers moving from an override into job.c did not change the
+# answer, and the control can still fail.
 #
-# THE THREE REGISTERS ARE NOW IN job.c, not an override:
-#     0x3018 = 0x10000200        (this is the one that changes the arithmetic)
-#     0x301c = M-1 in the LOW half
-#     0x3020 = N-1, plainly
-# int8 is untouched, checked on the host. CHARSIU_W4_BITPAT restores the old
-# behaviour so the fault can be brought back on demand.
+# ⛔ ROUND 348's TIMING MEASURED THIS TOOL, NOT THE HARDWARE.
+#
+#   int4  1418.6 us/submit  0.74 GB/s
+#   int8  1606.4 us/submit  1.31 GB/s
+#
+# **int8 at 1.31 GB/s against a standing 9.38 is the giveaway.** run() memsets
+# the whole output buffer and cache maintains it twice per submit, and at 4 MiB
+# that is most of the 1418 us. The 188 us between the two arms is probably the
+# real difference, but a 188 us signal on a 1400 us pedestal is not a
+# measurement, it is a subtraction -- and round 327 was lost to exactly that.
+#
+# So the overhead is REMOVED, not subtracted. run_bare() does the submit and
+# the wait and nothing else, and CHARSIU_OUT_KB sizes the output BO, which is
+# where all of it was.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ENTRY 1 must reproduce 1024 of 1024 with NO override anywhere. That is the
-# whole point of making it native: if the value moved from the environment into
-# the file and the answer changed, the file is wrong.
+# ⚠ ENTRY 1 IS THE INSTRUMENT CHECK AND IT CAN FAIL. int8 at K=2048 N=1024 is a
+# shape this project has measured many times: **about 9.4 GB/s and roughly 210
+# us for its 2 MiB.** If entry 1 does not land near that, the harness is still
+# measuring itself and entry 2 means nothing. Nothing else in this round should
+# be read until entry 1 is checked against that number.
 #
-# ENTRY 2 is the control that brings the fault back: CHARSIU_W4_BITPAT must
-# score 0 of 1024 and its sweep must show the old band. A fix whose control does
-# not reproduce the fault has not been shown to be the fix.
+# ENTRY 2 is the answer. int4 moves 1 MiB at this shape against int8's 2, so
 #
-# ⚠⚠ ENTRIES 3 AND 4 ARE THE QUESTION THAT MATTERS NOW: SPEED. Every int4
-# timing this project has ever taken -- 661.5 us/MB, 1.51 GB/s, "6.2x slower
-# than int8" -- was taken on a configuration that did not compute a weighted
-# sum, so none of it is a measurement of this. Entry 3 times int4 and entry 4
-# times int8 at the SAME K and N through the SAME code in the SAME boot.
+#   int4 above about 4.7 GB/s  -> a projection finishes sooner and the decode
+#                                 loop should move to int4
+#   int4 below that            -> correctness bought nothing at this shape
 #
-#   int4 above about 4.7 GB/s  -> it wins, because it moves half the bytes
-#   int4 below that            -> correctness bought nothing and the decode
-#                                 loop stays int8
+# ENTRY 3 is the control for the FIX: the same int8 job with the 4 MiB output
+# buffer back, which must reproduce round 348's ~1.3 GB/s. A fix whose control
+# does not bring the fault back has not been shown to be the fix.
 #
-# The standing number to beat is int8 at 9.38 GB/s and 6.55 tok/s, of which
-# 132.1 ms of a 153 ms token is hardware.
-#
-# ENTRY 5 is the anchor.
+# ENTRIES 4 AND 5 keep correctness under the eye while the buffer size changes.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# I genuinely do not know, and this is the first time the question can be asked
-# fairly. The old 1.51 GB/s was measured while half the buffer was dead and the
-# fetch pattern was whatever the wrong mode produced.
+# Entry 1 near 9.4 GB/s. For entry 2 I have no honest prior: the fetch pattern
+# is a different one now, half the bytes but sixteen channels a block, and the
+# only int4 rate this project has ever recorded was taken on the broken mode.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -112,32 +110,34 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 348: it is native now. is it fast? #####"
+	log "##### round 349: the rate, with an instrument that can be checked #####"
 	log "###############################################################"
 	log "  no fitted reference. one nibble changes, the output difference"
 	log "  is that nibble. a straight line means int4 is real."
 
 	log ""
-	log "===== 1) NATIVE: M=1, no override anywhere. 1024 of 1024.     ====="
-	arm "native int4, M=1" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1"
+	log "===== 1) INSTRUMENT CHECK: int8. must land near 9.4 GB/s.     ====="
+	log "  if it does not, stop reading: the harness is still timing"
+	log "  itself and entry 2 means nothing."
+	arm "int8 rate, small out bo" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200 CHARSIU_W8=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 2) CONTROL: bring the fault back. must be 0 of 1024.    ====="
-	arm "M=1, W4_BITPAT" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_W4_BITPAT=1"
+	log "===== 2) THE ANSWER: int4, same shape, same boot              ====="
+	log "  1 MiB against int8's 2, so above about 4.7 GB/s it wins."
+	arm "int4 rate, small out bo" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 3) THE RATE: int4, K=2048 N=1024, 1 MiB of weights      ====="
-	arm "int4 time" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200"
+	log "===== 3) CONTROL for the fix: int8 with the 4 MiB buffer back ====="
+	log "  must reproduce round 348's ~1.3 GB/s."
+	arm "int8 rate, 4 MiB out bo" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200 CHARSIU_W8=1 CHARSIU_OUT_KB=4096"
 
 	log ""
-	log "===== 4) THE RATE: int8, same shape, same code, same boot     ====="
-	log "  2 MiB of weights against int4's 1 MiB, so int4 needs more"
-	log "  than HALF of int8's GB/s to finish a projection sooner."
-	arm "int8 time" "-" 0 0 "CHARSIU_M=1 CHARSIU_TIME=200 CHARSIU_W8=1"
+	log "===== 4) correctness, still 1024 of 1024 with the small bo    ====="
+	arm "native int4, M=1" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 5) M=32 anchor, the merge. still 1280 of 1280?          ====="
-	arm "anchor, merge M=32" "+$RGC" 0 0 CHARSIU_VERIFY=1
+	log "===== 5) CONTROL: the fault back. must be 0 of 1024.          ====="
+	arm "M=1, W4_BITPAT" "-" 0 0 "CHARSIU_M=1 CHARSIU_VERIFY=1 CHARSIU_W4_BITPAT=1 CHARSIU_OUT_KB=64"
 
 	log ""
 	log "===== 6) the anchor: int8 conv must still be exact           ====="
