@@ -2,68 +2,71 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 354. THE MIDDLE OF THE GROUP SWEEP, AND WHERE THE LOAD GOES.
+# 2026-08-23 round 355. GROUP 1024 IS THE ANSWER. AND THE LOAD WAS getenv.
 #
-# 🔑 ROUND 353: GROUPING FIXES THE SENTENCE AND int4 STILL WINS.
+# 🔑 ROUND 354. GROUP 1024, WHICH NOBODY HAD RUN, IS THE ONE.
 #
-#   int4, one scale a row   10.09 tok/s  "Paris. Paris is the most populous
-#                                         city... most famous... most beautiful"
-#   int4, group 512          7.50 tok/s  "The Eiffel Tower is a famous landmark
-#                                         in Paris. The tower is over 1,000 feet
-#                                         tall and was built in the late 19"
-#   int4, group 128          3.51 tok/s  "known for its beautiful architecture,
-#                                         art museums, and fashion industry..."
-#   int8, KMAX 512           5.26 tok/s  the standing sentence
-#   int8, standing           6.53 tok/s  the standing sentence
+#   int4 group 1024   8.92 tok/s  "The Eiffel Tower is located in Paris. The
+#                                  Louvre Museum is also located in Paris. The
+#                                  famous painting "The Mona Lisa" is on"
+#   int4 group 512    7.51 tok/s  the tower, a thousand feet, the late 19th
+#   int4 one scale   10.13 tok/s  circling
+#   int8 standing     6.53 tok/s  the standing sentence
 #
-# **Group 512 is 15% faster than int8 AND says true things**: the tower, a
-# thousand feet, the late nineteenth century. Group 128 reads better still and
-# is slower than int8, so it is not the answer.
+# **37% faster than int8, and the same content the CPU arm gives.** All three
+# repeats reproduced their round 353 numbers (7.51 against 7.50, 10.13 against
+# 10.09, 6.53 exactly), so the boot to boot spread is small here.
 #
-# WHAT GROUPING COSTS, and it is not submits. All three int4 arms made 2470
-# submits. The SLICES went 144, 704, 2816 and with them the hardware path
-# (3051, 4361, 10060 ms) and the read back (153, 670, 4360 ms). The cost is a
-# task and a CPU accumulate per slice, so the sweep between 2048 and 512 has
-# never been looked at -- 1024 would be 288 slices.
+# 🔑🔑 AND THE HEARTBEAT SPLIT SETTLED THE LOAD IN ONE LINE.
 #
-# ⚠ AND MY STAGING FIX DID NOT WORK. Arm 1 still took 102 s. I also had the
-# comparison wrong last round: int8's staging is 16 s, not 303 ms -- the 303 ms
-# line is the gguf mmap, and the heartbeat shows int8's real staging. So int4 is
-# SIX times slower to stage, not three hundred, and packing into ordinary memory
-# and copying did not move it. That was my only guess, so this round measures
-# rather than guessing again: the heartbeat now splits the time into what is
-# spent inside charsiu_npu_add and what is left over, which is the quantiser.
+#   int4 group 1024   148428 ms of which   4450 adding and 143978 quantising
+#   int4 group 512    136727 ms of which   5180 adding and 131547 quantising
+#   int4 one scale    118535 ms of which   3964 adding and 114571 quantising
+#   int8               18436 ms of which   8879 adding and   9557 quantising
+#
+# It was never the packer. int4's ADDING is FASTER than int8's -- half the bytes
+# -- and all of the loss is in npu_tensor_build.
+#
+# ⛔ THE CAUSE: **getenv() inside the loop over every weight.**
+#
+#     if (bits == 4 && !getenv("CHARSIU_NPU_W4_SYM"))
+#
+# getenv walks the environment with a strcmp an entry, and this ran 1.24 BILLION
+# times. int8 never noticed because "bits == 4 &&" short circuits before the
+# call, which is exactly why it read as an int4 problem for two rounds. I
+# guessed a strided write to the buffer object twice and was wrong twice; the
+# split heartbeat found it without a guess.
+#
+# Three of them hoisted in npuquant.c, and one more in charsiu_build_coefs that
+# ran once an output channel rather than once a call.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE HEARTBEAT SPLIT IS THE DIAGNOSTIC AND IT IS FREE. If "adding" carries the
-# time, it is the packer or the buffer objects; if "quantising" carries it, it
-# is npu_tensor_build and the packer was never the problem. The two are far
-# enough apart that one line settles it.
+# ENTRY 1 IS THE FIX AND ITS NUMBER IS THE QUANTISING COLUMN. int8 quantises
+# 113 tensors in 9.6 s and int4 should now be in the same country. If it is
+# still over a minute there is a second one of these and the split will say so
+# again.
 #
-# ENTRY 1 is group 1024, the point nobody has run: 288 slices, half the extra
-# cost of 512. If its sentence is as good as 512's it is the answer.
+# ENTRY 1'S SENTENCE AND RATE MUST NOT MOVE: 8.92 tok/s and the Louvre. Hoisting
+# a getenv cannot change arithmetic, so if either moved, something else in this
+# change did.
 #
-# ENTRIES 2 AND 3 reproduce 512 and 2048 so the three sit in one boot with one
-# thermal state. ⚠ Round 349 to 350 showed a single shape timing moving 20%
-# between boots, and a tok/s is a single measurement too.
+# ENTRY 2 is int8, which must still be 6.53 and about 9.6 s quantising -- it is
+# the control for the hoist, since int8 never took that branch and must be
+# unaffected in both columns.
 #
-# ENTRY 4 is the int8 control, which must still be 6.53.
-#
-# ⚠ FOUR SENTENCES ARE NOT AN ACCURACY MEASUREMENT. They are enough to tell
-# circling from not circling and nothing more. If group 1024 lands between the
-# two, that is a judgement call and it should be made against KL over several
-# prompts, not against one sentence about Paris.
+# ENTRY 3 is group 1024 with a DIFFERENT PROMPT, because four sentences about
+# Paris are not an accuracy measurement and one about something else is at
+# least a second draw from the same urn.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Group 1024 near 8.7 tok/s, and the sentence is the coin flip. On the load, I
-# expect the quantiser rather than the packer, because the packer got faster
-# twice and the number did not move.
+# Quantising near 10 s and everything else unchanged. The prompt phase should
+# fall with it: 189 s of "prompt" in round 354 was mostly this.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -150,28 +153,35 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 354: the middle of the group sweep, and where the load goes #####"
+	log "##### round 355: group 1024 is the answer, and the load was getenv #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
 	log ""
-	log "===== 1) int4, group 1024. THE POINT NOBODY HAS RUN.          ====="
-	log "  288 slices, half of 512's extra cost. read the sentence."
+	log "===== 1) int4 group 1024. read the QUANTISING column.         ====="
+	log "  8.92 tok/s and the Louvre must not move; the load should."
 	rung "int4, group 1024" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
 		CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) int4, group 512. must reproduce 7.50 and the tower.   ====="
-	rung "int4, group 512" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 \
-		CHARSIU_NPU_KMAX=512 CHARSIU_NPU_W4_GROUP=512 "$CE" "$HEAD"
-
-	log ""
-	log "===== 3) int4, one scale a row. must reproduce 10.09, circling. ====="
-	rung "int4, one scale a row" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 4) CONTROL: the standing int8 decode, 6.53 tok/s        ====="
+	log "===== 2) CONTROL: int8. never took that branch, must not move. ====="
 	rung "int8, the standing number" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 3) group 1024 on a DIFFERENT PROMPT                     ====="
+	log "  one sentence about Paris is not an accuracy measurement."
+	# ⚠ set it and put it back. "PROMPT=... rung ..." is an assignment before
+	# a FUNCTION call and whether it survives the call is unspecified.
+	P0="$PROMPT"
+	PROMPT="Explain in one paragraph why the sky is blue"
+	rung "int4, group 1024, second prompt" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 \
+		CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 \
+		"$CE" "$HEAD"
+
+	log ""
+	log "===== 4) the same prompt on the CPU, to face it with          ====="
+	rung "cpu, second prompt" CHARSIU_NO_NPU=1
+	PROMPT="$P0"
 
 	log ""
 	log "===== 6) the anchor: int8 conv must still be exact           ====="
