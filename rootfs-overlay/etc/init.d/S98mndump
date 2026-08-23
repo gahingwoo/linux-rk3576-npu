@@ -2,75 +2,70 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-23 round 365. SPLIT THE SLICES TOO, NOT JUST THE GROUPS.
+# 2026-08-23 round 366. THE SAME ROUND, WITH THE ACTIVATION IN BOTH DEVICES.
 #
-# ✅ ROUND 364: THE SPLIT IS ARITHMETICALLY NEUTRAL, which was the first thing
-# to check. Two devices and one device produced the SAME SENTENCE word for word,
-# and the probe still verified 1024 of 1024 at worst 0.00e+00.
+# ⛔ ROUND 365 PRODUCED WORD SALAD AND THE RULE CAUGHT IT. "Read the sentence
+# first, not the rate" was written into the round before it ran, and it is the
+# only reason the 10.13 tok/s was not reported as a result:
 #
-#   int8, two cores          7.08 tok/s   fence 7171 ms   (6.4 on one core)
-#   int4 g1024, two devices  9.13 tok/s   fence 4788 ms
-#   int4 g1024, one device   8.52 tok/s   fence 5439 ms   same sentence
+#   int8, two devices    "soundingampedferballwick accompany gubit..."
+#   int4, two devices    "AN Aud Emer masterittleassandra mastersmerart..."
+#   int4, ONE device     "Paris. The Eiffel Tower is located in Paris..."
 #
-# ⚠ **THE GAIN WAS 7%, NOT THE 10 TO 12 I PREDICTED.** int8 got 11%, int4 7%.
+# The one device control was perfect, so the slice split broke the arithmetic --
+# and it broke int8 as well, which had been fine on two devices in round 364.
 #
-# THE REASON IS IN THE SUBMIT COUNTS, and it is a limit of what round 364
-# actually did rather than a hardware one:
+# ⛔ THE BUG WAS MINE AND IT WAS THE SAME ONE TWICE. The single projection path
+# packed the activation into ONE device's input buffer:
 #
-#   two devices  6790 submits, 6.37 MB a submit
-#   one device   4550 submits, 9.51 MB a submit
+#     charsiu_bo_prep(g->dev[e->di], &g->in[e->di], ...);
+#         ... pack ...
+#     charsiu_bo_fini(g->dev[e->di], &g->in[e->di]);
 #
-# Splitting a group into two joblists makes two submits where there was one, and
-# **only GROUPS were split**. q, k and v is three tensors going two against one,
-# worth 1.5x at best; gate and up is one each, worth 2x. But o_proj, down_proj
-# and the 128256 wide output head are grouped with nothing, so they went through
-# the single projection path, which submits and waits at once and never touched
-# core 1.
+# Round 365 spread a tensor's SLICES across both devices, so the slices on the
+# other device read an input buffer nobody had written. **The grouped path had
+# already been fixed for exactly this and the single path was not.**
 #
-# The output head alone is 128256 by 2048, about 21% of the model's weights, and
-# down_proj across sixteen layers is another 21%. **More than 40% of the weight
-# traffic never saw the second core.**
+# ⚠ AND IT COULD NOT HAVE BEEN CAUGHT ON THE HOST. There is no accel device
+# there, so npudev never runs. The board is the only test this code has, which
+# is an argument for auditing it rather than iterating on it: every place that
+# assumed one device per entry has now been walked, e->di is gone entirely, and
+# both accumulate loops read e->out[s->di] rather than an entry wide buffer.
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED
+# WHAT ROUND 365's NUMBERS ARE WORTH
 # ---------------------------------------------------------------------------
 #
-# The SLICES of one tensor now alternate between devices, not just the members
-# of a group. An entry carries one output buffer per device, each slice knows
-# which device it is on, and both the single and the grouped paths build one
-# joblist per device and issue both before waiting on either.
+#   int4, two devices, slices split   10.13 tok/s, fence 3877 ms, 9100 submits
+#   int4, one device                   8.45 tok/s, fence 5509 ms, 4550 submits
 #
-# The output head's sixteen N slices become eight and eight, and every
-# projection splits rather than only the five that share an activation.
+# The hardware fetched the same weights and ran the same MACs either way, so
+# these are probably representative -- but they came out of a run that computed
+# nonsense, so they are a hint and not a measurement. This round measures them
+# again with the answer right.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ THE SENTENCE FIRST, AGAIN. Which device computes which slice cannot change
-# the arithmetic; the slices are summed on the CPU either way. **Entries 2 and 3
-# must be word for word identical, and identical to round 364's.** If not, the
-# slice split is wrong and no rate matters.
+# ENTRY 2 AND ENTRY 3 MUST BE THE SAME SENTENCE, word for word, and it must be
+# the Eiffel Tower and the Louvre. Anything else and the split is still wrong.
 #
-# Then the rate against entry 3, which is this same build on one device.
+# Only then the rate, against entry 3 in the same boot. If it lands near 10 the
+# slice split is worth about 20%, and the remaining question is the submit
+# count: 9100 against 4550 is twice the submits for half the bytes each, which
+# is a lot of per submit cost to be paying for parallelism.
 #
-#   entry 2 near 11 or better -> the tensors that were never grouped are using
-#                                core 1 now, which is where the 40% was
-#   entry 2 near 9.1          -> splitting the singles bought nothing and the
-#                                limit is somewhere other than which core the
-#                                work runs on
-#
-# ENTRY 1 is int8 on the same build, since it splits too and it is the number
-# that was asked for.
+# ENTRY 1 is int8, which also splits and which also produced salad last time.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# 10 to 11. I said 10 to 12 last round and got 9.1, so treat that accordingly.
-# The submit count is the thing to watch: if it climbs again while the fence
-# barely moves, the cost of an extra submit is eating the parallelism, and the
-# next question becomes how few submits two cores can be fed with.
+# The sentence comes back and the rate stays near 10.1. If the sentence comes
+# back but the rate drops, then some of last round's speed was the broken input
+# -- an all zero activation is cheaper to multiply than a real one only if the
+# hardware short circuits, which it has never shown any sign of doing.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -179,7 +174,7 @@ pair() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 365: split the slices too, not just the groups   #####"
+	log "##### round 366: the activation, into BOTH devices           #####"
 	log "###############################################################"
 	log "  int4 is byte exact and 1.42 to 1.78x faster. now decode with it."
 
@@ -189,7 +184,7 @@ start() {
 	rung "int8" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) int4 g1024, slices split across both cores           ====="
+	log "===== 2) int4 g1024, slices split. THE SENTENCE FIRST.        ====="
 	rung "int4 g1024, two devices" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 "$CE" "$HEAD"
 
 	log ""
