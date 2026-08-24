@@ -1,0 +1,144 @@
+# Build a kernel a ROCK 4D can actually boot with the NPU working, and publish
+# it so charsiu-install.sh can fetch one.
+#
+# ⚠ WHY THIS EXISTS AT ALL. RK3576 rocket support is not upstream. The commit
+# that adds `rockchip,rk3576-rknn-core` is ours and is not reachable from any
+# tag, so there is no distribution kernel anywhere that will bind this NPU.
+# Without a kernel to offer, charsiu-install.sh can only ever tell people no.
+#
+# ⚠ PINNED ON PURPOSE. This builds the v9 series on top of the tag it was
+# written against, next-20260814, so the artifact is reproducible and a user
+# who downloads it gets the kernel the board rounds were measured on. Whether
+# the series still applies to TODAY's linux-next is a different question, asked
+# separately and on a schedule by patch-drift.yml -- a build that silently
+# followed a moving base would answer neither question.
+name: kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "linux-next tag to build on"
+        default: "next-20260814"
+      release:
+        description: "publish a release"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - 'rfc-send-v9/**'
+      - 'kernel/base.config'
+      - '.github/workflows/kernel.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # A native aarch64 runner: no cross toolchain to install or get wrong, and
+    # the build is quicker than cross-compiling on x86.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison libssl-dev libelf-dev bc \
+            python3 ccache zstd
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ inputs.base || 'next-20260814' }}-${{ github.sha }}
+          restore-keys: ccache-${{ inputs.base || 'next-20260814' }}-
+
+      - name: fetch linux-next at the pinned tag
+        run: |
+          BASE="${{ inputs.base || 'next-20260814' }}"
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          # shallow: the full linux-next history is gigabytes and nothing here
+          # needs it.
+          git clone --depth 1 --branch "$BASE" \
+            https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
+          git -C linux log --oneline -1
+
+      - name: apply the v9 series
+        run: |
+          cd linux
+          git config user.email ci@example.invalid
+          git config user.name "charsiu CI"
+          # 0000 is the cover letter and is not a patch.
+          for p in ../rfc-send-v9/v9-00[0-9][0-9]-*.patch; do
+            case "$p" in *v9-0000-*) continue ;; esac
+            echo "== $(basename "$p")"
+            git am --keep-cr "$p" || {
+              echo "::error::$(basename "$p") did not apply to $BASE"
+              git am --abort || true
+              exit 1
+            }
+          done
+          git log --oneline -14
+
+      - name: build
+        run: |
+          cd linux
+          cp ../kernel/base.config .config
+          make ARCH=arm64 olddefconfig
+          # The two settings the image needs and a stock config gets wrong:
+          # this rootfs has no udev and no mdev, so a module is never loaded by
+          # modalias -- anything a device needs has to be built in.
+          scripts/config --enable  DRM_ACCEL_ROCKET
+          scripts/config --enable  STMMAC_ETH
+          scripts/config --enable  STMMAC_PLATFORM
+          scripts/config --enable  DWMAC_ROCKCHIP
+          scripts/config --enable  REALTEK_PHY
+          scripts/config --enable  RTC_DRV_HYM8563
+          make ARCH=arm64 olddefconfig
+          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563; do
+            v=$(scripts/config --state $s)
+            echo "  $s = $v"
+            [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; exit 1; }
+          done
+          make ARCH=arm64 -j"$(nproc)" CC="ccache gcc" Image dtbs modules
+          make ARCH=arm64 INSTALL_MOD_PATH=../modroot modules_install
+
+      - name: package
+        run: |
+          mkdir -p out
+          cp linux/arch/arm64/boot/Image out/
+          cp linux/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dtb out/
+          KVER=$(cat linux/include/config/kernel.release)
+          tar -C modroot -czf "out/modules-$KVER.tar.gz" lib/modules
+          cat > out/MANIFEST <<EOF
+          base        $BASE
+          series      v9, 13 patches from rfc-send-v9/
+          kernel      $KVER
+          built       $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          repo        ${{ github.repository }}@${{ github.sha }}
+          EOF
+          ( cd out && sha256sum Image rk3576-rock-4d.dtb modules-*.tar.gz > SHA256SUMS )
+          echo "KVER=$KVER" >> "$GITHUB_ENV"
+          cat out/MANIFEST
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ env.KVER }}
+          path: out/
+
+      - name: release
+        if: inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="kernel-$KVER-$(date -u +%Y%m%d)"
+          gh release create "$TAG" out/* \
+            --title "$TAG" \
+            --notes "RK3576 NPU kernel: linux-next $BASE plus the v9 rocket series.
+
+          charsiu-install.sh fetches this. It keeps the kernel already on the
+          card and adds a second extlinux entry, so if this one misbehaves the
+          old one is still one boot menu away."

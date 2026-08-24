@@ -1,0 +1,81 @@
+# Does the v9 series still apply to TODAY's linux-next?
+#
+# ⚠ THIS IS THE QUESTION A KERNEL BUILD CANNOT ANSWER. kernel.yml pins the base
+# on purpose so its artifact is reproducible; that also means it will keep
+# building happily long after the tree has moved out from under the series. For
+# a patchset under review, "it stopped applying three weeks ago" is exactly the
+# thing you want to hear early -- a maintainer asking for a rebase should not be
+# the first news of it.
+#
+# A failure here is INFORMATION, not a broken build. It names the patch and the
+# files that moved.
+name: patch drift
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'      # Mondays, before anyone asks
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  applies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch the tip of linux-next
+        run: |
+          git clone --depth 1 \
+            https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
+          cd linux
+          echo "TIP=$(git log --format=%h -1)" >> "$GITHUB_ENV"
+          git log --oneline -1
+
+      - name: try the series
+        id: try
+        run: |
+          cd linux
+          git config user.email ci@example.invalid
+          git config user.name "charsiu CI"
+          fail=""
+          for p in ../rfc-send-v9/v9-00[0-9][0-9]-*.patch; do
+            case "$p" in *v9-0000-*) continue ;; esac
+            n=$(basename "$p")
+            if git am --keep-cr "$p" >/tmp/am.log 2>&1; then
+              echo "  ok    $n"
+            else
+              echo "  FAIL  $n"
+              sed 's/^/        /' /tmp/am.log
+              # which files moved -- the useful half of the answer
+              git am --show-current-patch=diff 2>/dev/null \
+                | grep -E '^(\+\+\+|---) ' | sort -u | sed 's/^/        /' || true
+              git am --abort || true
+              fail="$n"
+              break
+            fi
+          done
+          if [ -n "$fail" ]; then
+            echo "::warning::the v9 series stops applying at $fail on linux-next $TIP"
+            echo "failed=$fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "the whole series still applies to linux-next $TIP"
+
+      - name: and does it still build the two things that matter
+        if: steps.try.outputs.failed == ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu build-essential flex bison libssl-dev libelf-dev bc
+          cd linux
+          cp ../kernel/base.config .config
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          # not a full build: just the driver and the dtb the series touches,
+          # which is where a silent semantic conflict would show up.
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" \
+            drivers/accel/rocket/ drivers/pmdomain/rockchip/
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" \
+            rockchip/rk3576-rock-4d.dtb

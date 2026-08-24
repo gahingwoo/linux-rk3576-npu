@@ -157,6 +157,15 @@ start() {
 	fi
 
 	log ""
+	log "===== 1b) the TUI, which is new                                ====="
+	log "  whiptail is 1.8 MB of newt+slang. ⚠ It REFUSES to run without"
+	log "  TERM, which a serial console often lacks -- charsiu-tui.sh"
+	log "  falls back to plain text rather than failing."
+	log "     whiptail: $(command -v whiptail || echo MISSING)"
+	log "     TERM=${TERM:-(unset)}  -> the tools will use the plain path if unset"
+	charsiu-config --help > "$C" 2>&1 || true
+
+	log ""
 	log "===== 2) charsiu-doctor                                        ====="
 	charsiu-doctor > "$C" 2>&1
 	log "  doctor exit $?  (0 = nothing critical)"
