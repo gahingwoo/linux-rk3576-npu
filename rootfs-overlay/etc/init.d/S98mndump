@@ -2,121 +2,108 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-25 round 379. THE ENERGY BASELINE. MEASURE, DO NOT DESIGN.
-#
-# 🏁 ROUND 378 was a clean regression and it repeated clean a second time:
-#
-#            r378        repeat      delta
-#   64 tok   14.70       14.58       -0.82%
-#   384 tok  11.98       11.92       -0.50%
-#   control  14.01       13.92       -0.64%
-#
-# ⚠ All five deltas came out the SAME SIGN. Pure noise does not do that five
-# times, so what we have is a small per-boot offset rather than jitter. The
-# band is <= 1%; a repeat landing half a percent slow is not a finding.
+# 2026-08-25 round 380. THE RAIL FOLLOWS THE DOMAIN, AND THREE FIXED INSTRUMENTS.
 #
 # ---------------------------------------------------------------------------
-# WHY THIS ROUND EXISTS
+# WHAT ROUND 379 ANSWERED
 # ---------------------------------------------------------------------------
 #
-# The next piece of work is a power-save mode and a performance mode for a
-# BATTERY device. Before designing either, the honest question is what
-# actually drains the battery. Every round in this project that guessed first
-# had to be taken back.
+# ✅ **A53 vs A72 is CLOSED, and the A53 loses on both axes.** 14.59 -> 11.17
+# tok/s, 68.2 -> 88.6 ms a token, and the hardware path fell 10.34 -> 8.81 GB/s
+# because the little cores cannot feed the NPU (460 -> 540 us a submit).
 #
-# ⚠ THERE IS NO POWER METER, AND THIS BOARD CANNOT MAKE ONE. rock-4d.dts has
-# no ina2xx, no ina3221, no shunt, no fuel gauge, no battery -- checked. So
-# absolute watts are not available at any price, and nothing in this round
-# claims them. What IS available is RESIDENCY, and a mode decision needs a
-# RATIO, not a wattage:
+#   the 3x is not there to collect. schedutil held the A53s at 2016 MHz @ 0.900 V
+#   for 74% of the arm while the A72s spent 43% at 1200 MHz @ 0.700 V, so per
+#   core-second the A53 is only 2.49x cheaper -- and it needs 2.29x more of them.
 #
-#   * cpuidle time per core        -- how long each core was actually asleep
-#   * cpufreq time_in_state        -- which OPP each cluster sat at
-#   * runtime_suspended_time       -- whether the NPU cores really suspended
-#   * six thermal zones            -- bigcore, littlecore, npu, ddr separately
+#   CPU energy 8.23 J -> 7.34 J (-10.8%), but it holds the NPU active 1.93 s
+#   longer, so it only wins if NPU active power is under 461 mW. It is pushing
+#   ~9 GB/s through LPDDR5. It is not under 461 mW.
 #
-# runtime_status / runtime_active_time / runtime_suspended_time are in the
-# UNCONDITIONAL sysfs group (drivers/base/power/sysfs.c, before the
-# CONFIG_PM_ADVANCED_DEBUG ifdef), so they read today with no rebuild.
+#   Clean by-stage split: pure-CPU rows 6.03 -> 13.58 ms = 2.25x, NPU-dominated
+#   rows 62.05 -> 74.61 = 1.20x. That is the A53 IPC number, measured.
 #
-# ---------------------------------------------------------------------------
-# TWO SUSPICIONS ALREADY CLOSED, FOR FREE, BEFORE THE BOARD RAN
-# ---------------------------------------------------------------------------
-#
-# ⛔ "sync_state() pending leaves power domains up" -- REFUTED. I said this
-#    was genpd's defined behaviour and it is not. The rockchip pmdomain driver
-#    sets GENPD_FLAG_NO_STAY_ON, and core.c does
-#        genpd->stay_on = !genpd_is_no_stay_on(genpd) && !is_off;
-#    so those domains are never held on waiting for sync_state, and
-#    genpd_power_off_unused() runs at late_initcall_sync regardless. r378's
-#    own log has "PM: genpd: Disabling unused power domains" at t=1.35s and
-#    "vdd_gpu_s0: disabling". The pending lines are noise.
-#
-# ⛔ "the idle worker pool spins" -- REFUTED. llama.c's worker blocks in
-#    pthread_cond_wait. Idle threads cost nothing.
-#
-# ✅ ONE REAL LEAD SURVIVES, and it is in our own cmdline:
-#        console=ttyS0,1500000n8 ... rootwait rw clk_ignore_unused log_buf_len=8M
-#    clk_ignore_unused was a bring-up crutch. It forbids gating EVERY clock the
-#    bootloader left running. That is not tested here -- dropping it risks the
-#    NPU and would cost the whole round -- but this round counts how many
-#    clocks are enabled with no user, which says whether the crutch is
-#    expensive before anyone risks removing it.
+# ✅ **The idle session's falsifiable clause PASSED**: with the model resident
+# and the fds open, both NPU cores read suspended, active 0.00 s, suspended
+# 20.10 s of a 20 s window.
 #
 # ---------------------------------------------------------------------------
-# THE QUESTION THIS ROUND ANSWERS: A53 OR A72?
+# ⚠ AND THREE INSTRUMENT DEFECTS, ALL MINE, ALL FIXED HERE
 # ---------------------------------------------------------------------------
 #
-# The kernel's own energy model, from rk3576.dtsi:
+# 1. ⚠⚠ **cpuidle time BANKS ON EXIT.** A core in a long uninterrupted sleep
+#    has that episode uncounted, so it reads as BUSY. r379's idle floor showed
+#    cpu4 at 14.4% and cpu7 at 19.0% idle and I nearly reported two A72s burning
+#    85% of a window in which nothing ran. **The apparently busiest cores were
+#    the soundest sleepers** -- cpu4's 17 s "deficit" was how long it had been
+#    asleep at the moment of sampling.
+#    FIX: /proc/stat, whose get_idle_time() adds the in-progress idle period on
+#    NO_HZ. cpuidle usage COUNTS are kept beside it -- a core that is genuinely
+#    busy enters idle many times, a core sleeping deeply enters it once.
 #
-#   cluster0  A53 x4  dynamic-power-coefficient = 120   2016 MHz @ 0.900 V
-#   cluster1  A72 x4  dynamic-power-coefficient = 320   2208 MHz @ 0.925 V
+# 2. ⚠ **The clock question was asked wrong.** I counted enable_count > 0 with
+#    prepare_count == 0, which is structurally almost impossible, got 0, and
+#    nearly called the crutch free. clk_disable_unused goes after clocks that
+#    are ENABLED IN HARDWARE with enable_count == 0 -- column 9 is the hardware
+#    Y/N and column 2 is the enable count. Asked properly this round.
 #
-#   P = coeff * f(MHz) * V^2  ->  A53 196 mW/core, A72 605 mW/core = 3.09x
-#   At an OPP both share (1200 MHz @ 0.700 V) it is 70.6 vs 188 mW = 2.67x.
+# 3. ⚠ **psnap never sampled a regulator**, which is why r379 could not answer
+#    the one question that mattered. Rails are sampled now.
 #
-# charsiu uses ONE CPU thread's worth of work, so where it runs is a threefold
-# question on a battery. ⚠ Memory said this was CLOSED, and memory was reading
-# the wrong axis: the 0.3 ms from round 368 was PINNED vs UNPINNED, and
-# unpinned the scheduler had already put it on a big core. The A53 arm has
-# never run. It is also nearly free, because CHARSIU_CPUS exists and
-# cpus_pin() is called before pthread_create, so the workers inherit the mask.
+# ---------------------------------------------------------------------------
+# 🔑 THE FINDING, WHICH CAME FROM CHASING WHY THE INSTRUMENT COULD NOT ANSWER
+# ---------------------------------------------------------------------------
 #
-# ⚠ WHAT WOULD MAKE THE A53 LOSE: the CPU stages are SERIAL with the NPU
-# fence, so a slower core lengthens the token, and the NPU rail is then up for
-# longer. Slower-but-cheaper is not automatically cheaper. This round measures
-# both halves and decides nothing.
+# rocket's runtime_suspend does clk_bulk_disable_unprepare and NOTHING ELSE --
+# there is no regulator call anywhere in drivers/accel/rocket. A rail follows
+# the domain only through domain-supply on the power-domain node, taken by
+# rockchip_pd_power(), and only when the domain carries need_regulator.
+#
+#   the board kernel ALREADY has DOMAIN_RK3576_R and need_regulator, and
+#   RK3576_PD_NPU already uses it. The DTS was the half that never caught up:
+#   vdd_npu_s0 carried regulator-always-on and no domain-supply existed, so the
+#   NPU rail sat at 750 mV forever. **v9 posts exactly this fix.** The round
+#   image had simply never been brought in line with what we upstreamed.
+#
+# THIS ROUND CHANGES THE DTS, three lines, keeping BOTH cores:
+#   * rk3576.dtsi   : label the domain  pd_npu: power-domain@RK3576_PD_NPU
+#   * rk3576-rock-4d.dts : drop regulator-always-on from vdd_npu_s0 ONLY
+#                          (the other 33 always-on regulators are untouched)
+#   * rk3576-rock-4d.dts : &pd_npu { domain-supply = <&vdd_npu_s0>; }
+#
+# ⚠ BE HONEST ABOUT THE SIZE OF THIS. The domains and the clocks were already
+# dropping. What stays up is the rail, and its cost is the buck's quiescent draw
+# plus leakage into gated logic -- real, probably small, and NOT measurable on
+# this board, which has no INA, no shunt and no fuel gauge. "Small but forever"
+# is the category that matters on a battery, and the fix was already written.
+# No wattage is claimed anywhere in this round.
+#
+# ⚠ AND IT IS THE RISKIEST CHANGE IN MONTHS. Every arm now starts from a COLD
+# RAIL. This project has a long history with cold-start per power session (it
+# was the WALL, root-caused to PC_TASK_CON and fixed). The anchor therefore runs
+# TWICE, once before anything and once at the end.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ IT
 # ---------------------------------------------------------------------------
 #
-#   * arm 0 is DISCARDED. It only warms the page cache. In r378 the first run
-#     staged in 24159 ms and every later one in about 7900 -- a 3x difference
-#     that would swamp any comparison between arms 2 and 3.
-#   * arm 1 is the idle floor. Both clusters should be near 100% idle
-#     residency and BOTH NPU CORES SHOULD READ suspended.
-#   * arms 2 and 3 are the same 64 tokens, pinned to 4-7 and to 0-3. Compare
-#     tok/s, then compare the two clusters' time_in_state and their tsadc.
-#     ⚠ Their power deltas cover load + staging + prompt + generation, not
-#     generation alone. That is fair between the two arms because both have
-#     the same phases, and it is NOT a per-token energy number.
-#   * arm 4 holds 20 s with the model resident and nobody talking. This is
-#     where a battery device actually lives. THE FALSIFIABLE CLAUSE:
-#     rocket takes a runtime-PM reference per job with a 50 ms autosuspend
-#     delay, so over a 20 s hold both cores must read suspended and
-#     runtime_suspended_time must advance by about 20000 ms. If it does not,
-#     that is the finding of the round.
-#   * probe exact, anchor clean.
-#
-# NOTHING IS OPTIMISED THIS ROUND. Arm 2 must land in r378's band.
+#   * arm 0: the corrected clock count, and the genpd view of the NPU subtree.
+#   * arm 1 IS THE HEADLINE. At rest, **vdd_npu_s0 must read disabled**, and
+#     the four NPU domains must read off. In r379 the rail read enabled at
+#     750000 uV and could not do otherwise.
+#   * arm 1b: the anchor BEFORE any charsiu run. If cycling the rail broke the
+#     block, it breaks here and the rest of the round is known-bad.
+#   * arm 2 is the standing anchor: 14.6 tok/s, the Louvre sentence, in r378's
+#     <= 1% band. A rail that has to ramp on every resume would show up as a
+#     slower first submit, not a slower token, so watch the GB/s too.
+#   * arm 3: the idle session again, now with the rail sampled. Both cores
+#     suspended AND the rail down.
+#   * probe exact, anchor clean a second time.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
-WORK=/usr/lib/libteflon-working.so
 VD=/opt/charsiu/charsiu_vendor
 V=/opt/charsiu/vendor
-RGC=$V/vendor-int4-k2048-n1024.regcmd
 WT=$V/vendor-wt-1M.bin
 IN=$V/vendor-in.bin
 RUN=/opt/charsiu/charsiu_run
@@ -133,7 +120,7 @@ nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
 health() {
 	python3 "$NPU_DIR/perch.py" "$NPU_DIR/conv2d-cal.tflite" > /tmp/hc.txt 2>&1
 	if grep -q "128/128 channels match" /tmp/hc.txt; then
-		log "  !! health OK, the block recovered, continuing"
+		log "  !! health OK, the block computes"
 	else
 		log "  !! health FAILED, the block did not come back this time."
 		ABORT=1
@@ -156,33 +143,36 @@ capped() {
 }
 
 # ---------------------------------------------------------------------------
-# THE INSTRUMENT. No meter exists, so everything here is residency, and every
-# line is a DELTA over a named window. Absolute counters are meaningless: they
-# have been running since boot.
-#
-# Each sample line is  kind<TAB>key<TAB>value, and the kind carries the UNIT,
-# because the four sources do not agree on one:
-#   us   cpuidle time            microseconds
-#   cs   cpufreq time_in_state   centiseconds (USER_HZ)
-#   ms   runtime_*_time          milliseconds
-#   temp thermal_zone temp       millidegrees
-#   str  runtime_status          a word
+# THE INSTRUMENT. No meter exists, so everything is residency, over a named
+# window, as a DELTA. Sample lines are  kind<TAB>key<TAB>value; the kind carries
+# the unit because the sources do not agree on one:
+#   cs   /proc/stat, cpufreq time_in_state   centiseconds (USER_HZ)
+#   us   cpuidle time                        microseconds  (⚠ banks on EXIT)
+#   ms   runtime_*_time, genpd active_time   milliseconds
+#   n    a plain count, printed as a delta
+#   temp thermal_zone temp                   millidegrees
+#   str  a word: runtime_status, regulator state, genpd current_state
 # ---------------------------------------------------------------------------
 psnap() {
 	f="$1"; : > "$f"
-	for z in /sys/class/thermal/thermal_zone*; do
-		[ -r "$z/temp" ] || continue
-		printf 'temp\t%s\t%s\n' "$(cat $z/type)" "$(cat $z/temp)" >> "$f"
-	done
+
+	# 🔑 THE CORRECTED IDLE INSTRUMENT. get_idle_time() adds the in-progress
+	# idle period on NO_HZ, which is exactly what cpuidle's counter cannot do.
+	awk '/^cpu[0-9]/ {printf "cs\tstat.%s.idle\t%d\n", $1, $5 + $6}' /proc/stat >> "$f"
+	awk '/^cpu[0-9]/ {printf "cs\tstat.%s.busy\t%d\n", $1, $2+$3+$4+$7+$8+$9}' /proc/stat >> "$f"
+
 	for c in /sys/devices/system/cpu/cpu0 /sys/devices/system/cpu/cpu1 \
 		 /sys/devices/system/cpu/cpu2 /sys/devices/system/cpu/cpu3 \
 		 /sys/devices/system/cpu/cpu4 /sys/devices/system/cpu/cpu5 \
 		 /sys/devices/system/cpu/cpu6 /sys/devices/system/cpu/cpu7; do
 		n=${c##*/}
 		for s in "$c"/cpuidle/state*; do
-			[ -r "$s/time" ] || continue
-			printf 'us\tidle.%s.%s\t%s\n' "$n" "$(cat $s/name)" \
-				"$(cat $s/time)" >> "$f"
+			[ -r "$s/usage" ] || continue
+			# the COUNT, not the time -- a busy core enters idle many
+			# times, a deep sleeper enters it once. This is what tells
+			# the two apart, which r379 could not do.
+			printf 'n\tenter.%s.%s\t%s\n' "$n" "$(cat $s/name)" \
+				"$(cat $s/usage)" >> "$f"
 		done
 	done
 	for p in /sys/devices/system/cpu/cpufreq/policy*; do
@@ -191,45 +181,74 @@ psnap() {
 		awk -v pn="$pn" '{printf "cs\tfreq.%s.%s\t%s\n", pn, $1, $2}' \
 			"$p/stats/time_in_state" >> "$f"
 	done
+
+	# 🔑 THE RAIL. r379 could not answer its own question because this was
+	# missing. ⚠ num_users is rdev->use_count, the LIVE ENABLE COUNT, not a
+	# count of consumers -- see the rail memory, it cost a round once.
+	for r in /sys/class/regulator/regulator.*; do
+		[ -r "$r/name" ] || continue
+		nm=$(cat "$r/name")
+		case "$nm" in
+		vdd_npu*|vdd_gpu*|vdd_cpu_big*|vdd_cpu_lit*)
+			printf 'str\trail.%s.state\t%s\n' "$nm" \
+				"$(cat $r/state 2>/dev/null)" >> "$f"
+			printf 'str\trail.%s.use_count\t%s\n' "$nm" \
+				"$(cat $r/num_users 2>/dev/null)" >> "$f" ;;
+		esac
+	done
+
+	# the power domains themselves, which is the thing the rail now follows
+	for g in /sys/kernel/debug/pm_genpd/*npu*; do
+		[ -d "$g" ] || continue
+		n=${g##*/}
+		printf 'str\tpd.%s.state\t%s\n' "$n" \
+			"$(cat $g/current_state 2>/dev/null)" >> "$f"
+		printf 'ms\tpd.%s.active\t%s\n' "$n" \
+			"$(cat $g/active_time 2>/dev/null)" >> "$f"
+	done
+
 	for d in /sys/bus/platform/devices/27700000.npu \
 		 /sys/bus/platform/devices/27708000.npu; do
 		[ -d "$d/power" ] || continue
 		n=${d##*/}
 		printf 'str\tnpu.%s.status\t%s\n' "$n" \
 			"$(cat $d/power/runtime_status 2>/dev/null)" >> "$f"
-		printf 'ms\tnpu.%s.active\t%s\n' "$n" \
-			"$(cat $d/power/runtime_active_time 2>/dev/null)" >> "$f"
 		printf 'ms\tnpu.%s.suspended\t%s\n' "$n" \
 			"$(cat $d/power/runtime_suspended_time 2>/dev/null)" >> "$f"
 	done
-	printf 'wall\twall\t%s\n' "$(cut -d. -f1 /proc/uptime)" >> "$f"
+
+	for z in /sys/class/thermal/thermal_zone*; do
+		[ -r "$z/temp" ] || continue
+		printf 'temp\t%s\t%s\n' "$(cat $z/type)" "$(cat $z/temp)" >> "$f"
+	done
+	# ⚠ the FULL uptime, decimals included. r379 cut it at the point and a
+	# 20.1 s window read as 20, which is a 0.5% error on every percentage.
+	printf 'wall\twall\t%s\n' "$(awk '{print $1}' /proc/uptime)" >> "$f"
 }
 
-# pdelta <before> <after> <label>
 pdelta() {
-	w1=$(awk -F'\t' '$2=="wall"{print $3}' "$2")
-	w0=$(awk -F'\t' '$2=="wall"{print $3}' "$1")
-	win=$((w1 - w0)); [ "$win" -lt 1 ] && win=1
 	log ""
-	log "  ~~ residency over $win s: $3"
-	awk -F'\t' -v win="$win" '
+	log "  ~~ residency: $3"
+	awk -F'\t' '
 	  NR==FNR { a[$2]=$3; next }
-	  {
-	    k=$1; key=$2; v=$3; o=a[key];
-	    if (k=="temp")
-		printf "     %-32s %7.1f C   (was %.1f)\n", key, v/1000, o/1000;
-	    else if (k=="us")
-		printf "     %-32s %7.2f s   %5.1f%%\n", key, (v-o)/1e6, (v-o)/(win*1e4);
-	    else if (k=="cs")
-		printf "     %-32s %7.2f s   %5.1f%%\n", key, (v-o)/100, (v-o)/win;
-	    else if (k=="ms")
-		printf "     %-32s %7.2f s   %5.1f%%\n", key, (v-o)/1e3, (v-o)/(win*10);
-	    else if (k=="str")
-		printf "     %-32s %7s     %s\n", key, v, (v==o ? "" : "(was " o ")");
+	  { k[$2]=$1; v[$2]=$3; ord[++n]=$2 }
+	  END {
+	    win = v["wall"] - a["wall"];
+	    if (win < 0.001) win = 0.001;
+	    printf "     (window %.2f s)\n", win;
+	    for (i = 1; i <= n; i++) {
+	      key = ord[i]; if (key == "wall") continue;
+	      t = k[key]; o = a[key]; b = v[key];
+	      if      (t=="temp") printf "     %-34s %7.1f C   (was %.1f)\n", key, b/1000, o/1000;
+	      else if (t=="cs")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/100, (b-o)/win;
+	      else if (t=="us")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/1e6, (b-o)/(win*1e4);
+	      else if (t=="ms")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/1e3, (b-o)/(win*10);
+	      else if (t=="n")    printf "     %-34s %7d\n", key, b-o;
+	      else if (t=="str")  printf "     %-34s %9s   %s\n", key, b, (b==o ? "" : "(was " o ")");
+	    }
 	  }' "$1" "$2" > "$C"
 }
 
-# a window of pure nothing
 idlewin() {
 	psnap /tmp/p0
 	sleep "$1"
@@ -252,7 +271,6 @@ rung() {
 	return 0
 }
 
-# the same rung, with a residency window wrapped round it
 prung() {
 	lbl="$1"
 	psnap /tmp/p0
@@ -261,7 +279,6 @@ prung() {
 	pdelta /tmp/p0 /tmp/p1 "$lbl"
 }
 
-# generate, then sit there with everything still open, and sample the SITTING
 holdarm() {
 	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
 	lbl="$1"; shift
@@ -271,7 +288,6 @@ holdarm() {
 	env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 -t 4 \
 		--hold-secs 26 > /tmp/hold.txt 2>&1 &
 	hpid=$!
-	# wait for the hold to actually begin, up to 300 s of load+stage+generate
 	i=0
 	while [ "$i" -lt 300 ]; do
 		grep -q "holding" /tmp/hold.txt 2>/dev/null && break
@@ -285,7 +301,6 @@ holdarm() {
 		cat /tmp/hold.txt > "$C"
 		return 0
 	fi
-	# a moment for the last job to retire, then a clean 20 s of nothing
 	sleep 3
 	psnap /tmp/p0
 	sleep 20
@@ -296,7 +311,6 @@ holdarm() {
 	return 0
 }
 
-# arm: <label> <regcmd-or-dash> <byte> <high> [extra env, one assignment]
 arm() {
 	before=$(nbad)
 	log ""
@@ -316,89 +330,89 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 379: the energy baseline, and A53 vs A72        #####"
+	log "##### round 380: the rail follows the domain                #####"
 	log "###############################################################"
-	log "  no optimisation. arm 2 must land in r378's band."
-	log "  there is NO POWER METER on this board and none is claimed;"
-	log "  every number below is RESIDENCY over a named window."
+	log "  DTS changed: vdd_npu_s0 loses regulator-always-on and the NPU"
+	log "  power domain takes it as domain-supply. Both cores kept."
+	log "  NO WATTS ARE CLAIMED. Everything below is residency."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
+	mount -t debugfs none /sys/kernel/debug 2>/dev/null
 
 	log ""
-	log "===== 0) the instrument, and the clock crutch                  ====="
-	log "  what the board actually offers, once."
-	log "  -- cpu policies"
+	log "===== 0) the instrument, corrected                             ====="
 	for p in /sys/devices/system/cpu/cpufreq/policy*; do
 		[ -d "$p" ] || continue
-		log "     ${p##*/}: cpus=$(cat $p/related_cpus 2>/dev/null) cur=$(cat $p/scaling_cur_freq 2>/dev/null) gov=$(cat $p/scaling_governor 2>/dev/null)"
+		log "     ${p##*/}: cpus=$(cat $p/related_cpus 2>/dev/null) gov=$(cat $p/scaling_governor 2>/dev/null)"
 	done
-	log "  -- cpuidle states on cpu0 and cpu4"
-	for s in /sys/devices/system/cpu/cpu0/cpuidle/state* \
-		 /sys/devices/system/cpu/cpu4/cpuidle/state*; do
-		[ -r "$s/name" ] || continue
-		log "     $s -> $(cat $s/name) latency $(cat $s/latency 2>/dev/null) us"
+	log "  -- the clock crutch, asked PROPERLY this time"
+	log "     (column 2 is enable_count, column 9 is the hardware Y/N;"
+	log "      clk_disable_unused goes after hardware-on with count 0)"
+	if [ -r /sys/kernel/debug/clk/clk_summary ]; then
+		awk 'NF>=9 && $2 ~ /^[0-9]+$/ {
+			tot++;
+			if ($9 == "Y") { hw++; if ($2+0 == 0) held++ }
+		     } END {
+			printf "     %d clocks, %d enabled IN HARDWARE, %d of those with enable_count 0\n", tot, hw, held+0
+		     }' /sys/kernel/debug/clk/clk_summary > "$C"
+		log "     (the last number is what clk_ignore_unused is holding up)"
+	else
+		log "     clk_summary not available"
+	fi
+	log "  -- the NPU power domains, as genpd sees them"
+	for g in /sys/kernel/debug/pm_genpd/*npu*; do
+		[ -d "$g" ] || continue
+		log "     ${g##*/}: $(cat $g/current_state 2>/dev/null) active=$(cat $g/active_time 2>/dev/null) ms idle=$(cat $g/total_idle_time 2>/dev/null) ms"
 	done
-	log "  -- npu regulator"
+	log "  -- the rails, right now"
 	for r in /sys/class/regulator/regulator.*; do
 		[ -r "$r/name" ] || continue
-		nm=$(cat $r/name)
+		nm=$(cat "$r/name")
 		case "$nm" in vdd_npu*|vdd_gpu*|vdd_cpu*)
-			log "     $nm: state=$(cat $r/state 2>/dev/null) uV=$(cat $r/microvolts 2>/dev/null)" ;;
+			log "     $nm: $(cat $r/state 2>/dev/null) ${nm:+at} $(cat $r/microvolts 2>/dev/null) uV, use_count $(cat $r/num_users 2>/dev/null)" ;;
 		esac
 	done
-	log "  -- clk_ignore_unused is on the cmdline. how many clocks does it hold?"
-	mount -t debugfs none /sys/kernel/debug 2>/dev/null
-	if [ -r /sys/kernel/debug/clk/clk_summary ]; then
-		tot=$(awk 'NR>2 && NF>3 {n++} END {print n+0}' /sys/kernel/debug/clk/clk_summary)
-		en=$(awk 'NR>2 && NF>3 && $2+0 > 0 {n++} END {print n+0}' /sys/kernel/debug/clk/clk_summary)
-		nouser=$(awk 'NR>2 && NF>3 && $2+0 > 0 && $3+0 == 0 {n++} END {print n+0}' /sys/kernel/debug/clk/clk_summary)
-		log "     $tot clocks, $en enabled, $nouser of those with NO prepare user"
-		log "     (the last number is what dropping the crutch would go after)"
-	else
-		log "     clk_summary not available (debugfs did not mount)"
-	fi
 
 	log ""
-	log "===== 1) THE IDLE FLOOR: 20 s of nothing                       ====="
-	log "  both clusters near 100% idle, and BOTH NPU CORES suspended."
-	idlewin 20 "idle floor, nothing running"
+	log "===== 1) THE HEADLINE: is the NPU rail DOWN at rest?           ====="
+	log "  r379 read vdd_npu_s0 enabled at 750000 uV and could not do"
+	log "  otherwise -- it carried regulator-always-on. It must now read"
+	log "  disabled, and the four NPU domains must read off."
+	idlewin 20 "idle floor, nothing has touched the NPU yet"
 
 	log ""
-	log "===== 0b) warm the page cache. THIS ARM IS DISCARDED.          ====="
-	log "  r378 staged in 24159 ms cold and 7900 warm. Without this the"
-	log "  comparison between arms 2 and 3 would measure the disk."
-	rung "warm-up, discarded" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 2) 64 tokens PINNED TO THE A72s (cpu4-7)                 ====="
-	log "  the standing anchor. about 14.6 tok/s, the Louvre sentence."
-	prung "64 tok on the A72s" "int4 g1024, CHARSIU_CPUS=4-7" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 3) 64 tokens PINNED TO THE A53s (cpu0-3)                 ====="
-	log "  THE QUESTION. Same work, a cluster the energy model prices at"
-	log "  a third. Read tok/s first, then the two clusters' time_in_state."
-	log "  The text must be the SAME SENTENCE -- affinity cannot move a bit."
-	prung "64 tok on the A53s" "int4 g1024, CHARSIU_CPUS=0-3" $B "$CE" "$HEAD" CHARSIU_CPUS=0-3
-
-	log ""
-	log "===== 4) AN IDLE SESSION: model resident, nobody talking       ====="
-	log "  20 s sampled while charsiu holds the model and the NPU fds."
-	log "  FALSIFIABLE: rocket autosuspends 50 ms after the last job, so"
-	log "  both cores must read suspended and suspended_time must advance"
-	log "  by about 20000 ms. If it does not, that is the round's finding."
-	holdarm "idle with the model resident" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 5) the probe, still exact                                ====="
-	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
-
-	log ""
-	log "===== 6) the anchor: int8 conv must still be exact             ====="
+	log "===== 1b) THE ANCHOR, BEFORE ANY CHARSIU RUN                   ====="
+	log "  every arm from here starts on a COLD RAIL. If that broke the"
+	log "  block it breaks here, and the rest of the round is known-bad."
 	health
 
 	log ""
-	log "===== read arm 3's tok/s and arm 4's suspended_time first.     ====="
+	log "===== 0b) warm the page cache. THIS ARM IS DISCARDED.          ====="
+	rung "warm-up, discarded" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
+
+	log ""
+	log "===== 2) the standing anchor: 64 tokens on the A72s            ====="
+	log "  14.6 tok/s and the Louvre sentence, inside r378's 1% band."
+	log "  a rail that ramps on every resume would cost a slower FIRST"
+	log "  submit, not a slower token -- so read the GB/s as well."
+	prung "64 tok on the A72s" "int4 g1024, CHARSIU_CPUS=4-7" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
+
+	log ""
+	log "===== 3) an idle session, now with the rail in view            ====="
+	log "  model resident, fds open, nobody talking. r379 proved both"
+	log "  cores suspend. THE NEW CLAUSE: the rail must be down too."
+	holdarm "idle with the model resident" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
+
+	log ""
+	log "===== 4) the probe, still exact                                ====="
+	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
+
+	log ""
+	log "===== 5) the anchor AGAIN, after every rail cycle of the round ====="
+	health
+
+	log ""
+	log "===== read arm 1's rail.vdd_npu_s0.state first.                ====="
 	sync
 }
 case "$1" in
