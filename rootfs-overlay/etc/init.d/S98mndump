@@ -2,96 +2,78 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 372. THE TWO SWITCHES BECOME THE DEFAULT, AND A LONG CONTEXT.
+# 2026-08-24 round 373. ATTENTION AT LENGTH.
 #
-# ⛔ ROUND 371 KILLED THE CPU AS A SECOND ENGINE, and the trap the round wrote
-# down is the one that fired.
+# ROUND 372 LOCKED IN THE TWO SWITCHES. Arm 1 and its control wrote the SAME
+# sentence, word for word, so the board really does not see the difference the
+# host sees: 12.95 tok/s against 12.36, and the reordered dot product and the
+# polynomial exponential are the default now.
 #
-#   f = 0     12.33 tok/s   80.8 ms   fence 3778 ms   CPU share 0
-#   f = 0.10   7.20        138.7      fence  177      CPU share  8449
-#   f = 0.20   3.98        251.1      fence  186      CPU share 16388
-#   f = 0.30   2.76        362.4      fence  196      CPU share 24211
+# 🔑 AND ARM 3 FOUND SOMETHING NOBODY HAD LOOKED FOR. At 384 tokens:
 #
-# The fence collapsed because the hardware finishes long before the CPU does,
-# so prep_bo returns at once and the CPU is the whole critical path.
+#     attention           36.90 ms a token    33.0%   <- the LARGEST row
+#     gate + up           22.57                20.2
+#     down                20.89                18.7
+#     q k v               10.68                 9.6
+#     output head          8.88                 7.9
 #
-# 🔑 AND THE FAILURE IS COMPUTE, NOT BANDWIDTH:
+# against 4.53 ms at 64 tokens. **I predicted 20 to 25 and it is 36.90.** The
+# whole token went 76.9 ms to 111.8, and the run averaged 8.92 tok/s where a 64
+# token run gets 12.95.
 #
-#   f=0.10  0.94 G weights/s      f=0.20  0.97      f=0.30  0.98
-#   the NPU, for comparison:     21.0 G weights/s
-#
-# Dead flat with f, which is what a compute bound loop looks like. The CPU
-# never came near the 5.62 GB/s round 370 measured it READING at; it managed
-# 0.47. Four widening steps a weight, int4 to int8 to int16 to int32 to float,
-# on a core with no fp16 arithmetic to shorten them. Best possible split even
-# perfectly tuned is f = 0.043 and 3.2%.
-#
-# **So round 371 says nothing about whether the spare bandwidth can be spent.
-# It says the CPU is not what spends it.** The bar for anything else is now a
-# number: about 10 G weights a second, which is 5 GB/s of int4.
-#
-# ✅ All four sentences were identical, at f = 0.30 with three tenths of every
-# projection computed by a different engine in a different order. The kernel is
-# right; it is just slow.
+# ⚠ AND IT GREW FASTER THAN THE CONTEXT DID: 8.15x while the average position
+# grew 5.27x. Superlinear is what falling out of cache looks like -- the kv
+# cache is 4.6 MB at position 70 and 25.6 MB at 390.
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED
+# WHAT CHANGED, AND WHY IT SHOULD BE FREE
 # ---------------------------------------------------------------------------
 #
-# THE TWO FAST PATHS ARE THE DEFAULT NOW. Both reorder arithmetic by a last
-# bit, both moved a token on the HOST, and neither moved one on the BOARD --
-# the exponential in round 368, the dot product in round 370, each measured
-# against its own unvectorised arm and each writing the same sentence word for
-# word. Together they are 5.1 ms a token, 12.30 to 13.13 tok/s.
+# This model has 32 query heads and 8 key/value heads, so FOUR QUERIES SHARE
+# EVERY KV ROW -- and the loop walked the whole cache once for each of them,
+# reading every row four times. Invisible at the sixty-odd positions every
+# round since 352 has run at; a third of the token at 384.
 #
-# ⚠ Two rounds agreeing is not proof that no prompt ever diverges, and neither
-# round claimed it was. What it is, is enough to stop paying 5 ms for a switch
-# nobody turns on. CHARSIU_EXACT_ATTN and CHARSIU_EXACT_SILU put each back, and
-# CHARSIU_CPU_PLAIN puts back both.
+# A group is processed together now, so each row is read once. The ARITHMETIC
+# IS UNTOUCHED: every head still sums over the same i in the same order and the
+# same t in the same order, and only the interleaving changes. Checked on the
+# host across five configurations including a ragged head range from the thread
+# pool at -t 6, and every one reproduced its hash exactly.
 #
-# ⚠ AND THE SCALAR BUILD NO LONGER MATCHES THE DEFAULT ONE. Neither reordering
-# has a scalar twin, so the invariant is rewritten rather than quietly dropped:
-# charsiu_run_scalar now equals charsiu_run with both EXACT switches, which is
-# checked on the host and is still a detector for every vector path that IS
-# meant to be bit identical.
-#
-# ---------------------------------------------------------------------------
-# AND THE ONE THING NOBODY HAS MEASURED: A LONG CONTEXT
-# ---------------------------------------------------------------------------
-#
-# Every decode round since 352 has generated 64 tokens from a six token prompt,
-# so attention has never been asked about beyond about 70 positions. It is the
-# ONE cost in the token that grows with the conversation: at 70 positions it is
-# 4.53 ms of 75.8, and it should scale with the position while everything else
-# stays flat. Arm 3 generates 384 tokens to find out where that goes.
+# CHARSIU_ATTN_PERHEAD takes the group back to one, which IS the old walk. It
+# exists because a bit identical change has nothing else that could tell the
+# two apart, and round 368 is the reason every change carries a control.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE. Arms 1 and 2 must both be the Louvre sentence and must match
-# each other -- that is the whole claim being locked in, that the board does
-# not see the difference the host sees. **If arm 1 differs from arm 2, the flip
-# was wrong and the switches go back to opt-in.**
+# THE SENTENCES FIRST. Arms 1 and 2 must be identical to each other, and arm 3
+# must be the Louvre sentence. Nothing here is allowed to change a word: if
+# anything does, the regrouping is wrong and the host check missed it.
 #
-# THEN tok/s: arm 1 should reproduce round 370's 13.13 and arm 2 its 12.30.
+# THEN THE attention ROW, arm 1 against arm 2, both at 384 tokens. Round 372
+# measured 36.90 ms and arm 2 should reproduce it.
 #
-# ⚠ THEN ARM 3, AND READ ITS STAGE TABLE, NOT ITS tok/s. A 384 token run
-# averages over positions 6 to 390, so its tok/s is an average of a rising
-# cost and cannot be compared with a 64 token run. The row that matters is
-# attention, against arm 1's 4.53 ms. Everything else in the table should be
-# unchanged, and if it is not, the extra is not attention's.
+# ⚠ AND HERE IS THE WAY THIS ROUND IS WRONG. **On the host the regrouping was
+# worth 9%**: 2.11 ms to 1.93 at the same 384 tokens. The host has caches large
+# enough and memory fast enough that reading a row four times costs almost
+# nothing, which is exactly why it is the wrong machine to ask. **If the board
+# also says about 9%, then the redundant reads were NOT the cost, the
+# superlinear growth has some other cause, and the diagnosis in this header is
+# wrong.** Say that, rather than calling a 9% win a success.
+#
+# THEN ARM 3, which is the short case, to be sure nothing regressed there: 64
+# tokens should still be about 12.95 tok/s with attention at or below 4.53.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Arms 1 and 2 to reproduce 13.13 and 12.30 with one sentence between them.
-# Attention is a dot product and an accumulation per position, so at an average
-# position of about 200 against about 40 it should be roughly five times 4.53,
-# call it 20 to 25 ms, which would make it the second largest cost in the token
-# after the fence. If it comes back near 4.53 then it is not scaling with the
-# position and I have the shape of it wrong.
+# A memory bound loop reading a quarter as much: attention 36.90 down to
+# somewhere near 15 to 20 ms, the token from 111.8 to about 92 to 97, and the
+# 384 token rate from 8.92 to about 10.3 to 10.9. Not a quarter of 36.90,
+# because the arithmetic does not shrink at all -- only the traffic does.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -222,34 +204,29 @@ squeeze() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 372: the switches become the default            #####"
+	log "##### round 373: attention at length                        #####"
 	log "###############################################################"
-	log "  and the first look at what a long context costs."
+	log "  four queries share every kv row. it used to read each"
+	log "  row four times."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
 	log ""
-	log "===== 1) the new default. both fast paths on.                  ====="
-	log "  must be the Louvre sentence and about 13.13 tok/s."
-	rung "int4 g1024, default" $B "$CE" "$HEAD"
-
-	log ""
-	log "===== 2) THE CONTROL: both put back to the exact arithmetic    ====="
-	log "  must be the SAME sentence as arm 1, and about 12.30."
-	log "  a different sentence here means the flip was wrong."
-	rung "int4 g1024, EXACT_ATTN + EXACT_SILU" $B CHARSIU_EXACT_ATTN=1 CHARSIU_EXACT_SILU=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 3) 384 tokens. READ THE STAGE TABLE, NOT THE tok/s.      ====="
-	log "  the rate averages over a rising cost. the row that"
-	log "  matters is attention, against arm 1's 4.53 ms."
-	# ⚠ A PLAIN ASSIGNMENT, not a "NGEN=384 rung ..." prefix. Whether an
-	# assignment before a FUNCTION call survives it is unspecified and dash
-	# drops it -- the same trap the arm() helper below already carries a
-	# note about, and this script nearly walked into it again.
+	log "===== 1) 384 tokens, one pass over the kv cache per group      ====="
+	log "  read the attention row against round 372's 36.90 ms."
 	NGEN=384
-	rung "int4 g1024, 384 tokens" $B "$CE" "$HEAD"
+	rung "int4 g1024, 384 tokens, grouped" $B "$CE" "$HEAD"
+
+	log ""
+	log "===== 2) THE CONTROL: 384 tokens, one pass PER HEAD            ====="
+	log "  the old walk. must reproduce 36.90 and the SAME words."
+	rung "int4 g1024, 384 tokens, per head" $B CHARSIU_ATTN_PERHEAD=1 "$CE" "$HEAD"
 	NGEN=64
+
+	log ""
+	log "===== 3) 64 tokens, to be sure the short case did not regress  ====="
+	log "  about 12.95 tok/s, attention at or below 4.53 ms."
+	rung "int4 g1024, 64 tokens" $B "$CE" "$HEAD"
 
 	log ""
 	log "===== 4) the probe, still exact                                ====="
