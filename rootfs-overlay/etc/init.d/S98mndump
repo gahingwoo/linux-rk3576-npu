@@ -203,6 +203,18 @@ start() {
 	log "  launcher exit $?"
 
 	log ""
+	log "===== 5b) the UX that was added after the wizard               ====="
+	log "  -- charsiu bench: one command instead of six variables"
+	charsiu bench > "$C" 2>&1 || log "  !! bench failed"
+	log "  -- charsiu-doctor --paste: the block to put in an issue"
+	charsiu-doctor --paste > "$C" 2>&1 || true
+	log "  -- and a real conversation: does turn 2 remember turn 1?"
+	log "     (the model stays staged, so turn 2 costs a token not 20 s)"
+	printf 'My name is Bob. Just say OK.\nWhat is my name?\n/quit\n' \
+		| charsiu -i -n 24 > "$C" 2>&1 || log "  !! interactive failed"
+	log "     ^ the second answer must contain Bob"
+
+	log ""
 	log "===== 6) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
