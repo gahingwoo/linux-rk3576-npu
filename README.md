@@ -31,12 +31,17 @@ oven it is roasted in.
 
 The driver support is on the list. Current series:
 
-**[PATCH v8 0/12: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260817113603.1436067-1-gahing@gahingwoo.com/)**
-(2026-08-17, on top of Igor Paunovic's clocks-by-name fix)
+**[PATCH v9 0/13: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/)**
+(2026-08-24, on top of Igor Paunovic's clocks-by-name fix)
 
-No patch of the twelve has been applied anywhere. It carries a Reviewed-by from
-Krzysztof Kozlowski on the binding and one from Igor Paunovic on the refactor
-that arrived an hour after posting.
+v9 adds a patch that lets the core suspend after a reset, which is what
+RK3576 needs to survive a job timeout at all, and answers the v8 thread.
+The [v8 posting](https://lore.kernel.org/all/20260817113603.1436067-1-gahing@gahingwoo.com/)
+is still the place to read that review.
+
+No patch of the thirteen has been applied anywhere. It carries a Reviewed-by from
+Krzysztof Kozlowski on the binding and one from Igor Paunovic on the refactor,
+both from the v8 round.
 
 The testing is his and it is worth reading rather than counting. On 19 August he
 re-ran v8 on three RK3588 cores against a **differential base**, the same tree
@@ -47,9 +52,11 @@ as re-run; 2/12 has a fresh one naming exactly what was tested. He also said
 what the protocol cannot say, that the race itself never manifested in 45
 resets and the justification for the pair remains the source analysis.
 
-v9 exists and is held, to let v8 collect more review rather than reset the
-thread. Its 2/13 folds in an interrupt mask he raised, so it is not the patch he
-tested and his tag is deliberately not carried across.
+v9 is posted. Before it went out a review of all thirteen patches found
+that 2/13 wrote to a register on a path holding no runtime PM reference,
+which takes an async SError with the domain down; that write is guarded
+now. The same review is why 3/13 lost a Reported-by that named the wrong
+person: lore says the report was mine, not the reporter's.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
