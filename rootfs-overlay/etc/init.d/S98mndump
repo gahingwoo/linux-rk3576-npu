@@ -2,93 +2,96 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 371. SPENDING THE SPARE BANDWIDTH.
+# 2026-08-24 round 372. THE TWO SWITCHES BECOME THE DEFAULT, AND A LONG CONTEXT.
 #
-# 🏁 ROUND 370: 12.30 tok/s exact, 13.13 with both opt-ins, from 11.62.
+# ⛔ ROUND 371 KILLED THE CPU AS A SECOND ENGINE, and the trap the round wrote
+# down is the one that fired.
 #
-#   everything on              12.30 tok/s  80.9 ms  attn 6.63  sum 3.47
-#   + FAST_ATTN                12.71        78.4     attn 4.53
-#   CONTROL, vector paths off  10.55        94.5     attn 8.14  sum 8.64
-#   + FAST_ATTN + FAST_SILU    13.13        75.8     silu 1.93
+#   f = 0     12.33 tok/s   80.8 ms   fence 3778 ms   CPU share 0
+#   f = 0.10   7.20        138.7      fence  177      CPU share  8449
+#   f = 0.20   3.98        251.1      fence  186      CPU share 16388
+#   f = 0.30   2.76        362.4      fence  196      CPU share 24211
 #
-# All four sentences identical -- including both opt-in arms that were
-# predicted to differ. **All four predictions were right**, after round 368's
-# three of four wrong.
+# The fence collapsed because the hardware finishes long before the CPU does,
+# so prep_bo returns at once and the CPU is the whole critical path.
 #
-# 🔑 AND THE BANDWIDTH QUESTION HAS A NUMBER
+# 🔑 AND THE FAILURE IS COMPUTE, NOT BANDWIDTH:
 #
-#   CPU read alone   1 thread 7.13   2 threads 6.65   4 threads 6.32 GB/s
-#                    ^ MORE THREADS IS WORSE. One already saturates it.
-#   NPU alone        10.46 GB/s, 11.68 tok/s
-#   NPU + 4 readers   9.84 GB/s, 10.32 tok/s;  the readers got 5.62
-#   AGGREGATE        15.46 against 10.46 alone  ->  about 5 GB/s spare
+#   f=0.10  0.94 G weights/s      f=0.20  0.97      f=0.30  0.98
+#   the NPU, for comparison:     21.0 G weights/s
 #
-# So the practical ceiling is 15.5, not the 21.9 the bus suggests, and taking
-# the spare cost the decode 11.6% end to end. **This round is that experiment
-# with the reader doing something useful instead of nothing.**
+# Dead flat with f, which is what a compute bound loop looks like. The CPU
+# never came near the 5.62 GB/s round 370 measured it READING at; it managed
+# 0.47. Four widening steps a weight, int4 to int8 to int16 to int32 to float,
+# on a core with no fp16 arithmetic to shorten them. Best possible split even
+# perfectly tuned is f = 0.043 and 3.2%.
+#
+# **So round 371 says nothing about whether the spare bandwidth can be spent.
+# It says the CPU is not what spends it.** The bar for anything else is now a
+# number: about 10 G weights a second, which is 5 GB/s of int4.
+#
+# ✅ All four sentences were identical, at f = 0.30 with three tenths of every
+# projection computed by a different engine in a different order. The kernel is
+# right; it is just slow.
 #
 # ---------------------------------------------------------------------------
 # WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# CHARSIU_NPU_CPU_FRAC gives the CPU that fraction of every projection's output
-# channels. It costs NO scheduling: the submit is already asynchronous, so the
-# CPU's rows are computed in the window the calling thread was going to spend
-# BLOCKED in prep_bo, on the calling thread, with no fan out and no extra
-# ioctl. Round 370 is also why there is no fan out -- one thread already
-# saturates the controller, so a second would buy nothing and cost a barrier.
+# THE TWO FAST PATHS ARE THE DEFAULT NOW. Both reorder arithmetic by a last
+# bit, both moved a token on the HOST, and neither moved one on the BOARD --
+# the exponential in round 368, the dot product in round 370, each measured
+# against its own unvectorised arm and each writing the same sentence word for
+# word. Together they are 5.1 ms a token, 12.30 to 13.13 tok/s.
 #
-#   * rows are rounded DOWN to a multiple of 16, the feature atom the int4
-#     weight layout blocks by, and the hardware keeps the rest.
-#   * the CPU's rows get their own NIBBLE PACKED copy. t->q keeps one whole
-#     BYTE per int4 weight, so reading them out of it would cost twice the
-#     bytes the hardware pays for the same weights -- and bandwidth is the
-#     entire point. It is f * 620 MB, so 186 MB at f = 0.30.
-#   * the activation is rounded through fp16 first, so both halves of the
-#     split see the same numbers the hardware sees.
-#   * only where the sum already lands in the caller's buffer, which is
-#     grouped int4 with the vector paths on.
+# ⚠ Two rounds agreeing is not proof that no prompt ever diverges, and neither
+# round claimed it was. What it is, is enough to stop paying 5 ms for a switch
+# nobody turns on. CHARSIU_EXACT_ATTN and CHARSIU_EXACT_SILU put each back, and
+# CHARSIU_CPU_PLAIN puts back both.
 #
-# The kernel was checked on the host against a plain double reference at seven
-# shapes: **worst absolute miss 3.3e-07 of the vector's own RMS**, about one
-# float last place. Two bugs died in that check and neither would have shown up
-# on this board: a vector path that assumed a group starts on an EVEN index
-# (2.26 relative at k = 34, groups of 17) and an accumulator that was assigned
-# where it should have been added to, which silently dropped the scalar step.
+# ⚠ AND THE SCALAR BUILD NO LONGER MATCHES THE DEFAULT ONE. Neither reordering
+# has a scalar twin, so the invariant is rewritten rather than quietly dropped:
+# charsiu_run_scalar now equals charsiu_run with both EXACT switches, which is
+# checked on the host and is still a detector for every vector path that IS
+# meant to be bit identical.
+#
+# ---------------------------------------------------------------------------
+# AND THE ONE THING NOBODY HAS MEASURED: A LONG CONTEXT
+# ---------------------------------------------------------------------------
+#
+# Every decode round since 352 has generated 64 tokens from a six token prompt,
+# so attention has never been asked about beyond about 70 positions. It is the
+# ONE cost in the token that grows with the conversation: at 70 positions it is
+# 4.53 ms of 75.8, and it should scale with the position while everything else
+# stays flat. Arm 3 generates 384 tokens to find out where that goes.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# ⚠ THE SENTENCE IS EXPECTED TO CHANGE, and for once that is not a caveat but
-# the definition: rows moved to the CPU are summed in a different order by a
-# different engine. What must hold is that it stays coherent English on the
-# topic, and that arms 5 and 6 -- which do not use the split at all -- are
-# still exact. **A sentence that turns to salad means the split is wrong, not
-# imprecise.**
+# THE SENTENCE. Arms 1 and 2 must both be the Louvre sentence and must match
+# each other -- that is the whole claim being locked in, that the board does
+# not see the difference the host sees. **If arm 1 differs from arm 2, the flip
+# was wrong and the switches go back to opt-in.**
 #
-# THEN tok/s AGAINST f. Arm 1 is f = 0 and must reproduce 12.30.
-#   * a peak that then falls = the balance point, and the peak is the answer
-#   * a monotonic fall from f = 0 = the CPU cannot convert the spare bandwidth
-#     into tokens, and the whole heterogeneous idea is finished for decode.
-#     Say that plainly and stop, rather than reaching for the GPU next.
+# THEN tok/s: arm 1 should reproduce round 370's 13.13 and arm 2 its 12.30.
 #
-# ⚠ THEN THE NEW LINE, "the CPU's own share ... inside the fence window". That
-# time is FREE only while it is smaller than the fence. If it approaches or
-# passes the fence, the CPU has become the critical path and the fence number
-# has stopped meaning what it says -- check that before reading anything else
-# into a slowdown.
+# ⚠ THEN ARM 3, AND READ ITS STAGE TABLE, NOT ITS tok/s. A 384 token run
+# averages over positions 6 to 390, so its tok/s is an average of a rising
+# cost and cannot be compared with a 64 token run. The row that matters is
+# attention, against arm 1's 4.53 ms. Everything else in the table should be
+# unchanged, and if it is not, the extra is not attention's.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# The arithmetic says a CPU doing useful int4 at 4 GB/s balances near f = 0.29
-# and would take the fence from 59 to 45 ms, which is 15 tok/s. I do not
-# believe it: round 370 measured a dummy reader costing the decode 11.6% while
-# it took 5.62 GB/s, and this reader has to unpack nibbles and scale as well.
-# **I expect a peak between f = 0.15 and 0.25 worth 5 to 10%, and I would not
-# be surprised by a monotonic loss.**
+# Arms 1 and 2 to reproduce 13.13 and 12.30 with one sentence between them.
+# Attention is a dot product and an accumulation per position, so at an average
+# position of about 200 against about 40 it should be roughly five times 4.53,
+# call it 20 to 25 ms, which would make it the second largest cost in the token
+# after the fence. If it comes back near 4.53 then it is not scaling with the
+# position and I have the shape of it wrong.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -219,37 +222,41 @@ squeeze() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 371: spending the spare bandwidth              #####"
+	log "##### round 372: the switches become the default            #####"
 	log "###############################################################"
-	log "  the CPU takes part of every projection, in the window it"
-	log "  was going to spend blocked in prep_bo anyway."
+	log "  and the first look at what a long context costs."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
 	log ""
-	log "===== 1) f = 0. THE CONTROL. must reproduce 12.30 tok/s        ====="
-	rung "int4 g1024, CPU_FRAC=0" $B "$CE" "$HEAD"
+	log "===== 1) the new default. both fast paths on.                  ====="
+	log "  must be the Louvre sentence and about 13.13 tok/s."
+	rung "int4 g1024, default" $B "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) f = 0.10                                              ====="
-	rung "int4 g1024, CPU_FRAC=0.10" $B CHARSIU_NPU_CPU_FRAC=0.10 "$CE" "$HEAD"
+	log "===== 2) THE CONTROL: both put back to the exact arithmetic    ====="
+	log "  must be the SAME sentence as arm 1, and about 12.30."
+	log "  a different sentence here means the flip was wrong."
+	rung "int4 g1024, EXACT_ATTN + EXACT_SILU" $B CHARSIU_EXACT_ATTN=1 CHARSIU_EXACT_SILU=1 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) f = 0.20                                              ====="
-	rung "int4 g1024, CPU_FRAC=0.20" $B CHARSIU_NPU_CPU_FRAC=0.20 "$CE" "$HEAD"
+	log "===== 3) 384 tokens. READ THE STAGE TABLE, NOT THE tok/s.      ====="
+	log "  the rate averages over a rising cost. the row that"
+	log "  matters is attention, against arm 1's 4.53 ms."
+	# ⚠ A PLAIN ASSIGNMENT, not a "NGEN=384 rung ..." prefix. Whether an
+	# assignment before a FUNCTION call survives it is unspecified and dash
+	# drops it -- the same trap the arm() helper below already carries a
+	# note about, and this script nearly walked into it again.
+	NGEN=384
+	rung "int4 g1024, 384 tokens" $B "$CE" "$HEAD"
+	NGEN=64
 
 	log ""
-	log "===== 4) f = 0.30                                              ====="
-	log "  read the CPU-share line: it is free only while it is"
-	log "  smaller than the fence."
-	rung "int4 g1024, CPU_FRAC=0.30" $B CHARSIU_NPU_CPU_FRAC=0.30 "$CE" "$HEAD"
-
-	log ""
-	log "===== 5) the probe, still exact (the split is not in it)       ====="
+	log "===== 4) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 6) the anchor: int8 conv must still be exact            ====="
+	log "===== 5) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
