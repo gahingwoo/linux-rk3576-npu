@@ -825,10 +825,20 @@ The third run is there so the failure reads as deterministic rather than
 intermittent. Igor Paunovic reported the observation this came from, and on
 RK3588 his resets drop the domain either way, so it may be RK3576 only.
 
-⚠ On a board built from this tree the fix is behind `rocket.reset_autosuspend=1`
-and **defaults off**. A long test round that hits one timeout will otherwise run
-every entry after it on a dead block, which is exactly what happened to round
-250 and cost thirty entries.
+⚠ That paragraph described this tree until 2026-08-24, when the fix stopped
+being optional. `rocket.reset_autosuspend` **no longer exists**: the tree now
+carries v9's 2/13 and 3/13 unconditionally, so a board built from it recovers
+from a timeout with no boot parameter. It is written down because the old text
+told a reader to pass a parameter that is gone, which is the same defect the
+paper's Reproduction section had.
+
+The reason it changed is worth keeping. An audit of the posted series against
+the tree that actually gets flashed found the board running something else in
+two places: those two patches had never been applied here at all, and the DTS
+used `rockchip,rk3576-iommu` where v9 posts `rockchip,rk3576-npu-iommu` -- which
+v9's own binding would reject, since the five clock form is gated on the new
+compatible. It is inert in the driver, which matches both through the rk3568
+fallback, but it meant the posted DTS had never booted.
 
 ## Patches
 
