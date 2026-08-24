@@ -37,6 +37,13 @@ BR2_LINUX_KERNEL_INSTALL_TARGET=y
 BR2_PACKAGE_BUSYBOX=y
 BR2_PACKAGE_DROPBEAR=y
 BR2_PACKAGE_LIBDRM=y
+
+# charsiu-get pulls gguf files from huggingface.co over HTTPS, so the board
+# needs a real TLS fetcher and a CA store. busybox wget alone cannot verify a
+# certificate, and the rootfs shipped no CA bundle at all.
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
 BR2_PACKAGE_PYTHON3=y
 BR2_PACKAGE_PYTHON3_PY_LAUNCHER=y
 BR2_PACKAGE_PYTHON_PIP=y

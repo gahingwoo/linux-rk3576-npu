@@ -2,103 +2,82 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-25 round 380. THE RAIL FOLLOWS THE DOMAIN, AND THREE FIXED INSTRUMENTS.
+# 2026-08-25 round 381. THE WIZARD, ON THE BOARD.
+#
+# r380 closed the power line: the rail follows the domain, it costs nothing in
+# steady state, and it ran twice clean. r380b is the fastest anchor on record
+# at 14.77 tok/s.
+#
+# This round verifies what was built today, on the target rather than the host:
+# a model zoo that downloads from Hugging Face, a gate that decides whether a
+# file is runnable by READING IT, and a launcher/config/doctor that replace a
+# six-variable incantation.
 #
 # ---------------------------------------------------------------------------
-# WHAT ROUND 379 ANSWERED
+# WHAT WAS BUILT, AND WHY EACH PIECE EXISTS
 # ---------------------------------------------------------------------------
 #
-# ✅ **A53 vs A72 is CLOSED, and the A53 loses on both axes.** 14.59 -> 11.17
-# tok/s, 68.2 -> 88.6 ms a token, and the hardware path fell 10.34 -> 8.81 GB/s
-# because the little cores cannot feed the NPU (460 -> 540 us a submit).
+# charsiu_check   The runtime reads six ggml types (f32 f16 q4_0 q4_1 q8_0 q6_K)
+#                 and builds ONE graph (general.architecture == "llama"). The
+#                 filename does not tell you whether a file qualifies. MEASURED
+#                 on real Hugging Face files:
+#                   Q4_0_4_4.gguf -> type 31 in 210 tensors  (a Q4_0 REPACKED
+#                                    for ARM dotprod; passes any name test)
+#                   Q4_K_M.gguf   -> type 6 (q5_0) in 166 tensors
+#                   Qwen2.5-*     -> architecture qwen2
+#                 ⚠ And the reverse: Q6_K_L.gguf MEASURED AS RUNNABLE. I had
+#                 called it a trap and it is not -- every type in that file is
+#                 one charsiu reads. Only the contents decide, both ways.
+#                 It uses the RUNTIME's own gguf parser, so the gate cannot
+#                 drift from what will load.
 #
-#   the 3x is not there to collect. schedutil held the A53s at 2016 MHz @ 0.900 V
-#   for 74% of the arm while the A72s spent 43% at 1200 MHz @ 0.700 V, so per
-#   core-second the A53 is only 2.49x cheaper -- and it needs 2.29x more of them.
+# charsiu-get     The zoo. Every row was verified against the live repo on
+#                 2026-08-25: size from the HF tree API, architecture read out
+#                 of the file's own header over a range request. A download is
+#                 gated before it is kept, and a file that fails is DELETED
+#                 rather than left where the runtime would find it.
 #
-#   CPU energy 8.23 J -> 7.34 J (-10.8%), but it holds the NPU active 1.93 s
-#   longer, so it only wins if NPU active power is under 461 mW. It is pushing
-#   ~9 GB/s through LPDDR5. It is not under 461 mW.
+# charsiu         The launcher. The runtime reads 109 CHARSIU_* variables; six
+#                 decide whether a decode reaches the NPU at all, and getting
+#                 one wrong does not fail loudly -- it quietly runs a third as
+#                 fast on the CPU. ⚠ KMAX and W4_GROUP must be EQUAL (npudev
+#                 gates the int4 path on it), so config.ini keeps ONE value and
+#                 writes both.
 #
-#   Clean by-stage split: pure-CPU rows 6.03 -> 13.58 ms = 2.25x, NPU-dominated
-#   rows 62.05 -> 74.61 = 1.20x. That is the A53 IPC number, measured.
-#
-# ✅ **The idle session's falsifiable clause PASSED**: with the model resident
-# and the fds open, both NPU cores read suspended, active 0.00 s, suspended
-# 20.10 s of a 20 s window.
-#
-# ---------------------------------------------------------------------------
-# ⚠ AND THREE INSTRUMENT DEFECTS, ALL MINE, ALL FIXED HERE
-# ---------------------------------------------------------------------------
-#
-# 1. ⚠⚠ **cpuidle time BANKS ON EXIT.** A core in a long uninterrupted sleep
-#    has that episode uncounted, so it reads as BUSY. r379's idle floor showed
-#    cpu4 at 14.4% and cpu7 at 19.0% idle and I nearly reported two A72s burning
-#    85% of a window in which nothing ran. **The apparently busiest cores were
-#    the soundest sleepers** -- cpu4's 17 s "deficit" was how long it had been
-#    asleep at the moment of sampling.
-#    FIX: /proc/stat, whose get_idle_time() adds the in-progress idle period on
-#    NO_HZ. cpuidle usage COUNTS are kept beside it -- a core that is genuinely
-#    busy enters idle many times, a core sleeping deeply enters it once.
-#
-# 2. ⚠ **The clock question was asked wrong.** I counted enable_count > 0 with
-#    prepare_count == 0, which is structurally almost impossible, got 0, and
-#    nearly called the crutch free. clk_disable_unused goes after clocks that
-#    are ENABLED IN HARDWARE with enable_count == 0 -- column 9 is the hardware
-#    Y/N and column 2 is the enable count. Asked properly this round.
-#
-# 3. ⚠ **psnap never sampled a regulator**, which is why r379 could not answer
-#    the one question that mattered. Rails are sampled now.
+# charsiu-config  ⚠ NO CURSES, unlike kiln's whiptail TUI. This rootfs has no
+#                 whiptail, no dialog, no newt and no slang, and the board is
+#                 driven over a 1.5 Mbaud serial console. Plain numbered menu,
+#                 zero dependencies. Copying kiln's SHAPE is not copying its
+#                 dependencies -- the two stacks are incompatible.
 #
 # ---------------------------------------------------------------------------
-# 🔑 THE FINDING, WHICH CAME FROM CHASING WHY THE INSTRUMENT COULD NOT ANSWER
+# AND THE BOARD COULD NOT REACH THE NETWORK AT ALL UNTIL THIS ROUND
 # ---------------------------------------------------------------------------
 #
-# rocket's runtime_suspend does clk_bulk_disable_unprepare and NOTHING ELSE --
-# there is no regulator call anywhere in drivers/accel/rocket. A rail follows
-# the domain only through domain-supply on the power-domain node, taken by
-# rockchip_pd_power(), and only when the domain carries need_regulator.
-#
-#   the board kernel ALREADY has DOMAIN_RK3576_R and need_regulator, and
-#   RK3576_PD_NPU already uses it. The DTS was the half that never caught up:
-#   vdd_npu_s0 carried regulator-always-on and no domain-supply existed, so the
-#   NPU rail sat at 750 mV forever. **v9 posts exactly this fix.** The round
-#   image had simply never been brought in line with what we upstreamed.
-#
-# THIS ROUND CHANGES THE DTS, three lines, keeping BOTH cores:
-#   * rk3576.dtsi   : label the domain  pd_npu: power-domain@RK3576_PD_NPU
-#   * rk3576-rock-4d.dts : drop regulator-always-on from vdd_npu_s0 ONLY
-#                          (the other 33 always-on regulators are untouched)
-#   * rk3576-rock-4d.dts : &pd_npu { domain-supply = <&vdd_npu_s0>; }
-#
-# ⚠ BE HONEST ABOUT THE SIZE OF THIS. The domains and the clocks were already
-# dropping. What stays up is the rail, and its cost is the buck's quiescent draw
-# plus leakage into gated logic -- real, probably small, and NOT measurable on
-# this board, which has no INA, no shunt and no fuel gauge. "Small but forever"
-# is the category that matters on a battery, and the fix was already written.
-# No wattage is claimed anywhere in this round.
-#
-# ⚠ AND IT IS THE RISKIEST CHANGE IN MONTHS. Every arm now starts from a COLD
-# RAIL. This project has a long history with cold-start per power session (it
-# was the WALL, root-caused to PC_TASK_CON and fixed). The anchor therefore runs
-# TWICE, once before anything and once at the end.
+# Every log up to r380 has "Waiting for interface eth0 to appear......... timeout!"
+# and nobody had chased it. Root cause: CONFIG_STMMAC_ETH, STMMAC_PLATFORM and
+# DWMAC_ROCKCHIP were all =m and nothing modprobes them at boot. Now =y.
+# ⚠ The PHY was NOT the problem: rock-4d.dts says ethernet-phy-id001c.c916,
+# which is a Realtek RTL8211F, and CONFIG_REALTEK_PHY=y was already set. I said
+# Motorcomm first and that was wrong -- the DTS says otherwise.
+# The rootfs also had no CA store and no TLS fetcher, so ca-certificates and
+# curl were added; busybox wget alone cannot verify a certificate.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ IT
 # ---------------------------------------------------------------------------
 #
-#   * arm 0: the corrected clock count, and the genpd view of the NPU subtree.
-#   * arm 1 IS THE HEADLINE. At rest, **vdd_npu_s0 must read disabled**, and
-#     the four NPU domains must read off. In r379 the rail read enabled at
-#     750000 uV and could not do otherwise.
-#   * arm 1b: the anchor BEFORE any charsiu run. If cycling the rail broke the
-#     block, it breaks here and the rest of the round is known-bad.
-#   * arm 2 is the standing anchor: 14.6 tok/s, the Louvre sentence, in r378's
-#     <= 1% band. A rail that has to ramp on every resume would show up as a
-#     slower first submit, not a slower token, so watch the GB/s too.
-#   * arm 3: the idle session again, now with the rail sampled. Both cores
-#     suspended AND the rail down.
-#   * probe exact, anchor clean a second time.
+#   * arm 1: eth0 must EXIST and carry an address. This has never worked here.
+#   * arm 2: charsiu-doctor must pass with nothing critical.
+#   * arm 3: the gate, against the three models that ship on the card.
+#   * arm 4: the zoo, and a REAL download from Hugging Face, on the board.
+#     ⚠ The card is tight -- 2.7 GB of models in a 3584 MB rootfs -- so
+#     charsiu-get's free-space check may refuse, and refusing is a PASS for
+#     that check. df is printed first so the number is visible either way.
+#   * arm 5: the launcher must produce the SAME tok/s as the raw incantation.
+#     That is the whole claim: convenience with no cost. Both arms are 64
+#     tokens on the A72s; r380b's anchor was 14.77 and the band is <= 1%.
+#   * probe exact, anchor clean.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -122,297 +101,108 @@ health() {
 	if grep -q "128/128 channels match" /tmp/hc.txt; then
 		log "  !! health OK, the block computes"
 	else
-		log "  !! health FAILED, the block did not come back this time."
-		ABORT=1
+		log "  !! health FAILED"; ABORT=1
 	fi
 }
-
 capped() {
 	lim="$1"; shift
-	"$@" &
-	pid=$!
-	i=0
+	"$@" & pid=$!; i=0
 	while [ "$i" -lt "$lim" ]; do
 		kill -0 "$pid" 2>/dev/null || { wait "$pid"; return $?; }
-		sleep 1
-		i=$((i + 1))
+		sleep 1; i=$((i + 1))
 	done
-	kill -9 "$pid" 2>/dev/null
-	wait "$pid" 2>/dev/null
-	return 124
+	kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 124
 }
-
-# ---------------------------------------------------------------------------
-# THE INSTRUMENT. No meter exists, so everything is residency, over a named
-# window, as a DELTA. Sample lines are  kind<TAB>key<TAB>value; the kind carries
-# the unit because the sources do not agree on one:
-#   cs   /proc/stat, cpufreq time_in_state   centiseconds (USER_HZ)
-#   us   cpuidle time                        microseconds  (⚠ banks on EXIT)
-#   ms   runtime_*_time, genpd active_time   milliseconds
-#   n    a plain count, printed as a delta
-#   temp thermal_zone temp                   millidegrees
-#   str  a word: runtime_status, regulator state, genpd current_state
-# ---------------------------------------------------------------------------
-psnap() {
-	f="$1"; : > "$f"
-
-	# 🔑 THE CORRECTED IDLE INSTRUMENT. get_idle_time() adds the in-progress
-	# idle period on NO_HZ, which is exactly what cpuidle's counter cannot do.
-	awk '/^cpu[0-9]/ {printf "cs\tstat.%s.idle\t%d\n", $1, $5 + $6}' /proc/stat >> "$f"
-	awk '/^cpu[0-9]/ {printf "cs\tstat.%s.busy\t%d\n", $1, $2+$3+$4+$7+$8+$9}' /proc/stat >> "$f"
-
-	for c in /sys/devices/system/cpu/cpu0 /sys/devices/system/cpu/cpu1 \
-		 /sys/devices/system/cpu/cpu2 /sys/devices/system/cpu/cpu3 \
-		 /sys/devices/system/cpu/cpu4 /sys/devices/system/cpu/cpu5 \
-		 /sys/devices/system/cpu/cpu6 /sys/devices/system/cpu/cpu7; do
-		n=${c##*/}
-		for s in "$c"/cpuidle/state*; do
-			[ -r "$s/usage" ] || continue
-			# the COUNT, not the time -- a busy core enters idle many
-			# times, a deep sleeper enters it once. This is what tells
-			# the two apart, which r379 could not do.
-			printf 'n\tenter.%s.%s\t%s\n' "$n" "$(cat $s/name)" \
-				"$(cat $s/usage)" >> "$f"
-		done
-	done
-	for p in /sys/devices/system/cpu/cpufreq/policy*; do
-		[ -r "$p/stats/time_in_state" ] || continue
-		pn=${p##*/}
-		awk -v pn="$pn" '{printf "cs\tfreq.%s.%s\t%s\n", pn, $1, $2}' \
-			"$p/stats/time_in_state" >> "$f"
-	done
-
-	# 🔑 THE RAIL. r379 could not answer its own question because this was
-	# missing. ⚠ num_users is rdev->use_count, the LIVE ENABLE COUNT, not a
-	# count of consumers -- see the rail memory, it cost a round once.
-	for r in /sys/class/regulator/regulator.*; do
-		[ -r "$r/name" ] || continue
-		nm=$(cat "$r/name")
-		case "$nm" in
-		vdd_npu*|vdd_gpu*|vdd_cpu_big*|vdd_cpu_lit*)
-			printf 'str\trail.%s.state\t%s\n' "$nm" \
-				"$(cat $r/state 2>/dev/null)" >> "$f"
-			printf 'str\trail.%s.use_count\t%s\n' "$nm" \
-				"$(cat $r/num_users 2>/dev/null)" >> "$f" ;;
-		esac
-	done
-
-	# the power domains themselves, which is the thing the rail now follows
-	for g in /sys/kernel/debug/pm_genpd/*npu*; do
-		[ -d "$g" ] || continue
-		n=${g##*/}
-		printf 'str\tpd.%s.state\t%s\n' "$n" \
-			"$(cat $g/current_state 2>/dev/null)" >> "$f"
-		printf 'ms\tpd.%s.active\t%s\n' "$n" \
-			"$(cat $g/active_time 2>/dev/null)" >> "$f"
-	done
-
-	for d in /sys/bus/platform/devices/27700000.npu \
-		 /sys/bus/platform/devices/27708000.npu; do
-		[ -d "$d/power" ] || continue
-		n=${d##*/}
-		printf 'str\tnpu.%s.status\t%s\n' "$n" \
-			"$(cat $d/power/runtime_status 2>/dev/null)" >> "$f"
-		printf 'ms\tnpu.%s.suspended\t%s\n' "$n" \
-			"$(cat $d/power/runtime_suspended_time 2>/dev/null)" >> "$f"
-	done
-
-	for z in /sys/class/thermal/thermal_zone*; do
-		[ -r "$z/temp" ] || continue
-		printf 'temp\t%s\t%s\n' "$(cat $z/type)" "$(cat $z/temp)" >> "$f"
-	done
-	# ⚠ the FULL uptime, decimals included. r379 cut it at the point and a
-	# 20.1 s window read as 20, which is a 0.5% error on every percentage.
-	printf 'wall\twall\t%s\n' "$(awk '{print $1}' /proc/uptime)" >> "$f"
-}
-
-pdelta() {
-	log ""
-	log "  ~~ residency: $3"
-	awk -F'\t' '
-	  NR==FNR { a[$2]=$3; next }
-	  { k[$2]=$1; v[$2]=$3; ord[++n]=$2 }
-	  END {
-	    win = v["wall"] - a["wall"];
-	    if (win < 0.001) win = 0.001;
-	    printf "     (window %.2f s)\n", win;
-	    for (i = 1; i <= n; i++) {
-	      key = ord[i]; if (key == "wall") continue;
-	      t = k[key]; o = a[key]; b = v[key];
-	      if      (t=="temp") printf "     %-34s %7.1f C   (was %.1f)\n", key, b/1000, o/1000;
-	      else if (t=="cs")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/100, (b-o)/win;
-	      else if (t=="us")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/1e6, (b-o)/(win*1e4);
-	      else if (t=="ms")   printf "     %-34s %7.2f s   %5.1f%%\n", key, (b-o)/1e3, (b-o)/(win*10);
-	      else if (t=="n")    printf "     %-34s %7d\n", key, b-o;
-	      else if (t=="str")  printf "     %-34s %9s   %s\n", key, b, (b==o ? "" : "(was " o ")");
-	    }
-	  }' "$1" "$2" > "$C"
-}
-
-idlewin() {
-	psnap /tmp/p0
-	sleep "$1"
-	psnap /tmp/p1
-	pdelta /tmp/p0 /tmp/p1 "$2"
-}
-
 rung() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
+	[ "$ABORT" = "1" ] && { log "  -- SKIPPED: $1"; return 0; }
 	lbl="$1"; shift
 	before=$(nbad)
-	log ""
-	log "  -- $lbl"
-	sleep 1
+	log ""; log "  -- $lbl"; sleep 1
 	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n "${NGEN:-32}" \
 		--ignore-eos -q -c 512 -t 4 > "$C" 2>&1
 	rc=$?
 	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
-	[ "$(nbad)" != "$before" ] && { log "  !! POISON. This rung is VOID."; health; }
+	[ "$(nbad)" != "$before" ] && { log "  !! POISON. VOID."; health; }
 	return 0
 }
-
-prung() {
-	lbl="$1"
-	psnap /tmp/p0
-	rung "$@"
-	psnap /tmp/p1
-	pdelta /tmp/p0 /tmp/p1 "$lbl"
-}
-
-holdarm() {
-	[ "$ABORT" = "1" ] && { log "  -- SKIPPED (round aborted): $1"; return 0; }
-	lbl="$1"; shift
-	log ""
-	log "  -- $lbl"
-	sleep 1
-	env "$@" "$RUN" "$M8" -p "$PROMPT" -n 32 --ignore-eos -q -c 512 -t 4 \
-		--hold-secs 26 > /tmp/hold.txt 2>&1 &
-	hpid=$!
-	i=0
-	while [ "$i" -lt 300 ]; do
-		grep -q "holding" /tmp/hold.txt 2>/dev/null && break
-		kill -0 "$hpid" 2>/dev/null || break
-		sleep 1
-		i=$((i + 1))
-	done
-	if ! grep -q "holding" /tmp/hold.txt 2>/dev/null; then
-		log "  !! the hold never started, this arm is VOID"
-		wait "$hpid" 2>/dev/null
-		cat /tmp/hold.txt > "$C"
-		return 0
-	fi
-	sleep 3
-	psnap /tmp/p0
-	sleep 20
-	psnap /tmp/p1
-	wait "$hpid" 2>/dev/null
-	grep -E "^\[|holding|hold done" /tmp/hold.txt > "$C"
-	pdelta /tmp/p0 /tmp/p1 "$lbl"
-	return 0
-}
-
 arm() {
 	before=$(nbad)
-	log ""
-	log "  ---- $1"
-	sleep 1
+	log ""; log "  ---- $1"; sleep 1
 	env ${5:-IGNORED=1} $VD "$2" "$WT" "$IN" "$3" "$4" 4096 > /tmp/vd.txt 2>&1
 	cat /tmp/vd.txt > "$C"
 	after=$(nbad)
-	if [ "$after" != "$before" ]; then
-		log "  !! POISONED: $((after - before)) new fault or timeout lines"
-		health
-		ABORT=0
-		sleep 2
-	fi
+	[ "$after" != "$before" ] && { log "  !! POISONED"; health; ABORT=0; sleep 2; }
 }
 
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 380: the rail follows the domain                #####"
+	log "##### round 381: the wizard, on the board                   #####"
 	log "###############################################################"
-	log "  DTS changed: vdd_npu_s0 loses regulator-always-on and the NPU"
-	log "  power domain takes it as domain-supply. Both cores kept."
-	log "  NO WATTS ARE CLAIMED. Everything below is residency."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
-	mount -t debugfs none /sys/kernel/debug 2>/dev/null
 
 	log ""
-	log "===== 0) the instrument, corrected                             ====="
-	for p in /sys/devices/system/cpu/cpufreq/policy*; do
-		[ -d "$p" ] || continue
-		log "     ${p##*/}: cpus=$(cat $p/related_cpus 2>/dev/null) gov=$(cat $p/scaling_governor 2>/dev/null)"
-	done
-	log "  -- the clock crutch, asked PROPERLY this time"
-	log "     (column 2 is enable_count, column 9 is the hardware Y/N;"
-	log "      clk_disable_unused goes after hardware-on with count 0)"
-	if [ -r /sys/kernel/debug/clk/clk_summary ]; then
-		awk 'NF>=9 && $2 ~ /^[0-9]+$/ {
-			tot++;
-			if ($9 == "Y") { hw++; if ($2+0 == 0) held++ }
-		     } END {
-			printf "     %d clocks, %d enabled IN HARDWARE, %d of those with enable_count 0\n", tot, hw, held+0
-		     }' /sys/kernel/debug/clk/clk_summary > "$C"
-		log "     (the last number is what clk_ignore_unused is holding up)"
+	log "===== 1) THE NETWORK, which has never worked on this board     ====="
+	log "  stmmac/dwmac-rockchip were modules nobody loaded. Now built in."
+	ip addr show eth0 2>/dev/null > "$C" || log "  !! eth0 does not exist"
+	log "  -- route"
+	ip route 2>/dev/null > "$C"
+	log "  -- can it resolve and reach huggingface.co?"
+	if curl -s -m 20 -o /dev/null -w '     HTTP %{http_code} in %{time_total}s\n' \
+	     https://huggingface.co/api/models/bartowski/SmolLM2-135M-Instruct-GGUF > "$C" 2>&1; then
+		log "     (a 200 above means TLS, the CA store and DNS all work)"
 	else
-		log "     clk_summary not available"
+		log "  !! could not reach huggingface.co"
 	fi
-	log "  -- the NPU power domains, as genpd sees them"
-	for g in /sys/kernel/debug/pm_genpd/*npu*; do
-		[ -d "$g" ] || continue
-		log "     ${g##*/}: $(cat $g/current_state 2>/dev/null) active=$(cat $g/active_time 2>/dev/null) ms idle=$(cat $g/total_idle_time 2>/dev/null) ms"
+
+	log ""
+	log "===== 2) charsiu-doctor                                        ====="
+	charsiu-doctor > "$C" 2>&1
+	log "  doctor exit $?  (0 = nothing critical)"
+
+	log ""
+	log "===== 3) the gate, on the models that ship on the card         ====="
+	for m in /opt/charsiu/models/*.gguf; do
+		printf '  %-46s ' "$(basename "$m")" > "$C"
+		/opt/charsiu/charsiu_check -q "$m" > "$C" 2>&1
 	done
-	log "  -- the rails, right now"
-	for r in /sys/class/regulator/regulator.*; do
-		[ -r "$r/name" ] || continue
-		nm=$(cat "$r/name")
-		case "$nm" in vdd_npu*|vdd_gpu*|vdd_cpu*)
-			log "     $nm: $(cat $r/state 2>/dev/null) ${nm:+at} $(cat $r/microvolts 2>/dev/null) uV, use_count $(cat $r/num_users 2>/dev/null)" ;;
-		esac
-	done
 
 	log ""
-	log "===== 1) THE HEADLINE: is the NPU rail DOWN at rest?           ====="
-	log "  r379 read vdd_npu_s0 enabled at 750000 uV and could not do"
-	log "  otherwise -- it carried regulator-always-on. It must now read"
-	log "  disabled, and the four NPU domains must read off."
-	idlewin 20 "idle floor, nothing has touched the NPU yet"
+	log "===== 4) the zoo, and a real download from Hugging Face        ====="
+	log "  -- room on the card first; refusing for lack of space is a PASS"
+	df -h /opt/charsiu/models > "$C" 2>&1
+	charsiu-get > "$C" 2>&1
+	log "  -- fetching the smallest entry, 92 MB, onto this board"
+	charsiu-get smollm2-135m-q4 > "$C" 2>&1
+	log "  fetch exit $?"
+	ls -l /opt/charsiu/models/ > "$C" 2>&1
 
 	log ""
-	log "===== 1b) THE ANCHOR, BEFORE ANY CHARSIU RUN                   ====="
-	log "  every arm from here starts on a COLD RAIL. If that broke the"
-	log "  block it breaks here, and the rest of the round is known-bad."
-	health
+	log "===== 5) the launcher must cost NOTHING                        ====="
+	log "  same 64 tokens, once by hand and once through config.ini."
+	log "  r380b's anchor was 14.77 tok/s and the band is <= 1%."
+	rung "by hand: the six variables spelled out" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
+	log ""
+	log "  -- through the launcher"
+	log "     the command it builds:"
+	charsiu --show -p "$PROMPT" -n 64 > "$C" 2>&1
+	# ⚠ the same CHARSIU_STAGES as the by-hand arm, or the two are not the
+	# same measurement. env inherits, and the launcher's own env adds to it.
+	capped "$LIMIT" env CHARSIU_STAGES=1 charsiu -p "$PROMPT" -n 64 \
+		--ignore-eos -q > "$C" 2>&1
+	log "  launcher exit $?"
 
 	log ""
-	log "===== 0b) warm the page cache. THIS ARM IS DISCARDED.          ====="
-	rung "warm-up, discarded" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 2) the standing anchor: 64 tokens on the A72s            ====="
-	log "  14.6 tok/s and the Louvre sentence, inside r378's 1% band."
-	log "  a rail that ramps on every resume would cost a slower FIRST"
-	log "  submit, not a slower token -- so read the GB/s as well."
-	prung "64 tok on the A72s" "int4 g1024, CHARSIU_CPUS=4-7" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 3) an idle session, now with the rail in view            ====="
-	log "  model resident, fds open, nobody talking. r379 proved both"
-	log "  cores suspend. THE NEW CLAUSE: the rail must be down too."
-	holdarm "idle with the model resident" $B "$CE" "$HEAD" CHARSIU_CPUS=4-7
-
-	log ""
-	log "===== 4) the probe, still exact                                ====="
+	log "===== 6) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 5) the anchor AGAIN, after every rail cycle of the round ====="
+	log "===== 7) the anchor                                            ====="
 	health
 
 	log ""
-	log "===== read arm 1's rail.vdd_npu_s0.state first.                ====="
+	log "===== read arm 1 first: nothing else matters if eth0 is down.  ====="
 	sync
 }
 case "$1" in
