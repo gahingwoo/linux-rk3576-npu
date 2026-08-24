@@ -43,6 +43,35 @@
 # between them is taken once a GROUP, not once a position.
 #
 # ---------------------------------------------------------------------------
+# AND A DEFECT THE LOG ITSELF SHOWED
+# ---------------------------------------------------------------------------
+#
+# Round 372's 384 token arm printed <|eot_id|> and <|start_header_id|> into the
+# text. Those are CONTROL tokens -- the model steers with them and nobody reads
+# them -- and tokenizer_decode hands back their literal SPELLING. The loop
+# intercepted only end-of-generation and wrote whatever else came back, so four
+# of them landed in the output as 58 characters of tag.
+#
+# They are suppressed now. ⚠ They still COUNT and still go back into the model:
+# each cost a forward pass and each is real context, so only the printing
+# changes. --show-special prints them anyway, which is how this was confirmed
+# to fire rather than to do nothing.
+#
+# ⚠ SO THE 384 TOKEN TEXT WILL NOT MATCH ROUND 373'S ARCHIVED OUTPUT, and that
+# is this change, not the layout. Arms 1 and 2 must still match EACH OTHER.
+#
+# The end-of-generation handling itself was never broken: with --chat and
+# without --ignore-eos the model stops on its own after seventeen tokens with a
+# well formed answer. It is the benchmark's --ignore-eos, which exists so a
+# timing round generates a fixed count, that lets a control token be sampled at
+# all.
+#
+# One more, found next to it: this tool passed a hard 1 for add_bos where
+# tokenizer_encode has always taken -1 to mean "ask the file". Llama 3's file
+# says true, so nothing moves here, but a model whose file said otherwise got a
+# begin-of-text it did not ask for. It asks the file now.
+#
+# ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
