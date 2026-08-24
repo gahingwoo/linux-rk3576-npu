@@ -2,81 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 376. THE 8 MS, AND THE DENOMINATOR THAT HID IT.
+# 2026-08-24 round 377. THE 8 MS WAS ALL OF IT, AND IT IS NOT NEEDED.
 #
-# ⚠ ROUND 375 ANSWERED BOTH ITS QUESTIONS AND THEN FOUND A THIRD THING: I HAD
-# BEEN DIVIDING BY THE WRONG NUMBER SINCE ROUND 369.
+# 🏁 ROUND 376 CLOSED THE ACCOUNT. quantising x came back at 8.10 ms a token at
+# 384 tokens and 8.09 at 64 -- the same at both lengths, exactly as the residue
+# was. The books now balance:
 #
-# The stage table is reset after the prompt, so it counts GENERATED tokens.
-# npudev's counters are never reset, so they cover the prompt as well -- six
-# more forward passes. Dividing npudev by the generated count over-states it by
-# 9.4% at 64 tokens and 1.6% at 384, and every "residue" computed from the two
-# has been wrong by that difference.
+#   384 tok: stage rows 71.39 = quantising x 8.10 + npudev 63.24 + 0.05 left
+#    64 tok: stage rows 69.78 = quantising x 8.09 + npudev 62.07 - 0.38 left
 #
-#   ⛔ "the hardware path is 3.29 ms a token FASTER at 384" was that error.
-#      Per PASS it is 58.66 and 59.93, which is the same, as it has to be.
-#   ⛔ "the residue grows with context, 1.95 to 7.22 ms" was that error.
-#      Per pass it is 7.77 and 8.17: constant, and not attention's.
-#   ⛔ AND ROUND 369'S HEADLINE WAS WRONG. "The hole is closed, 1.67 ms left"
-#      recomputes to 7.92 ms. The hole was never closed. Packing WAS most of
-#      it -- the control proved that and still does -- but eight milliseconds
-#      stayed and I filed them as under two.
+# So charsiu_act_set IS the residue. Nothing else is hiding.
 #
-# There is a comment beside llama_stages_reset about round 327 being lost to
-# exactly this. The stage table was fixed then and npudev's counters were not.
-#
-# ✅ AND THE TWO QUESTIONS IT WAS ASKED:
-#
-#   the residue INSIDE npudev   0.047 ms a token at BOTH lengths -- nothing
-#                               hides in there and its own accounting is whole
-#   slow submits                1 of 9100, in the SHORT arm this time and not
-#                               the long one, which inverts the pattern I twice
-#                               offered a hardware story for. Random. Closed.
+# ⚠ I predicted 3 to 5 ms and wrote "nearer 3, I have been optimistic more
+# often than not". It is 8.10. The host to board factor was 12x, not the 5 to 8
+# I assumed -- so this time being pessimistic was the error.
 #
 # ---------------------------------------------------------------------------
-# SO WHERE ARE THE 8 MS
+# WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# Outside npudev, inside the stage rows: what llama.c does around the call. It
-# is about 9% of a 90 ms token and it does not scale with the conversation.
+# The activation is RECORDED, not quantised. Two forms were being built at the
+# top of every matvec, 65 times a token, 231 thousand elements twice over:
 #
-# The first suspect is charsiu_act_set, which runs at the top of every matvec
-# and quantises the activation TWICE -- once into blocks of 32 for the CPU path
-# and once under a single scale for the NPU's operand shape. That is 231
-# thousand elements a token, and **the int4 path reads the FLOAT activation and
-# looks at neither result**. It survives only because q1_valid is what gates
-# routing to the hardware at all.
+#   blocks of 32   what gguf_matvec's dot kernels take
+#   one scale q1   what the NPU's INT8 operand wants, and what npu_matvec
+#                  falls back on
 #
-# It is TIMED, not skipped. Skipping it is a correctness cliff -- any tensor
-# that falls back to the CPU would read a stale quantisation -- and three
-# derived numbers have already been read wrong today. On the host it is 0.67 ms
-# a token of a 29.6 ms token; this board's CPU is five to eight times slower at
-# that kind of work.
+# **A fully routed int4 run reads NEITHER.** It takes the float activation. The
+# quantisations survived only because q1_valid was what gated routing to the
+# hardware -- "the hardware may have it" and "it has been computed" being two
+# different questions that one flag was answering.
+#
+# So there is a->npu_ok for the gate, and charsiu_act_blocks and
+# charsiu_act_q1 for the consumers. Three call sites, all in llama.c.
+#
+# ⚠ AND ALL THREE ARE BEFORE THE FAN OUT, never inside gguf_matvec or
+# npu_matvec. Those run on four pool workers, and realising a shared buffer
+# from all of them would be a race that no sentence check would catch reliably.
+#
+# ⚠ THE INSTRUMENT HAD TO FOLLOW THE WORK. Timing only charsiu_act_set would
+# have read 0.00 whether the quantisation VANISHED or merely MOVED into a
+# fallback, and those are the two answers this number exists to separate. The
+# realisers are timed as well, so quantising x still means all of it.
+#
+# CHARSIU_ACT_EAGER builds both up front, which is every round before this one.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# Nothing changes behaviour. The sentences must be round 375's and the rates
-# must land inside the 0.8% band the repeat established.
+# THE SENTENCES. Arms 1 and 2 must match each other exactly -- lazy and eager
+# compute the same numbers, they only differ in when. Five host configurations
+# agree, including both quantisation paths.
 #
-# THE NEW ROW IS "quantising x", printed under the table and marked as being
-# INSIDE the rows above rather than another row -- it is a slice through them,
-# not a stage.
+# THEN quantising x IN ARM 1. It should be at or near ZERO: every tensor is
+# routed, the hardware takes the float, and nothing asks for either form.
 #
-#   * near 4 ms would make it half the residue and worth the work to remove
-#   * near 1 ms and it is not the story, and the rest of that 8 ms is somewhere
-#     I have not looked -- say so rather than attacking it anyway
-#
-# ⚠ AND COMPUTE THE RESIDUE PER FORWARD PASS THIS TIME: generated tokens PLUS
-# the six of the prompt. That is the whole lesson of round 375.
+# ⚠ AND THEN CHECK THE TOKEN ACTUALLY SHRANK BY WHAT THE ROW LOST. If
+# quantising x goes to zero and the token does NOT drop by about 8 ms, then
+# those 8 ms were overlapping something else and the stage attribution is wrong
+# again. That would be the fourth derived number to go wrong today and it
+# should be said, not filed.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# 3 to 5 ms, from the host's 0.67 and this CPU being several times slower. I
-# have been optimistic more often than not, so nearer 3.
+# quantising x to zero, the 64 token case 75.9 ms to about 68, which is 13.11
+# to about 14.5 tok/s, and the 384 token case 90.5 to about 82.5. Arm 2 to
+# reproduce round 376 exactly.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -207,28 +201,36 @@ squeeze() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 376: the 8 ms, and where it is not              #####"
+	log "##### round 377: the activation nobody reads                #####"
 	log "###############################################################"
-	log "  read quantising x. and divide by 390 and 70, not 384 and 64."
+	log "  8.09 ms a token quantising what int4 never looks at."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
 	log ""
-	log "===== 1) 384 tokens                                            ====="
+	log "===== 1) 64 tokens, lazy                                       ====="
+	log "  quantising x should be at or near ZERO, and the token"
+	log "  must shrink by what the row lost."
+	rung "int4 g1024, 64 tokens, lazy" $B "$CE" "$HEAD"
+
+	log ""
+	log "===== 2) THE CONTROL: 64 tokens, eager                         ====="
+	log "  every round before this one. must reproduce 8.09 ms"
+	log "  and 13.11 tok/s, and the SAME sentence as arm 1."
+	rung "int4 g1024, 64 tokens, eager" $B CHARSIU_ACT_EAGER=1 "$CE" "$HEAD"
+
+	log ""
+	log "===== 3) 384 tokens, lazy                                      ====="
 	NGEN=384
-	rung "int4 g1024, 384 tokens" $B "$CE" "$HEAD"
+	rung "int4 g1024, 384 tokens, lazy" $B "$CE" "$HEAD"
 	NGEN=64
 
 	log ""
-	log "===== 2) 64 tokens                                             ====="
-	rung "int4 g1024, 64 tokens" $B "$CE" "$HEAD"
-
-	log ""
-	log "===== 3) the probe, still exact                                ====="
+	log "===== 4) the probe, still exact                                ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 4) the anchor: int8 conv must still be exact            ====="
+	log "===== 5) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
