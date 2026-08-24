@@ -1,4 +1,7 @@
-From 6100f43a9e5de4ffa62545d0bd67c1bcdfaf215d Mon Sep 17 00:00:00 2001
+From b5265e47492897d0ada844c2ff7f477bb715cd07 Mon Sep 17 00:00:00 2001
+Message-ID: <b5265e47492897d0ada844c2ff7f477bb715cd07.1787568944.git.gahing@gahingwoo.com>
+In-Reply-To: <f1805c2bce56c89d8ace35f67c665b24bab90965.1787568944.git.gahing@gahingwoo.com>
+References: <f1805c2bce56c89d8ace35f67c665b24bab90965.1787568944.git.gahing@gahingwoo.com>
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v9 03/13] accel/rocket: let the core suspend after a reset
@@ -22,22 +25,32 @@ pm_runtime_put_autosuspend() the core reads suspended with the rail down,
 there is no IOMMU message, and the same inference returns 128 of 128. A
 third run repeating the first failed the same way.
 
-pm_runtime_put_autosuspend() also matches every other put in this driver,
-including the one in the completion path a few lines away, so the reset
-path no longer leaves the device in a state the rest of the driver never
-produces.
+It also matches the put in the completion path a few lines away, so the
+reset path no longer leaves the device in a state the rest of the driver
+never produces. The remaining put, on the error path in rocket_job_run(),
+is a plain pm_runtime_put() and is left alone here: it unwinds a
+get_sync() that never reached the hardware, and changing it belongs in
+its own patch.
 
-Reported-by: Igor Paunovic <royalnet026@gmail.com>
+Igor Paunovic ran the differential on RK3588: 45 induced resets across
+three cores, with and without the two preceding patches, and the domain
+dropped every single time with no MMU message on either kernel. So this
+is not rocket-wide. His conditions cross a healthy block with a lowered
+timeout rather than a hung one, which he was careful to say his protocol
+cannot settle, but it is what scopes the change to RK3576.
+
+Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
  drivers/accel/rocket/rocket_job.c | 6 +++---
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 68c7ffefd..4cf370a6e 100644
+index 3c0ed4605..a89ab49e1 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -394,12 +394,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -406,12 +406,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  
  	/*
  	 * No handler is running now, but we might still have stuck jobs. Let's

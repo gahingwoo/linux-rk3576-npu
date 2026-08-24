@@ -1,6 +1,7 @@
-From b75d03550e329caf394a0de4aa3c68fae1f68cb0 Mon Sep 17 00:00:00 2001
+From f0c857f718090184d2bfb558714e254208a655b6 Mon Sep 17 00:00:00 2001
+Message-ID: <cover.1787568658.git.gahing@gahingwoo.com>
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Wed, 19 Aug 2026 19:12:46 +1200
+Date: Mon, 24 Aug 2026 22:50:58 +1200
 Subject: [PATCH v9 00/13] accel/rocket: RK3576 NPU (RKNN) enablement
 
 Based on Igor Paunovic's "[PATCH v2] accel/rocket: request the core
@@ -16,8 +17,9 @@ differently. Two extra convolution buffer clocks, two power domains per
 core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
 that packs the task number into sixteen bits rather than twelve.
 
-The reason for v9 is a new 3/13, and the rest is review
-======================================================
+What changed since v8
+
+A new 3/13, and the rest is answers to the v8 thread.
 
 RK3576 did not recover from a job timeout. The block came back with
 MMU_DTE_ADDR complaining and every following inference returned the
@@ -36,28 +38,55 @@ and then running the same convolution:
   put_noidle again   runtime-active, rail up    0 of 128, MMU_DTE_ADDR
 
 The third run is there so the failure reads as deterministic rather than
-intermittent. Igor Paunovic reported the underlying observation.
+intermittent.
 
-The rest of v9 is review from the v8 thread:
+Igor Paunovic ran the differential on RK3588: 45 induced resets across
+three cores, with and without 1/13 and 2/13, and the domain dropped every
+time with no MMU message on either kernel. That is what scopes this to
+RK3576. An earlier draft of 3/13 carried Reported-by on his name and that
+was wrong. He called it "your non-recovery" and said he could not
+reproduce it, and the put_noidle against put_autosuspend split was mine.
+He is on 3/13 for the RK3588 result, which is what he contributed.
 
-  * 2/13 now masks the block before synchronize_irq(). hw_submit() arms
-    INTERRUPT_MASK on every submit and only the hardirq clears it, so on
-    an ordinary timeout it is still live and a completion can arrive
-    after the sync returns. The next submit re-arms it. Igor Paunovic
-    raised this.
+2/13 now masks the block before synchronize_irq(). hw_submit() arms
+INTERRUPT_MASK on every submit and only the hardirq clears it, so on an
+ordinary timeout it is still live and a completion can arrive after the
+sync returns. The next submit re-arms it. Igor Paunovic raised this and
+wrote the line.
 
-    His Tested-by on the v8 shape of that patch is deliberately NOT
-    carried here, because this is not the patch he tested. 1/13 is
-    unchanged and keeps his.
+That write is guarded by pm_runtime_get_if_active(), and it needs to be.
+It is the first register access rocket_reset() has ever made, and the
+function holds no runtime PM reference of its own. The only one in the
+window belongs to in_flight_job, and the completion path can have put it
+before the timeout worker arrives. drm_sched_stop() sits in between, can
+block, and subtracts every pending job's credits, so nothing keeps the
+core resumed. A register access with the domain down takes an async
+SError on this hardware, which is the failure 6/13 and 8/13 describe from
+the power-on side. Igor asked the general form of this on v8, whether
+rocket_reset() should hold a reference, and it was deferred because
+nothing in the path touched a register. 2/13 is what makes it matter.
 
-  * 11/13 includes <linux/device-id/of.h> rather than
-    <linux/mod_devicetable.h>, which Uwe Kleine-Koenig asked for. The
-    driver needed nothing else out of the wider header.
+His Tested-by on the v8 shape of that patch is deliberately not carried
+here, because this is not the patch he tested. 1/13 is unchanged and
+keeps his.
 
-  * 5/13 carries a git note naming the base and the one prerequisite, so
-    the dependency is in the patch rather than only in this letter, which
-    Rob Herring's bot asked for. dt_binding_check is clean on all three
-    bindings the series touches with dtschema 2026.6 and yamllint 1.38.0.
+11/13 includes <linux/device-id/of.h> rather than
+<linux/mod_devicetable.h>, which Uwe Kleine-Koenig asked for. The driver
+needed nothing else out of the wider header.
+
+5/13 carries a git note naming the base and the one prerequisite, so the
+dependency is in the patch rather than only in this letter, which Rob
+Herring's bot asked for. dt_binding_check is clean on all three bindings
+the series touches with dtschema 2026.6 and yamllint 1.38.0, and
+CHECK_DTBS is clean on all 13 rk3576 and all 48 rk3588 dtbs.
+
+Two things I have left alone and would rather hear about than guess at.
+8/13 does three things: it adds the settle delay, renames a macro, and
+gives RK3576_PD_NPU a regulator, which also makes every RK3576 board
+force that domain off at probe. It may want splitting. And 12/13 gives
+each core both NPU domains, which is the description that has been
+tested here rather than the topology; if it should be one domain per
+core, 5/13's minItems has to change with it.
 
 Nothing else moved. The completion path, the register field layout v7
 corrected, and the rail and reset arrangement v8 settled are all
@@ -80,22 +109,21 @@ Jiaxing Hu (13):
   arm64: dts: rockchip: rk3576-rock-4d: enable NPU
 
  .../bindings/iommu/rockchip,iommu.yaml        |  28 +++++
- .../npu/rockchip,rk3588-rknn-core.yaml        |  47 +++++++-
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 ++++++-
  .../power/rockchip,power-controller.yaml      |   8 ++
- .../boot/dts/rockchip/rk3576-rock-4d.dts      |  13 +++
- arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  82 +++++++++++++-
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  13 ++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  82 +++++++++++-
  drivers/accel/rocket/rocket_core.c            |  28 ++++-
  drivers/accel/rocket/rocket_core.h            |  11 +-
  drivers/accel/rocket/rocket_device.c          |   7 +-
  drivers/accel/rocket/rocket_drv.c             |  28 ++++-
  drivers/accel/rocket/rocket_drv.h             |   2 +
- drivers/accel/rocket/rocket_job.c             | 107 ++++++++++++++----
- drivers/pmdomain/rockchip/pm-domains.c        |  75 ++++++++----
- 12 files changed, 373 insertions(+), 63 deletions(-)
+ drivers/accel/rocket/rocket_job.c             | 119 ++++++++++++++----
+ drivers/pmdomain/rockchip/pm-domains.c        |  75 +++++++----
+ 12 files changed, 385 insertions(+), 63 deletions(-)
 
 
-base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
-prerequisite-patch-id: 46ebb679e93d3d25393e8cbf8fc3c955bcc01bd4
+base-commit: d589af98928d20eb39b04ecce3eecbe7ec802222
 -- 
 2.43.0
 
