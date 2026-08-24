@@ -2,193 +2,93 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 370. THE LAST TWO CPU LOOPS.
+# 2026-08-24 round 371. SPENDING THE SPARE BANDWIDTH.
 #
-# 🏁 ROUND 369: 11.62 tok/s, AND THE HOLE IS CLOSED.
+# 🏁 ROUND 370: 12.30 tok/s exact, 13.13 with both opt-ins, from 11.62.
 #
-#   1 everything on, unpinned   11.56 tok/s   86.2 ms   packing 2.75 ms
-#   2 the same, pinned to A72   11.62          85.7     packing 2.73
-#   3 CONTROL, all three back   10.57          94.2     packing 8.47
+#   everything on              12.30 tok/s  80.9 ms  attn 6.63  sum 3.47
+#   + FAST_ATTN                12.71        78.4     attn 4.53
+#   CONTROL, vector paths off  10.55        94.5     attn 8.14  sum 8.64
+#   + FAST_ATTN + FAST_SILU    13.13        75.8     silu 1.93
 #
-# All three sentences identical, probe 1024/1024 at 0.00e+00, anchor clean.
+# All four sentences identical -- including both opt-in arms that were
+# predicted to differ. **All four predictions were right**, after round 368's
+# three of four wrong.
 #
-# 🔑 THE 10.6 MS HOLE WAS THE PACKING, and the pre-declared test for being
-# WRONG about that did not fire. Recomputed as the round asked:
+# 🔑 AND THE BANDWIDTH QUESTION HAS A NUMBER
 #
-#   arm 1    five NPU rows 74.62 - hardware 70.20 - packing 2.75 = 1.67 left
-#   control  five NPU rows 82.62 - hardware 71.98 - packing 8.47 = 2.17 left
+#   CPU read alone   1 thread 7.13   2 threads 6.65   4 threads 6.32 GB/s
+#                    ^ MORE THREADS IS WORSE. One already saturates it.
+#   NPU alone        10.46 GB/s, 11.68 tok/s
+#   NPU + 4 readers   9.84 GB/s, 10.32 tok/s;  the readers got 5.62
+#   AGGREGATE        15.46 against 10.46 alone  ->  about 5 GB/s spare
 #
-# So packing accounts for it: 8.47 ms a token became 2.75, and summing into the
-# caller's buffer took the read back from 8.5 to 7.0. **10.57 -> 11.62 tok/s.**
-#
-# And pinning to the A72s is worth 0.06 tok/s with attention serial, which
-# CLOSES that question: the CPU thread was never on a little core.
-#
-# ---------------------------------------------------------------------------
-# WHERE AN 86 MS TOKEN GOES NOW
-# ---------------------------------------------------------------------------
-#
-#     60.0  the fence          9.63 GB/s, the measured ceiling. done.
-#      7.75 attention          scalar C, one element at a time
-#      7.03 summing the slices 1.2 M scaled adds over 4.8 MB
-#      3.14 submitting
-#      2.93 silu               1.0 ms of it is the exp, opt in since 368
-#      2.75 packing
-#      1.67 what is left of the wrapper
-#      0.9  everything else
-#
-# Two loops are 15 ms of that and both were still scalar. This round is them.
+# So the practical ceiling is 15.5, not the 21.9 the bus suggests, and taking
+# the spare cost the decode 11.6% end to end. **This round is that experiment
+# with the reader doing something useful instead of nothing.**
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED, AND WHY ONLY ONE PIECE NEEDS A SWITCH
+# WHAT CHANGED
 # ---------------------------------------------------------------------------
 #
-# BIT IDENTICAL, ON BY DEFAULT:
+# CHARSIU_NPU_CPU_FRAC gives the CPU that fraction of every projection's output
+# channels. It costs NO scheduling: the submit is already asynchronous, so the
+# CPU's rows are computed in the window the calling thread was going to spend
+# BLOCKED in prep_bo, on the calling thread, with no fan out and no extra
+# ioctl. Round 370 is also why there is no fan out -- one thread already
+# saturates the controller, so a second would buy nothing and cost a barrier.
 #
-#   1. THE SLICE SUM. acc[j] += fo[j] * sc[j] is not a reduction -- each j has
-#      its own accumulator -- and the product of two floats has at most 48
-#      significant bits, so the double the scalar loop formed it in was exact
-#      and the cast back was the correctly rounded float product.
-#   2. ATTENTION'S SECOND HALF, out[i] += a * vt[i], for the same reason.
+#   * rows are rounded DOWN to a multiple of 16, the feature atom the int4
+#     weight layout blocks by, and the hardware keeps the rest.
+#   * the CPU's rows get their own NIBBLE PACKED copy. t->q keeps one whole
+#     BYTE per int4 weight, so reading them out of it would cost twice the
+#     bytes the hardware pays for the same weights -- and bandwidth is the
+#     entire point. It is f * 620 MB, so 186 MB at f = 0.30.
+#   * the activation is rounded through fp16 first, so both halves of the
+#     split see the same numbers the hardware sees.
+#   * only where the sum already lands in the caller's buffer, which is
+#     grouped int4 with the vector paths on.
 #
-#      ⚠ AND BOTH NEEDED A COMPILER BARRIER. Left alone, gcc fuses the multiply
-#      and the add into fmla, which rounds ONCE where the source rounds twice:
-#      460190 of 20.5 million accumulations came out different in the host
-#      check. With the barrier, zero do, and there is no fmla in the built
-#      object.
-#
-# OPT IN, BECAUSE IT REORDERS A REDUCTION:
-#
-#   3. CHARSIU_FAST_ATTN vectorises the q.k dot product, which four lanes add
-#      up in a different order. On the host that moved a token -- and it halved
-#      attention, 0.78 ms to 0.39.
-#
-# CHARSIU_CPU_PLAIN and CHARSIU_NPU_PLAIN now also switch off 2 and 1.
-#
-# ---------------------------------------------------------------------------
-# AND THE COLD START, WHICH NEEDED NO BOARD TO FIX
-# ---------------------------------------------------------------------------
-#
-# Round 369's own heartbeat says a cold start is 4.4 seconds "adding" and 7.9
-# "quantising", and BOTH ran on one core while three sat idle. Both split
-# cleanly by output channel:
-#
-#   QUANTISING. Each row writes its own k bytes of q, its own scales and its
-#   own wsum, and reads the weight file through gguf_row_f32, which only writes
-#   the buffer it is handed. On the host it went 3.65 s to 0.93 with four
-#   threads, and 1, 2, 4 and 6 threads give the SAME 64 tokens.
-#   ⚠ The one thing that crosses rows is the squared error --info accumulates,
-#   so a run that asks for it stays serial.
-#
-#   ADDING. The gather and the weight packer both index by output channel and
-#   write disjoint bytes. Checked byte for byte against the whole matrix call
-#   at nine shapes and five split counts, int4 and int8, odd channel counts
-#   included. ⚠ The legacy bit pattern layout accumulates with |= and cannot be
-#   split, so CHARSIU_W4_BITPAT forces the serial packer.
-#
-# ⚠ AND IT MAY HAVE OBSOLETED --cache. On the host, staging with the cache now
-# costs 930 ms against 799 without it: reading 620 MB back is slower than
-# quantising it on four cores. The board has slower storage AND slower cores,
-# so the answer there is genuinely unknown -- read the heartbeat, do not
-# assume the cache is still a win.
+# The kernel was checked on the host against a plain double reference at seven
+# shapes: **worst absolute miss 3.3e-07 of the vector's own RMS**, about one
+# float last place. Two bugs died in that check and neither would have shown up
+# on this board: a vector path that assumed a group starts on an EVEN index
+# (2.26 relative at k = 34, groups of 17) and an accumulator that was assigned
+# where it should have been added to, which silently dropped the scalar step.
 #
 # ---------------------------------------------------------------------------
 # HOW TO READ THIS, WRITTEN BEFORE THE RUN
 # ---------------------------------------------------------------------------
 #
-# THE SENTENCE FIRST. **Arms 1 and 3 must be the Louvre sentence and match each
-# other**: the default path is bit identical by construction and by host check.
-# **Arms 2 and 4 are expected to differ** -- and if they do not, that is luck on
-# this prompt rather than evidence, because round 368's fast exp differed on the
-# host and not on the board.
+# ⚠ THE SENTENCE IS EXPECTED TO CHANGE, and for once that is not a caveat but
+# the definition: rows moved to the CPU are summed in a different order by a
+# different engine. What must hold is that it stays coherent English on the
+# topic, and that arms 5 and 6 -- which do not use the split at all -- are
+# still exact. **A sentence that turns to salad means the split is wrong, not
+# imprecise.**
 #
-# THEN THE TWO ROWS, against round 369: attention 7.75 and summing 7.03.
-# ⚠ The sum is partly reading 4.8 MB out of memory that was just invalidated,
-# and no arrangement of multiplies makes a cache miss faster. If it barely
-# moves, that is the answer -- it is memory, not arithmetic -- and NOT a reason
-# to try again with wider vectors.
+# THEN tok/s AGAINST f. Arm 1 is f = 0 and must reproduce 12.30.
+#   * a peak that then falls = the balance point, and the peak is the answer
+#   * a monotonic fall from f = 0 = the CPU cannot convert the spare bandwidth
+#     into tokens, and the whole heterogeneous idea is finished for decode.
+#     Say that plainly and stop, rather than reaching for the GPU next.
 #
-# AND THE STAGING HEARTBEAT, free in every arm: "N tensors staged, X ms of
-# which Y adding and Z quantising". Round 369 read 4375 adding and 7871
-# quantising at 112 tensors. Arm 3 is the control for BOTH halves, since
-# CHARSIU_NPU_PLAIN serialises the packer too.
-#
-# THEN ARM 2'S attention ROW against arm 1'S. That number is what the anchor
-# would cost. Below about 2 ms it is not worth a re-baseline; above 3 it
-# probably is, and the honest way to take it is to say so and re-anchor
-# deliberately rather than let the sentence drift in some later round.
-#
-# ---------------------------------------------------------------------------
-# AND THE QUESTION BEHIND CPU + GPU + NPU TOGETHER
-# ---------------------------------------------------------------------------
-#
-# The board is LPDDR5 at 2736 MHz over two 16 bit channels: about 21.9 GB/s of
-# bus. The NPU alone pulls 9.63 of it, and the CPU decoding Q8_0 on its own
-# managed about 4.5 (round 356, 3.41 tok/s at 1.32 GB a token). So on paper
-# there is room -- IF the controller will actually give it out.
-#
-# That matters because decode is a strict DEPENDENCY CHAIN. Every projection
-# feeds the next, so there is nothing for a second engine to run in parallel:
-# it has to take part of the SAME tensor and read the SAME weights from the
-# SAME DRAM at the same moment. If the controller has nothing spare, the split
-# is zero sum however it is scheduled, and no amount of GPU is going to help.
-#
-# Arms 5 and 6 ask exactly that, and need no GPU stack to do it:
-#
-#   ⚠ IF THE DECODE'S gen 128 IS UNCHANGED and the reader got several GB/s,
-#     there is spare bandwidth and a CPU/NPU row split is worth building. The
-#     cheap version costs NO extra scheduling at all: submit the NPU's rows,
-#     compute the CPU's rows on the calling thread in the time we currently
-#     spend BLOCKED in prep_bo, then wait. npu_matvec already takes a row
-#     range.
-#
-#   ⚠ IF THE DECODE SLOWS BY ROUGHLY WHAT THE READER GAINED, the controller is
-#     the wall, and the whole heterogeneous idea is dead for decode -- say so
-#     and stop, rather than spending a fortnight on Mesa to find out.
-#
-# ⚠ THE READER STARTS 7 SECONDS IN, to be past staging and inside generation.
-# If the staging heartbeat says otherwise, its window overlapped the load
-# instead and the pair does not mean what it says. Check that first.
-#
-# ---------------------------------------------------------------------------
-# AND THE KERNEL UNDER THIS ROUND IS NOW THE ONE v9 POSTS
-# ---------------------------------------------------------------------------
-#
-# An audit of v9 against the tree that actually gets flashed found three
-# things, and two of them were real:
-#
-#   ⚠ THE DTS TESTED WAS NOT THE DTS POSTED. v9's iommu binding introduces
-#     rockchip,rk3576-npu-iommu and gates the five clock form on it -- anything
-#     else is capped at two -- and v9's own DTS uses it. The tree still said
-#     rockchip,rk3576-iommu with five clocks, which v9's binding would reject.
-#     Inert in the driver, which matches only rockchip,iommu and
-#     rockchip,rk3568-iommu, so both bind through the fallback either way. The
-#     two nodes now say what v9 says.
-#
-#   ⚠ TWO PATCHES HAD NEVER RUN HERE. v9's 2/13, which masks the block before
-#     synchronize_irq, and 3/13, which lets the core suspend after a reset,
-#     were both absent from this tree. 3/13 was measured in round 246 and the
-#     log backs every row of the cover letter's table, but the tree did not
-#     carry it afterwards. Both are in now.
-#
-#   ✓ AND ONE THING THAT LOOKED WRONG AND IS NOT. The power domain binding
-#     posts maxItems: 1 for resets while the driver uses the array API, and
-#     this tree says maxItems: 30. The posted DTS puts exactly one reset in
-#     each domain, so 1 is the honest binding and the 30 is our own widening
-#     from an experiment. It stays local.
-#
-# None of the three touches a path a healthy run executes: no timeout, no
-# reset, and a compatible nothing matches on. **If the anchor in arm 8 is
-# clean, they cost nothing; if it is not, they are the first suspects.**
+# ⚠ THEN THE NEW LINE, "the CPU's own share ... inside the fence window". That
+# time is FREE only while it is smaller than the fence. If it approaches or
+# passes the fence, the CPU has become the critical path and the fence number
+# has stopped meaning what it says -- check that before reading anything else
+# into a slowdown.
 #
 # ---------------------------------------------------------------------------
 # WHAT I EXPECT
 # ---------------------------------------------------------------------------
 #
-# Summing 7.0 -> 4, attention 7.75 -> 6.5, so about 83 ms and 12.0 tok/s, and
-# arm 2 near 3 ms below that. ⚠ Four rounds of predictions: rope was right, the
-# packing was right, the pool and the scale gather were badly wrong. The ones
-# that were right removed work; the ones that were wrong moved it.
+# The arithmetic says a CPU doing useful int4 at 4 GB/s balances near f = 0.29
+# and would take the fence from 59 to 45 ms, which is 15 tok/s. I do not
+# believe it: round 370 measured a dummy reader costing the decode 11.6% while
+# it took 5.62 GB/s, and this reader has to unpack nibbles and scale as well.
+# **I expect a peak between f = 0.15 and 0.25 worth 5 to 10%, and I would not
+# be surprised by a monotonic loss.**
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -319,57 +219,37 @@ squeeze() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 370: the last two CPU loops                    #####"
+	log "##### round 371: spending the spare bandwidth              #####"
 	log "###############################################################"
-	log "  the fence is 60 of 86 ms. attention and the sum are 15."
+	log "  the CPU takes part of every projection, in the window it"
+	log "  was going to spend blocked in prep_bo anyway."
+
+	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
 	log ""
-	log "===== 1) everything on                                         ====="
-	log "  read the attention and summing rows against 7.75 and 7.03."
-	rung "int4 g1024, two devices, stages" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 "$CE" "$HEAD"
+	log "===== 1) f = 0. THE CONTROL. must reproduce 12.30 tok/s        ====="
+	rung "int4 g1024, CPU_FRAC=0" $B "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) the vectorised dot product. EXPECTED TO CHANGE WORDS. ====="
-	log "  a reduction added up in a different order. read the"
-	log "  attention row: that is what the anchor would cost."
-	rung "int4 g1024, FAST_ATTN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_FAST_ATTN=1 "$CE" "$HEAD"
+	log "===== 2) f = 0.10                                              ====="
+	rung "int4 g1024, CPU_FRAC=0.10" $B CHARSIU_NPU_CPU_FRAC=0.10 "$CE" "$HEAD"
 
 	log ""
-	log "===== 3) THE CONTROL: both vector paths off                    ====="
-	rung "int4 g1024, CPU_PLAIN + NPU_PLAIN" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_CPU_PLAIN=1 CHARSIU_NPU_PLAIN=1 "$CE" "$HEAD"
+	log "===== 3) f = 0.20                                              ====="
+	rung "int4 g1024, CPU_FRAC=0.20" $B CHARSIU_NPU_CPU_FRAC=0.20 "$CE" "$HEAD"
 
 	log ""
-	log "===== 4) and everything at once, for the best number it has    ====="
-	log "  fast exp and fast dot together. both move tokens, both"
-	log "  are documented, and this is what the runtime COULD do."
-	rung "int4 g1024, FAST_ATTN + FAST_SILU" CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1 CHARSIU_FAST_ATTN=1 CHARSIU_FAST_SILU=1 "$CE" "$HEAD"
+	log "===== 4) f = 0.30                                              ====="
+	log "  read the CPU-share line: it is free only while it is"
+	log "  smaller than the fence."
+	rung "int4 g1024, CPU_FRAC=0.30" $B CHARSIU_NPU_CPU_FRAC=0.30 "$CE" "$HEAD"
 
 	log ""
-	log "===== 5) WHAT THE MEMORY CONTROLLER HAS LEFT                   ====="
-	log "  LPDDR5 2736 MHz over two 16 bit channels is about 21.9"
-	log "  GB/s of bus, and the NPU alone pulls 9.63. Everything"
-	log "  about CPU+GPU+NPU together turns on whether the rest of"
-	log "  that is REACHABLE, because decode is a dependency chain:"
-	log "  a second engine can only take part of the SAME tensor,"
-	log "  from the SAME DRAM, at the SAME time."
-	for n in 1 2 4; do
-		log ""
-		log "  ---- memory read alone, $n thread(s)"
-		env CHARSIU_THREADS=$n CHARSIU_SECONDS=5 $BW > "$C" 2>&1
-	done
-
-	log ""
-	log "===== 6) the same decode alone, then under memory pressure     ====="
-	log "  compare gen 128 in the two, and read what the reader got."
-	squeeze "int4 g1024, 128 tokens, NOTHING ELSE RUNNING" 0 ""
-	squeeze "int4 g1024, 128 tokens, WITH four threads reading DRAM" 7 9
-
-	log ""
-	log "===== 7) the probe, still exact                                ====="
+	log "===== 5) the probe, still exact (the split is not in it)       ====="
 	arm "solo verify" "-" 0 0 "CHARSIU_M=1 CHARSIU_GEN=1 CHARSIU_VERIFY=1 CHARSIU_OUT_KB=64"
 
 	log ""
-	log "===== 8) the anchor: int8 conv must still be exact            ====="
+	log "===== 6) the anchor: int8 conv must still be exact            ====="
 	health
 
 	log ""
