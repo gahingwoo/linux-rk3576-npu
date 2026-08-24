@@ -2,75 +2,75 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
-# 2026-08-24 round 377. THE 8 MS WAS ALL OF IT, AND IT IS NOT NEEDED.
+# 2026-08-24 round 378. A CLEAN REGRESSION, AND THE OUTPUT FIXED.
 #
-# 🏁 ROUND 376 CLOSED THE ACCOUNT. quantising x came back at 8.10 ms a token at
-# 384 tokens and 8.09 at 64 -- the same at both lengths, exactly as the residue
-# was. The books now balance:
+# 🏁 ROUND 377: 14.86 tok/s at 64 tokens and 12.32 at 384, and the clause that
+# could have failed did not. quantising x went 8.09 ms a token to 0.01 and the
+# token went 75.0 to 67.0 -- the row lost 8.08 and the token lost 8.00, so the
+# attribution was right. The two 64 token arms were byte identical.
 #
-#   384 tok: stage rows 71.39 = quantising x 8.10 + npudev 63.24 + 0.05 left
-#    64 tok: stage rows 69.78 = quantising x 8.09 + npudev 62.07 - 0.38 left
-#
-# So charsiu_act_set IS the residue. Nothing else is hiding.
-#
-# ⚠ I predicted 3 to 5 ms and wrote "nearer 3, I have been optimistic more
-# often than not". It is 8.10. The host to board factor was 12x, not the 5 to 8
-# I assumed -- so this time being pessimistic was the error.
+#   r366  9.71   r369 11.62   r370 12.30   r372 12.95   r374 13.19   r377 14.86
+#   = 2.32x the int8 baseline of 6.4, and 8.84 -> 12.32 at 384 tokens.
 #
 # ---------------------------------------------------------------------------
-# WHAT CHANGED
+# ⚠ AND A REAL OUTPUT DEFECT, WHICH I INTRODUCED IN ROUND 374
 # ---------------------------------------------------------------------------
 #
-# The activation is RECORDED, not quantised. Two forms were being built at the
-# top of every matvec, 65 times a token, 231 thousand elements twice over:
+# The 384 token arms print a bare "assistant" glued to the previous sentence,
+# and repeat a paragraph four times. Two different things, and only one is a
+# bug.
 #
-#   blocks of 32   what gguf_matvec's dot kernels take
-#   one scale q1   what the NPU's INT8 operand wants, and what npu_matvec
-#                  falls back on
+# THE BARE WORD IS MINE. Llama 3 writes a turn header as
+# <|start_header_id|>assistant<|end_header_id|>, and the middle one is an
+# ORDINARY TEXT token. Round 374 hid control tokens BY TYPE, which took the
+# frame away and left the contents -- so from 374 the logs read as though the
+# model had said the word. Before 374 the same text was there with its tags
+# visible, which was ugly but honest. **Checked across the archive: the loop
+# appears in r372 and r373 too, the first two long runs ever made. The bare
+# word appears from r374 exactly.**
 #
-# **A fully routed int4 run reads NEITHER.** It takes the float activation. The
-# quantisations survived only because q1_valid was what gated routing to the
-# hardware -- "the hardware may have it" and "it has been computed" being two
-# different questions that one flag was answering.
+# THE LOOP IS --ignore-eos DOING WHAT IT SAYS. The model finishes, emits
+# <|eot_id|>, the flag ignores it, and the natural continuation of a finished
+# turn is a new turn -- which greedy decoding on an unchanged context fills
+# with near-identical text. That is not a runtime fault; it is asking a
+# six-token completion prompt for 384 tokens.
 #
-# So there is a->npu_ok for the gate, and charsiu_act_blocks and
-# charsiu_act_q1 for the consumers. Three call sites, all in llama.c.
+# THREE FIXES, AND THE FIRST TWO OF MINE WERE WRONG:
 #
-# ⚠ AND ALL THREE ARE BEFORE THE FAN OUT, never inside gguf_matvec or
-# npu_matvec. Those run on four pool workers, and realising a shared buffer
-# from all of them would be a race that no sentence check would catch reliably.
-#
-# ⚠ THE INSTRUMENT HAD TO FOLLOW THE WORK. Timing only charsiu_act_set would
-# have read 0.00 whether the quantisation VANISHED or merely MOVED into a
-# fallback, and those are the two answers this number exists to separate. The
-# realisers are timed as well, so quantising x still means all of it.
-#
-# CHARSIU_ACT_EAGER builds both up front, which is every round before this one.
-#
-# ---------------------------------------------------------------------------
-# HOW TO READ THIS, WRITTEN BEFORE THE RUN
-# ---------------------------------------------------------------------------
-#
-# THE SENTENCES. Arms 1 and 2 must match each other exactly -- lazy and eager
-# compute the same numbers, they only differ in when. Five host configurations
-# agree, including both quantisation paths.
-#
-# THEN quantising x IN ARM 1. It should be at or near ZERO: every tensor is
-# routed, the hardware takes the float, and nothing asks for either form.
-#
-# ⚠ AND THEN CHECK THE TOKEN ACTUALLY SHRANK BY WHAT THE ROW LOST. If
-# quantising x goes to zero and the token does NOT drop by about 8 ms, then
-# those 8 ms were overlapping something else and the stage attribution is wrong
-# again. That would be the fourth derived number to go wrong today and it
-# should be said, not filed.
+#   1. the whole header is suppressed, not just its markers.
+#      ⚠ Suppressing until the close LATCHED: pushed past its own end this
+#      model opens a header and NEVER CLOSES IT -- <|end_header_id|> appears
+#      ZERO times in 384 tokens -- so the first version ate everything after.
+#      ⚠ Giving up after a budget ate the budget.
+#      ⚠ And holding the decoded POINTERS printed garbage, because
+#      tokenizer_decode returns a reused per-thread buffer. It holds the BYTES.
+#      A state machine over model output must assume the closing token never
+#      comes, and must lose nothing when it does not.
+#   2. the run now says where the model wanted to stop, so a log cannot read
+#      as though it had lost the thread when it was pushed past its own end.
+#   3. **the long arm gets a prompt that actually wants a long answer.** On the
+#      host it runs all 384 tokens without reaching EOG at all, coherent
+#      throughout. Asking "the capital of France is" for 384 was the real
+#      mistake and it was mine, in round 372.
 #
 # ---------------------------------------------------------------------------
-# WHAT I EXPECT
+# THIS ROUND ADDS NO OPTIMISATION. It is a regression.
 # ---------------------------------------------------------------------------
 #
-# quantising x to zero, the 64 token case 75.9 ms to about 68, which is 13.11
-# to about 14.5 tok/s, and the 384 token case 90.5 to about 82.5. Arm 2 to
-# reproduce round 376 exactly.
+# ⚠ Arm 2 uses a DIFFERENT PROMPT, so its text is not comparable with any
+# earlier 384 token arm. That is the point of changing it. Arm 1 is the
+# standing anchor and must be exactly round 377's.
+#
+# HOW TO READ IT
+#   * arm 1: the Louvre sentence, 14.86 tok/s, quantising x at 0.01
+#   * arm 2: coherent English for all 384 tokens, NO "reached its own end"
+#     line, and no bare "assistant" anywhere in the log
+#   * arm 3: the exact arithmetic still reproduces its own sentence and lands
+#     near 13.3 tok/s
+#   * probe exact, anchor clean
+#
+# Anything outside the 0.8% band round 374's repeat established is a real
+# change and this round changed no arithmetic.
 # ---------------------------------------------------------------------------
 NPU_DIR=/opt/npu-test
 C=/dev/console
@@ -198,32 +198,36 @@ squeeze() {
 	return 0
 }
 
+LONG="Write a long and detailed description of the Eiffel Tower: its history, its construction, and why people visit it."
+
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 377: the activation nobody reads                #####"
+	log "##### round 378: a clean regression, and the output fixed   #####"
 	log "###############################################################"
-	log "  8.09 ms a token quantising what int4 never looks at."
+	log "  no optimisation in this round. nothing should move."
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
 	log ""
-	log "===== 1) 64 tokens, lazy                                       ====="
-	log "  quantising x should be at or near ZERO, and the token"
-	log "  must shrink by what the row lost."
-	rung "int4 g1024, 64 tokens, lazy" $B "$CE" "$HEAD"
+	log "===== 1) 64 tokens, the standing anchor                        ====="
+	log "  the Louvre sentence, about 14.86 tok/s, quantising x 0.01."
+	rung "int4 g1024, 64 tokens" $B "$CE" "$HEAD"
 
 	log ""
-	log "===== 2) THE CONTROL: 64 tokens, eager                         ====="
-	log "  every round before this one. must reproduce 8.09 ms"
-	log "  and 13.11 tok/s, and the SAME sentence as arm 1."
-	rung "int4 g1024, 64 tokens, eager" $B CHARSIU_ACT_EAGER=1 "$CE" "$HEAD"
-
-	log ""
-	log "===== 3) 384 tokens, lazy                                      ====="
+	log "===== 2) 384 tokens, a prompt that WANTS a long answer         ====="
+	log "  coherent all the way, no 'reached its own end' line, and"
+	log "  no bare assistant anywhere. different prompt, so the text"
+	log "  is NOT comparable with earlier 384 token arms."
 	NGEN=384
-	rung "int4 g1024, 384 tokens, lazy" $B "$CE" "$HEAD"
+	PROMPT="$LONG"
+	rung "int4 g1024, 384 tokens, long prompt" $B "$CE" "$HEAD"
 	NGEN=64
+	PROMPT="The capital of France is"
+
+	log ""
+	log "===== 3) THE CONTROL: the exact arithmetic                     ====="
+	rung "int4 g1024, EXACT_ATTN + EXACT_SILU" $B CHARSIU_EXACT_ATTN=1 CHARSIU_EXACT_SILU=1 "$CE" "$HEAD"
 
 	log ""
 	log "===== 4) the probe, still exact                                ====="
