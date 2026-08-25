@@ -2,6 +2,41 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-26 round 382. WHAT 381 BROKE ON ITSELF.
+#
+# ⚠⚠ ROUND 381 LOST ITS FIRST TWO ARMS AND THE ROUND HEADER. Not to a crash:
+# the round logs to /dev/console, one arm ran charsiu-config, whiptail draws by
+# CLEARING THAT CONSOLE, and everything printed before it went with the screen.
+# The network arm was the headline of that round and there is no record of it.
+#
+#   A HARNESS THAT LOGS TO A CONSOLE CANNOT SHARE IT WITH A FULL-SCREEN TUI.
+#
+# So CHARSIU_PLAIN=1 is exported for the whole round. whiptail is checked for
+# separately, by asking whether the binary is there, which needs no screen.
+#
+# Four things 381 did prove, and they are not re-run here except as anchors:
+#   * the launcher costs NOTHING: 14.76 tok/s by hand, 14.75 through
+#     config.ini, 67.4 ms a token both ways, 10.36 against 10.34 GB/s
+#   * the conversation remembers: "OK, Bob!" then "Your name is Bob.",
+#     34 then 54 of 512 context, on the NPU, the model staged throughout
+#   * the staging bar draws, and 113 is what n_layer * 7 + 1 predicted
+#   * charsiu-get refused a 92 MB download onto a card with 172M free
+#
+# And three faults it found, all fixed in this image:
+#   * ⚠ busybox here has NO stat APPLET (CONFIG_STAT is not set), so every
+#     `stat -c%s ... || echo 0` returned 0 in silence. charsiu-doctor called a
+#     1321 MB model "0 MB" and then sized the memory check off it. wc -c now.
+#   * ⚠ charsiu-config did not handle --help, so it fell through to the menu
+#     and opened the dialog that ate the log. It handles it, and refuses an
+#     unknown argument rather than opening anything.
+#   * ⚠ the staging bar collided with the generated text: "99%  112/113OK,
+#     Bob!". The heartbeat fires every sixteenth tensor, so for 113 the last
+#     one is 112 and nothing followed on stderr to close the line. It closes
+#     itself on the last heartbeat there will be.
+#
+# ---------------------------------------------------------------------------
+# ROUND 381 (kept, for the arms below)
+# ---------------------------------------------------------------------------
 # 2026-08-25 round 381. THE WIZARD, ON THE BOARD.
 #
 # r380 closed the power line: the rail follows the domain, it costs nothing in
@@ -137,8 +172,11 @@ arm() {
 start() {
 	log ""
 	log "###############################################################"
-	log "##### round 381: the wizard, on the board                   #####"
+	log "##### round 382: what 381 broke on itself                   #####"
 	log "###############################################################"
+	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
+	log "    console this log is written to, and 381 lost two arms to it."
+	CHARSIU_PLAIN=1; export CHARSIU_PLAIN
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
 
@@ -163,7 +201,10 @@ start() {
 	log "  falls back to plain text rather than failing."
 	log "     whiptail: $(command -v whiptail || echo MISSING)"
 	log "     TERM=${TERM:-(unset)}  -> the tools will use the plain path if unset"
-	charsiu-config --help > "$C" 2>&1 || true
+	log "  -- and --help must NOT open a dialog (this is what ate 381)"
+	charsiu-config --help > "$C" 2>&1 || log "  !! --help failed"
+	charsiu-config --nonsense > "$C" 2>&1
+	log "     unknown argument exit $?  (2 = refused, which is right)"
 
 	log ""
 	log "===== 2) charsiu-doctor                                        ====="
@@ -206,7 +247,8 @@ start() {
 	log "===== 5b) the UX that was added after the wizard               ====="
 	log "  -- charsiu bench: one command instead of six variables"
 	charsiu bench > "$C" 2>&1 || log "  !! bench failed"
-	log "  -- charsiu-doctor --paste: the block to put in an issue"
+	log "  -- charsiu-doctor --paste, which must show a REAL model size"
+	log "     (381 said 0 MB for a 1321 MB file: busybox has no stat)"
 	charsiu-doctor --paste > "$C" 2>&1 || true
 	log "  -- and a real conversation: does turn 2 remember turn 1?"
 	log "     (the model stays staged, so turn 2 costs a token not 20 s)"

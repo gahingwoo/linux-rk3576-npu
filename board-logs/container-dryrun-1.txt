@@ -1,0 +1,129 @@
+woo@debian:~$ curl -fsSL https://raw.githubusercontent.com/gahingwoo/charsiu/main/scripts/charsiu-install.sh | sh -s -- --dry-run
+curl: (23) Failure writing output to destination, passed 1378 returned 1311
+^C
+woo@debian:~$ curl -fsL https://raw.githubusercontent.com/gahingwoo/charsiu/main/scripts/charsiu-install.sh | sh -s -- --dry-run
+
+charsiu needs its source to build from.
+
+It will be fetched into
+  /opt/charsiu/src
+
+Continue?
+
+  [Y/n] y
+  git is not installed; taking a tarball instead
+  handing over to /opt/charsiu/src/scripts/charsiu-install.sh
+
+
+  would  apt-get install -y whiptail   (so the wizard is a dialog, not shell prompts)
+
+DRY RUN
+
+Nothing is written, downloaded, built or chowned. Every action is
+printed as "would ..." and a summary follows at the end.
+
+Read-only checks still run for real. That is the point: this is
+what the installer SEES on this machine.
+
+press enter 
+
+charsiu, an open LLM runtime for the RK3576 NPU
+
+This will:
+  * check whether this kernel can drive the NPU, and offer one if not
+  * build and install charsiu
+  * fetch a model you can actually run
+  * check the result
+
+Nothing is written until each step is agreed to.
+
+press enter 
+
+/dev/accel/accel0 is missing, so this kernel cannot drive the NPU.
+
+There is no rknn-core node in the device tree either, so this
+dtb does not describe the NPU at all.
+
+RK3576 NPU support is not upstream yet: the patches are ours and are
+still under review on the kernel lists. There is no distribution
+kernel anywhere that will bind this hardware.
+
+Fetch a prebuilt one from gahingwoo/linux-rk3576-npu?
+The kernel now on this board is kept and stays selectable at boot.
+
+  [Y/n] 
+
+No extlinux.conf found under /boot.
+
+This board boots some other way (a boot.scr, a distro's own kernel
+package, or U-Boot environment variables), and guessing at it would
+be worse than doing nothing.
+
+Install a kernel built from the series by hand instead:
+  https://github.com/gahingwoo/linux-rk3576-npu  (rfc-send-v9/, kernel/base.config)
+
+press enter 
+  [WARN] continuing without the NPU; charsiu will run on the CPU
+  [FAIL] missing: make a-C-compiler  (a real run would stop here)
+  [INFO] /opt/charsiu/src/build/charsiu_run is not built yet (the build was skipped)
+  would  mkdir -p /opt/charsiu /usr/bin /etc/charsiu /opt/charsiu/models
+  would  cp /opt/charsiu/src/build/charsiu_run /opt/charsiu/charsiu_run
+  would  cp /opt/charsiu/src/build/charsiu_check /opt/charsiu/charsiu_check
+  would  cp /opt/charsiu/src/scripts/charsiu-tui.sh /opt/charsiu/charsiu-tui.sh
+  would  cp /opt/charsiu/src/scripts/charsiu /usr/bin/charsiu
+  would  chmod 0755 /usr/bin/charsiu
+  would  cp /opt/charsiu/src/scripts/charsiu-get /usr/bin/charsiu-get
+  would  chmod 0755 /usr/bin/charsiu-get
+  would  cp /opt/charsiu/src/scripts/charsiu-config /usr/bin/charsiu-config
+  would  chmod 0755 /usr/bin/charsiu-config
+  would  cp /opt/charsiu/src/scripts/charsiu-doctor /usr/bin/charsiu-doctor
+  would  chmod 0755 /usr/bin/charsiu-doctor
+  would  chown -R woo /opt/charsiu/models
+  would  cp /opt/charsiu/src/etc/config.ini /etc/charsiu/config.ini
+  would  charsiu-get --wizard   (pick and download a model into /opt/charsiu/models)
+
+checking
+
+the hardware
+  [FAIL] /dev/accel/accel0 is missing, so the rocket driver did not bind
+  [FAIL] no NPU core in the device tree
+
+the configuration
+  [ OK ] config at /opt/charsiu/src/etc/config.ini
+  [INFO] K slice 1024 (written to both CHARSIU_NPU_KMAX and CHARSIU_NPU_W4_GROUP; they must match)
+
+the model
+  [FAIL] /opt/charsiu/models/Llama-3.2-1B-Instruct-Q8_0.gguf does not exist. charsiu-get fetches one
+
+the kernel's opinion
+  [ OK ] no iommu faults and no job timeouts in dmesg
+
+VERDICT 2 passed, 0 warning(s), 3 CRITICAL
+  would  charsiu -p 'The capital of France is' -n 32   (one sentence, to prove it works)
+
+DRY RUN. Nothing above was done. In order, it would have:
+
+  mkdir -p /opt/charsiu /usr/bin /etc/charsiu /opt/charsiu/models
+  cp /opt/charsiu/src/build/charsiu_run /opt/charsiu/charsiu_run
+  cp /opt/charsiu/src/build/charsiu_check /opt/charsiu/charsiu_check
+  cp /opt/charsiu/src/scripts/charsiu-tui.sh /opt/charsiu/charsiu-tui.sh
+  cp /opt/charsiu/src/scripts/charsiu /usr/bin/charsiu
+  chmod 0755 /usr/bin/charsiu
+  cp /opt/charsiu/src/scripts/charsiu-get /usr/bin/charsiu-get
+  chmod 0755 /usr/bin/charsiu-get
+  cp /opt/charsiu/src/scripts/charsiu-config /usr/bin/charsiu-config
+  chmod 0755 /usr/bin/charsiu-config
+  cp /opt/charsiu/src/scripts/charsiu-doctor /usr/bin/charsiu-doctor
+  chmod 0755 /usr/bin/charsiu-doctor
+  chown -R woo /opt/charsiu/models
+  cp /opt/charsiu/src/etc/config.ini /etc/charsiu/config.ini
+  charsiu-get --wizard   (pick and download a model into /opt/charsiu/models)
+  charsiu -p 'The capital of France is' -n 32   (one sentence, to prove it works)
+
+
+Dry run finished. Nothing was written.
+
+Run it again without --dry-run to do it for real.
+
+press enter 
+woo@debian:~$ 
