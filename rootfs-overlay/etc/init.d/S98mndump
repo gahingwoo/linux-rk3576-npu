@@ -2,6 +2,37 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-27 round 384. AN ADDRESS, AND STILL NO INTERNET.
+#
+# 🏁 383 FIXED THE DHCP RACE AND THE BOARD HAS AN ADDRESS:
+#
+#   Waiting for eth0 carrier: [5.221] Link is Up, 1Gbps/Full
+#   udhcpc: lease of 192.168.2.4 obtained from 192.168.2.1
+#   default via 192.168.2.1 dev eth0      carrier=1 speed=1000Mb
+#
+# The discriminating test answered too: asked again with carrier already up, it
+# got the same lease, exit 0. So there WAS a server all along and the race was
+# the whole story. S39carrier is the fix and it works.
+#
+# ⚠ AND IT STILL CANNOT REACH huggingface.co: HTTP 000 in 0.198s. That is not a
+# timeout, it is a refusal to start, and the arm could not say why because it
+# ran curl with -s, which throws the error away. An instrument that reports a
+# fault without its reason is half an instrument.
+#
+# This round replaces that one line with a LADDER, so the layer is named rather
+# than guessed:
+#
+#   resolv.conf   is there a nameserver at all
+#   ping gateway  is the link usable
+#   ping 1.1.1.1  is there a route off this subnet, WITHOUT dns
+#   nslookup      does dns answer
+#   curl -sS      and if all of that works, what does curl actually say
+#
+# Whichever rung fails first is the answer.
+#
+# ---------------------------------------------------------------------------
+# ROUND 383 (kept, for the arms below)
+# ---------------------------------------------------------------------------
 # 2026-08-26 round 383. THE DISCOVER WENT OUT ON A DEAD LINK.
 #
 # 🏁 382 got the whole round into the log and eth0 exists for the first time:
@@ -233,7 +264,7 @@ start() {
 	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
-	log "##### round 383: the discover went out on a dead link       #####"
+	log "##### round 384: an address, and still no internet         #####"
 	log "###############################################################"
 	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
 	log "    console this log is written to, and 381 lost two arms to it."
@@ -251,20 +282,27 @@ start() {
 	log "     carrier=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo EINVAL) speed=$(cat /sys/class/net/eth0/speed 2>/dev/null)Mb operstate=$(cat /sys/class/net/eth0/operstate 2>/dev/null)"
 	log "  -- route"
 	both ip route
-	log "  -- ⚠ THE DISCRIMINATING TEST: ask for a lease NOW, with carrier up."
-	log "     a lease means the race was the whole story."
-	log "     a timeout means there is no dhcp server on this link."
-	both udhcpc -i eth0 -n -q -t 6 -T 2
-	log "     udhcpc exit $?  (0 = got a lease)"
-	both ip addr show eth0
-	both ip route
-	log "  -- can it resolve and reach huggingface.co?"
-	if both curl -s -m 20 -o /dev/null -w '     HTTP %{http_code} in %{time_total}s\n' \
-	     https://huggingface.co/api/models/bartowski/SmolLM2-135M-Instruct-GGUF; then
-		log "     (a 200 above means TLS, the CA store and DNS all work)"
-	else
-		log "  !! could not reach huggingface.co"
-	fi
+	log "  -- ⚠ THE LADDER. Whichever rung fails first is the answer."
+	log "     1) is there a nameserver at all?"
+	both cat /etc/resolv.conf || log "     !! no /etc/resolv.conf"
+	log "     2) is the gateway reachable? (link and arp)"
+	both ping -c 2 -W 2 192.168.2.1
+	log "        ping gw exit $?"
+	log "     3) is there a route off this subnet? BY IP, so dns cannot lie"
+	both ping -c 2 -W 3 1.1.1.1
+	log "        ping 1.1.1.1 exit $?"
+	log "     4) does dns answer?"
+	both nslookup huggingface.co
+	log "        nslookup exit $?"
+	log "     5) and what does curl actually SAY? (-sS, not -s: 383 threw"
+	log "        the error away and left a bare HTTP 000)"
+	both curl -sS -m 15 -o /dev/null \
+	     -w '        HTTP %{http_code} in %{time_total}s\n' \
+	     https://huggingface.co/api/models/bartowski/SmolLM2-135M-Instruct-GGUF
+	log "        curl exit $?  (0 with HTTP 200 means dns, tls and the CA store all work)"
+	log "     6) and once more without TLS, to separate the CA store from the rest"
+	both curl -sS -m 15 -o /dev/null -w '        HTTP %{http_code}\n' http://neverssl.com/
+	log "        plain http exit $?"
 
 	log ""
 	log "===== 1b) the TUI, which is new                                ====="
@@ -293,7 +331,12 @@ start() {
 
 	log ""
 	log "===== 4) the zoo, and a real download from Hugging Face        ====="
-	log "  -- room on the card first; refusing for lack of space is a PASS"
+	log "  -- room on the card first."
+	log "     ⚠ 383 refused with 171M free, which was the space check working"
+	log "     but left the download itself never tested end to end. The"
+	log "     q4_0-pure model, which no arm references, is out of the image"
+	log "     (671 MB; a copy is still in the charsiu tree). This should now"
+	log "     have room, so a REAL fetch from Hugging Face can be measured."
 	both df -h /opt/charsiu/models
 	both charsiu-get
 	log "  -- fetching the smallest entry, 92 MB, onto this board"
