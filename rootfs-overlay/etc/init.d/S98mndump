@@ -2,6 +2,35 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-26 round 383. THE DISCOVER WENT OUT ON A DEAD LINK.
+#
+# 🏁 382 got the whole round into the log and eth0 exists for the first time:
+#
+#   2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+#      link/ether be:5a:d5:30:e9:0f
+#
+# ⚠ BUT NO IPv4, NO ROUTE, curl HTTP 000. The reason is a race, not the driver:
+#
+#   t=1.834  Starting network:  eth0 registers
+#   t=1.863  PHY [stmmac-0:01] driver [RTL8211F Gigabit Ethernet]
+#            udhcpc: broadcasting discover        <- sent HERE
+#   t=4.965  eth0: Link is Up, 1Gbps/Full         <- carrier, three seconds later
+#            udhcpc: no lease, forking to background
+#
+# The DISCOVER went out on a link that had not negotiated. `wait-delay 15` in
+# /etc/network/interfaces waits for the INTERFACE TO APPEAR, which it already
+# had. S39carrier now waits for CARRIER before S40network runs.
+#
+# ⚠ And no lease ever arrived afterwards either: `Lease of` appears ZERO times
+# in the whole 382 log, though udhcpc had forked to background and should have
+# kept retrying. That is a second, separate question, and this round's arm 1 is
+# built to tell the two apart: it retries dhcp EXPLICITLY and prints what came
+# back. A timeout with carrier up and no offer means there is no server on that
+# link. A lease means the race was the whole story.
+#
+# ---------------------------------------------------------------------------
+# ROUND 382 (kept, for the arms below)
+# ---------------------------------------------------------------------------
 # 2026-08-26 round 382. WHAT 381 BROKE ON ITSELF.
 #
 # ⚠⚠ ROUND 381 LOST ITS FIRST TWO ARMS AND THE ROUND HEADER. Not to a crash:
@@ -204,7 +233,7 @@ start() {
 	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
-	log "##### round 382: what 381 broke on itself                   #####"
+	log "##### round 383: the discover went out on a dead link       #####"
 	log "###############################################################"
 	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
 	log "    console this log is written to, and 381 lost two arms to it."
@@ -214,9 +243,20 @@ start() {
 
 	log ""
 	log "===== 1) THE NETWORK, which has never worked on this board     ====="
-	log "  stmmac/dwmac-rockchip were modules nobody loaded. Now built in."
+	log "  382: eth0 exists and the link is up at 1Gbps, and there was"
+	log "  still no address, because the DISCOVER went out three seconds"
+	log "  before the RTL8211F finished negotiating. S39carrier now waits."
 	both ip addr show eth0 || log "  !! eth0 does not exist"
+	log "  -- carrier and speed, straight from sysfs"
+	log "     carrier=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo EINVAL) speed=$(cat /sys/class/net/eth0/speed 2>/dev/null)Mb operstate=$(cat /sys/class/net/eth0/operstate 2>/dev/null)"
 	log "  -- route"
+	both ip route
+	log "  -- ⚠ THE DISCRIMINATING TEST: ask for a lease NOW, with carrier up."
+	log "     a lease means the race was the whole story."
+	log "     a timeout means there is no dhcp server on this link."
+	both udhcpc -i eth0 -n -q -t 6 -T 2
+	log "     udhcpc exit $?  (0 = got a lease)"
+	both ip addr show eth0
 	both ip route
 	log "  -- can it resolve and reach huggingface.co?"
 	if both curl -s -m 20 -o /dev/null -w '     HTTP %{http_code} in %{time_total}s\n' \

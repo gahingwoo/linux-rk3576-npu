@@ -1,0 +1,47 @@
+#!/bin/sh
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Wait for the PHY to finish autonegotiation before anything tries DHCP.
+#
+# ⚠ MEASURED ON ROUND 382, which is the first log this board ever produced with
+# a working ethernet driver:
+#
+#   t=1.834  Starting network:  eth0 registers
+#   t=1.863  PHY [stmmac-0:01] driver [RTL8211F Gigabit Ethernet]
+#            udhcpc: broadcasting discover        <- sent HERE
+#   t=4.965  eth0: Link is Up, 1Gbps/Full         <- carrier, three seconds later
+#            udhcpc: no lease, forking to background
+#
+# The driver is fine. The DISCOVER simply went out on a link that had not
+# negotiated yet. `wait-delay 15` in /etc/network/interfaces does not help: that
+# waits for the INTERFACE TO APPEAR, which it already had.
+#
+# ⚠ /sys/class/net/eth0/carrier returns EINVAL while the interface is
+# administratively down, so the link has to be brought up before it can be
+# asked. Reading it without that gives an error, not a zero.
+case "$1" in start) ;; *) exit 0 ;; esac
+
+IF="${CARRIER_IF:-eth0}"
+MAX="${CARRIER_WAIT:-12}"
+
+[ -e "/sys/class/net/$IF" ] || exit 0
+
+ip link set "$IF" up 2>/dev/null || ifconfig "$IF" up 2>/dev/null
+
+printf 'Waiting for %s carrier: ' "$IF"
+i=0
+while [ "$i" -lt "$MAX" ]; do
+	if [ "$(cat "/sys/class/net/$IF/carrier" 2>/dev/null)" = 1 ]; then
+		# ⚠ Carrier is not the same as ready. The MAC reports it the
+		# instant the PHY does, and a switch may still be learning the
+		# port. One second is cheap against a failed lease.
+		sleep 1
+		echo "up after ${i}s"
+		exit 0
+	fi
+	sleep 1
+	i=$((i + 1))
+done
+echo "no carrier after ${MAX}s, carrying on"
+exit 0
