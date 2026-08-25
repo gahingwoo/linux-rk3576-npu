@@ -33,7 +33,18 @@ mount --rbind /sys  "$ROOT/sys"
 mount --rbind /dev  "$ROOT/dev"
 mount -t tmpfs tmpfs "$ROOT/tmp"
 mount -t tmpfs tmpfs "$ROOT/run"
-cp -f /etc/resolv.conf "$ROOT/etc/resolv.conf" 2>/dev/null || true
+# ⚠ Once the image points /etc/resolv.conf at systemd-resolved stub, a plain
+# copy writes THROUGH the symlink into a directory that does not exist in a
+# chroot, and every name lookup then fails with nothing to show for it. Put the
+# host resolver where the link actually points.
+if [ -L "$ROOT/etc/resolv.conf" ]; then
+	_t=$(readlink "$ROOT/etc/resolv.conf")
+	case "$_t" in
+	/*) mkdir -p "$ROOT$(dirname "$_t")" && cp -f /etc/resolv.conf "$ROOT$_t" ;;
+	esac
+else
+	cp -f /etc/resolv.conf "$ROOT/etc/resolv.conf"
+fi 2>/dev/null || true
 if [ "$#" -eq 0 ]; then set -- /bin/bash -l; fi
 exec chroot "$ROOT" env -i \
     HOME=/root TERM="${TERM:-xterm}" \
