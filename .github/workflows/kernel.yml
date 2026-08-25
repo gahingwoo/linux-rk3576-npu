@@ -130,7 +130,13 @@ jobs:
           tar -C modroot -czf "out/modules-$KVER.tar.gz" lib/modules
           {
             echo "base        $BASE  (a mainline release, not linux-next)"
-            echo "backports   $(ls ../kernel/backport-7.2/*.patch 2>/dev/null | wc -l) upstream fixes that landed after $BASE"
+            # ⚠ NOT ../ HERE. The apply step runs inside linux/, this one runs
+            # at the workspace root, and the first build reported "backports 0"
+            # in a manifest people are meant to trust while having applied all
+            # four. A count that can silently read zero is worse than no count.
+            nbp=$(ls kernel/backport-7.2/*.patch 2>/dev/null | wc -l)
+            [ "$nbp" -gt 0 ] || { echo "::error::the backport count came out 0"; exit 1; }
+            echo "backports   $nbp upstream fixes that landed after $BASE"
             echo "prereq      1 (Igor Paunovic, clocks by name -- declared by the v9 cover letter)"
             echo "series      v9, 13 patches"
             echo "kernel      $KVER"
