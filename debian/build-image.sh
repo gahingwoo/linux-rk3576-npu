@@ -219,6 +219,22 @@ RemainAfterExit=yes
 WantedBy=sysinit.target
 EOF
 
+# ⚠⚠ systemd HANDS A SERIAL GETTY TERM=vt220, WHICH HAS NO COLOUR AND NO
+# ALTERNATE SCREEN. Without smcup/rmcup whiptail cannot restore what was under
+# a dialog, so every screen of an installer stays where it was drawn and they
+# pile down the console in monochrome. It reads as a broken TUI and sends
+# people looking for a missing package; whiptail, libnewt and the terminfo for
+# vt220 are all present and working exactly as vt220 says to.
+#
+# Every serial terminal anyone actually uses (minicom, picocom, screen, tio,
+# PuTTY) speaks xterm, and xterm-256color is in ncurses-base, so it needs no
+# extra package on the board either.
+install -d "$STAGE/etc/systemd/system/serial-getty@ttyS0.service.d"
+cat > "$STAGE/etc/systemd/system/serial-getty@ttyS0.service.d/term.conf" <<'EOF'
+[Service]
+Environment=TERM=xterm-256color
+EOF
+
 cat > "$STAGE/etc/motd" <<EOF
 
   Debian $(echo "$SUITE" | cut -d- -f1) on ROCK 4D (RK3576), kernel $KVER
