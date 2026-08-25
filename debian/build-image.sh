@@ -371,6 +371,11 @@ mkfs.fat -F32 -n BOOT "$BOOTFAT" >/dev/null
 mcopy -i "$BOOTFAT" "$PREBUILT/boot/Image"               ::Image
 mcopy -i "$BOOTFAT" "$PREBUILT/boot/rk3576-rock-4d.dtb"  ::rk3576-rock-4d.dtb
 
+# ⚠ loglevel=4 KEEPS THE CONSOLE FOR USERSPACE. This board's only screen is the
+# serial line, and a driver that prints at info level halfway through a whiptail
+# dialog scribbles straight over it. Warnings and worse still come through and
+# dmesg still has everything, so nothing is lost for debugging.
+#
 # ⚠ TWO ENTRIES, ALWAYS. charsiu's installer adds a kernel by prepending a
 # label here and leaving the previous one selectable, so a kernel that does
 # not boot costs a menu choice rather than a card rewrite. The menu is shown
@@ -385,7 +390,7 @@ label charsiu
     menu label Debian, NPU kernel $KVER
     kernel /Image
     fdt /rk3576-rock-4d.dtb
-    append console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw log_buf_len=8M
+    append console=ttyS0,1500000n8 earlycon=uart8250,mmio32,0x2ad40000 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw log_buf_len=8M loglevel=4
 EOF
 mmd  -i "$BOOTFAT" ::extlinux
 mcopy -i "$BOOTFAT" "$EXTL" ::extlinux/extlinux.conf
