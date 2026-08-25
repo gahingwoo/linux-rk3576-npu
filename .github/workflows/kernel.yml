@@ -12,7 +12,7 @@
 # drivers/accel/rocket for RK3588.
 #
 # It does NOT carry four fixes that went in after it, and the v9 series was
-# written on a tree that has them -- measured: without them patch 4 fails on
+# written on a tree that has them. Measured: without them patch 4 fails on
 # rocket_job.c and patch 8 fails on pm-domains.c. They are cherry-picked into
 # kernel/backport-7.2/, they are other people's upstream commits, and that
 # directory goes away when 7.3 ships. See its README.
@@ -101,7 +101,7 @@ jobs:
           cp ../kernel/base.config .config
           make ARCH=arm64 olddefconfig
           # ⚠ DRM FIRST. DRM_ACCEL_ROCKET selects DRM_SCHED and
-          # DRM_GEM_SHMEM_HELPER, so it cannot be y while DRM is m -- measured:
+          # DRM_GEM_SHMEM_HELPER, so it cannot be y while DRM is m. Measured:
           # enabling only ROCKET leaves it at m and the assert below fails.
           scripts/config --enable DRM --enable DRM_ACCEL
           scripts/config --enable DRM_ACCEL_ROCKET
@@ -137,7 +137,7 @@ jobs:
             nbp=$(ls kernel/backport-7.2/*.patch 2>/dev/null | wc -l)
             [ "$nbp" -gt 0 ] || { echo "::error::the backport count came out 0"; exit 1; }
             echo "backports   $nbp upstream fixes that landed after $BASE"
-            echo "prereq      1 (Igor Paunovic, clocks by name -- declared by the v9 cover letter)"
+            echo "prereq      1 (Igor Paunovic, clocks by name, declared by the v9 cover letter)"
             echo "series      v9, 13 patches"
             echo "kernel      $KVER"
             echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"

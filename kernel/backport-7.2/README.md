@@ -21,7 +21,7 @@ is what v9's *"pmdomain/rockchip: add optional per-domain power-on settle delay"
 extends. The first three are the `pm_runtime_resume_and_get` error unwinding and
 the overflow hardening in the job path.
 
-**When 7.3 is released, delete this directory and move the base tag** — every one
+**When 7.3 is released, delete this directory and move the base tag.** Every one
 of these is upstream, so the only reason they are here is that 7.2 shipped first.
 
 ## Verified 2026-08-25
@@ -36,6 +36,6 @@ On a clean `v7.2` checkout, in this order:
 then `drivers/accel/rocket/` and `drivers/pmdomain/rockchip/` compile with no
 errors and no warnings.
 
-⚠ `CONFIG_DRM_ACCEL_ROCKET` cannot be `y` while `CONFIG_DRM` is `m` — it selects
-`DRM_SCHED` and `DRM_GEM_SHMEM_HELPER`. Enable `DRM` first. On this rootfs a
+⚠ `CONFIG_DRM_ACCEL_ROCKET` cannot be `y` while `CONFIG_DRM` is `m`, because it
+selects `DRM_SCHED` and `DRM_GEM_SHMEM_HELPER`. Enable `DRM` first. On this rootfs a
 module is never loaded (no udev, no mdev), so `m` means the NPU does not work.

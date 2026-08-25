@@ -26,7 +26,7 @@
 #                   Q4_K_M.gguf   -> type 6 (q5_0) in 166 tensors
 #                   Qwen2.5-*     -> architecture qwen2
 #                 ⚠ And the reverse: Q6_K_L.gguf MEASURED AS RUNNABLE. I had
-#                 called it a trap and it is not -- every type in that file is
+#                 called it a trap and it is not. Every type in that file is
 #                 one charsiu reads. Only the contents decide, both ways.
 #                 It uses the RUNTIME's own gguf parser, so the gate cannot
 #                 drift from what will load.
@@ -39,7 +39,7 @@
 #
 # charsiu         The launcher. The runtime reads 109 CHARSIU_* variables; six
 #                 decide whether a decode reaches the NPU at all, and getting
-#                 one wrong does not fail loudly -- it quietly runs a third as
+#                 one wrong does not fail loudly. It quietly runs a third as
 #                 fast on the CPU. ⚠ KMAX and W4_GROUP must be EQUAL (npudev
 #                 gates the int4 path on it), so config.ini keeps ONE value and
 #                 writes both.
@@ -48,7 +48,7 @@
 #                 whiptail, no dialog, no newt and no slang, and the board is
 #                 driven over a 1.5 Mbaud serial console. Plain numbered menu,
 #                 zero dependencies. Copying kiln's SHAPE is not copying its
-#                 dependencies -- the two stacks are incompatible.
+#                 dependencies, and the two stacks are incompatible.
 #
 # ---------------------------------------------------------------------------
 # AND THE BOARD COULD NOT REACH THE NETWORK AT ALL UNTIL THIS ROUND
@@ -59,7 +59,7 @@
 # DWMAC_ROCKCHIP were all =m and nothing modprobes them at boot. Now =y.
 # ⚠ The PHY was NOT the problem: rock-4d.dts says ethernet-phy-id001c.c916,
 # which is a Realtek RTL8211F, and CONFIG_REALTEK_PHY=y was already set. I said
-# Motorcomm first and that was wrong -- the DTS says otherwise.
+# Motorcomm first and that was wrong. The DTS says otherwise.
 # The rootfs also had no CA store and no TLS fetcher, so ca-certificates and
 # curl were added; busybox wget alone cannot verify a certificate.
 #
@@ -71,7 +71,7 @@
 #   * arm 2: charsiu-doctor must pass with nothing critical.
 #   * arm 3: the gate, against the three models that ship on the card.
 #   * arm 4: the zoo, and a REAL download from Hugging Face, on the board.
-#     ⚠ The card is tight -- 2.7 GB of models in a 3584 MB rootfs -- so
+#     ⚠ The card is tight (2.7 GB of models in a 3584 MB rootfs), so
 #     charsiu-get's free-space check may refuse, and refusing is a PASS for
 #     that check. df is printed first so the number is visible either way.
 #   * arm 5: the launcher must produce the SAME tok/s as the raw incantation.
@@ -159,7 +159,7 @@ start() {
 	log ""
 	log "===== 1b) the TUI, which is new                                ====="
 	log "  whiptail is 1.8 MB of newt+slang. ⚠ It REFUSES to run without"
-	log "  TERM, which a serial console often lacks -- charsiu-tui.sh"
+	log "  TERM, which a serial console often lacks, so charsiu-tui.sh"
 	log "  falls back to plain text rather than failing."
 	log "     whiptail: $(command -v whiptail || echo MISSING)"
 	log "     TERM=${TERM:-(unset)}  -> the tools will use the plain path if unset"

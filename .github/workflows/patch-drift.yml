@@ -36,7 +36,7 @@ jobs:
           NEWEST=$(tail -1 /tmp/tags)
           echo "pinned: $PINNED   newest: $NEWEST"
           if [ "$NEWEST" != "$PINNED" ]; then
-            echo "::warning::mainline $NEWEST is out and kernel.yml still pins $PINNED -- check whether kernel/backport-7.2/ is still needed"
+            echo "::warning::mainline $NEWEST is out and kernel.yml still pins $PINNED. Check whether kernel/backport-7.2/ is still needed"
           fi
 
   applies-to-next:
@@ -62,7 +62,7 @@ jobs:
           # kernel/backport-7.2 is applied here: those exist only because the
           # RELEASE is older than the series, and linux-next already has them.
           git am --keep-cr ../rfc-send-v9/prereq/*.patch >/tmp/am.log 2>&1 || {
-            echo "::warning::even the prerequisite no longer applies -- it may have been merged"
+            echo "::warning::even the prerequisite no longer applies, so it may have been merged"
             sed 's/^/  /' /tmp/am.log | head -5
             git am --abort || true
           }
