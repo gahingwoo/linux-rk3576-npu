@@ -2,6 +2,31 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-27 round 386. THE DATE FORMAT WAS WRONG, AND THE SCRIPT LIED.
+#
+# 🏁 385 GOT THE RTC BOUND: `rtc-hym8563 2-0051: registered as rtc0`, and
+# /dev/rtc0 exists. The =y fix works.
+#
+# ⚠ But the clock stayed at `Thu Jan  1 00:00:12 UTC 1970` and the script
+# announced that time as though it had set it. Two faults:
+#
+#   * `date -s` was given MMDDhhmmYYYY.ss, which is the coreutils and BSD form.
+#     BUSYBOX TAKES @seconds / hh:mm[:ss] / [YYYY.]MM.DD-hh:mm[:ss] AND REJECTS
+#     THAT ONE. Verified against the real busybox binary. The ISO form
+#     "YYYY-MM-DD hh:mm:ss" is accepted by both, and is what it sends now.
+#   * ⚠ and it TRUSTED the exit status instead of the result. A script that
+#     reports a clock it did not set is worse than one that fails loudly. It
+#     reads the year back now, prints the header it received and the string it
+#     tried, and says so when the year is still wrong.
+#
+# ⚠ The rtc itself has never been written: `no valid clock/calendar values
+# available`, so hctosys had nothing at boot. That is expected on a board whose
+# rtc supply is the system rail. Once the network sets the time, hwclock -w
+# gives it something to keep across a WARM reboot.
+#
+# ---------------------------------------------------------------------------
+# ROUND 385 (kept, for the arms below)
+# ---------------------------------------------------------------------------
 # 2026-08-27 round 385. THE CLOCK WAS THE WHOLE THING.
 #
 # 🏁 384's LADDER NAMED THE LAYER, WHICH IS WHAT A LADDER IS FOR:
@@ -293,7 +318,7 @@ start() {
 	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
-	log "##### round 385: the clock was the whole thing              #####"
+	log "##### round 386: the date format was wrong                  #####"
 	log "###############################################################"
 	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
 	log "    console this log is written to, and 381 lost two arms to it."

@@ -38,33 +38,43 @@ if [ "$YEAR" -ge 2025 ] 2>/dev/null; then
 	exit 0
 fi
 
-printf 'Clock: %s is wrong, asking the network: ' "$(date -u +%Y)"
-for u in http://neverssl.com/ http://example.com/ http://cn.pool.ntp.org/; do
+printf 'Clock: %s is wrong, asking the network\n' "$(date -u +%Y)"
+for u in http://neverssl.com/ http://example.com/ http://ftp.debian.org/; do
 	# ⚠ -I so nothing but the headers comes back, and plain http on purpose:
 	# https is exactly what does not work until this succeeds.
 	D=$(curl -sS -I -m 8 "$u" 2>/dev/null | awk 'tolower($1)=="date:" {
-		sub(/^[Dd]ate: */,""); print; exit }')
+		sub(/^[Dd]ate: */,""); sub(/\r$/,""); print; exit }')
+	echo "Clock:   $u -> ${D:-(nothing)}"
 	[ -n "$D" ] && break
 done
-if [ -z "$D" ]; then
-	echo "no answer, leaving it"
-	exit 0
-fi
+[ -n "$D" ] || { echo "Clock: no answer, leaving it at $(date -u)"; exit 0; }
 
-# "Tue, 27 Aug 2026 05:12:34 GMT" -> MMDDhhmmYYYY.ss, which busybox date takes
-# without needing the -D parser.
+# "Tue, 27 Aug 2026 05:12:34 GMT" -> "2026-08-27 05:12:34"
+#
+# ⚠⚠ NOT MMDDhhmmYYYY.ss. That is the coreutils and BSD form; busybox takes
+#   @seconds / hh:mm[:ss] / [YYYY.]MM.DD-hh:mm[:ss]
+# and REJECTS the other one. Round 385 shipped the coreutils form, the clock
+# stayed at 1970, and the script reported success anyway. The ISO form below is
+# accepted by both, and the result is CHECKED rather than trusted.
 set -- $D
 DD=$2; MON=$3; YYYY=$4; HMS=$5
 MM=$(awk -v m="$MON" 'BEGIN{
 	split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", a, " ")
 	for (i in a) if (a[i] == m) { printf "%02d", i; exit } }')
-[ -n "$MM" ] || { echo "could not parse '$D'"; exit 0; }
-HH=${HMS%%:*}; rest=${HMS#*:}; MI=${rest%%:*}; SS=${rest##*:}
+[ -n "$MM" ] || { echo "Clock: could not parse '$D'"; exit 0; }
 
-date -u -s "${MM}${DD}${HH}${MI}${YYYY}.${SS}" >/dev/null 2>&1 \
-	|| { echo "date -s refused '${MM}${DD}${HH}${MI}${YYYY}.${SS}'"; exit 0; }
-echo "$(date -u)"
-# ⚠ Write it back so a warm reboot does not have to ask again. Harmless if the
-# rtc is not there; the driver is =y now, so it should be.
-hwclock -w -u 2>/dev/null && echo "Clock: written to the rtc"
+WANT="$YYYY-$MM-$DD $HMS"
+echo "Clock: setting '$WANT'"
+date -u -s "$WANT" >/dev/null 2>&1
+
+# ⚠ VERIFY, DO NOT TRUST. 385's script believed date's exit status and announced
+# a time it had not set. Read the year back instead.
+NOW=$(date -u +%Y 2>/dev/null)
+if [ "${NOW:-0}" -ge 2025 ] 2>/dev/null; then
+	echo "Clock: $(date -u)"
+	hwclock -w -u 2>/dev/null && echo "Clock: written to the rtc" \
+	                          || echo "Clock: the rtc would not take it"
+else
+	echo "Clock: STILL $NOW after setting '$WANT' -- date refused it"
+fi
 exit 0
