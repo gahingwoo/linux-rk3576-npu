@@ -128,7 +128,35 @@ NGEN=64
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
 ABORT=0
-log() { echo "$@" > "$C"; }
+# ⚠⚠ THE LOG GOES TO A FILE AS WELL AS THE SCREEN, AND THE FILE IS THE RECORD.
+#
+# Round 381 lost its header and its first two arms. The capture has ZERO ANSI
+# escapes in it, so it is a rendered screen and not raw uart bytes, and the
+# SHAPE of what went missing says how: U-Boot survived, the early kernel log
+# survived, the most RECENT output did not. whiptail on a terminal with no
+# alternate screen positions the cursor and writes over the visible rows, so
+# whatever had already scrolled out of view was safe and whatever was still on
+# screen was overwritten in place. The network arm was that round's headline and
+# there is no record of it anywhere.
+#
+# A screen is not a log. Anything that draws can destroy one, and producing
+# evidence is this round's whole job.
+#
+# ⚠ AND NOT THROUGH A PIPE. `cmd | tee` puts cmd in a pipeline, so $? becomes
+# tee's status and `capped`'s 124 timeout detection stops working. Everything
+# below goes to a temp file first and is copied to both places afterwards, so
+# exit codes survive.
+LOGF=/root/round.log
+log() { echo "$@" >> "$LOGF"; echo "$@" > "$C"; }
+# both() CMD...   run it, show it, keep it, and return WHAT IT RETURNED
+both() {
+	"$@" > /tmp/both.$$ 2>&1
+	_rc=$?
+	cat /tmp/both.$$ >> "$LOGF"
+	cat /tmp/both.$$ > "$C"
+	rm -f /tmp/both.$$
+	return $_rc
+}
 nbad() { dmesg 2>/dev/null | grep -c "MMU_DTE_ADDR\|job timed out"; }
 
 health() {
@@ -154,8 +182,9 @@ rung() {
 	before=$(nbad)
 	log ""; log "  -- $lbl"; sleep 1
 	capped "$LIMIT" env "$@" "$RUN" "$M8" -p "$PROMPT" -n "${NGEN:-32}" \
-		--ignore-eos -q -c 512 -t 4 > "$C" 2>&1
+		--ignore-eos -q -c 512 -t 4 > /tmp/rung.$$ 2>&1
 	rc=$?
+	cat /tmp/rung.$$ >> "$LOGF"; cat /tmp/rung.$$ > "$C"; rm -f /tmp/rung.$$
 	[ "$rc" != "0" ] && log "  !! the rung exited $rc (124 is the wall clock limit)"
 	[ "$(nbad)" != "$before" ] && { log "  !! POISON. VOID."; health; }
 	return 0
@@ -164,12 +193,15 @@ arm() {
 	before=$(nbad)
 	log ""; log "  ---- $1"; sleep 1
 	env ${5:-IGNORED=1} $VD "$2" "$WT" "$IN" "$3" "$4" 4096 > /tmp/vd.txt 2>&1
-	cat /tmp/vd.txt > "$C"
+	cat /tmp/vd.txt >> "$LOGF"; cat /tmp/vd.txt > "$C"
 	after=$(nbad)
 	[ "$after" != "$before" ] && { log "  !! POISONED"; health; ABORT=0; sleep 2; }
 }
 
 start() {
+	# ⚠ / is 95% full on this card, so fall back rather than fail silently.
+	: > "$LOGF" 2>/dev/null || LOGF=/tmp/round.log
+	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
 	log "##### round 382: what 381 broke on itself                   #####"
@@ -183,12 +215,12 @@ start() {
 	log ""
 	log "===== 1) THE NETWORK, which has never worked on this board     ====="
 	log "  stmmac/dwmac-rockchip were modules nobody loaded. Now built in."
-	ip addr show eth0 2>/dev/null > "$C" || log "  !! eth0 does not exist"
+	both ip addr show eth0 || log "  !! eth0 does not exist"
 	log "  -- route"
-	ip route 2>/dev/null > "$C"
+	both ip route
 	log "  -- can it resolve and reach huggingface.co?"
-	if curl -s -m 20 -o /dev/null -w '     HTTP %{http_code} in %{time_total}s\n' \
-	     https://huggingface.co/api/models/bartowski/SmolLM2-135M-Instruct-GGUF > "$C" 2>&1; then
+	if both curl -s -m 20 -o /dev/null -w '     HTTP %{http_code} in %{time_total}s\n' \
+	     https://huggingface.co/api/models/bartowski/SmolLM2-135M-Instruct-GGUF; then
 		log "     (a 200 above means TLS, the CA store and DNS all work)"
 	else
 		log "  !! could not reach huggingface.co"
@@ -202,31 +234,32 @@ start() {
 	log "     whiptail: $(command -v whiptail || echo MISSING)"
 	log "     TERM=${TERM:-(unset)}  -> the tools will use the plain path if unset"
 	log "  -- and --help must NOT open a dialog (this is what ate 381)"
-	charsiu-config --help > "$C" 2>&1 || log "  !! --help failed"
-	charsiu-config --nonsense > "$C" 2>&1
+	both charsiu-config --help || log "  !! --help failed"
+	both charsiu-config --nonsense
 	log "     unknown argument exit $?  (2 = refused, which is right)"
 
 	log ""
 	log "===== 2) charsiu-doctor                                        ====="
-	charsiu-doctor > "$C" 2>&1
+	both charsiu-doctor
 	log "  doctor exit $?  (0 = nothing critical)"
 
 	log ""
 	log "===== 3) the gate, on the models that ship on the card         ====="
 	for m in /opt/charsiu/models/*.gguf; do
+		printf '  %-46s ' "$(basename "$m")" >> "$LOGF"
 		printf '  %-46s ' "$(basename "$m")" > "$C"
-		/opt/charsiu/charsiu_check -q "$m" > "$C" 2>&1
+		both /opt/charsiu/charsiu_check -q "$m"
 	done
 
 	log ""
 	log "===== 4) the zoo, and a real download from Hugging Face        ====="
 	log "  -- room on the card first; refusing for lack of space is a PASS"
-	df -h /opt/charsiu/models > "$C" 2>&1
-	charsiu-get > "$C" 2>&1
+	both df -h /opt/charsiu/models
+	both charsiu-get
 	log "  -- fetching the smallest entry, 92 MB, onto this board"
-	charsiu-get smollm2-135m-q4 > "$C" 2>&1
+	both charsiu-get smollm2-135m-q4
 	log "  fetch exit $?"
-	ls -l /opt/charsiu/models/ > "$C" 2>&1
+	both ls -l /opt/charsiu/models/
 
 	log ""
 	log "===== 5) the launcher must cost NOTHING                        ====="
@@ -236,24 +269,28 @@ start() {
 	log ""
 	log "  -- through the launcher"
 	log "     the command it builds:"
-	charsiu --show -p "$PROMPT" -n 64 > "$C" 2>&1
+	both charsiu --show -p "$PROMPT" -n 64
 	# ⚠ the same CHARSIU_STAGES as the by-hand arm, or the two are not the
 	# same measurement. env inherits, and the launcher's own env adds to it.
 	capped "$LIMIT" env CHARSIU_STAGES=1 charsiu -p "$PROMPT" -n 64 \
-		--ignore-eos -q > "$C" 2>&1
+		--ignore-eos -q > /tmp/lau.$$ 2>&1
+	_lrc=$?
+	cat /tmp/lau.$$ >> "$LOGF"; cat /tmp/lau.$$ > "$C"; rm -f /tmp/lau.$$
+	( exit $_lrc )
 	log "  launcher exit $?"
 
 	log ""
 	log "===== 5b) the UX that was added after the wizard               ====="
 	log "  -- charsiu bench: one command instead of six variables"
-	charsiu bench > "$C" 2>&1 || log "  !! bench failed"
+	both charsiu bench || log "  !! bench failed"
 	log "  -- charsiu-doctor --paste, which must show a REAL model size"
 	log "     (381 said 0 MB for a 1321 MB file: busybox has no stat)"
-	charsiu-doctor --paste > "$C" 2>&1 || true
+	both charsiu-doctor --paste || true
 	log "  -- and a real conversation: does turn 2 remember turn 1?"
 	log "     (the model stays staged, so turn 2 costs a token not 20 s)"
 	printf 'My name is Bob. Just say OK.\nWhat is my name?\n/quit\n' \
-		| charsiu -i -n 24 > "$C" 2>&1 || log "  !! interactive failed"
+		> /tmp/conv.in
+	both sh -c 'charsiu -i -n 24 < /tmp/conv.in' || log "  !! interactive failed"
 	log "     ^ the second answer must contain Bob"
 
 	log ""
@@ -266,6 +303,10 @@ start() {
 
 	log ""
 	log "===== read arm 1 first: nothing else matters if eth0 is down.  ====="
+	log ""
+	log "  the whole round is also in $LOGF ($(wc -c < "$LOGF" 2>/dev/null) bytes),"
+	log "  which no amount of drawing on this screen can touch. If the console"
+	log "  looks chewed, that file is the record."
 	sync
 }
 case "$1" in
