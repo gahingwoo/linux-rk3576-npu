@@ -2,6 +2,35 @@
 # Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
 # SPDX-License-Identifier: GPL-2.0
 # ---------------------------------------------------------------------------
+# 2026-08-27 round 385. THE CLOCK WAS THE WHOLE THING.
+#
+# 🏁 384's LADDER NAMED THE LAYER, WHICH IS WHAT A LADDER IS FOR:
+#
+#   1 nameserver      192.168.2.1                          ok
+#   2 ping gateway    0% loss, 0.8 ms                      ok
+#   3 ping 1.1.1.1    0% loss, 9.5 ms                      ok, so routing works
+#   4 nslookup        13.225.220.47 and three more         ok, so dns works
+#   5 https           curl: (60) certificate is NOT YET VALID
+#   6 http, no TLS    HTTP 200, exit 0                     ok
+#
+# Everything works except TLS, and TLS failed on the DATE. A certificate whose
+# notBefore is after the board's idea of now is "not yet valid".
+#
+# ⚠⚠ AND I HAD ALREADY WRITTEN DOWN WHY, TWO ROUNDS EARLIER, AND FIXED IT IN
+# ONE PLACE ONLY. CONFIG_RTC_DRV_HYM8563 was =m while the dts carries
+# hym8563 at 0x51, so rtc0 never existed and CONFIG_RTC_HCTOSYS had nothing to
+# read. The CI kernel workflow enables it. kernel/base.config, which is what
+# builds THIS image, did not. Now it does.
+#
+# ⚠ AND THAT ALONE WOULD NOT HAVE BEEN ENOUGH. The rtc's supply is
+# vcc_3v3_rtc_s5, whose vin-supply is vcc_5v0_sys: the system rail, not a coin
+# cell. This board forgets the time whenever it loses power. So S41timesync sets
+# the clock from an HTTP Date header (plain http measurably works) and writes it
+# back to the rtc, and only when the year already looks wrong.
+#
+# ---------------------------------------------------------------------------
+# ROUND 384 (kept, for the arms below)
+# ---------------------------------------------------------------------------
 # 2026-08-27 round 384. AN ADDRESS, AND STILL NO INTERNET.
 #
 # 🏁 383 FIXED THE DHCP RACE AND THE BOARD HAS AN ADDRESS:
@@ -264,13 +293,23 @@ start() {
 	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
-	log "##### round 384: an address, and still no internet         #####"
+	log "##### round 385: the clock was the whole thing              #####"
 	log "###############################################################"
 	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
 	log "    console this log is written to, and 381 lost two arms to it."
 	CHARSIU_PLAIN=1; export CHARSIU_PLAIN
 
 	B="CHARSIU_NPU_QUANT=1 CHARSIU_NPU=1 CHARSIU_NPU_W4V=1 CHARSIU_NPU_KMAX=1024 CHARSIU_NPU_W4_GROUP=1024 CHARSIU_STAGES=1"
+
+	log ""
+	log "===== 0b) THE CLOCK, which is why TLS failed                   ====="
+	log "  384: everything worked except https, and https failed with"
+	log "  'certificate is not yet valid'. The rtc driver was a module on"
+	log "  a rootfs that loads none, and this board has no coin cell."
+	log "     date:      $(date -u)"
+	log "     rtc0:      $([ -e /dev/rtc0 ] && echo present || echo MISSING)"
+	both hwclock -r -u || log "     !! hwclock could not read the rtc"
+	log "     ⚠ the year must be >= 2025 or TLS cannot work at all"
 
 	log ""
 	log "===== 1) THE NETWORK, which has never worked on this board     ====="
@@ -303,6 +342,8 @@ start() {
 	log "     6) and once more without TLS, to separate the CA store from the rest"
 	both curl -sS -m 15 -o /dev/null -w '        HTTP %{http_code}\n' http://neverssl.com/
 	log "        plain http exit $?"
+	log "     ⚠ 384 had 6 passing and 5 failing. If 5 passes now, the clock"
+	log "       was the only thing between this board and Hugging Face."
 
 	log ""
 	log "===== 1b) the TUI, which is new                                ====="

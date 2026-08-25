@@ -1,0 +1,70 @@
+#!/bin/sh
+# Copyright (c) 2026 Jiaxing Hu <gahing@gahingwoo.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Set the clock from the network, because TLS cannot work without it.
+#
+# ⚠ MEASURED ON ROUND 384, which is the first log with a working network:
+#
+#   ping 1.1.1.1          0% loss, 9.5 ms
+#   nslookup huggingface  13.225.220.47 and three more
+#   http://  (no TLS)     HTTP 200, exit 0
+#   https:// (TLS)        curl: (60) SSL certificate problem:
+#                                    certificate is not yet valid
+#
+# Everything works except TLS, and TLS fails on the DATE. A certificate whose
+# notBefore is after the board's idea of now is "not yet valid", so charsiu-get
+# cannot reach Hugging Face however good the link is.
+#
+# Two causes, both fixed:
+#   * CONFIG_RTC_DRV_HYM8563 was =m and nothing on this rootfs loads a module,
+#     so rtc0 never existed and CONFIG_RTC_HCTOSYS had nothing to read. Now =y.
+#   * ⚠ AND THAT IS NOT ENOUGH. The rtc's supply is vcc_3v3_rtc_s5, whose
+#     vin-supply is vcc_5v0_sys: the SYSTEM rail, not a coin cell. This board
+#     forgets the time whenever it loses power, so something has to tell it.
+#
+# ⚠ NO ntpd IN THIS BUSYBOX (CONFIG_NTPD is not set) and rdate speaks a protocol
+# almost nothing still answers. But plain HTTP measurably works, and every HTTP
+# response carries a Date header, which is enough to get inside a certificate's
+# validity window. It is not precise and does not need to be.
+case "$1" in start) ;; *) exit 0 ;; esac
+
+YEAR=$(date -u +%Y 2>/dev/null)
+[ -n "$YEAR" ] || exit 0
+# Only act when the clock is obviously wrong. A board that kept its time across
+# a warm reboot should not have it replaced by a header rounded to the second.
+if [ "$YEAR" -ge 2025 ] 2>/dev/null; then
+	echo "Clock: $(date -u) looks sane, leaving it"
+	exit 0
+fi
+
+printf 'Clock: %s is wrong, asking the network: ' "$(date -u +%Y)"
+for u in http://neverssl.com/ http://example.com/ http://cn.pool.ntp.org/; do
+	# ⚠ -I so nothing but the headers comes back, and plain http on purpose:
+	# https is exactly what does not work until this succeeds.
+	D=$(curl -sS -I -m 8 "$u" 2>/dev/null | awk 'tolower($1)=="date:" {
+		sub(/^[Dd]ate: */,""); print; exit }')
+	[ -n "$D" ] && break
+done
+if [ -z "$D" ]; then
+	echo "no answer, leaving it"
+	exit 0
+fi
+
+# "Tue, 27 Aug 2026 05:12:34 GMT" -> MMDDhhmmYYYY.ss, which busybox date takes
+# without needing the -D parser.
+set -- $D
+DD=$2; MON=$3; YYYY=$4; HMS=$5
+MM=$(awk -v m="$MON" 'BEGIN{
+	split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", a, " ")
+	for (i in a) if (a[i] == m) { printf "%02d", i; exit } }')
+[ -n "$MM" ] || { echo "could not parse '$D'"; exit 0; }
+HH=${HMS%%:*}; rest=${HMS#*:}; MI=${rest%%:*}; SS=${rest##*:}
+
+date -u -s "${MM}${DD}${HH}${MI}${YYYY}.${SS}" >/dev/null 2>&1 \
+	|| { echo "date -s refused '${MM}${DD}${HH}${MI}${YYYY}.${SS}'"; exit 0; }
+echo "$(date -u)"
+# ⚠ Write it back so a warm reboot does not have to ask again. Harmless if the
+# rtc is not there; the driver is =y now, so it should be.
+hwclock -w -u 2>/dev/null && echo "Clock: written to the rtc"
+exit 0
