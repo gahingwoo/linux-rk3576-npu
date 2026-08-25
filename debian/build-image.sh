@@ -264,6 +264,26 @@ msg "users and services"
 	done
 "
 
+# ⚠⚠ `useradd -m` COPIES /etc/skel AND THEN CHOWNS THE COPIES, and the chown
+# cannot work here, so it aborted on the first file: .bashrc arrived EMPTY and
+# .profile and .bash_logout never arrived at all. Without .bashrc there is no
+# `shopt -s checkwinsize`, so bash never learns the terminal's real width and
+# wraps in the wrong column on a serial line, which is most of what makes the
+# shell feel broken.
+#
+# Worse, the home directory itself stayed root-owned, so the user could not
+# write to their own home: no shell history, no ~/.charsiu, nothing.
+#
+# Copy the skeleton by hand, and hand the whole tree over through the
+# ownership table, which is the one thing in this build that can set a uid it
+# does not own.
+HOME_UID=$(awk -F: -v u="$BOARD_USER" '$1 == u { print $3 }' "$STAGE/etc/passwd")
+HOME_GID=$(awk -F: -v u="$BOARD_USER" '$1 == u { print $4 }' "$STAGE/etc/passwd")
+[ -n "$HOME_UID" ] || { echo "no $BOARD_USER in /etc/passwd" >&2; exit 1; }
+cp -a "$STAGE/etc/skel/." "$STAGE/home/$BOARD_USER/"
+printf '    %s is uid %s, %d files from /etc/skel\n' \
+	"$BOARD_USER" "$HOME_UID" "$(ls -A "$STAGE/home/$BOARD_USER" | wc -l)"
+
 # ---------------------------------------------------------------------------
 # OWNERSHIP
 # ---------------------------------------------------------------------------
@@ -331,6 +351,10 @@ for line in open(req):
 PYEOF
 	sort -u -o "$OWNTAB" "$OWNTAB"
 fi
+# the user's own home, which nothing else in this build can give them
+( cd "$STAGE" && find "home/$BOARD_USER" ) \
+	| sed "s|^|$HOME_UID/$HOME_GID |" >> "$OWNTAB"
+sort -u -o "$OWNTAB" "$OWNTAB"
 printf '    %d entries need a non-root owner\n' "$(wc -l < "$OWNTAB")"
 
 msg "cleaning the build's own leavings"
