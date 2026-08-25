@@ -1,25 +1,32 @@
-# Build a kernel a ROCK 4D can actually boot with the NPU working, and publish
-# it so charsiu-install.sh can fetch one.
+# Build a kernel a ROCK 4D can boot with the NPU working, and publish it so
+# charsiu-install.sh has something to offer.
 #
-# ⚠ WHY THIS EXISTS AT ALL. RK3576 rocket support is not upstream. The commit
-# that adds `rockchip,rk3576-rknn-core` is ours and is not reachable from any
-# tag, so there is no distribution kernel anywhere that will bind this NPU.
-# Without a kernel to offer, charsiu-install.sh can only ever tell people no.
+# ⚠ WHY THIS EXISTS. RK3576 rocket support is not upstream. The commit adding
+# `rockchip,rk3576-rknn-core` is ours and is not reachable from any tag, so no
+# distribution kernel anywhere will bind this NPU and the installer would have
+# nothing to do but say no.
 #
-# ⚠ PINNED ON PURPOSE. This builds the v9 series on top of the tag it was
-# written against, next-20260814, so the artifact is reproducible and a user
-# who downloads it gets the kernel the board rounds were measured on. Whether
-# the series still applies to TODAY's linux-next is a different question, asked
-# separately and on a schedule by patch-drift.yml -- a build that silently
-# followed a moving base would answer neither question.
+# ⚠ THE BASE IS A MAINLINE RELEASE, NOT linux-next. next moves under you, it is
+# not what anyone means by a kernel, and a board is not the place to find out
+# what landed yesterday. v7.2 is the newest release and it already carries
+# drivers/accel/rocket for RK3588.
+#
+# It does NOT carry four fixes that went in after it, and the v9 series was
+# written on a tree that has them -- measured: without them patch 4 fails on
+# rocket_job.c and patch 8 fails on pm-domains.c. They are cherry-picked into
+# kernel/backport-7.2/, they are other people's upstream commits, and that
+# directory goes away when 7.3 ships. See its README.
+#
+# The full stack, verified to apply and compile on a clean v7.2 on 2026-08-25:
+#   4 upstream backports + 1 declared prerequisite (Igor's) + the 13 of v9.
 name: kernel
 
 on:
   workflow_dispatch:
     inputs:
       base:
-        description: "linux-next tag to build on"
-        default: "next-20260814"
+        description: "mainline tag to build on"
+        default: "v7.2"
       release:
         description: "publish a release"
         type: boolean
@@ -27,6 +34,7 @@ on:
   push:
     paths:
       - 'rfc-send-v9/**'
+      - 'kernel/backport-7.2/**'
       - 'kernel/base.config'
       - '.github/workflows/kernel.yml'
 
@@ -35,8 +43,8 @@ permissions:
 
 jobs:
   build:
-    # A native aarch64 runner: no cross toolchain to install or get wrong, and
-    # the build is quicker than cross-compiling on x86.
+    # native aarch64: no cross toolchain to get wrong, and quicker than
+    # cross-compiling on x86.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     steps:
@@ -53,56 +61,63 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ inputs.base || 'next-20260814' }}-${{ github.sha }}
-          restore-keys: ccache-${{ inputs.base || 'next-20260814' }}-
+          key: ccache-${{ inputs.base || 'v7.2' }}-${{ github.sha }}
+          restore-keys: ccache-${{ inputs.base || 'v7.2' }}-
 
-      - name: fetch linux-next at the pinned tag
+      - name: fetch mainline at the pinned release
         run: |
-          BASE="${{ inputs.base || 'next-20260814' }}"
+          BASE="${{ inputs.base || 'v7.2' }}"
           echo "BASE=$BASE" >> "$GITHUB_ENV"
-          # shallow: the full linux-next history is gigabytes and nothing here
-          # needs it.
           git clone --depth 1 --branch "$BASE" \
-            https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
+            https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux
           git -C linux log --oneline -1
 
-      - name: apply the v9 series
+      - name: apply the stack
         run: |
           cd linux
           git config user.email ci@example.invalid
           git config user.name "charsiu CI"
-          # 0000 is the cover letter and is not a patch.
-          for p in ../rfc-send-v9/v9-00[0-9][0-9]-*.patch; do
-            case "$p" in *v9-0000-*) continue ;; esac
-            echo "== $(basename "$p")"
-            git am --keep-cr "$p" || {
-              echo "::error::$(basename "$p") did not apply to $BASE"
-              git am --abort || true
-              exit 1
-            }
-          done
-          git log --oneline -14
+          apply() {
+            for p in $1; do
+              case "$p" in *v9-0000-*) continue ;; esac   # the cover letter
+              echo "== $(basename "$p")"
+              git am --keep-cr "$p" || {
+                echo "::error::$(basename "$p") did not apply to $BASE"
+                git am --abort || true
+                exit 1
+              }
+            done
+          }
+          # ⚠ ORDER MATTERS: upstream fixes, then the prerequisite the v9 cover
+          # letter names, then the series itself.
+          apply "../kernel/backport-7.2/*.patch"
+          apply "../rfc-send-v9/prereq/*.patch"
+          apply "../rfc-send-v9/v9-00[0-9][0-9]-*.patch"
+          git log --oneline -18
 
       - name: build
         run: |
           cd linux
           cp ../kernel/base.config .config
           make ARCH=arm64 olddefconfig
-          # The two settings the image needs and a stock config gets wrong:
-          # this rootfs has no udev and no mdev, so a module is never loaded by
-          # modalias -- anything a device needs has to be built in.
-          scripts/config --enable  DRM_ACCEL_ROCKET
-          scripts/config --enable  STMMAC_ETH
-          scripts/config --enable  STMMAC_PLATFORM
-          scripts/config --enable  DWMAC_ROCKCHIP
-          scripts/config --enable  REALTEK_PHY
-          scripts/config --enable  RTC_DRV_HYM8563
+          # ⚠ DRM FIRST. DRM_ACCEL_ROCKET selects DRM_SCHED and
+          # DRM_GEM_SHMEM_HELPER, so it cannot be y while DRM is m -- measured:
+          # enabling only ROCKET leaves it at m and the assert below fails.
+          scripts/config --enable DRM --enable DRM_ACCEL
+          scripts/config --enable DRM_ACCEL_ROCKET
+          # This rootfs has no udev and no mdev, so a module is NEVER loaded by
+          # modalias. Anything a device needs has to be built in.
+          scripts/config --enable STMMAC_ETH --enable STMMAC_PLATFORM
+          scripts/config --enable DWMAC_ROCKCHIP --enable REALTEK_PHY
+          scripts/config --enable RTC_DRV_HYM8563
           make ARCH=arm64 olddefconfig
+          bad=0
           for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563; do
             v=$(scripts/config --state $s)
             echo "  $s = $v"
-            [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; exit 1; }
+            [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; bad=1; }
           done
+          [ "$bad" = 0 ]
           make ARCH=arm64 -j"$(nproc)" CC="ccache gcc" Image dtbs modules
           make ARCH=arm64 INSTALL_MOD_PATH=../modroot modules_install
 
@@ -113,13 +128,15 @@ jobs:
           cp linux/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dtb out/
           KVER=$(cat linux/include/config/kernel.release)
           tar -C modroot -czf "out/modules-$KVER.tar.gz" lib/modules
-          cat > out/MANIFEST <<EOF
-          base        $BASE
-          series      v9, 13 patches from rfc-send-v9/
-          kernel      $KVER
-          built       $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          repo        ${{ github.repository }}@${{ github.sha }}
-          EOF
+          {
+            echo "base        $BASE  (a mainline release, not linux-next)"
+            echo "backports   $(ls ../kernel/backport-7.2/*.patch 2>/dev/null | wc -l) upstream fixes that landed after $BASE"
+            echo "prereq      1 (Igor Paunovic, clocks by name -- declared by the v9 cover letter)"
+            echo "series      v9, 13 patches"
+            echo "kernel      $KVER"
+            echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "repo        ${{ github.repository }}@${{ github.sha }}"
+          } > out/MANIFEST
           ( cd out && sha256sum Image rk3576-rock-4d.dtb modules-*.tar.gz > SHA256SUMS )
           echo "KVER=$KVER" >> "$GITHUB_ENV"
           cat out/MANIFEST
@@ -135,10 +152,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="kernel-$KVER-$(date -u +%Y%m%d)"
-          gh release create "$TAG" out/* \
-            --title "$TAG" \
-            --notes "RK3576 NPU kernel: linux-next $BASE plus the v9 rocket series.
+          gh release create "$TAG" out/* --title "$TAG" --notes \
+          "RK3576 NPU kernel: mainline $BASE, four upstream fixes that landed
+          after it, Igor Paunovic's clocks-by-name prerequisite, and the v9
+          rocket series.
 
           charsiu-install.sh fetches this. It keeps the kernel already on the
-          card and adds a second extlinux entry, so if this one misbehaves the
-          old one is still one boot menu away."
+          card as a second extlinux entry, so if this one misbehaves the old
+          one is one boot menu away."

@@ -1,14 +1,15 @@
-# Does the v9 series still apply to TODAY's linux-next?
+# Two questions a pinned build cannot answer.
 #
-# ⚠ THIS IS THE QUESTION A KERNEL BUILD CANNOT ANSWER. kernel.yml pins the base
-# on purpose so its artifact is reproducible; that also means it will keep
-# building happily long after the tree has moved out from under the series. For
-# a patchset under review, "it stopped applying three weeks ago" is exactly the
-# thing you want to hear early -- a maintainer asking for a rebase should not be
-# the first news of it.
+# 1. Does the v9 series still apply to TODAY's linux-next? That is what a
+#    maintainer will do, and for a patchset under review "it stopped applying
+#    three weeks ago" should not first arrive as a request to rebase.
 #
-# A failure here is INFORMATION, not a broken build. It names the patch and the
-# files that moved.
+# 2. Has mainline released anything newer than the tag kernel.yml pins? When it
+#    has, the four cherry-picks in kernel/backport-7.2/ may already be in it and
+#    the directory can go. They are other people's upstream commits and the only
+#    reason they are carried here is that 7.2 shipped before they did.
+#
+# A failure here is INFORMATION, not a broken build.
 name: patch drift
 
 on:
@@ -19,8 +20,26 @@ on:
 permissions:
   contents: read
 
+env:
+  PINNED: v7.2
+
 jobs:
-  applies:
+  newer-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: is there a mainline release newer than the pinned one
+        run: |
+          git ls-remote --tags --refs \
+            https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git 'v[0-9]*' \
+            | sed 's|.*refs/tags/||' | grep -vE 'rc|tree' | sort -V | tail -3 > /tmp/tags
+          echo "newest mainline tags:"; sed 's/^/  /' /tmp/tags
+          NEWEST=$(tail -1 /tmp/tags)
+          echo "pinned: $PINNED   newest: $NEWEST"
+          if [ "$NEWEST" != "$PINNED" ]; then
+            echo "::warning::mainline $NEWEST is out and kernel.yml still pins $PINNED -- check whether kernel/backport-7.2/ is still needed"
+          fi
+
+  applies-to-next:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -30,16 +49,23 @@ jobs:
         run: |
           git clone --depth 1 \
             https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
-          cd linux
-          echo "TIP=$(git log --format=%h -1)" >> "$GITHUB_ENV"
-          git log --oneline -1
+          echo "TIP=$(git -C linux log --format=%h -1)" >> "$GITHUB_ENV"
+          git -C linux log --oneline -1
 
-      - name: try the series
+      - name: the series, against today's tree
         id: try
         run: |
           cd linux
           git config user.email ci@example.invalid
           git config user.name "charsiu CI"
+          # ⚠ The prerequisite the cover letter names goes first. Nothing from
+          # kernel/backport-7.2 is applied here: those exist only because the
+          # RELEASE is older than the series, and linux-next already has them.
+          git am --keep-cr ../rfc-send-v9/prereq/*.patch >/tmp/am.log 2>&1 || {
+            echo "::warning::even the prerequisite no longer applies -- it may have been merged"
+            sed 's/^/  /' /tmp/am.log | head -5
+            git am --abort || true
+          }
           fail=""
           for p in ../rfc-send-v9/v9-00[0-9][0-9]-*.patch; do
             case "$p" in *v9-0000-*) continue ;; esac
@@ -49,7 +75,6 @@ jobs:
             else
               echo "  FAIL  $n"
               sed 's/^/        /' /tmp/am.log
-              # which files moved -- the useful half of the answer
               git am --show-current-patch=diff 2>/dev/null \
                 | grep -E '^(\+\+\+|---) ' | sort -u | sed 's/^/        /' || true
               git am --abort || true
@@ -64,7 +89,7 @@ jobs:
           fi
           echo "the whole series still applies to linux-next $TIP"
 
-      - name: and does it still build the two things that matter
+      - name: and it still compiles
         if: steps.try.outputs.failed == ''
         run: |
           sudo apt-get update -qq
@@ -73,8 +98,12 @@ jobs:
           cd linux
           cp ../kernel/base.config .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-          # not a full build: just the driver and the dtb the series touches,
-          # which is where a silent semantic conflict would show up.
+          # ⚠ DRM before ROCKET: it selects DRM_SCHED and DRM_GEM_SHMEM_HELPER
+          # and cannot be y while DRM is m.
+          scripts/config --enable DRM --enable DRM_ACCEL --enable DRM_ACCEL_ROCKET
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          # not a full build: the driver, the pmdomain code and the dtb are
+          # where a silent semantic conflict would show.
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" \
             drivers/accel/rocket/ drivers/pmdomain/rockchip/
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" \
