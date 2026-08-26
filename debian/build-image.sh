@@ -150,6 +150,12 @@ tar -C "$STAGE" -xzf "$MODTAR"
 msg "configuring"
 install -d "$STAGE/etc/systemd/network" "$STAGE/usr/local/sbin" "$STAGE/boot"
 
+# Files that are easier to read as files than as heredocs live in overlay/.
+if [ -d "$HERE/overlay" ]; then
+	cp -a "$HERE/overlay/." "$STAGE/"
+	printf '    overlay: %d files\n' "$(find "$HERE/overlay" -type f | wc -l)"
+fi
+
 echo "$HOSTNAME_" > "$STAGE/etc/hostname"
 cat > "$STAGE/etc/hosts" <<EOF
 127.0.0.1	localhost
@@ -234,6 +240,22 @@ cat > "$STAGE/etc/systemd/system/serial-getty@ttyS0.service.d/term.conf" <<'EOF'
 [Service]
 Environment=TERM=xterm-256color
 EOF
+
+# ⚠⚠ THE BOARD HAS NO USABLE RTC, AND A CLOCK IN THE PAST BREAKS TLS. The log
+# says it plainly:
+#
+#   rtc-hym8563 2-0051: hctosys: unable to read the hardware clock
+#   curl: (60) SSL certificate problem: certificate is not yet valid
+#
+# so the very first thing the motd tells someone to run fails, and the way
+# round it that suggests itself is `curl -k`, which is the wrong lesson.
+#
+# systemd-timesyncd bumps the clock to the mtime of this file at startup,
+# before the network is up, and writes it back once it has synced. That is the
+# designed mechanism for a board without a working RTC. Seeding it with the
+# build date means the clock is never earlier than the image itself.
+install -d "$STAGE/var/lib/systemd/timesync"
+: > "$STAGE/var/lib/systemd/timesync/clock"
 
 cat > "$STAGE/etc/motd" <<EOF
 
