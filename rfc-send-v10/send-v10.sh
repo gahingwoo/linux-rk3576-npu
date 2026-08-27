@@ -29,6 +29,10 @@ if [ "$REGEN" = 1 ]; then
 	git -C "$TREE" format-patch --notes -v10 --cover-letter \
 	    -o "$PWD" d589af989..v10-prep >/dev/null
 	for f in 0*.patch; do [ -e "$f" ] && mv "$f" "v10-$f"; done
+	# ⚠ THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
+	# cover-blurb.txt so that regenerating cannot throw it away.
+	./splice-cover.py v10-0000-cover-letter.patch cover-blurb.txt
+	! grep -q "SUBJECT HERE\|BLURB HERE" v10-0000-cover-letter.patch
 	n=$(grep -lc '^Notes:' v10-*.patch 2>/dev/null | wc -l)
 	[ "$n" = 1 ] || { echo "expected exactly one patch with a Notes block, got $n" >&2; exit 1; }
 	echo "regenerated $(ls v10-0*.patch | wc -l) patches, Notes block on:"
