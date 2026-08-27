@@ -6,29 +6,22 @@ Hi Igor,
 
 Three things: the note you caught, the oc = 64 answer I have owed you since the
 17th, and your SIZE_E question from the 20th. The last two turned out to have
-the same source, and it was already on my disk.
+the same source, and it was sitting on my disk the whole time.
 
-The note
-========
-
-You were right and my own theory was wrong. send-v9.sh never passed --notes.
-The note has been in the repository the whole time; grep on the patch file I
-actually sent says
+First the note, because you were right and I was wrong about why. send-v9.sh
+never passed --notes, so whatever was on the commit could not have reached the
+mail. grep on the patch file I actually sent says
 
   $ grep -c '^Notes:' rfc-send-v9/v9-0005-*.patch
   0
 
-so nothing was lost in a rebase and nothing needed recovering. The flag was
-missing, which is exactly what you said. v10's send script regenerates with
---notes and then refuses to go if the count of patches carrying a Notes block
-is not exactly one, so this cannot happen quietly again.
+so nothing was lost in a rebase and nothing needed recovering; the note is on
+the commit and format-patch --notes emits it. The flag was missing, which is
+exactly what you said. v10's send script regenerates with --notes and then
+refuses to send unless the number of patches carrying a Notes block is exactly
+one. Thank you for saying it before v10 rather than after.
 
-Thank you for saying it before v10 rather than after.
-
-oc = 64: SIZE_E_2 = 1
-=====================
-
-Concretely, as you asked: **1**.
+Now oc = 64, concretely, as you asked: SIZE_E_2 = 1.
 
 The expression, which is what the merge request emits and what I should have
 sent instead of the sentence about 0x124 and 0x024:
@@ -36,55 +29,49 @@ sent instead of the sentence about 0x124 and 0x024:
   (DIV_ROUND_UP(oc, FEATURE_ATOMIC_SIZE) & 1) == 0 ? 0x80011111 : 0x80011011
 
 At oc = 64 that is DIV_ROUND_UP(64, 16) = 4, even, so 0x80011111, so
-SIZE_E_2 = 1. Your reading of the merge request line was correct in every
-detail; the sentence was mine and it named the arms by the wrong predicate.
-Discard it and take the expression. And you are right that we should name the
-arms by value and count, so from here: oc = 64 -> 0x80011111 -> SIZE_E_2 = 1.
+SIZE_E_2 = 1. Your reading of the merge request line was right in every detail.
+The sentence was mine and it named the arms by the wrong predicate, so discard
+it and take the expression. You are also right that we should name the arms by
+value and by count, so from here: oc = 64, 0x80011111, SIZE_E_2 = 1.
 
-The vendor toolkit agrees, and I did not have to guess: geom/g_oc64.rknn,
-compiled at ic 16, 80x80, k = 5, stride 2, oc = 64, has DPU 0x4050 = 0x80011111.
-So do a_lin, a_lin2, a_lin_m1, a_relu, g_pw2 and sv_oc64. pp_oc64 (k = 3,
-stride 1) and pw48x64w56 (ic 48, 56x56, k = 1) read 0x80021111, which differs
-from the others only in RESERVED_0 - see the last section - and has SIZE_E_2 = 1
-as well. Nine vendor models at oc = 64 on this disk, all SIZE_E_2 = 1, across
-three kernel sizes, both strides and spatial sizes from 1x1 to 112x112.
+I did not have to derive that. geom/g_oc64.rknn, compiled at ic 16, 80x80,
+k = 5, stride 2, oc = 64, has DPU 0x4050 = 0x80011111, and so do six more at
+oc = 64. Two others, pp_oc64 at k = 3 stride 1 and pw48x64w56 at ic 48, 56x56,
+k = 1, read 0x80021111, which differs only in RESERVED_0 (see below) and has
+SIZE_E_2 = 1 as well. Nine vendor models at oc = 64 on this disk, all
+SIZE_E_2 = 1, across three kernel sizes, both strides, and spatial sizes from
+1x1 to 112x112.
 
-Your SIZE_E question, answered from 94 vendor models
-====================================================
+Which brings me to your question from the 20th, whether different output
+channel counts would exercise different SIZE_E fields, and whether two shapes
+can rule out one that leans on SIZE_E_1.
 
-You asked whether different output channel counts would exercise different
-SIZE_E fields, and whether two shapes can rule out one that leans on SIZE_E_1.
-
-I have 94 compiled vendor .rknn on disk from earlier rounds, spanning oc 4 to
-1024, ic 3 to 1024, 1x1 to 224x224, k = 1, 3 and 5, stride 1 and 2, regular and
-depthwise. Reading DPU 0x4050 out of every one of them and decoding it against
+I have 94 compiled vendor .rknn on disk from earlier rounds: oc 4 to 1024, ic 3
+to 1024, 1x1 to 224x224, k = 1, 3 and 5, stride 1 and 2, regular and depthwise.
+Reading DPU 0x4050 out of every one of them and decoding it against
 registers.xml:
 
-  SIZE_E_0   = 4     in all 94. It never moves.
-  SIZE_E_1   = 0     in all 81 regular models
-             = 1     in all 13 depthwise models
-  SIZE_E_2   = 0..1  regular, and 0..3 depthwise
+  SIZE_E_0   4     in all 94, it never moves
+  SIZE_E_1   0     in all 81 regular models
+             1     in all 13 depthwise models
+  SIZE_E_2   0..1  regular, 0..3 depthwise
 
-So the answer to your question is no, and for a sharper reason than "we have
-not seen it move": **SIZE_E_1's axis is the depthwise flag, not the channel
-count.** No output channel count can be the shape that leans on SIZE_E_1,
-because oc does not select it at all. What does is regular-versus-depthwise,
-and the driver already emits a different word entirely on the depthwise path
-(0x00013033 | ((DIV_ROUND_UP(oc,16)-1) & 3) << 8), whose SIZE_E_1 is 1, which
-is the vendor's depthwise value on all thirteen.
+So the answer is no, and for a sharper reason than "we have not seen it move".
+SIZE_E_1's axis is the depthwise flag, not the channel count. No output channel
+count can be the shape that leans on it, because oc does not select it at all.
+What does is regular against depthwise, and the driver already emits a
+different word entirely on the depthwise path, whose SIZE_E_1 is 1, which is
+the vendor's depthwise value on all thirteen.
 
-That also upgrades the comment I left in the driver. "SIZE_E_1 left at 0
-because two shapes is not every shape" was honest but weaker than the truth: 0
-is what the vendor emits on all 81 regular models, and the value upstream
-writes there, 1, is what the vendor emits on depthwise. It is not an
-unexplained traced constant. I will reword it.
+That also means my comment in the driver was weaker than the truth. "SIZE_E_1
+left at 0 because two shapes is not every shape" was honest, but 0 is what the
+vendor emits on all 81 regular models, and upstream's 1 is what it emits on
+depthwise. It is not an unexplained traced constant, and I have corrected the
+comment to say so.
 
-And your padding reading, tested
-================================
-
-Your SIZE_E_n + 1 = atoms in the final bank is what the depthwise models say,
-taken literally and with the depthwise padding you pointed at - 64 channels,
-so the last bank holds one to four atoms:
+Your padding reading holds too, taken literally and with the depthwise padding
+you pointed at. Depthwise pads to 64 output channels, so the last bank holds
+one to four atoms of 16:
 
   oc            16  32  48  64  80  96  112  128  256  1024
   last bank     16  32  48  64  16  32   48   64   64    64
@@ -92,61 +79,50 @@ so the last bank holds one to four atoms:
   predicted      0   1   2   3   0   1    2    3    3     3
   observed       0   1   2   3   0   1    2    3    3     3
 
-13 of 13 depthwise models, ten distinct counts, no exceptions - including the
-three the driver's comment says it predicted rather than fitted, 16, 80 and 112.
-I had been carrying it as (atoms - 1) & 3, which
-gets the same numbers and says nothing; your form is the reason for them, and
-the mask is just what "the last bank of four" looks like in arithmetic.
+13 of 13 depthwise models, ten distinct counts, no exceptions, including the
+three the driver's comment says it predicted rather than fitted: 16, 80 and
+112. I had been carrying that as (atoms - 1) & 3, which gets the same numbers
+and says nothing. Your form is the reason for them.
 
-On the regular path the last bank is padded to 32 channels, so it holds one atom
-or two, which is why only 0 and 1 appear there. Same statement, not a second
-rule.
+And while I had all 94 open I scored both candidate readings against the 81
+regular models:
 
-The parity form now has a second, independent confirmation
-=========================================================
+  parity, DIV_ROUND_UP(oc,16) even    0 wrong of 81
+  modulo, oc % 32 == 0                1 wrong of 81
 
-I scored both candidate readings against all 81 regular models:
+The one point where they disagree in that corpus is ocp56, oc = 56, ic = 64,
+56x56, k = 1, stride 1, and the vendor emits 0x80021111, SIZE_E_2 = 1, which is
+the parity answer. Every other model has an oc where the two forms agree, which
+is why the original ten point sweep could not choose between them.
 
-  parity, DIV_ROUND_UP(oc,16) even   ->  0 wrong of 81
-  modulo, oc % 32 == 0               ->  1 wrong of 81
+That is oc = 56 again. The board picked out a different model at the same
+count, pw64x56w56, as the one shape that times out under the modulo form. The
+board and the vendor's own compiler arrive at the same discriminating count
+from two directions, which is better evidence than either alone and better than
+I claimed at the time.
 
-The one point where they disagree in this corpus is ocp56 - oc = 56, ic = 64,
-56x56, k = 1, stride 1 - and the vendor emits 0x80021111, SIZE_E_2 = 1, which is
-the parity answer. Every other model in the corpus has an oc where the two forms
-agree, which is why the original ten-point sweep could not choose.
+One thing I cannot explain, flagged rather than claimed. RESERVED_0 is 34 in
+most of the regular models and 66 in a subset of them: 0x80011111 against
+0x80021111, which inside the field is its bit 5 against its bit 6, both over a
+constant 2. It does not correlate with oc, ic, spatial size, kernel size or
+stride. Both values appear at oc 16, 64 and 128, at k = 1, 3 and 5, and at both
+strides. What it does track is which batch of models it came from, which makes
+a toolkit setting more likely than a geometry, but I have not established that.
+The driver emits 34 always and the board is correct with it, so this is an open
+thread rather than a defect I know about. Say the word and I will send you the
+table.
 
-That is oc = 56 again, the same count the board picked out as the one shape that
-times out under the modulo form. The board and the vendor's own compiler now
-agree on the same discriminating count from two directions, which is better
-evidence than either alone and better than I claimed at the time.
+v10 goes out shortly, and I said I would tell you here when it does. It is v9
+plus six tags and the note, with no code change: I diffed every patch body
+against its v9 counterpart and twelve of thirteen are byte identical, the
+thirteenth differing only by the Notes block. Your two tags are on the patches
+you sent them for, with the comments as you re-sent them on one line, so 02/13
+carries "differential base" and 03/13 does not.
 
-One thing I cannot explain, flagged rather than claimed
-======================================================
-
-RESERVED_0 is 34 in most of the regular models and 66 in a subset of them:
-0x80011111 against 0x80021111, which inside the field is its bit 5 against its
-bit 6, both over a constant 2. It does not
-correlate with oc, ic, spatial size, kernel size or stride: both values appear
-at oc 16, 64 and 128, at k 1, 3 and 5, and at both strides. What it does track
-is which batch of models it came from, which makes a toolkit setting more likely
-than a geometry, but I have not established that. The driver emits 34 always and
-the board is correct with it, so this is an open thread rather than a defect I
-know about. If you want the table I will send it.
-
-v10
-===
-
-Going out shortly, and I said I would tell you here when it does. It is v9 plus
-six tags and the note, with no code change: I diffed every patch body against
-its v9 counterpart and twelve of thirteen are byte-identical, the thirteenth
-differing only by the Notes block.
-
-Your two tags are on the patches you sent them for, with the comments as you
-re-sent them on one line - 02/13 carries "differential base" and 03/13 does not.
 And thank you for the differential arm. The run that signalled success with an
-unwritten output buffer, all 48 channels 0x80 and nothing in the log, is the
-clearest statement of what these two patches close that anyone has produced,
-including me.
+output buffer that was never written, all 48 channels 0x80 and nothing in the
+log, is the clearest statement of what these two patches close that anyone has
+produced, including me.
 
 Regards,
 Jiaxing
