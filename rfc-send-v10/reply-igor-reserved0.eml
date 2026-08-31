@@ -1,0 +1,486 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v9 05/13] dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+In-Reply-To: <CAEWPSH5_PmfUCEm5O53=32NQjPKMd4vm--Y2R=4ErMoehtt=tA@mail.gmail.com>
+References: <CAEWPSH5_PmfUCEm5O53=32NQjPKMd4vm--Y2R=4ErMoehtt=tA@mail.gmail.com>
+
+Hi Igor,
+
+Here is the table. It does not say what I told you it said, so the
+retraction comes first.
+
+I wrote that RESERVED_0 "follows the model series rather than the
+geometry". You read that as a toolkit setting and said the table was the
+way to corner it. It cornered my own claim instead.
+
+It is not the model series. All 94 files carry the same toolkit build
+string, 2.3.2 (@2025-04-03T08:26:16), so there is no version difference
+to hang it on. Worse for my sentence: g_pw24 carries BOTH values in one
+compile of one model -- the 512 to 1024 pointwise reads 34 and the one
+pixel 16x16 op the compiler adds for itself reads 66. Ten of the dwbig_*
+files do the same. A per-model constant cannot be right.
+
+It is not the geometry either, and that half I had tested too weakly. I
+had checked oc, ic, spatial size, kernel and stride one at a time. Fixing
+the WHOLE CNA geometry gives 116 classes over the 364 regular dispatches
+and twelve of them carry both values. The cleanest pair is g_cal against
+bias_k5: one ONNX Conv each, ic 16, oc 128, 80x80 in, k = 5, stride 2,
+same toolkit, and the two .onnx sources are the same 205601 bytes. Their
+register streams are 138 words each and differ in five: 0x4044, 0x4050,
+0x40ac, 0x40b0 and 0x501c. Three of those five are the output zero point
+and the requant pair, which differ between any two models with different
+weights. What is left is 0x4044, 0x4050 and 0x501c, and it is the same
+three in every conflicting pair.
+
+What it does follow is DPU 0x4044, exactly:
+
+    RESERVED_0 34   <->  0x4044 = 1     260 dispatches
+    RESERVED_0 66   <->  0x4044 = 0     104 dispatches
+
+364 of 364, no exceptions, and 0x501c moves with them (0x710 against
+0x14/0x114). Sweeping every register in the stream, 0x4044 is the only
+one that partitions the two groups one to one. So it is not a loose
+constant with no company: it is one third of a single per-op decision in
+the bias and scale path of the output stage. What selects that arm I
+still cannot tell you.
+
+Two more things the old claim got wrong. There is a THIRD value: 38, on
+all 58 depthwise dispatches, which my "34 against 66" never mentioned. 38
+is 34 with one more field bit, so on the 16-against-17 word bit axis
+depthwise sits with the 34 group while its 0x4044 reads 0 -- which breaks
+the lockstep above, and is why I state it as a regular datapath result
+only. And the RK3576 encoder has no depthwise path at all
+(rkt_ml_operation_supported declines it), so the driver never emits the
+38 word: that row is about the vendor and about upstream's RK3588
+encoder, not about ours.
+
+For what we ship: rkt_regcmd.c emits 0x4044 = 1, RESERVED_0 = 34 and
+0x501c = 0x710 -- the 34 arm in all three at once, never mixed. That is
+consistent, and it is the arm 260 of the 364 vendor dispatches take.
+
+Nothing below was run on hardware. It is decoding of files already on
+this disk, one op per register run, 0 of the 422 dispatches undecodable.
+The script that produces every number in it is small enough to send if
+you want to re-run it against your own corpus.
+
+DPU 0x4050 RESERVED_0 across 94 vendor-compiled .rknn on this disk
+====================================================================
+
+Regenerate with reserved0-build.py, which reads only the files in
+vendor-capture/geom and prints this whole page, numbers included.
+
+How the value is obtained
+-------------------------
+
+A .rknn carries the register command stream the vendor runtime
+submits, as little-endian u64 words
+
+    [63:48] target   [47:16] value   [15:0] register
+
+with target 0x0201 CNA, 0x0801 CORE, 0x1001 DPU, 0x2001 DPU_RDMA. A
+maximal run of such words is one dispatch. In this corpus every run of
+20 words or more carries exactly one CNA block and exactly one write
+of DPU 0x4050, so a value and the geometry it is tested against always
+come from the same op and there is no matching to guess at.
+
+The word is BS_OW_CFG. Split as upstream's registers.xml splits it:
+
+    RGP_CNTER  31:28   TP_ORG_EN  27   RESERVED_0  26:11
+    SIZE_E_2   10:8    SIZE_E_1   7:5  SIZE_E_0     4:2
+    OD_BYPASS  1       OW_SRC     0
+
+So RESERVED_0 is bits 26:11, and the two values in question are
+
+    0x80011111 -> RESERVED_0 = 34 = field bits 5 and 1 = word bits 16, 12
+    0x80021111 -> RESERVED_0 = 66 = field bits 6 and 1 = word bits 17, 12
+
+One word bit apart, 16 against 17, over a constant word bit 12. The
+geometry columns come from the CNA registers of the same run:
+
+    ic  = (0x1028 & 0xffff) + 1     oc = (0x1024 & 0xffff) + 1
+    k   = sqrt(0x1020 / ic)         stride from 0x1014, which is (s<<3)|s
+
+Three notes on reading those columns honestly.
+
+  * The oc register holds the count rounded up to 2, so a 41 channel
+    output reads 42. pq_ic and pq_oc are the two rows where that shows.
+  * On the depthwise path, CORE 0x3018 mode 0x0a, the oc register reads
+    2 and the channel count is in the ic register. Those rows carry the
+    ic one and are marked dw in the path column.
+  * On the first convolution path, CORE 0x3018 mode 0x81, three input
+    channels are packed and the ic register reads 12, so the ic and k
+    columns on those seven rows are the packed form and not the source
+    shape. They are marked 1st. All seven read 34 either way.
+
+Nothing here was run on hardware. These are numbers read out of files
+the vendor toolkit produced, and what the bits mean was arrived at by
+trial and error against those files and against the board.
+
+
+The table
+---------
+
+One row per file, for the first dispatch in the file. The last column
+is what the file records about itself, input>output with the batch
+dropped. A + on the name means the file holds more than one distinct
+RESERVED_0 across its dispatches; those are broken out below.
+
+model           0x4050     R_0 path    ic    oc  k  s  file says
+----------------------------------------------------------------
+
+  RESERVED_0 = 34   (regular convolutions)   61 files
+a_lin           0x80011111  34 reg     64    64  1  1  64x8x8>64x8x8
+a_lin2          0x80011111  34 reg     64    64  1  1  64x8x8>64x8x8
+a_lin_m1        0x80011111  34 reg     64    64  1  1  64x1x1>64x1x1
+a_relu          0x80011111  34 reg     64    64  1  1  64x8x8>64x8x8
+c_32            0x80011011  34 reg     32    16  3  1  32x80x80>16x80x80
+c_48            0x80011011  34 reg     48    16  3  1  48x80x80>16x80x80
+c_64            0x80011011  34 reg     64    16  3  1  64x80x80>16x80x80
+fc_224          0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_cal127       0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_cal250       0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_cal255       0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_x1           0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_x16          0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+fc_x4           0x80011111  34 1st     12    32  2  2  3x224x224>32x112x112
+g_cal           0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+g_cal_k1        0x80011111  34 reg     16   128  1  2  16x80x80>128x40x40
+g_cal_k3        0x80011111  34 reg     16   128  3  2  16x80x80>128x40x40
+g_cal_oc16      0x80011011  34 reg     16    16  5  2  16x80x80>16x40x40
+g_cal_s1        0x80011111  34 reg     16   128  5  1  16x80x80>128x80x80
+g_k3s1          0x80011011  34 reg     16    16  3  1  16x80x80>16x80x80
+g_md003         0x80011011  34 reg     16    16  1  1  16x160x160>16x160x160
+g_md003_80      0x80011011  34 reg     16    16  1  1  16x80x80>16x80x80
+g_md003_oc128   0x80011111  34 reg     16   128  1  1  16x80x80>128x80x80
+g_md003s2       0x80011011  34 reg     16    16  1  2  16x160x160>16x80x80
+g_oc112         0x80011011  34 reg     16   112  5  2  16x80x80>112x40x40
+g_oc144         0x80011011  34 reg     16   144  5  2  16x80x80>144x40x40
+g_oc160         0x80011111  34 reg     16   160  5  2  16x80x80>160x40x40
+g_oc32          0x80011111  34 reg     16    32  5  2  16x80x80>32x40x40
+g_oc48          0x80011011  34 reg     16    48  5  2  16x80x80>48x40x40
+g_oc64          0x80011111  34 reg     16    64  5  2  16x80x80>64x40x40
+g_oc80          0x80011011  34 reg     16    80  5  2  16x80x80>80x40x40
+g_oc96          0x80011111  34 reg     16    96  5  2  16x80x80>96x40x40
+g_pw2           0x80011111  34 reg     32    64  1  1  32x112x112>64x112x112
+g_pw24+         0x80011111  34 reg    512  1024  1  1  512x7x7>1024x7x7
+p0_k1           0x80011011  34 reg     16    16  1  1  16x80x80>16x80x80
+p0_k5           0x80011011  34 reg     16    16  5  1  16x80x80>16x76x76
+p1_k3           0x80011011  34 reg     16    16  3  1  16x80x80>16x80x80
+p1_k5           0x80011011  34 reg     16    16  5  1  16x80x80>16x78x78
+p2_k5           0x80011011  34 reg     16    16  5  1  16x80x80>16x80x80
+sv_k3           0x80011111  34 reg     16   128  3  2  16x80x80>128x40x40
+sv_k5           0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_null_a       0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_null_b       0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_oc128        0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_oc64         0x80011111  34 reg     16    64  5  2  16x80x80>64x40x40
+sv_rg           0x80011111  34 reg     32    32  3  1  32x112x112>32x112x112
+sv_rgu          0x80011111  34 reg     32    32  3  1  32x112x112>32x112x112
+sv_sc_base      0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_sc_moved     0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_wt_a         0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+sv_wt_b         0x80011111  34 reg     16   128  5  2  16x80x80>128x40x40
+w_112           0x80011011  34 reg     16    16  3  1  16x112x112>16x112x112
+w_120           0x80011011  34 reg     16    16  3  1  16x120x120>16x120x120
+w_128           0x80011011  34 reg     16    16  3  1  16x128x128>16x128x128
+w_144           0x80011011  34 reg     16    16  3  1  16x144x144>16x144x144
+w_160           0x80011011  34 reg     16    16  3  1  16x160x160>16x160x160
+w_40            0x80011011  34 reg     16    16  3  1  16x40x40>16x40x40
+w_56            0x80011011  34 reg     16    16  3  1  16x56x56>16x56x56
+w_64            0x80011011  34 reg     16    16  3  1  16x64x64>16x64x64
+w_80            0x80011011  34 reg     16    16  3  1  16x80x80>16x80x80
+w_96            0x80011011  34 reg     16    16  3  1  16x96x96>16x96x96
+
+  RESERVED_0 = 66   (regular convolutions)   20 files
+bias_k3         0x80021111  66 reg     16   128  3  2  16x80x80>128x40x40
+bias_k5         0x80021111  66 reg     16   128  5  2  16x80x80>128x40x40
+bias_ramp       0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+lane_ic         0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+lane_oc         0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+ocp34           0x80021011  66 reg     64    34  1  1  64x56x56>34x56x56
+ocp40           0x80021011  66 reg     64    40  1  1  64x56x56>40x56x56
+ocp56           0x80021111  66 reg     64    56  1  1  64x56x56>56x56x56
+pp_k3           0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+pp_k3b          0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+pp_oc64         0x80021111  66 reg     16    64  3  1  16x80x80>64x80x80
+pp_p1           0x80021011  66 reg     16    16  1  1  16x80x80>16x80x80
+pp_p3           0x80021011  66 reg     16    16  3  1  16x80x80>16x80x80
+pp_p5           0x80021011  66 reg     16    16  5  1  16x80x80>16x80x80
+pp_pw           0x80021011  66 reg     64     4  1  1  64x80x80>4x80x80
+pq_ic           0x80021011  66 reg     64    42  1  1  64x56x56>41x56x56
+pq_oc           0x80021011  66 reg     64    42  1  1  64x56x56>41x56x56
+pw48x64w56      0x80021111  66 reg     48    64  1  1  48x56x56>64x56x56
+tq_ic           0x80021011  66 reg     48    40  1  1  48x40x40>40x40x40
+tq_oc           0x80021011  66 reg     48    40  1  1  48x40x40>40x40x40
+
+  RESERVED_0 = 38   (depthwise; a third value, see below)   13 files
+dwbig_1024+     0x00013333  38 dw    1024     2  3  1  1024x7x7>1024x7x7
+dwbig_112+      0x00013233  38 dw     112     2  3  1  112x7x7>112x7x7
+dwbig_128+      0x00013333  38 dw     128     2  3  1  128x7x7>128x7x7
+dwbig_16+       0x00013033  38 dw      16     2  3  1  16x7x7>16x7x7
+dwbig_256+      0x00013333  38 dw     256     2  3  1  256x7x7>256x7x7
+dwbig_32+       0x00013133  38 dw      32     2  3  1  32x7x7>32x7x7
+dwbig_48+       0x00013233  38 dw      48     2  3  1  48x7x7>48x7x7
+dwbig_64+       0x00013333  38 dw      64     2  3  1  64x7x7>64x7x7
+dwbig_80+       0x00013033  38 dw      80     2  3  1  80x7x7>80x7x7
+dwbig_96+       0x00013133  38 dw      96     2  3  1  96x7x7>96x7x7
+g_dw1           0x00013133  38 dw      32     2  3  1  32x112x112>32x112x112
+sv_dw           0x00013133  38 dw      32     2  3  1  32x112x112>32x112x112
+sv_dwu          0x00013133  38 dw      32     2  3  1  32x112x112>32x112x112
+
+
+The counts
+----------
+
+  files                                  94
+  dispatches in them                     422
+  dispatches that could not be decoded   0
+  regular dispatches                     364
+  depthwise dispatches                   58
+
+  by dispatch, RESERVED_0
+    34    260
+    38     58
+    66    104
+
+  by file, first dispatch
+    34     61
+    38     13
+    66     20
+
+  distinct 0x4050 words, 8 of them
+    word         count  RGP  R_0  S_E2 S_E1 S_E0 OD   OW
+    0x80011111   140  8    34   1    0    4    0    1
+    0x80011011   120  8    34   0    0    4    0    1
+    0x80021011    84  8    66   0    0    4    0    1
+    0x00013133    26  0    38   1    1    4    1    1
+    0x80021111    20  8    66   1    0    4    0    1
+    0x00013333    16  0    38   3    1    4    1    1
+    0x00013233     8  0    38   2    1    4    1    1
+    0x00013033     8  0    38   0    1    4    1    1
+
+  the other fields, for completeness
+    RGP_CNTER  regular {8: 364}
+               dw      {0: 58}
+    TP_ORG_EN  regular {0: 364}
+               dw      {0: 58}
+    SIZE_E_0   regular {4: 364}
+               dw      {4: 58}
+    SIZE_E_1   regular {0: 364}
+               dw      {1: 58}
+    SIZE_E_2   regular {0: 204, 1: 160}
+               dw      {0: 8, 1: 26, 2: 8, 3: 16}
+    OD_BYPASS  regular {0: 364}
+               dw      {1: 58}
+    OW_SRC     regular {1: 364}
+               dw      {1: 58}
+
+
+Does it follow the geometry?
+----------------------------
+
+No. Grouping the 364 regular dispatches by their full CNA geometry --
+ic, oc, kernel, stride, input width, rows, output width, pixels and
+surface -- gives 116 distinct classes, and 12 of them contain both
+values. Read that as 5 facts and not 12: a model appears in several
+classes because the compiler splits it into CBUF windows of different
+heights, and each window is its own class here. Same geometry,
+different RESERVED_0, in the same corpus:
+
+  ic 16  oc 128  k 5  stride 2  80x80 in, 1600 pixels out
+    34: g_cal, sv_k5, sv_null_a, sv_null_b, sv_oc128, sv_sc_base,
+        sv_sc_moved, sv_wt_a, sv_wt_b
+    66: bias_k5
+  ic 16  oc 16  k 3  stride 1  80x80 in, 6400 pixels out
+    34: g_k3s1, p1_k3, w_80
+    66: bias_ramp, lane_ic, lane_oc, pp_k3, pp_k3b, pp_p3
+  ic 16  oc 16  k 3  stride 1  80x41 in, 3200 pixels out
+    34: g_k3s1, p1_k3, w_80
+    66: bias_ramp, lane_ic, lane_oc, pp_k3, pp_k3b, pp_p3
+  ic 16  oc 128  k 5  stride 2  80x41 in, 800 pixels out
+    34: g_cal, sv_k5, sv_null_a, sv_null_b, sv_oc128, sv_sc_base,
+        sv_sc_moved, sv_wt_a, sv_wt_b
+    66: bias_k5
+  ic 16  oc 128  k 5  stride 2  80x42 in, 800 pixels out
+    34: g_cal, sv_k5, sv_null_a, sv_null_b, sv_oc128, sv_sc_base,
+        sv_sc_moved, sv_wt_a, sv_wt_b
+    66: bias_k5
+  ic 16  oc 128  k 3  stride 2  80x80 in, 1600 pixels out
+    34: g_cal_k3, sv_k3
+    66: bias_k3
+  ic 16  oc 16  k 1  stride 1  80x80 in, 6400 pixels out
+    34: g_md003_80, p0_k1
+    66: pp_p1
+  ic 16  oc 16  k 1  stride 1  80x40 in, 3200 pixels out
+    34: g_md003_80, p0_k1
+    66: pp_p1
+  ic 16  oc 16  k 5  stride 1  80x80 in, 6400 pixels out
+    34: p2_k5
+    66: pp_p5
+  ic 16  oc 16  k 5  stride 1  80x42 in, 3200 pixels out
+    34: p2_k5
+    66: pp_p5
+  ic 16  oc 128  k 3  stride 2  80x40 in, 800 pixels out
+    34: g_cal_k3, sv_k3
+    66: bias_k3
+  ic 16  oc 128  k 3  stride 2  80x41 in, 800 pixels out
+    34: g_cal_k3, sv_k3
+    66: bias_k3
+
+The cleanest single pair is g_cal against bias_k5. Both are one ONNX
+Conv, ic 16, oc 128, 80x80 input, k = 5, stride 2, compiled by the
+same toolkit build, and the two .onnx sources are the same 205601
+bytes -- they differ in the weight and bias VALUES and in nothing
+else. Their first dispatches are 138 registers each and differ in
+five of them:
+    t=1001 r=4044   g_cal 00000001   bias_k5 00000000
+    t=1001 r=4050   g_cal 80011111   bias_k5 80021111
+    t=1001 r=40ac   g_cal fffffff8   bias_k5 fffffff5
+    t=1001 r=40b0   g_cal 000064f9   bias_k5 00006f37
+    t=2001 r=501c   g_cal 00000710   bias_k5 00000114
+
+Three more same-geometry pairs, one from each of the other groups:
+
+  g_k3s1 against pp_k3: 6 registers differ, 4044 4050 40ac 40b0 40b4 501c
+  g_cal_k3 against bias_k3: 6 registers differ, 4044 4050 40ac 40b0 40b4 501c
+  p2_k5 against pp_p5: 6 registers differ, 4044 4050 40ac 40b0 40b4 501c
+
+0x40ac, 0x40b0 and 0x40b4 are the output zero point, the requant
+multiplier and the requant shift. Those differ between any two models
+with different weights and say nothing here. What is left in every
+pair is 0x4044, 0x4050 and 0x501c, the same three every time.
+
+
+Does it follow the model series?
+--------------------------------
+
+Not that either, and one form of the guess dies immediately: all 94
+files carry the same toolkit build string,
+
+    2.3.2 (@2025-04-03T08:26:16)   94 files
+
+so it is not a toolkit version difference.
+
+And a per-model constant cannot be right, because 11 files hold more
+than one value inside a single compile:
+
+  g_pw24, 512x7x7>1024x7x7, one Conv in the source graph.
+  Its dispatches, by byte offset in the file:
+    0x4980   0x80011111  R_0 34      ic 512   oc 1024  k 1  49 px
+    0x4e00   0x80011111  R_0 34      ic 512   oc 1024  k 1  49 px
+    0x5280   0x80011111  R_0 34      ic 512   oc 1024  k 1  28 px
+    0x5700   0x80021011  R_0 66      ic 16    oc 16    k 1  1 px
+    0x5b80   0x80011111  R_0 34      ic 512   oc 1024  k 1  21 px
+    0x6000   0x80021011  R_0 66      ic 16    oc 16    k 1  1 px
+
+  and the same shape in the other 10, all of them dwbig_*:
+  dwbig_1024, 1024x7x7>1024x7x7, one Conv in the source graph.
+  Its dispatches, by byte offset in the file:
+    0x6d80   0x00013333  R_0 38  dw  ic 1024  oc 2     k 3  49 px
+    0x7200   0x00013333  R_0 38  dw  ic 1024  oc 2     k 3  49 px
+    0x7680   0x00013333  R_0 38  dw  ic 1024  oc 2     k 3  28 px
+    0x7b00   0x80021011  R_0 66      ic 16    oc 16    k 1  1 px
+    0x7f80   0x00013333  R_0 38  dw  ic 1024  oc 2     k 3  21 px
+    0x8400   0x80021011  R_0 66      ic 16    oc 16    k 1  1 px
+    ... and the same pattern in dwbig_112, dwbig_128, dwbig_16, ...
+
+g_pw24 is the one that settles it. One Conv in the source graph, one
+compile, one file, and its two REGULAR dispatches disagree: the 512 to
+1024 pointwise reads 34 and the one-pixel 16 by 16 op the compiler
+adds for itself reads 66. Whatever selects the value is decided per
+dispatch, not per model and not per batch of models.
+
+
+What it does follow
+-------------------
+
+DPU 0x4044, exactly, on every regular dispatch in the corpus:
+
+    RESERVED_0 34   <->  0x4044 = 0x00000001    260 dispatches
+    RESERVED_0 66   <->  0x4044 = 0x00000000    104 dispatches
+
+364 of 364, no exceptions. 0x2001/0x501c moves with them:
+
+    RESERVED_0 34   ->  0x501c 0x710 (260)
+    RESERVED_0 66   ->  0x501c 0x14 (22), 0x114 (82)
+
+Sweeping every register in the stream, 0x4044 is the ONLY one whose
+value partitions the two RESERVED_0 groups one-to-one, and 0x501c the
+only other whose value sets are disjoint between them. So the bit is
+not a loose constant with no company: it is one third of a single
+per-op decision in the bias-and-scale path of the output stage.
+
+The depthwise dispatches are the honest limit on that. They read
+    RESERVED_0 38, 0x4044 = 0x0, 0x501c = 0x510, 58 dispatches
+38 is 34 with field bit 2 -- word bit 13 -- added, so on the word-bit
+16-against-17 axis depthwise sits with the 34 group while its 0x4044
+sits with the 66 group. The lockstep is a statement about the regular
+datapath only, and I am not claiming more than that.
+
+What selects the arm in the first place is still open. It is not the
+shape, not the file, not the toolkit build, and not the day the file
+was compiled: 2026-08-08 and 2026-08-09 each produced both arms.
+
+
+What this means for the driver
+------------------------------
+
+rkt_regcmd.c emits, for a regular convolution,
+
+    0x4044 = 0x00000001
+    0x4050 = 0x80011011 or 0x80011111   (RESERVED_0 = 34)
+    0x501c = 0x00000710
+
+which is the 34 arm in all three registers at once. It is the arm the
+vendor takes on 260 of its 364 regular dispatches, and the driver never
+mixes an 0x4044 from one arm with a 0x4050 from the other. That is
+the part I could not say in the earlier mail and can say now.
+
+The RK3576 encoder has no depthwise path at all -- fill_regcmd_rk3576
+covers a regular convolution and rkt_ml_operation_supported declines
+depthwise before it is reached -- so the driver never emits the 38
+word. That is an observation about the vendor's depthwise datapath
+and about upstream's RK3588 encoder, not about this one.
+
+The field is also not free: moved on its own to upstream's 0, on a 5x5
+at 128 output channels and a pointwise at 88, the output stayed
+identical to the baseline and the job timed out. So it is a completion
+field, and 34 is the value that completes.
+
+
+What of the claim I sent
+------------------------
+
+The counting half stands. 34 and 66 are the only two RESERVED_0 values
+on regular convolutions, 34 is the common one, 260 dispatches against
+104, and 61 files against 20 by first dispatch.
+
+Three things in it were wrong or too small, and I would rather correct
+them here than let them stand.
+
+1. "It does not correlate with oc, ic, spatial size, kernel size or
+   stride" is true but it was the weak version of the test. The strong
+   version is the one you asked for: hold the WHOLE geometry fixed.
+   12 geometry classes then carry both values, 5 of them once the CBUF
+   windows of one model are folded together, and g_cal against bias_k5
+   is two files identical in every register but five.
+
+2. "What it does track is which batch of models it came from, which
+   makes a toolkit setting more likely" does not survive as written.
+   The batches are uniform, but the batch is not what decides:
+   g_pw24 carries both values in one compile of one Conv, and the
+   toolkit build string is identical across all 94 files. Why a whole
+   batch lands on one arm I still cannot say.
+
+3. It only ever mentioned two values. There is a third, 38, on all 58
+   depthwise dispatches. The RK3576 encoder declines depthwise so it
+   never emits that word, but the corpus has it and the table should
+   have said so.
+
+The one thing the earlier mail did not have is the answer to your
+question. It is not a toolkit setting sitting on its own; it is a bit
+of a three-register per-op choice, and the driver takes one side of
+that choice consistently.
+
+
+Regards,
+Jiaxing
