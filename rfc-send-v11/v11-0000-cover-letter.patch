@@ -1,0 +1,162 @@
+From 13eea5a15259bc34c4dc1c3687ddcd82ebc2abd3 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 31 Aug 2026 19:37:48 +1200
+Subject: [PATCH v11 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
+
+1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
+by name", unchanged and carried inside the series rather than named as a
+prerequisite outside it. Tomeu asked for that on v10:
+
+  "Sashiko is not reviewing this series because it doesn't not understand
+   yet prerequisite-patch-id. Can you please resubmit the series with
+   Igor's (presumably) patches bundled in it?"
+
+  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
+
+So this applies to a plain next-20260814 on its own: base-commit names it
+and there is no prerequisite-patch-id, because there is no longer a
+prerequisite outside the series to name. 14 of 14 apply to that tree in
+order.
+
+Tested on a Radxa ROCK 4D, on next-20260814. The tree is byte identical
+to v9 and v10, so that is the same test rather than a new one.
+
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently. Two extra convolution buffer clocks, two power domains per
+core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
+that packs the task number into sixteen bits rather than twelve.
+
+What changed since v10
+
+No code, again. Igor's patch joins the series as 1/14 and everything that
+was 1/13 through 13/13 in v10 is now 2/14 through 14/14, same diffs.
+
+Igor's patch is his: same diff, same commit message, his authorship and
+his Signed-off-by first, mine underneath as the person passing it on. It
+carries the four tags it collected on its own thread, which my tree had
+not picked up -- it had only my own Reviewed-by from before the others
+arrived, so posting it as my tree held it would have stripped three
+reviews off somebody else's patch. They are Sidong Yang's and Diederik de
+Haas's Tested-by from 2 and 5 August and Sebastian Reichel's Reviewed-by
+from 5 August, taken from the mails that gave them. I told Igor before
+sending this.
+
+6/14's git note is gone rather than renumbered. It existed because Rob
+Herring's bot asked on v8 for the dependency to be recorded in the patch
+rather than only in the cover, and the dependency was Igor's patch
+sitting outside the series. It is inside now, so the note has nothing
+left to say -- its own text named a prerequisite-patch-id trailer this
+version deliberately does not emit.
+
+Igor also ran the 19 August protocol again on v9 as posted, on RK3588,
+an Orange Pi 5 Plus with all three cores bound, PROVE_LOCKING=y and
+DEBUG_ATOMIC_SLEEP=y, and a local test-only patch lowering
+JOB_TIMEOUT_MS to 2 ms so healthy jobs cross the timeout. Two passes per
+kernel at console loglevel 8 and 4, serial captured on a second machine.
+
+  v9, two passes         12 and 11 induced resets, all recovered,
+                         48 of 48 within 1 on both, including the
+                         inference after a forced autosuspend and
+                         resume. No MMU faults, no lockdep hits,
+                         nothing on the console.
+
+  without 2 and 3/14,    8, 10, 12, 8 and 15 induced resets, all
+  five runs in the       recovered. Four runs clean. In the
+  same session           remaining one the inference after autosuspend
+                         reported success and returned a constant
+                         buffer, all 48 output channels at 0x80,
+                         which is not this model's output zero
+                         point, while the CPU reference varied
+                         normally. Zero kernel messages, zero
+                         lockdep hits, nothing on the console.
+
+  2, 3 and 4/14 only,    13 and 13 induced resets, all recovered,
+  two passes             oracle 48 of 48 throughout, including after a
+                         forced autosuspend and resume. On the 2+3 arm
+                         a round that ends in a timeout leaves the
+                         affected core runtime-active even through a
+                         forced autosuspend; with 4/14 applied the same
+                         sequence leaves all three cores suspended.
+                         That arm is where 4/14's Tested-by comes from.
+
+A job that signals completion while its output buffer is never written
+is the silent form of the race 2/14 and 3/14 close, and across 102
+induced resets in nine runs that day it appeared only on the arm without
+them. It is a better statement of what those two patches are for than
+anything my own logs have caught, which has always been the loud form:
+a message, a wrong answer, something to look at.
+
+The tags, and where each came from:
+
+  3/14  Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, differential base,
+                                    # JOB_TIMEOUT_MS=2
+  4/14  Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  7/14  Acked-by: Conor Dooley
+  8/14  Acked-by: Conor Dooley
+  9/14  Reviewed-by: Abel Vesa
+  10/14  Reviewed-by: Abel Vesa
+
+The two Tested-by comments are not the same string, and that is how they
+were given. 2/14, 5/14 and 6/14 keep the tags they had; Igor checked before
+testing that 2/14 is byte identical to v8 1/12 up to the base-commit
+trailer and 5/14 identical to v8 3/12, so those tags still describe what
+was tested.
+
+The bindings are unchanged since v9, where dt_binding_check was clean on
+all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
+clean on all 13 rk3576 and all 48 rk3588 dtbs.
+
+Two things I raised in v9 and would still rather hear about than guess
+at. 9/14 does three things: it adds the settle delay, renames a macro,
+and gives RK3576_PD_NPU a regulator, which also makes every RK3576 board
+force that domain off at probe. I asked whether it wants splitting;
+Abel Vesa's Reviewed-by may be the answer, but nobody has said so, and I
+would rather split it than have it merged on my silence. And 13/14 gives
+each core both NPU domains, which is the description that has been
+tested here rather than the topology; if it should be one domain per
+core, 6/14's minItems has to change with it. That one has had no reply
+at all.
+
+Nothing else moved.
+
+Igor Paunovic (1):
+  accel/rocket: request the core clocks by name
+
+Jiaxing Hu (13):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: let the core suspend after a reset
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../bindings/iommu/rockchip,iommu.yaml        |  28 +++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 ++++++-
+ .../power/rockchip,power-controller.yaml      |   8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  13 ++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  82 +++++++++++-
+ drivers/accel/rocket/rocket_core.c            |  32 ++++-
+ drivers/accel/rocket/rocket_core.h            |  11 +-
+ drivers/accel/rocket/rocket_device.c          |   7 +-
+ drivers/accel/rocket/rocket_drv.c             |  28 ++++-
+ drivers/accel/rocket/rocket_drv.h             |   2 +
+ drivers/accel/rocket/rocket_job.c             | 119 ++++++++++++++----
+ drivers/pmdomain/rockchip/pm-domains.c        |  75 +++++++----
+ 12 files changed, 389 insertions(+), 63 deletions(-)
+
+
+base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
+-- 
+2.43.0
+
