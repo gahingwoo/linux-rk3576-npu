@@ -9,10 +9,12 @@
 # a good reason to bundle and no reason at all to do it quietly -- the patch is
 # Igor's, he is active on this series, and he may want to send a v3 himself.
 #
-# ⚠ THE TAGS ARE THE PART THAT COULD HAVE GONE WRONG. Our tree's copy carried
-# only our own Reviewed-by, picked up before the others arrived, so bundling it
-# as-is would have posted his patch stripped of three reviews. The mail lists
-# all three with the dates of the mails that gave them so he can check them.
+# ⚠ THE TAGS ARE THE PART THAT COULD GO WRONG, and the check for them belongs
+# in send-v11.sh, not here. Our tree's copy carried only our own Reviewed-by,
+# picked up before the others arrived, so bundling it as held would have
+# posted his patch stripped of three reviews. That is our bookkeeping and not
+# his problem, so the mail does not confess it -- send-v11.sh refuses to send
+# a 01/14 that has lost any of the three, which is the guard that matters.
 #
 # ⚠ DRY=1 prints the headers and sends nothing.
 set -euo pipefail
@@ -20,8 +22,11 @@ cd "$(dirname "$0")"
 
 M=reply-igor-bundling.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
-for want in "Sidong Yang" "Diederik de Haas" "Sebastian Reichel" \
-            "authorship and your Signed-off-by first"; do
+# ⚠ MATCH ON SHORT STRINGS. A guard that greps a whole sentence fails the
+# moment the mail is rewrapped at 78 columns, and it did: "should not have
+# been sitting in my RFC" was present and split across a newline, and the
+# check reported it missing minutes before sending.
+for want in "under your name" "01/14" "Tomeu"; do
 	grep -q "$want" "$M" || {
 		echo "$M no longer mentions \"$want\" -- the point of the mail" >&2
 		exit 1; }

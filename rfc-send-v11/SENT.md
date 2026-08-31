@@ -1,8 +1,8 @@
 # Sent
 
-Nothing in this directory has been sent.
+v11 itself has NOT been sent. The notification to Igor has.
 
-## reply-igor-bundling.eml -- NOT SENT, and it goes FIRST
+## reply-igor-bundling.eml -- SENT
 
 Tells Igor his patch is being carried inside v11 before he sees it as 01/14.
 Tomeu asked for the bundling on the v10 cover because Sashiko will not review
@@ -12,13 +12,25 @@ a series whose dependency is a prerequisite-patch-id it cannot follow.
     To:          royalnet026@gmail.com
     Cc:          linux-rockchip, dri-devel, tomeu@tomeuvizoso.net
 
-What it commits us to:
+Sent 2026-08-31 20:03 +1200, SMTP result 250.
 
-- his patch goes out unchanged, his authorship and Signed-off-by first;
-- all four of his tags travel with it, listed with the dates of the mails
-  that gave them so he can check them;
-- if he would rather send a v3 standalone, we drop it from the series. That
-  offer is on the record and has to be honoured if he takes it.
+    Message-ID: <20260831080356.80952-1-gahing@gahingwoo.com>
+
+What it commits us to, and it is short on purpose:
+
+- his patch goes out UNCHANGED, under his name, his Signed-off-by first and
+  mine underneath as the carrier;
+- it goes out "with the four tags it has collected". That sentence is a
+  promise, and send-v11.sh is what keeps it: it refuses to send a 01/14 not
+  authored by Igor Paunovic or missing any of Sidong Yang's, Diederik de
+  Haas's or Sebastian Reichel's tag.
+
+⚠ Two paragraphs were cut from the draft before it went, both correctly.
+One offered to drop the patch from the series if he preferred a v3 -- an
+offer nobody asked for, and one that would have had to be honoured. The
+other confessed that our tree's copy carried only our own Reviewed-by and
+would have posted his patch three reviews short. That is our bookkeeping and
+not his problem; the check for it belongs in the send script, where it is.
 
 ## v11 itself -- NOT SENT
 
