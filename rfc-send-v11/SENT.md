@@ -1,6 +1,6 @@
 # Sent
 
-v11 itself has NOT been sent. The notification to Igor has.
+Both sent 2026-08-31.
 
 ## reply-igor-bundling.eml -- SENT
 
@@ -32,7 +32,25 @@ other confessed that our tree's copy carried only our own Reviewed-by and
 would have posted his patch three reviews short. That is our bookkeeping and
 not his problem; the check for it belongs in the send script, where it is.
 
-## v11 itself -- NOT SENT
+## v11 itself -- SENT
+
+Sent 2026-08-31 20:19 +1200. Fifteen messages, all SMTP result 250, no
+failures, visible on lore.
+
+    Cover:  <20260831081956.84871-1-gahing@gahingwoo.com>
+    01..14: <20260831081956.84871-2..15-gahing@gahingwoo.com>
+
+⚠ git send-email auto-Cc'd Diederik de Haas off 01/14's Tested-by line,
+which is the cheapest possible confirmation that Igor's three recovered
+tags really travelled.
+
+The cover went out at 54 lines, down from 122. What came out of it: the
+provenance history of Igor's patch, the link to its standalone posting,
+Igor's RK3588 differential for the third time, and the tag bookkeeping.
+What stayed: the note's removal (Rob Herring's bot asked for that note in
+v8 and removing it silently invites the complaint again), the binding
+check results, and the two open questions -- 9/14 possibly wanting a
+split, and 13/14's power domain topology, which has still had no reply.
 
 14 patches plus a cover. Igor's is 01/14, ours are 02/14 through 14/14, and
 every diff is byte identical to v10 -- `git diff v10-prep v11-prep` is empty.
