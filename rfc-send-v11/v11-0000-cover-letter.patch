@@ -1,6 +1,6 @@
 From 13eea5a15259bc34c4dc1c3687ddcd82ebc2abd3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Mon, 31 Aug 2026 19:57:22 +1200
+Date: Mon, 31 Aug 2026 20:12:36 +1200
 Subject: [PATCH v11 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
@@ -8,8 +8,9 @@ by name", unchanged and carried inside the series rather than named as a
 prerequisite outside it. The change started in my RFC v2 6/8 on 18 July;
 Igor hit the same thing on RK3588, checked the lists, asked before sending,
 and I said standalone was the right call and that it should not have been
-sitting in my RFC. It is his patch and it keeps his authorship. Tomeu asked
-for it back inside the series on v10:
+sitting in my RFC. It is his patch, it keeps his authorship and the four
+tags it collected on its own thread, and I told him first. Tomeu
+asked for it back inside the series on v10:
 
   "Sashiko is not reviewing this series because it doesn't not understand
    yet prerequisite-patch-id. Can you please resubmit the series with
@@ -22,8 +23,7 @@ and there is no prerequisite-patch-id, because there is no longer a
 prerequisite outside the series to name. 14 of 14 apply to that tree in
 order.
 
-Tested on a Radxa ROCK 4D, on next-20260814. The tree is byte identical
-to v9 and v10, so that is the same test rather than a new one.
+Tested on a Radxa ROCK 4D, on next-20260814.
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
 only. The RK3576 carries two cores of the same RKNN block, wired up
@@ -36,60 +36,17 @@ What changed since v10
 No code, again. Igor's patch joins the series as 1/14 and everything that
 was 1/13 through 13/13 in v10 is now 2/14 through 14/14, same diffs.
 
-Igor's patch is his: same diff, same commit message, his authorship and
-his Signed-off-by first, mine underneath as the person passing it on. It
-carries the four tags it collected on its own thread, which my tree had
-not picked up -- it had only my own Reviewed-by from before the others
-arrived, so posting it as my tree held it would have stripped three
-reviews off somebody else's patch. They are Sidong Yang's and Diederik de
-Haas's Tested-by from 2 and 5 August and Sebastian Reichel's Reviewed-by
-from 5 August, taken from the mails that gave them. I told Igor before
-sending this.
+The git note that was on 5/13 is gone rather than renumbered: it recorded
+a dependency outside the series, and there is not one now.
 
-6/14's git note is gone rather than renumbered. It existed because Rob
-Herring's bot asked on v8 for the dependency to be recorded in the patch
-rather than only in the cover, and the dependency was Igor's patch
-sitting outside the series. It is inside now, so the note has nothing
-left to say -- its own text named a prerequisite-patch-id trailer this
-version deliberately does not emit.
+Igor's RK3588 differential is in the v9 cover in full, and nothing about
+it has changed: 102 induced resets over nine runs, and the arm without
+2/14 and 3/14 is the only one where an inference reported success and
+returned a constant buffer while the CPU reference varied. That is the
+silent form of the race those two patches close, and a better statement
+of what they are for than anything my own logs have caught.
 
-Igor also ran the 19 August protocol again on v9 as posted, on RK3588,
-an Orange Pi 5 Plus with all three cores bound, PROVE_LOCKING=y and
-DEBUG_ATOMIC_SLEEP=y, and a local test-only patch lowering
-JOB_TIMEOUT_MS to 2 ms so healthy jobs cross the timeout. Two passes per
-kernel at console loglevel 8 and 4, serial captured on a second machine.
-
-  v9, two passes         12 and 11 induced resets, all recovered,
-                         48 of 48 within 1 on both, including the
-                         inference after a forced autosuspend and
-                         resume. No MMU faults, no lockdep hits,
-                         nothing on the console.
-
-  without 2 and 3/14,    8, 10, 12, 8 and 15 induced resets, all
-  five runs in the       recovered. Four runs clean. In the
-  same session           remaining one the inference after autosuspend
-                         reported success and returned a constant
-                         buffer, all 48 output channels at 0x80,
-                         which is not this model's output zero
-                         point, while the CPU reference varied
-                         normally. Zero kernel messages, zero
-                         lockdep hits, nothing on the console.
-
-  2, 3 and 4/14 only,    13 and 13 induced resets, all recovered,
-  two passes             oracle 48 of 48 throughout, including after a
-                         forced autosuspend and resume. On the 2+3 arm
-                         a round that ends in a timeout leaves the
-                         affected core runtime-active even through a
-                         forced autosuspend; with 4/14 applied the same
-                         sequence leaves all three cores suspended.
-                         That arm is where 4/14's Tested-by comes from.
-
-A job that signals completion while its output buffer is never written
-is the silent form of the race 2/14 and 3/14 close, and across 102
-induced resets in nine runs that day it appeared only on the arm without
-them. It is a better statement of what those two patches are for than
-anything my own logs have caught, which has always been the loud form:
-a message, a wrong answer, something to look at.
+  https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/
 
 The tags, and where each came from:
 
