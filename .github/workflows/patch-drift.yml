@@ -1,6 +1,6 @@
 # Two questions a pinned build cannot answer.
 #
-# 1. Does the v9 series still apply to TODAY's linux-next? That is what a
+# 1. Does the v11 series still apply to TODAY's linux-next? That is what a
 #    maintainer will do, and for a patchset under review "it stopped applying
 #    three weeks ago" should not first arrive as a request to rebase.
 #
@@ -58,20 +58,27 @@ jobs:
           cd linux
           git config user.email ci@example.invalid
           git config user.name "charsiu CI"
-          # ⚠ The prerequisite the cover letter names goes first. Nothing from
-          # kernel/backport-7.2 is applied here: those exist only because the
-          # RELEASE is older than the series, and linux-next already has them.
-          git am --keep-cr ../rfc-send-v9/prereq/*.patch >/tmp/am.log 2>&1 || {
-            echo "::warning::even the prerequisite no longer applies, so it may have been merged"
-            sed 's/^/  /' /tmp/am.log | head -5
-            git am --abort || true
-          }
+          # Nothing from kernel/backport-7.2 is applied here: those exist only
+          # because the RELEASE is older than the series, and linux-next already
+          # has them.
+          #
+          # ⚠⚠ 1/14 IS NOT ALLOWED TO HARD FAIL. It is Igor Paunovic's
+          # clocks-by-name patch, which v9 and v10 named from outside with a
+          # `prerequisite-patch-id:` trailer and v11 carries inside the series.
+          # When it lands upstream it will stop applying to linux-next, and that
+          # is the patch being MERGED, not the series drifting. The old shape of
+          # this job tolerated exactly that because the patch was a separate
+          # step; folding it in must not quietly turn a merge into a red run.
           fail=""
-          for p in ../rfc-send-v9/v9-00[0-9][0-9]-*.patch; do
-            case "$p" in *v9-0000-*) continue ;; esac
+          for p in ../rfc-send-v11/v11-00[0-9][0-9]-*.patch; do
+            case "$p" in *-0000-*) continue ;; esac
             n=$(basename "$p")
             if git am --keep-cr "$p" >/tmp/am.log 2>&1; then
               echo "  ok    $n"
+            elif case "$p" in *-0001-*) true ;; *) false ;; esac; then
+              echo "::warning::1/14 no longer applies, so it may have been merged"
+              sed 's/^/  /' /tmp/am.log | head -5
+              git am --abort || true
             else
               echo "  FAIL  $n"
               sed 's/^/        /' /tmp/am.log
@@ -83,7 +90,7 @@ jobs:
             fi
           done
           if [ -n "$fail" ]; then
-            echo "::warning::the v9 series stops applying at $fail on linux-next $TIP"
+            echo "::warning::the v11 series stops applying at $fail on linux-next $TIP"
             echo "failed=$fail" >> "$GITHUB_OUTPUT"
             exit 1
           fi

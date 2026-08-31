@@ -5,9 +5,10 @@ linux-next and heading for 7.3, cherry-picked here so the RK3576 NPU series can
 be built on a **released** mainline kernel rather than on a linux-next tag.
 
 v7.2 is the newest mainline release and it already carries `drivers/accel/rocket`
-(for RK3588). It does not carry these four, and the v9 series was written on top
-of a tree that has them, so without them patch 4 fails on `rocket_job.c` and
-patch 8 fails on `pm-domains.c`. Measured, not assumed.
+(for RK3588). It does not carry these four, and the series was written on top
+of a tree that has them, so without them the completion-tail patch fails on
+`rocket_job.c` and the settle-delay patch fails on `pm-domains.c`. Measured, not
+assumed.
 
 | | commit | author | what |
 |---|---|---|---|
@@ -17,7 +18,7 @@ patch 8 fails on `pm-domains.c`. Measured, not assumed.
 | 0004 | `c8e1c83f9ad7` | Midgy BALON | pmdomain/rockchip: add a regulator to the RK3568 NPU power domain |
 
 0004 is the one that introduces `DOMAIN_M_R` and the `need_regulator` field, which
-is what v9's *"pmdomain/rockchip: add optional per-domain power-on settle delay"*
+is what *"pmdomain/rockchip: add optional per-domain power-on settle delay"*
 extends. The first three are the `pm_runtime_resume_and_get` error unwinding and
 the overflow hardening in the job path.
 
@@ -25,6 +26,11 @@ the overflow hardening in the job path.
 of these is upstream, so the only reason they are here is that 7.2 shipped first.
 
 ## Verified 2026-08-25
+
+⚠ Verified against v9, which is two revisions old. v11 carries Igor Paunovic's
+clocks-by-name patch inside the series as 01/14, so there is no separate
+prerequisite step any more and the series is 14 patches, not 13. The four
+backports and their reason are unchanged.
 
 On a clean `v7.2` checkout, in this order:
 

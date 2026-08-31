@@ -1,5 +1,14 @@
 # The SDP coefficient float surface is NOT an opaque blob (2026-06-25)
 
+> **SUPERSEDED 2026-08-07 -- the float surface is gone.** Measured per output
+> channel, keeping the first four bytes of that region and zeroing the rest
+> leaves every channel correct, and keeping zero bytes leaves none: one word out
+> of 197888 bytes was doing the work, and it is read as a bitfield, not a float.
+> Mesa now writes the constant `0x1004` there and the surface it took to be a
+> blob no longer exists. So neither the "derivable skeleton" reading, the
+> "genuine blob" reversal, nor the wt_zp-correction hypothesis at the end of
+> this file is what it turned out to be. See README.md.
+
 Working the per-tensor conv2d (16->128, 5x5) coefficient buffer by trial-and-error
 on the captures + the maxdiff oracle. The headline reversal: the float surface that
 test (b) proved is **load-bearing** is **not** a data-dependent opaque blob — it is a
@@ -125,7 +134,7 @@ the float surface is a genuine blob for a from-scratch derivable encoder. The ho
 (vendor layout = optimization the hw tolerates) is refuted.
 Residual cheap untested candidate: value-SORTED fill (posprobe showed local order is OIHW not
 value-sorted, so low odds). Realistic paths now: extract/replay per-conv (allbilly's suggestion,
-not upstreamable) or a deep RE of the placement algorithm.
+not upstreamable) or working out the placement algorithm.
 
 ## UPDATE 2026-06-26 — the all-zero was the REQUANT NUMBERS, not the float surface; engage works
 Stepped back from "is the placement derivable" to "why is the output all-zero", isolated cleanly:

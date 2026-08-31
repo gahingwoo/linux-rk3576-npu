@@ -1,5 +1,18 @@
 # RK3576 NPU chained CMAC: why the open-source black-box route stops here
 
+> **SUPERSEDED 2026-08-07 -- the wall is solved, and it is none of the things
+> this document concludes.** It was not a CBUF/CSC/CMAC consume-arm and it did
+> not need RTL or TRM access; it was one register field offset.
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> The falsification ledger below is still an accurate record of what was tested
+> and ruled out. Its verdict is not. See README.md and FINDINGS.md.
+
 **Status: parked (2026-07-10), pending new evidence.** Every software-observable
 dimension has been tested to a clean, reproducible negative. Reopening this needs
 either vendor RTL/TRM access or a new runtime signal nobody has found yet — not
@@ -54,7 +67,7 @@ merely unconfirmed.
 
 | Dimension | Candidate | Test | Result |
 |---|---|---|---|
-| **Dispatch mechanism** | Sequential per-task kicks are wrong; hardware-native iteration is needed | Rebuilt the exact vendor grammar: single `PC_OP_EN` pulse, `TASK_CON.task_number = N`, contiguous 64-byte-strided task regcmds with the vendor's self-iterating trailer (`[next-addr][next-amount][SYNC][broadcast OP_EN]`), reverse-engineered from a runtime wtrace of the vendor's own `task_number=8` submit and confirmed byte-identical to its compile-time form | **Refuted.** `PC_TASK_STATUS` genuinely advances (1→6), all four compute units engage (`exec_ever=0xf`), DMA is clean, `PC_DONE` fires clean. The PC mechanism works exactly as designed. Every task after the first still computes empty. |
+| **Dispatch mechanism** | Sequential per-task kicks are wrong; hardware-native iteration is needed | Rebuilt the exact vendor grammar: single `PC_OP_EN` pulse, `TASK_CON.task_number = N`, contiguous 64-byte-strided task regcmds with the vendor's self-iterating trailer (`[next-addr][next-amount][SYNC][broadcast OP_EN]`), read off a runtime wtrace of the vendor's own `task_number=8` submit and confirmed byte-identical to its compile-time form | **Refuted.** `PC_TASK_STATUS` genuinely advances (1→6), all four compute units engage (`exec_ever=0xf`), DMA is clean, `PC_DONE` fires clean. The PC mechanism works exactly as designed. Every task after the first still computes empty. |
 | | Native hardware iteration with zero driver intervention mid-run (`bare_tasknum`) | Strip every driver register touch during the run so the PC walks the chain with no software in the loop at all | **Refuted.** Byte-identical result to the driven case. |
 | | The escape hatch: skip chaining entirely, dispatch every task as its own fully independent job | N independent single-task submits, each its own driver-level job, one reading the previous op's real (correct) output as input | **Refuted, decisively.** Only the very first submit after each power-domain resume computes; every subsequent *independent* submit is empty, even one reading verified-correct upstream data. This rules out chaining, trailers, PC state, and task_number as the cause outright — there is no chain in this test. |
 | | Vendor uses a descriptor-array DMA-fetch mechanism (`TASK_DMA_BASE_ADDR` → array of task descriptors) rocket never replicated | Live wtrace of the vendor's own submit register writes | **Refuted.** `task_base_addr = 0` in the vendor's own capture, at `task_number=2` and `task_number=8` alike. The vendor doesn't use this mechanism either. |
@@ -102,7 +115,7 @@ Two things worth keeping independent of the negative result:
   without complaint. This project's own earlier TLB-flush "fix" had been
   running that no-op the entire time. A real fix (`kernel/0025`) is
   implemented and confirmed firing.
-- **The vendor's RK3576 multi-task dispatch grammar, reverse-engineered from a
+- **The vendor's RK3576 multi-task dispatch grammar, read off a
   runtime capture and confirmed against the compile-time `.rknn`**: each task
   ends in a self-iterating trailer — an absolute pointer to the next task's
   regcmd, its fetch amount, a `SYNC`, and a broadcast `OP_EN` that re-fires the
@@ -179,6 +192,6 @@ mainline-7.1.3 image via two DTB variants) is in `/home/parallels/Documents/kiln
 (`FINDINGS-DUAL-IMAGE.md`, `capture/env-trace.sh`, `capture/wtrace-diff.py`).
 The rocket-only sweep's full chronological log, including every reversed
 verdict and dead end along the way, is `FINDINGS.md` in this repo. The vendor
-dispatch grammar reverse-engineering is `WHOLEGRAPH-GRAMMAR.md`. Kernel patches
+dispatch grammar is written up in `WHOLEGRAPH-GRAMMAR.md`. Kernel patches
 `0025`–`0028` in `kernel/` carry the TLB fix, the cross-stack instrumentation,
 the cache probe, and the settled dispatch consolidation, in that order.

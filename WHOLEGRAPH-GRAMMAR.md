@@ -1,5 +1,18 @@
 # RK3576 whole-graph regcmd grammar — vendor vs mesa, and the Phase-B go/no-go (2026-07-05)
 
+> **SUPERSEDED 2026-08-07 on the wall, not on the grammar.** The trailer grammar
+> below is correct and still the reference. What the banner under this one calls
+> "a separate, exhausted wall" was neither separate nor exhausted:
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> So read this document for the dispatch grammar, and ignore every sentence in
+> it that places the remaining fault below that grammar.
+
 > **STATUS 2026-07-13 — OUTCOME: Phase B was a GO and the trailer grammar WORKS; it does
 > NOT get you chained MACs (that is a separate, exhausted wall).** Implementing the trailer
 > (absolute next-pointer PC 0x10 + PC 0x14 amount + SYNC 0x41 + broadcast OP_EN 0x1d, order

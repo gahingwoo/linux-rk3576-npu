@@ -1,5 +1,17 @@
 # Does RKNPU matmul/GEMM use the same CBUF→CSC→CMAC conv pipeline (and the chained-task wall)? (2026-07-05)
 
+> **SUPERSEDED 2026-08-07 -- the wall this gates on is solved, so the gate is
+> moot.** It was not a CSC re-arm and it was not per-power-session state.
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> Matmul does run through the same pipeline, and it now runs chained. The
+> pipeline reading below stands; the wall framing throughout does not.
+
 Gate-1 question: on the open mesa/rocket stack, conv MobileNet is blocked by ONE wall — in a submit that
 chains multiple tasks, the non-cold-start task's CSC never re-arms (operands reach CBUF, but the CSC
 weight-loader never drains it → empty CMAC → requant zero-point). Only the cold-start (first) task after

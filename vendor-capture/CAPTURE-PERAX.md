@@ -1,5 +1,11 @@
 # Per-axis coefficient-buffer capture (next board session)
 
+> **SUPERSEDED 2026-08-07 -- the decisive check below is moot.** The float
+> surface is not load-bearing: one word out of its 197888 bytes was, it is read
+> as a bitfield rather than a float, and Mesa writes the constant `0x1004` there
+> now. There is nothing left for a per-axis capture to decide about it. Kept for
+> the capture recipe, which still works.
+
 **Goal:** capture the vendor's live SDP coefficient buffer for a genuinely **per-axis**
 conv, the one thing only the board can give. For per-axis the float surface decodes to the
 dequantised weights (derivable) — so a clean capture lets the `rkt_coefs.c` encoder be written

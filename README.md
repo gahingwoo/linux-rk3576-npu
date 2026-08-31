@@ -31,17 +31,27 @@ oven it is roasted in.
 
 The driver support is on the list. Current series:
 
-**[PATCH v9 0/13: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/)**
-(2026-08-24, on top of Igor Paunovic's clocks-by-name fix)
+**[PATCH v11 0/14: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260831081956.84871-1-gahing@gahingwoo.com/)**
+(2026-08-31, applies to a plain next-20260814)
 
-v9 adds a patch that lets the core suspend after a reset, which is what
-RK3576 needs to survive a job timeout at all, and answers the v8 thread.
-The [v8 posting](https://lore.kernel.org/all/20260817113603.1436067-1-gahing@gahingwoo.com/)
-is still the place to read that review.
+1/14 is Igor Paunovic's clocks-by-name patch, unchanged and under his name,
+carried inside the series rather than named outside it. v9 and v10 declared it
+with a `prerequisite-patch-id:` trailer; Tomeu Vizoso asked for it bundled
+because the Sashiko CI cannot follow that trailer, so v11 carries a
+`base-commit:` and nothing else. No code changed between v9, v10 and v11: every
+diff in v11 is byte identical to its v10 counterpart.
 
-No patch of the thirteen has been applied anywhere. It carries a Reviewed-by from
-Krzysztof Kozlowski on the binding and one from Igor Paunovic on the refactor,
-both from the v8 round.
+No patch of the fourteen has been applied anywhere. Thirteen review tags are on
+it: Igor Paunovic's Tested-by on 2/14, 3/14 and 4/14 and his Reviewed-by on
+5/14, Krzysztof Kozlowski's Reviewed-by on the binding, Conor Dooley's Acked-by
+on 7/14 and 8/14, Abel Vesa's Reviewed-by on 9/14 and 10/14, and four on 1/14 --
+Sidong Yang's and Diederik de Haas's Tested-by and Sebastian Reichel's Reviewed-by,
+all three carried from Igor's own posting, plus ours.
+
+Two questions in the cover have gone unanswered across v9, v10 and v11: whether
+9/14 wants splitting, since it adds the settle delay, renames a macro and gives
+`RK3576_PD_NPU` a regulator in one patch, and whether 13/14's power domain
+topology is right. The second has had no reply at all.
 
 The testing is his and it is worth reading rather than counting. On 19 August he
 re-ran v8 on three RK3588 cores against a **differential base**, the same tree
@@ -52,11 +62,12 @@ as re-run; 2/12 has a fresh one naming exactly what was tested. He also said
 what the protocol cannot say, that the race itself never manifested in 45
 resets and the justification for the pair remains the source analysis.
 
-v9 is posted. Before it went out a review of all thirteen patches found
-that 2/13 wrote to a register on a path holding no runtime PM reference,
-which takes an async SError with the domain down; that write is guarded
-now. The same review is why 3/13 lost a Reported-by that named the wrong
-person: lore says the report was mine, not the reporter's.
+v9 is where the patch that lets the core suspend after a reset first went out,
+which is what RK3576 needs to survive a job timeout at all. Before it went out a
+review of all thirteen patches found that 2/13 wrote to a register on a path
+holding no runtime PM reference, which takes an async SError with the domain
+down; that write is guarded now. The same review is why 3/13 lost a Reported-by
+that named the wrong person: lore says the report was mine, not the reporter's.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -65,7 +76,10 @@ Earlier revisions:
 [v4](https://lore.kernel.org/all/20260803094125.3285895-1-gahing@gahingwoo.com/) |
 [v5](https://lore.kernel.org/all/20260805063826.95682-1-gahing@gahingwoo.com/) |
 [v6](https://lore.kernel.org/all/20260806063413.350184-1-gahing@gahingwoo.com/) |
-[v7](https://lore.kernel.org/all/20260812094106.1391698-1-gahing@gahingwoo.com/)
+[v7](https://lore.kernel.org/all/20260812094106.1391698-1-gahing@gahingwoo.com/) |
+[v8](https://lore.kernel.org/all/20260817113603.1436067-1-gahing@gahingwoo.com/) |
+[v9](https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/) |
+[v10](https://lore.kernel.org/all/20260831040804.24111-1-gahing@gahingwoo.com/)
 
 v7 is the first revision sent as PATCH rather than RFC, because the thing every
 earlier cover letter described as unsolved is solved and Rockchip has confirmed
@@ -594,7 +608,9 @@ a constant fitted to one capture rather than derived:
   constant it replaced, `0x02020101`, is exactly SAME padding for a 5x5 stride 2
   convolution, so every other geometry was configured with the wrong padding.
 - `DPU 0x4050` depends on the **output channel count**: `0x80011111` for a
-  multiple of 32 and `0x80011011` otherwise, ten for ten across a sweep.
+  multiple of 32 and `0x80011011` otherwise, ten for ten across a sweep. The
+  modulo form is superseded by the parity of `DIV_ROUND_UP(oc, 16)`; see the
+  2026-08-16 section above.
 
 Both were found by compiling vendor `.rknn` files on the host at chosen
 geometries and reading the registers back, which the RKNN toolkit supports from
@@ -792,7 +808,7 @@ retractions, of which there have been several.
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Board | Radxa ROCK 4D |
-| Kernel | linux-next, v8 is based on next-20260814 |
+| Kernel | linux-next, v11 is based on next-20260814 |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
 ## Status
@@ -905,7 +921,10 @@ ls /dev/accel/
 build.sh                     full pipeline (extract → mesa → model → buildroot → sdcard.img)
 kernel-only.sh               fast kernel iteration
 kernel/
-  000[1-2]-*.patch           2-patch DTS series for upstream submission
+  00[0-2][0-9]-*.patch       29 patches: the working out-of-tree series. The
+                             upstream material is what v11 posts; the rest are
+                             DEBUG and FIX-ATTEMPT probes that are not for the
+                             list, and build.sh applies all of them.
   npu.fragment               CONFIG_DRM_ACCEL + ROCKET + CRC32C
   base.config                linux-next .config snapshot (regenerated by build.sh)
 mesa/

@@ -11,14 +11,20 @@
 # what landed yesterday. v7.2 is the newest release and it already carries
 # drivers/accel/rocket for RK3588.
 #
-# It does NOT carry four fixes that went in after it, and the v9 series was
-# written on a tree that has them. Measured: without them patch 4 fails on
-# rocket_job.c and patch 8 fails on pm-domains.c. They are cherry-picked into
+# It does NOT carry four fixes that went in after it, and the series was
+# written on a tree that has them. Measured: without them the patch touching
+# rocket_job.c fails, and so does the one touching pm-domains.c. Those are
+# named rather than numbered because renumbering moves the numbers: v11 folded
+# Igor's patch in at the front and shifted everything after it by one. They are
+# cherry-picked into
 # kernel/backport-7.2/, they are other people's upstream commits, and that
 # directory goes away when 7.3 ships. See its README.
 #
 # The full stack, verified to apply and compile on a clean v7.2 on 2026-08-25:
-#   4 upstream backports + 1 declared prerequisite (Igor's) + the 13 of v9.
+#   4 upstream backports + the 14 of v11. There is no separate prerequisite
+# step any more: v9 and v10 named Igor Paunovic's clocks-by-name patch with a
+# `prerequisite-patch-id:` trailer and kept it in prereq/, and v11 carries it
+# INSIDE the series as 1/14, because the Sashiko CI cannot follow that trailer.
 name: kernel
 
 on:
@@ -33,7 +39,7 @@ on:
         default: false
   push:
     paths:
-      - 'rfc-send-v9/**'
+      - 'rfc-send-v11/**'
       - 'kernel/backport-7.2/**'
       - 'kernel/base.config'
       - '.github/workflows/kernel.yml'
@@ -79,7 +85,7 @@ jobs:
           git config user.name "charsiu CI"
           apply() {
             for p in $1; do
-              case "$p" in *v9-0000-*) continue ;; esac   # the cover letter
+              case "$p" in *-0000-*) continue ;; esac   # the cover letter
               echo "== $(basename "$p")"
               git am --keep-cr "$p" || {
                 echo "::error::$(basename "$p") did not apply to $BASE"
@@ -88,12 +94,12 @@ jobs:
               }
             done
           }
-          # ⚠ ORDER MATTERS: upstream fixes, then the prerequisite the v9 cover
-          # letter names, then the series itself.
+          # ⚠ ORDER MATTERS: upstream fixes, then the series. v11 has no
+          # prereq/ directory -- Igor's patch is 1/14 of the series itself --
+          # so a step that applied one would fail on a glob matching nothing.
           apply "../kernel/backport-7.2/*.patch"
-          apply "../rfc-send-v9/prereq/*.patch"
-          apply "../rfc-send-v9/v9-00[0-9][0-9]-*.patch"
-          git log --oneline -18
+          apply "../rfc-send-v11/v11-00[0-9][0-9]-*.patch"
+          git log --oneline -19
 
       - name: build
         run: |
@@ -137,8 +143,13 @@ jobs:
             nbp=$(ls kernel/backport-7.2/*.patch 2>/dev/null | wc -l)
             [ "$nbp" -gt 0 ] || { echo "::error::the backport count came out 0"; exit 1; }
             echo "backports   $nbp upstream fixes that landed after $BASE"
-            echo "prereq      1 (Igor Paunovic, clocks by name, declared by the v9 cover letter)"
-            echo "series      v9, 13 patches"
+            # ⚠ COUNT THE PATCHES, do not type the number. It has been wrong
+            # once already: the series went 13 -> 14 when Igor's patch moved
+            # inside, and a manifest that states a stale count is worse than
+            # one that states none.
+            nsp=$(ls rfc-send-v11/v11-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
+            [ "$nsp" -gt 0 ] || { echo "::error::the series count came out 0"; exit 1; }
+            echo "series      v11, $nsp patches (Igor Paunovic's clocks-by-name is 1/14)"
             echo "kernel      $KVER"
             echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "repo        ${{ github.repository }}@${{ github.sha }}"
@@ -160,8 +171,8 @@ jobs:
           TAG="kernel-$KVER-$(date -u +%Y%m%d)"
           gh release create "$TAG" out/* --title "$TAG" --notes \
           "RK3576 NPU kernel: mainline $BASE, four upstream fixes that landed
-          after it, Igor Paunovic's clocks-by-name prerequisite, and the v9
-          rocket series.
+          after it, and the v11 rocket series, which carries Igor Paunovic's
+          clocks-by-name patch as its own 1/14.
 
           charsiu-install.sh fetches this. It keeps the kernel already on the
           card as a second extlinux entry, so if this one misbehaves the old

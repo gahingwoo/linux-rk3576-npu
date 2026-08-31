@@ -1,5 +1,9 @@
 # Capture the working RK3576 vendor NPU command stream (path C1-B)
 
+> The "CNA executer never engages" question this was written for was answered on
+> 2026-08-07: rocket wrote `PC_TASK_CON = 0x00007001` where the vendor writes
+> `0x00070001`. The capture recipe below is still the one this project uses.
+
 Goal: get the **vendor's known-good register command stream** for a conv on RK3576,
 decoded in the same format as our rocket `regcmd` dump, so we can diff the exact CNA
 start/CBUF sequence the vendor uses against what mesa emits — and find the one step

@@ -14,7 +14,7 @@
  * already uses. If this ALSO stalls (hardware watchdog, zero output), that
  * implicates the picture/buffer-class register content itself (shared by
  * both attempts) rather than the control-register quirk sequence (which
- * only the mainline driver had to reverse-engineer). If this SUCCEEDS, the
+ * only the mainline driver had to work out for itself). If this SUCCEEDS, the
  * fix is about control-class register timing/values on the mainline driver
  * side specifically.
  *

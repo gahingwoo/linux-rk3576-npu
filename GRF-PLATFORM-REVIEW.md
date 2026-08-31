@@ -1,5 +1,18 @@
 # Non-NPU-block (GRF/CRU/power) writes — vendor vs rocket, the dimension the NPU writel audit missed (2026-07-05)
 
+> **SUPERSEDED 2026-08-07 -- the read-margin lead is dead, because the wall it
+> was ranked against is solved.**
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> The enumeration below of what the vendor writes outside the NPU block is still
+> correct and still the reference for that question. Its RANK #1/#2/#3
+> candidates were ranked against a fault that does not exist.
+
 The NPU-register-block writel audit + bare task_number=N are exhausted (chained CMAC empty with the vendor's
 exact NPU software). Firmware is ruled out (board boots the vendor SPI TF-A+OP-TEE). This reviews the ONE
 untested layer: what the vendor rknpu driver writes OUTSIDE the NPU block (0x2770_xxxx) — GRF/CRU/power —

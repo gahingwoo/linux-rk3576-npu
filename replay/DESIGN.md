@@ -111,19 +111,15 @@ reuses code we've already proven reads the right buffers.
 
 ## Status
 
-- `replay.c` — written from the UABI headers, cross-compiled for aarch64, both
-  paths (rknn + rocket). **Not yet validated on hardware** — the ioctl flows are
-  from the headers and need a board run to shake out subtleties (esp. rknn's
-  `task_obj_addr` semantics and the rocket BO cache-prep ordering).
-- capture (`/proc/rknpu_cap` full dump) — **next build**, reusing the validated
-  reader.
+Done. The capture went through the `LD_PRELOAD` shim (`capture.c`) rather than
+`/proc/rknpu_cap`, and its output is in `rootfs-overlay/opt/npu-test/rknpu_replay/`.
+`replay_rocket` and `replay_mesa` are built and were run on the board.
 
-## What the board run decides
+## What the board run decided
 
-- rknn replay reproduces the captured output → capture + program are sound.
-- rocket replay with the identical bytes:
-  - reproduces it → the rocket kernel path is fine; look further up (unlikely,
-    given the mesa stack fails — would point at a config/firmware delta, cf.
-    alchark's BL31/BL32 finding).
-  - fails (degenerate output / wt_rd=0) → **isolated to the rocket kernel
-    driver**, userspace and packing ruled out. This is the decisive split.
+The rocket replay of the vendor's identical bytes still walled, which was read at
+the time as isolating the fault to the rocket kernel driver. That reading was
+right, and the fault was one register value: rocket wrote `PC_TASK_CON =
+0x00007001` where the vendor writes `0x00070001`, because RK3576 packs the task
+number into 16 bits and `rocket_registers.h` is derived from RK3588's 12. Fixed
+2026-08-07; see README.md.

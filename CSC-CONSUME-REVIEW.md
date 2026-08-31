@@ -1,5 +1,17 @@
 # CBUF→CSC→CMAC consume — was the CSC drain/weight-load trigger ever touched? (2026-07-05)
 
+> **SUPERSEDED 2026-08-07 -- the CSC consume-arm is not the wall.** There was no
+> undocumented consumer credit to re-arm.
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> The pipeline reading below is kept for the reasoning trail. Its premise, that
+> chained CMAC failure localises to a CSC drain trigger, is wrong.
+
 > **STATUS 2026-07-13 — lever #1 is CLOSED, do NOT re-run.** This review's proposed
 > "next step" (#1 below, the per-task PP_CLEAR / CSC re-arm in the trailer, mesa
 > `ROCKET_CSC_REARM`) was subsequently implemented, flashed, and tested on the board —

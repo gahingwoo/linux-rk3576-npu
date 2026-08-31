@@ -1,5 +1,14 @@
 # RK3576 NPU writel audit — vendor rknpu vs open rocket (2026-07-04)
 
+> **STATUS 2026-08-07 -- the verdict here held, and the answer was in the audit
+> all along.** There is no writel the vendor makes that rocket lacks, and the
+> difference is not one-vs-many submits either. It is a VALUE: rocket wrote
+> `PC_TASK_CON = 0x00007001` where the vendor writes `0x00070001`, because
+> RK3576 packs the task number into 16 bits and `rocket_registers.h` is derived
+> from RK3588's 12. This document already records `pc_task_number_bits=16` as
+> the vendor's own RK3576 config, one section down. Part 2, the live trace, was
+> built and run; see FINDINGS-DUAL-IMAGE.md.
+
 Goal: is there ANY NPU register write the vendor rknpu driver makes across a full
 inference that the open rocket driver does not? Part 1 = complete static
 enumeration + diff (below). Part 2 = a line-diffable live writel trace built into

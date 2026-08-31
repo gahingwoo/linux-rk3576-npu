@@ -1,5 +1,19 @@
 # RK3576 NPU wall — same-kernel vendor-vs-rocket verification
 
+> **SUPERSEDED 2026-08-07 -- the wall is solved.** Every negative below is real
+> and none of them located the cause, because the cause was a value this
+> capture's own set-diff could not separate: rocket and the vendor both write
+> `PC_TASK_CON`, so the write appears in both sets.
+> `rocket_registers.h` is derived from RK3588, where `PC_TASK_CON` packs the task
+> number into 12 bits. RK3576 uses 16, so `TASK_PP_EN`, `TASK_COUNT_CLEAR` and
+> `RESERVED_0` sit at bits 16, 17 and 18. rocket wrote `0x00007001` where the
+> vendor writes `0x00070001`, so the PC read 28673 tasks left to run and the
+> count clear landed on nothing, and only a reset ever cleared the counter.
+> Chaoyi Chen confirmed the field layout on the list on 2026-08-10.
+>
+> Read this for what it rules out. Do not read it as evidence that the fault was
+> below software. See README.md.
+
 The chained-task wall (only the first task per power session does real MACs; later
 tasks in a `task_number=N` submit engage + DMA input but the CMAC output never
 lands) had been chased on the rocket stack alone. This is a cross-check on a **single

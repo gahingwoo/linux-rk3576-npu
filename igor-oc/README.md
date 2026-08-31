@@ -25,8 +25,8 @@ His RK3588 reference point, upstream Mesa, oc = 48:
 WHY THIS MATTERS HERE: `0x4050` was fitted on ten vendor models at oc = 16..160
 in steps of 16, and at every multiple of 16 the two candidate rules,
 DIV_ROUND_UP(oc,16) parity and oc mod 32, give the same answer. They disagree
-only at output channel counts that are NOT multiples of 16, and nobody has ever
-built one. mk1x1.py builds them.
+only at output channel counts that are NOT multiples of 16, and nobody had ever
+built one. mk1x1.py builds them, and the ten in `models/` are its output.
 
 The only edit: mk1x1.py's generation loop is under `if __name__ == "__main__":`
 so `build()` can be imported. The host here has numpy, flatbuffers and the
