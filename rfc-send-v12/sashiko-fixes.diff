@@ -1,0 +1,57 @@
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index e46962949..8a6786488 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -179,6 +179,17 @@ static int rocket_probe(struct platform_device *pdev)
+ 	rdev->cores[core].soc = of_device_get_match_data(&pdev->dev);
+ 	rdev->cores[core].index = core;
+ 
++	/*
++	 * soc is dereferenced without a check by every one of its users, and
++	 * rocket_core_init() below is the first of them. A device that bound
++	 * by name rather than by compatible has no match data, so fail here
++	 * rather than at the first dereference.
++	 */
++	if (!rdev->cores[core].soc) {
++		dev_err(&pdev->dev, "no match data for this device\n");
++		return -ENODEV;
++	}
++
+ 	rdev->num_cores++;
+ 
+ 	ret = rocket_core_init(&rdev->cores[core]);
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 2a272c2ef..8fe5bcb8d 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -410,6 +410,8 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ static void
+ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ {
++	int on;
++
+ 	if (!atomic_read(&core->reset.pending))
+ 		return;
+ 
+@@ -430,9 +432,19 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	 * this hardware a register access with the domain down takes an async
+ 	 * SError, so a reset must not be the thing that causes one.
+ 	 */
+-	if (pm_runtime_get_if_active(core->dev) > 0) {
++	/*
++	 * Zero is the only answer that must not be written through: it means
++	 * suspended. -EINVAL means runtime PM is not managing this device at
++	 * all, either because CONFIG_PM is not set or in the window around
++	 * probe and remove, and there the block is powered and the write is
++	 * both safe and wanted. It takes no reference in that case, so it must
++	 * not be put either.
++	 */
++	on = pm_runtime_get_if_active(core->dev);
++	if (on != 0) {
+ 		rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
+-		pm_runtime_put_autosuspend(core->dev);
++		if (on > 0)
++			pm_runtime_put_autosuspend(core->dev);
+ 	}
+ 
+ 	/*
