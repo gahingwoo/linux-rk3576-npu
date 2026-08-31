@@ -14,9 +14,10 @@ that packs the task number into sixteen bits rather than twelve.
 
 What changed since v9
 
-No code. Every patch body is byte identical to its v9 counterpart apart
-from 5/13, which differs only by the git note below. Six tags, and that
-note.
+No code. Every patch's diff is byte identical to its v9 counterpart, and
+below the --- the only change anywhere is 5/13's git note. Above it, six
+commit messages each gained one trailer line and nothing else. Six tags,
+that note, and the base-commit trailers back where v8 had them.
 
 The note first, because v9's cover letter said 5/13 carried it and the
 posted mail did not. Rob Herring's bot asked on v8 for the dependency to
@@ -49,6 +50,15 @@ kernel at console loglevel 8 and 4, serial captured on a second machine.
                          normally. Zero kernel messages, zero
                          lockdep hits, nothing on the console.
 
+  1, 2 and 3/13 only,    13 and 13 induced resets, all recovered,
+  two passes             oracle 48 of 48 throughout, including after a
+                         forced autosuspend and resume. On the 1+2 arm
+                         a round that ends in a timeout leaves the
+                         affected core runtime-active even through a
+                         forced autosuspend; with 3/13 applied the same
+                         sequence leaves all three cores suspended.
+                         That arm is where 3/13's Tested-by comes from.
+
 A job that signals completion while its output buffer is never written
 is the silent form of the race 1/13 and 2/13 close, and across 102
 induced resets in nine runs that day it appeared only on the arm without
@@ -69,7 +79,7 @@ The tags, and where each came from:
   09/13  Reviewed-by: Abel Vesa
 
 The two Tested-by comments are not the same string, and that is how they
-were given. 1/13 and 4/13 keep the tags they had; Igor checked before
+were given. 1/13, 4/13 and 5/13 keep the tags they had; Igor checked before
 testing that 1/13 is byte identical to v8 1/12 up to the base-commit
 trailer and 4/13 identical to v8 3/12, so those tags still describe what
 was tested.
