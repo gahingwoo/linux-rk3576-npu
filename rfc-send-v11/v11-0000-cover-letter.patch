@@ -1,29 +1,19 @@
 From 13eea5a15259bc34c4dc1c3687ddcd82ebc2abd3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Mon, 31 Aug 2026 20:12:36 +1200
+Date: Mon, 31 Aug 2026 20:16:54 +1200
 Subject: [PATCH v11 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
 by name", unchanged and carried inside the series rather than named as a
-prerequisite outside it. The change started in my RFC v2 6/8 on 18 July;
-Igor hit the same thing on RK3588, checked the lists, asked before sending,
-and I said standalone was the right call and that it should not have been
-sitting in my RFC. It is his patch, it keeps his authorship and the four
-tags it collected on its own thread, and I told him first. Tomeu
-asked for it back inside the series on v10:
+prerequisite outside it. It keeps his authorship and its four tags.
+Tomeu asked for it on v10:
 
   "Sashiko is not reviewing this series because it doesn't not understand
    yet prerequisite-patch-id. Can you please resubmit the series with
    Igor's (presumably) patches bundled in it?"
 
-  https://lore.kernel.org/linux-rockchip/20260729130743.128876-1-royalnet026@gmail.com/
-
-So this applies to a plain next-20260814 on its own: base-commit names it
-and there is no prerequisite-patch-id, because there is no longer a
-prerequisite outside the series to name. 14 of 14 apply to that tree in
-order.
-
-Tested on a Radxa ROCK 4D, on next-20260814.
+So it applies to a plain next-20260814, with no prerequisite-patch-id
+left to follow. Tested on a Radxa ROCK 4D.
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
 only. The RK3576 carries two cores of the same RKNN block, wired up
@@ -39,16 +29,7 @@ was 1/13 through 13/13 in v10 is now 2/14 through 14/14, same diffs.
 The git note that was on 5/13 is gone rather than renumbered: it recorded
 a dependency outside the series, and there is not one now.
 
-Igor's RK3588 differential is in the v9 cover in full, and nothing about
-it has changed: 102 induced resets over nine runs, and the arm without
-2/14 and 3/14 is the only one where an inference reported success and
-returned a constant buffer while the CPU reference varied. That is the
-silent form of the race those two patches close, and a better statement
-of what they are for than anything my own logs have caught.
-
-  https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/
-
-The tags, and where each came from:
+The tags:
 
   3/14  Tested-by: Igor Paunovic   # RK3588, three cores, induced
                                     # reset, differential base,
@@ -59,12 +40,6 @@ The tags, and where each came from:
   8/14  Acked-by: Conor Dooley
   9/14  Reviewed-by: Abel Vesa
   10/14  Reviewed-by: Abel Vesa
-
-The two Tested-by comments are not the same string, and that is how they
-were given. 2/14, 5/14 and 6/14 keep the tags they had; Igor checked before
-testing that 2/14 is byte identical to v8 1/12 up to the base-commit
-trailer and 5/14 identical to v8 3/12, so those tags still describe what
-was tested.
 
 The bindings are unchanged since v9, where dt_binding_check was clean on
 all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
