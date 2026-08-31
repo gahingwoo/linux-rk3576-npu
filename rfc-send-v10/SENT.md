@@ -45,8 +45,37 @@ What it commits us to, so the next version can be checked against it:
   for the depthwise padding. If that attribution was meant for him it is not
   in the MR yet.
 
+## reply-igor-reserved0.eml
+
+Sent 2026-08-31 16:07 +1200, SMTP result 250.
+
+    Message-ID:   <20260831040751.24030-1-gahing@gahingwoo.com>
+    In-Reply-To:  <CAEWPSH5_PmfUCEm5O53=32NQjPKMd4vm--Y2R=4ErMoehtt=tA@mail.gmail.com>
+    To:           royalnet026@gmail.com
+    Cc:           linux-rockchip@lists.infradead.org, dri-devel@lists.freedesktop.org
+
+What it commits us to:
+
+- it RETRACTS "RESERVED_0 follows the model series rather than the geometry"
+  on-list. If that phrasing is used again anywhere, it contradicts a public
+  correction.
+- it states RESERVED_0 <-> DPU 0x4044 as 364 of 364 on the REGULAR datapath
+  only, and says the depthwise value 38 breaks the pairing. Do not widen it.
+- it offers reserved0-build.py "if you want to re-run it against your own
+  corpus". If he asks, it is rfc-send-v10/reserved0-build.py.
+- it says what selects the 0x4044 arm is still open. It is.
+
 ## v10 itself
 
-NOT sent. send-v10.sh regenerates with --notes and refuses unless exactly one
-patch carries a Notes block. The cover letter's prose is unwritten;
-CHANGELOG-DRAFT.md holds the factual delta only.
+SENT 2026-08-31 16:08 +1200. Fourteen messages, all SMTP result 250, no
+failures. Visible on lore.
+
+    Cover:  <20260831040804.24111-1-gahing@gahingwoo.com>
+    01..13: <20260831040804.24111-2..14-gahing@gahingwoo.com>
+    lore:   https://lore.kernel.org/all/20260831040804.24111-1-gahing@gahingwoo.com/
+
+⚠ A count of "10 of 14" appeared while it was in flight. That was a grep
+filter on a backgrounded pipeline truncating its own capture, not a
+half-posted series: /tmp/v10-send.log has 14 Message-IDs and 14 results of
+250. Read the tee'd log, never the filtered view, before believing a send
+went wrong.
