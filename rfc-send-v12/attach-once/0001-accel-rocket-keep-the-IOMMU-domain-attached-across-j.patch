@@ -1,0 +1,192 @@
+From 94c6ad2105774f5d81200016136e3c5e2098b5bb Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 2 Sep 2026 11:05:56 +1200
+Subject: [PATCH] accel/rocket: keep the IOMMU domain attached across jobs
+
+rocket_job_run() attached the job's IOMMU domain to the core before
+every job and rocket_job_next_locked() detached it after. On rk_iommu
+those are not bookkeeping. The detach disables paging and zeroes the DTE
+address behind an enable-stall poll; the attach that follows re-enables
+the clocks, stalls, FORCE_RESETs the MMU and polls for it, writes the
+DTE, zaps the TLB and polls paging back on. Five readx_poll_timeout()
+loops and a dozen MMIO accesses, twice a job, to arrive at the same
+domain every time: a core sees one domain per open file, and a file
+lives for the whole run.
+
+A language model decoding through this driver issues about 150 jobs a
+core per token, and the runtime's own cost model on Qwen3-0.6B reads
+130 us of floor per call before a byte of weights moves -- 19.5 ms of a
+51.7 ms token, more than the 18.6 ms the weights themselves take at the
+measured 16 GB/s.
+
+Keep the domain attached until a job arrives with a different one, the
+core is reset, or the core is torn down. The core holds a reference on
+it for as long as it is attached, so the domain outlives the job that
+brought it; rk_iommu_domain_free() warns on a domain that still has an
+MMU on it, and this is what keeps that from being reachable.
+
+The per-job detach also went through iommu_group_get(core->dev) and
+never put the group, so it leaked a group reference on every job. The
+detach is gone from that path and the reset path uses core->iommu_group,
+which the core already holds.
+---
+ drivers/accel/rocket/rocket_core.h |  9 ++++
+ drivers/accel/rocket/rocket_job.c  | 85 +++++++++++++++++++++++++++---
+ 2 files changed, 86 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 8c8d1f453..f83242d5a 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -35,6 +35,8 @@ struct rocket_soc_data {
+ 	bool task_con_16bit;		/* PC_TASK_CON uses the 16-bit task number */
+ };
+ 
++struct rocket_iommu_domain;
++
+ struct rocket_core {
+ 	struct device *dev;
+ 	struct rocket_device *rdev;
+@@ -52,6 +54,13 @@ struct rocket_core {
+ 
+ 	struct mutex job_lock;
+ 	struct rocket_job *in_flight_job;
++	/*
++	 * The IOMMU domain the core's MMU is attached to, held across jobs and
++	 * pinned by a reference for as long as it is. Under job_lock. A job
++	 * whose domain is this one attaches nothing; see
++	 * rocket_core_attach_domain().
++	 */
++	struct rocket_iommu_domain *attached;
+ 
+ 	spinlock_t fence_lock;
+ 
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 254c3d980..399cfff35 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -321,6 +321,67 @@ static struct rocket_core *sched_to_core(struct rocket_device *rdev,
+ 	return NULL;
+ }
+ 
++/*
++ * Attach the job's domain to the core, unless it is attached already.
++ *
++ * This used to be an attach before every job and a detach after it, and on
++ * rk_iommu those are not bookkeeping. The detach disables paging and zeroes
++ * the DTE address behind an enable-stall poll; the attach that follows
++ * re-enables the clocks, stalls, FORCE_RESETs the MMU and polls for it,
++ * writes the DTE, zaps the TLB and polls paging back on. Five
++ * readx_poll_timeout() loops and a dozen MMIO accesses, twice a job, to
++ * arrive at the same domain every time: a core sees one domain per open
++ * file and a file lives for the whole run. A language model decoding on
++ * this driver issues about 150 jobs a core per token, and its own cost
++ * model reads 130 us of floor per job before a byte of weights moves.
++ *
++ * So the domain stays attached until a job arrives with a different one,
++ * the core is reset, or the core is torn down. It is pinned with a
++ * reference for as long as it is attached: a job's own reference dies with
++ * the job, and rk_iommu_domain_free() warns on a domain that still has an
++ * MMU on it.
++ *
++ * Caller holds job_lock.
++ */
++static int rocket_core_attach_domain(struct rocket_core *core,
++				     struct rocket_iommu_domain *domain)
++{
++	int ret;
++
++	lockdep_assert_held(&core->job_lock);
++
++	if (core->attached == domain)
++		return 0;
++
++	if (core->attached) {
++		iommu_detach_group(NULL, core->iommu_group);
++		rocket_iommu_domain_put(core->attached);
++		core->attached = NULL;
++	}
++
++	ret = iommu_attach_group(domain->domain, core->iommu_group);
++	if (ret < 0)
++		return ret;
++
++	kref_get(&domain->kref);
++	core->attached = domain;
++
++	return 0;
++}
++
++/* Detach whatever is attached and drop its reference. Caller holds job_lock. */
++static void rocket_core_detach_domain(struct rocket_core *core)
++{
++	lockdep_assert_held(&core->job_lock);
++
++	if (!core->attached)
++		return;
++
++	iommu_detach_group(NULL, core->iommu_group);
++	rocket_iommu_domain_put(core->attached);
++	core->attached = NULL;
++}
++
+ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ {
+ 	struct rocket_job *job = to_rocket_job(sched_job);
+@@ -351,14 +412,15 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 	if (ret < 0)
+ 		goto err_put_fences;
+ 
+-	ret = iommu_attach_group(job->domain->domain, core->iommu_group);
+-	if (ret < 0)
++	mutex_lock(&core->job_lock);
++	ret = rocket_core_attach_domain(core, job->domain);
++	if (ret < 0) {
++		mutex_unlock(&core->job_lock);
+ 		goto err_put_pm;
+-
+-	scoped_guard(mutex, &core->job_lock) {
+-		core->in_flight_job = job;
+-		rocket_job_hw_submit(core, job);
+ 	}
++	core->in_flight_job = job;
++	rocket_job_hw_submit(core, job);
++	mutex_unlock(&core->job_lock);
+ 
+ 	return fence;
+ 
+@@ -384,7 +446,11 @@ static void rocket_job_next_locked(struct rocket_core *core)
+ 		return;
+ 	}
+ 
+-	iommu_detach_group(NULL, iommu_group_get(core->dev));
++	/*
++	 * The domain stays attached for the next job. This used to detach
++	 * here through iommu_group_get(), which also took a group reference
++	 * per job that nothing ever put.
++	 */
+ 	dma_fence_signal(core->in_flight_job->done_fence);
+ 	pm_runtime_put_autosuspend(core->dev);
+ 	core->in_flight_job = NULL;
+@@ -440,7 +506,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 		if (core->in_flight_job)
+ 			pm_runtime_put_autosuspend(core->dev);
+ 
+-		iommu_detach_group(NULL, core->iommu_group);
++		rocket_core_detach_domain(core);
+ 
+ 		core->in_flight_job = NULL;
+ 	}
+@@ -564,6 +630,9 @@ void rocket_job_fini(struct rocket_core *core)
+ {
+ 	drm_sched_fini(&core->sched);
+ 
++	scoped_guard(mutex, &core->job_lock)
++		rocket_core_detach_domain(core);
++
+ 	cancel_work_sync(&core->reset.work);
+ 	destroy_workqueue(core->reset.wq);
+ }
+-- 
+2.43.0
+
