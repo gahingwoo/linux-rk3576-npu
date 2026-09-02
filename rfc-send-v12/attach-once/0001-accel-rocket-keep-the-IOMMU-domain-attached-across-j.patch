@@ -1,4 +1,4 @@
-From 94c6ad2105774f5d81200016136e3c5e2098b5bb Mon Sep 17 00:00:00 2001
+From 74187117e4036a30e04aef267ce0244699916234 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 2 Sep 2026 11:05:56 +1200
 Subject: [PATCH 1/2] accel/rocket: keep the IOMMU domain attached across jobs
@@ -62,7 +62,7 @@ index 8c8d1f453..f83242d5a 100644
  	spinlock_t fence_lock;
  
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 254c3d980..399cfff35 100644
+index 1d8b3319a..402a1737a 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -321,6 +321,67 @@ static struct rocket_core *sched_to_core(struct rocket_device *rdev,
@@ -168,7 +168,7 @@ index 254c3d980..399cfff35 100644
  	dma_fence_signal(core->in_flight_job->done_fence);
  	pm_runtime_put_autosuspend(core->dev);
  	core->in_flight_job = NULL;
-@@ -440,7 +506,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -452,7 +518,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  		if (core->in_flight_job)
  			pm_runtime_put_autosuspend(core->dev);
  
@@ -177,7 +177,7 @@ index 254c3d980..399cfff35 100644
  
  		core->in_flight_job = NULL;
  	}
-@@ -564,6 +630,9 @@ void rocket_job_fini(struct rocket_core *core)
+@@ -576,6 +642,9 @@ void rocket_job_fini(struct rocket_core *core)
  {
  	drm_sched_fini(&core->sched);
  

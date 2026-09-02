@@ -1,4 +1,4 @@
-From e50e5336356ea454ffe958ec5441efe06bb7093f Mon Sep 17 00:00:00 2001
+From fad49ac01a250e2522fdae1cb3713cd6c7291b89 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 2 Sep 2026 11:38:36 +1200
 Subject: [PATCH 2/2] accel/rocket: handle the completion in the hardirq
@@ -55,7 +55,7 @@ index f83242d5a..44bfcfa9a 100644
  	struct rocket_iommu_domain *attached;
  
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 399cfff35..0a142fb9d 100644
+index 402a1737a..15ea9854e 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -341,15 +341,15 @@ static struct rocket_core *sched_to_core(struct rocket_device *rdev,
@@ -120,8 +120,8 @@ index 399cfff35..0a142fb9d 100644
  		/*
  		 * Stopping the block belongs under the lock. hw_submit() writes
  		 * OPERATION_ENABLE too, and outside the lock this zero can land
-@@ -482,8 +479,8 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
- 	drm_sched_stop(&core->sched, bad);
+@@ -502,8 +499,8 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	}
  
  	/*
 -	 * drm_sched_stop() returns without waiting for a threaded handler that
@@ -131,7 +131,7 @@ index 399cfff35..0a142fb9d 100644
  	 * job_lock: the handler takes that lock, so waiting for it while
  	 * holding it would deadlock instead of fencing anything.
  	 */
-@@ -502,15 +499,16 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -514,15 +511,16 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  	 * make sure the PM counters stay balanced by putting the reference the
  	 * job took, and request idle while doing it so the core can suspend.
  	 */
@@ -151,7 +151,7 @@ index 399cfff35..0a142fb9d 100644
  	/* Proceed with reset now. */
  	rocket_core_reset(core);
  
-@@ -549,15 +547,16 @@ static const struct drm_sched_backend_ops rocket_sched_ops = {
+@@ -561,15 +559,16 @@ static const struct drm_sched_backend_ops rocket_sched_ops = {
  	.free_job = rocket_job_free
  };
  
@@ -177,7 +177,7 @@ index 399cfff35..0a142fb9d 100644
  static irqreturn_t rocket_job_irq_handler(int irq, void *data)
  {
  	struct rocket_core *core = data;
-@@ -572,7 +571,9 @@ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
+@@ -584,7 +583,9 @@ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
  
  	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
  
@@ -188,7 +188,7 @@ index 399cfff35..0a142fb9d 100644
  }
  
  int rocket_job_init(struct rocket_core *core)
-@@ -588,17 +589,14 @@ int rocket_job_init(struct rocket_core *core)
+@@ -600,17 +601,14 @@ int rocket_job_init(struct rocket_core *core)
  
  	INIT_WORK(&core->reset.work, rocket_reset_work);
  	spin_lock_init(&core->fence_lock);
@@ -209,7 +209,7 @@ index 399cfff35..0a142fb9d 100644
  	if (ret) {
  		dev_err(core->dev, "failed to request job irq");
  		return ret;
-@@ -630,8 +628,7 @@ void rocket_job_fini(struct rocket_core *core)
+@@ -642,8 +640,7 @@ void rocket_job_fini(struct rocket_core *core)
  {
  	drm_sched_fini(&core->sched);
  

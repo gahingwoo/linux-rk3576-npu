@@ -16,3 +16,15 @@ charsiu-install takes: Image, dtb, modules tarball, SHA256SUMS. It is
 published as a GitHub PRE-release, which `releases/latest` never returns,
 and installed on purpose with `CHARSIU_KERNEL_TAG=<tag>`.
 `board-kernel-revert.sh` puts the previous kernel back.
+
+## 2026-09-02 evening: rebased onto v11
+
+The old LNEXT tree was aligned with v9 and lacks v11-0009's regulator
+argument for the RK3576 domains, so every Image built from it -- with or
+without these patches, with either toolchain -- dies on the first NPU job:
+the dtb hands vdd_npu_s0 to the pm-domain driver and that driver never
+enables it. The two patches here are now exported from the `v11-attach`
+branch (linux-next 20260730 + v11 + the ROCK 4D second core), where they
+apply cleanly. Kernels: `kernel-7.2.0-rc5-next-20260730-v11-control` and
+`kernel-7.2.0-rc5-next-20260730-attach-once-v11`, both pre-releases, both
+buildroot gcc 12.4.0.
