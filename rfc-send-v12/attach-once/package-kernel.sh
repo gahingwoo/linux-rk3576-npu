@@ -22,7 +22,15 @@ rm -rf "$OUT"; mkdir -p "$OUT/stage"
 make -C "$LNEXT" -s modules_install INSTALL_MOD_PATH="$OUT/stage" INSTALL_MOD_STRIP=1
 cp "$LNEXT/arch/arm64/boot/Image" "$OUT/Image"
 cp "$LNEXT/$DTB" "$OUT/"
-tar -C "$OUT/stage" -czf "$OUT/modules-$REL.tar.gz" lib
+# ⚠⚠ NAME THE RELEASE DIRECTORY, NOT lib/. `tar ... lib` records lib/ and
+# lib/modules/ as DIRECTORY MEMBERS, and GNU tar extracting a directory
+# member over Armbian's /lib -> usr/lib symlink replaces the symlink with a
+# real directory: the loader path is gone, nothing dynamic can exec, and the
+# board panics in run-init. That is what the first tarball from this script
+# did on 2026-09-02. Naming lib/modules/$REL stores that directory and its
+# contents only, which is the layout the August release has and what
+# `tar -C /` in the old installer survived by luck.
+tar -C "$OUT/stage" -czf "$OUT/modules-$REL.tar.gz" "lib/modules/$REL"
 rm -rf "$OUT/stage"
 (cd "$OUT" && sha256sum Image "$(basename "$DTB")" "modules-$REL.tar.gz" >SHA256SUMS)
 ls -la "$OUT"
