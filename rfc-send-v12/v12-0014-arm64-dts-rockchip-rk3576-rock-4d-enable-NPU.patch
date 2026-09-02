@@ -1,0 +1,72 @@
+From 76e54a8c6fda771a23af9ae1bbeb95facf22df9b Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 6 Aug 2026 18:30:48 +1200
+Subject: [PATCH v12 14/14] arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+Enable both RKNN cores and their IOMMUs on the Radxa ROCK 4D, and hand
+vdd_npu_s0 to the NPU power domain as its domain-supply, so the rail is
+switched by the domain that gates the block.
+
+Measured on a ROCK 4D with this in place. The rail's regulator debugfs
+reports open_count 1, so the domain is the consumer that took it. A
+sampler running beside an inference caught use_count at 1, and three
+reads at rest report use_count 0 with the rail disabled, so it follows
+the domain rather than staying on. Over the same run the genpd
+active_time of all four NPU domains rises by roughly 60ms per inference,
+and the inferences either side of that are 128 of 128 channels against
+the CPU reference.
+
+Both cores keep npu-supply on the same rail, which the binding requires.
+v11 enabled rknn_core_0 alone and left the second to whoever could test
+it; it has been tested since. Both cores probe, each with its IOMMU, and
+a runtime that deals its submits across the two returns text identical
+to the one-core run over nine language models.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+index 272af1012..93d59c0a9 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+@@ -722,6 +722,10 @@ &pcie0 {
+ 	status = "okay";
+ };
+ 
++&pd_npu {
++	domain-supply = <&vdd_npu_s0>;
++};
++
+ &pinctrl {
+ 	hdmi {
+ 		hdmi_tx_on_h: hdmi-tx-on-h {
+@@ -779,6 +783,24 @@ wifi_en_h: wifi-en-h {
+ 	};
+ };
+ 
++&rknn_core_0 {
++	npu-supply = <&vdd_npu_s0>;
++	status = "okay";
++};
++
++&rknn_mmu_0 {
++	status = "okay";
++};
++
++&rknn_core_1 {
++	npu-supply = <&vdd_npu_s0>;
++	status = "okay";
++};
++
++&rknn_mmu_1 {
++	status = "okay";
++};
++
+ &sai6 {
+ 	status = "okay";
+ };
+-- 
+2.43.0
+

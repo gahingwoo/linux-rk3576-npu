@@ -1,0 +1,126 @@
+From 76e54a8c6fda771a23af9ae1bbeb95facf22df9b Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 3 Sep 2026 09:21:41 +1200
+Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
+
+1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
+by name", carried inside the series since v11 so that it applies to a
+plain next-20260814 with nothing outside it to follow. It keeps his
+authorship and its four tags. Tested on a Radxa ROCK 4D.
+
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently. Two extra convolution buffer clocks, two power domains per
+core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
+that packs the task number into sixteen bits rather than twelve.
+
+What changed since v11
+
+Sashiko reviewed v11, which is what v11 was for. Most of what it found
+is in the driver as it stands and not in this series; those are listed
+at the end for Tomeu. Three things on this series changed:
+
+  3/14   pm_runtime_get_if_active() has three answers, not two: 1 for
+         active, 0 for suspended, and -EINVAL when runtime PM is not
+         managing the device at all. The test was "> 0", so under
+         CONFIG_PM=n the INTERRUPT_MASK write this patch exists to add
+         never happened. It now tests for zero, the one answer that
+         means the domain may be down, and puts the reference only when
+         one was taken. Igor's Tested-by is kept; it is one condition,
+         but say so if it should go.
+
+  11/14  of_device_get_match_data() returns NULL for a device bound by
+         name rather than by compatible, and core->soc was dereferenced
+         two statements later. Checked, and the probe fails with -ENODEV.
+
+  14/14  enables both cores and both IOMMUs. v11 enabled rknn_core_0
+         alone, "left to whoever can test it". It has been tested.
+
+*** BOARD RESULT HERE: 4/14, sashiko-3-suspend.sh, then delete this line ***
+
+One thing Sashiko raised on 4/14 that an argument does not settle.
+pm_runtime_put_autosuspend() is asynchronous and the delay is 50 ms, so
+on a workload whose gap between submits is shorter than that the domain
+does not cycle after a reset, 10/14's reset pulse on power-on does not
+fire, and rocket_core_reset()'s own resets are all that run. Whether
+the core reset alone is enough on RK3576 is a question for the
+hardware, and I would rather report a measurement than a guess:
+
+  [fill in: does the domain cycle at rest, and after an induced
+   timeout, on the ROCK 4D -- genpd active_time and the regulator's
+   use_count, before and after]
+
+Findings Sashiko labelled pre-existing, for Tomeu, all in code this
+series does not touch:
+
+  - the job completion path takes iommu_group_get(core->dev) and never
+    puts it, one group reference a job (flagged on all nine mails);
+  - the shared IRQ handler touches registers without checking the PM
+    state;
+  - runtime suspend has no synchronize_irq();
+  - num_cores is used both as an array length and as the probe index;
+  - rdev is leaked through devres on probe deferral.
+
+Still open from v9, no reply since. 9/14 does three things: it adds the
+settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
+which also makes every RK3576 board force that domain off at probe. I
+asked whether it wants splitting; Abel Vesa's Reviewed-by may be the
+answer, and I would rather split it than have it merged on my silence.
+And 13/14 gives each core both NPU domains, which is the description
+that has been tested here rather than the topology; if it should be one
+domain per core, 6/14's minItems has to change with it.
+
+The bindings are unchanged since v9, where dt_binding_check was clean on
+all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
+clean on all 13 rk3576 and all 48 rk3588 dtbs.
+
+The tags:
+
+  3/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, differential base,
+                                    # JOB_TIMEOUT_MS=2
+  4/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  7/14   Acked-by: Conor Dooley
+  8/14   Acked-by: Conor Dooley
+  9/14   Reviewed-by: Abel Vesa
+  10/14  Reviewed-by: Abel Vesa
+
+Igor Paunovic (1):
+  accel/rocket: request the core clocks by name
+
+Jiaxing Hu (13):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: let the core suspend after a reset
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain/rockchip: add optional per-domain power-on settle delay
+  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+
+ .../bindings/iommu/rockchip,iommu.yaml        |  28 ++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 ++++++-
+ .../power/rockchip,power-controller.yaml      |   8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  22 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  82 ++++++++++-
+ drivers/accel/rocket/rocket_core.c            |  32 ++++-
+ drivers/accel/rocket/rocket_core.h            |  11 +-
+ drivers/accel/rocket/rocket_device.c          |   7 +-
+ drivers/accel/rocket/rocket_drv.c             |  39 +++++-
+ drivers/accel/rocket/rocket_drv.h             |   2 +
+ drivers/accel/rocket/rocket_job.c             | 131 +++++++++++++++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  75 +++++++---
+ 12 files changed, 421 insertions(+), 63 deletions(-)
+
+
+base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
+-- 
+2.43.0
+

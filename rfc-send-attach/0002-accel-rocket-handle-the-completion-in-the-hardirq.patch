@@ -1,0 +1,224 @@
+From 155d91ff3a308f6703c5191a402df5d2005685ba Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 2 Sep 2026 11:38:36 +1200
+Subject: [PATCH 2/2] accel/rocket: handle the completion in the hardirq
+
+The job interrupt was split in two: the hardirq masked the block and
+woke a thread, and the thread stopped the block, signalled the fence and
+started the next task. Nothing in that second half sleeps -- three
+register writes, dma_fence_signal(), an asynchronous runtime-PM put and
+a submit that is register writes too -- so the thread bought a wakeup on
+every job and nothing else. A language model decoding through this
+driver issues about 150 jobs a core per token, each waited on, and every
+one paid that hop before the waiter's own.
+
+job_lock becomes a spinlock so the completion can be handled where it
+lands. The one thing that used to run under it and can sleep is the
+IOMMU attach, which takes the group's mutex; it moves out from under the
+lock, which is sound because only run_job() attaches and the scheduler
+serialises that per core, and the reset and teardown paths run with the
+scheduler stopped. The reset path's detach moves out for the same
+reason, after the in-flight job is cleared under the lock.
+---
+ drivers/accel/rocket/rocket_core.h | 16 +++++--
+ drivers/accel/rocket/rocket_job.c  | 69 ++++++++++++++----------------
+ 2 files changed, 45 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index f83242d5a..44bfcfa9a 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -52,13 +52,21 @@ struct rocket_core {
+ 
+ 	struct iommu_group *iommu_group;
+ 
+-	struct mutex job_lock;
++	/*
++	 * Guards in_flight_job and the hardware submit. A spinlock, so the
++	 * completion can be handled in the hardirq itself: signalling the
++	 * fence from a threaded handler put a thread wakeup between the NPU
++	 * finishing and the waiter learning of it, on every job.
++	 */
++	spinlock_t job_lock;
+ 	struct rocket_job *in_flight_job;
+ 	/*
+ 	 * The IOMMU domain the core's MMU is attached to, held across jobs and
+-	 * pinned by a reference for as long as it is. Under job_lock. A job
+-	 * whose domain is this one attaches nothing; see
+-	 * rocket_core_attach_domain().
++	 * pinned by a reference for as long as it is. Not under job_lock:
++	 * attaching takes the IOMMU group's mutex and cannot happen under a
++	 * spinlock. It is only touched from run_job(), which the scheduler
++	 * serialises per core, and from the reset and teardown paths, which
++	 * run with the scheduler stopped. See rocket_core_attach_domain().
+ 	 */
+ 	struct rocket_iommu_domain *attached;
+ 
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index e14f78630..21f61b86b 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -341,15 +341,15 @@ static struct rocket_core *sched_to_core(struct rocket_device *rdev,
+  * the job, and rk_iommu_domain_free() warns on a domain that still has an
+  * MMU on it.
+  *
+- * Caller holds job_lock.
++ * Called from run_job(), which the scheduler serialises per core, and from
++ * reset and teardown with the scheduler stopped; it takes the IOMMU group's
++ * mutex, so it cannot run under job_lock.
+  */
+ static int rocket_core_attach_domain(struct rocket_core *core,
+ 				     struct rocket_iommu_domain *domain)
+ {
+ 	int ret;
+ 
+-	lockdep_assert_held(&core->job_lock);
+-
+ 	if (core->attached == domain)
+ 		return 0;
+ 
+@@ -369,11 +369,9 @@ static int rocket_core_attach_domain(struct rocket_core *core,
+ 	return 0;
+ }
+ 
+-/* Detach whatever is attached and drop its reference. Caller holds job_lock. */
++/* Detach whatever is attached and drop its reference. Scheduler stopped. */
+ static void rocket_core_detach_domain(struct rocket_core *core)
+ {
+-	lockdep_assert_held(&core->job_lock);
+-
+ 	if (!core->attached)
+ 		return;
+ 
+@@ -412,15 +410,14 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 	if (ret < 0)
+ 		goto err_put_fences;
+ 
+-	mutex_lock(&core->job_lock);
+ 	ret = rocket_core_attach_domain(core, job->domain);
+-	if (ret < 0) {
+-		mutex_unlock(&core->job_lock);
++	if (ret < 0)
+ 		goto err_put_pm;
++
++	scoped_guard(spinlock_irqsave, &core->job_lock) {
++		core->in_flight_job = job;
++		rocket_job_hw_submit(core, job);
+ 	}
+-	core->in_flight_job = job;
+-	rocket_job_hw_submit(core, job);
+-	mutex_unlock(&core->job_lock);
+ 
+ 	return fence;
+ 
+@@ -460,7 +457,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ {
+ 	pm_runtime_mark_last_busy(core->dev);
+ 
+-	scoped_guard(mutex, &core->job_lock) {
++	scoped_guard(spinlock_irqsave, &core->job_lock) {
+ 		/*
+ 		 * Stopping the block belongs under the lock. hw_submit() writes
+ 		 * OPERATION_ENABLE too, and outside the lock this zero can land
+@@ -514,8 +511,8 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	}
+ 
+ 	/*
+-	 * drm_sched_stop() returns without waiting for a threaded handler that
+-	 * is already running, so wait for one here. This has to stay outside
++	 * drm_sched_stop() returns without waiting for a handler that is
++	 * already running, so wait for one here. This has to stay outside
+ 	 * job_lock: the handler takes that lock, so waiting for it while
+ 	 * holding it would deadlock instead of fencing anything.
+ 	 */
+@@ -526,15 +523,16 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	 * make sure the PM counters stay balanced by putting the reference the
+ 	 * job took, and request idle while doing it so the core can suspend.
+ 	 */
+-	scoped_guard(mutex, &core->job_lock) {
++	scoped_guard(spinlock_irqsave, &core->job_lock) {
+ 		if (core->in_flight_job)
+ 			pm_runtime_put_autosuspend(core->dev);
+ 
+-		rocket_core_detach_domain(core);
+-
+ 		core->in_flight_job = NULL;
+ 	}
+ 
++	/* the scheduler is stopped and the irq is quiet: nothing else touches it */
++	rocket_core_detach_domain(core);
++
+ 	/* Proceed with reset now. */
+ 	rocket_core_reset(core);
+ 
+@@ -573,15 +571,16 @@ static const struct drm_sched_backend_ops rocket_sched_ops = {
+ 	.free_job = rocket_job_free
+ };
+ 
+-static irqreturn_t rocket_job_irq_handler_thread(int irq, void *data)
+-{
+-	struct rocket_core *core = data;
+-
+-	rocket_job_handle_irq(core);
+-
+-	return IRQ_HANDLED;
+-}
+-
++/*
++ * The whole of a completion runs here, in the hardirq. It used to be split:
++ * the hardirq masked the block and woke a thread, and the thread stopped the
++ * block, signalled the fence and started the next task. Nothing in that
++ * second half sleeps -- three register writes, dma_fence_signal(), an
++ * asynchronous pm_runtime put, and a submit that is register writes too --
++ * so the thread bought a wakeup on every job and nothing else. A decode step
++ * through this driver is about 150 jobs a core, each waited on, and every
++ * one paid that hop before the waiter's own.
++ */
+ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
+ {
+ 	struct rocket_core *core = data;
+@@ -596,7 +595,9 @@ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
+ 
+ 	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
+ 
+-	return IRQ_WAKE_THREAD;
++	rocket_job_handle_irq(core);
++
++	return IRQ_HANDLED;
+ }
+ 
+ int rocket_job_init(struct rocket_core *core)
+@@ -613,17 +614,14 @@ int rocket_job_init(struct rocket_core *core)
+ 
+ 	INIT_WORK(&core->reset.work, rocket_reset_work);
+ 	spin_lock_init(&core->fence_lock);
+-	mutex_init(&core->job_lock);
++	spin_lock_init(&core->job_lock);
+ 
+ 	core->irq = platform_get_irq(to_platform_device(core->dev), 0);
+ 	if (core->irq < 0)
+ 		return core->irq;
+ 
+-	ret = devm_request_threaded_irq(core->dev, core->irq,
+-					rocket_job_irq_handler,
+-					rocket_job_irq_handler_thread,
+-					IRQF_SHARED, dev_name(core->dev),
+-					core);
++	ret = devm_request_irq(core->dev, core->irq, rocket_job_irq_handler,
++			       IRQF_SHARED, dev_name(core->dev), core);
+ 	if (ret) {
+ 		dev_err(core->dev, "failed to request job irq");
+ 		return ret;
+@@ -655,8 +653,7 @@ void rocket_job_fini(struct rocket_core *core)
+ {
+ 	drm_sched_fini(&core->sched);
+ 
+-	scoped_guard(mutex, &core->job_lock)
+-		rocket_core_detach_domain(core);
++	rocket_core_detach_domain(core);
+ 
+ 	cancel_work_sync(&core->reset.work);
+ 	destroy_workqueue(core->reset.wq);
+-- 
+2.43.0
+

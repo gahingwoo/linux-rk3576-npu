@@ -1,0 +1,26 @@
+*** DRAFT. Held until the board attributes the overlap fault and Igor has run
+*** these on RK3588. See rfc-send-v12/README.md. Delete these lines to send.
+
+Two patches on top of "[PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN)
+enablement"; the prerequisite-patch-id trailers name it. Neither applies
+without it: both rework the job and reset paths that series restructures.
+
+rocket attaches the job's IOMMU domain to the core before every job and
+detaches it after, and on rk_iommu those are five poll loops and a dozen
+MMIO accesses each way, to arrive at the same domain every time. It also
+takes a group reference on the way out and never puts it, which Sashiko
+flagged on every mail of v11. 1/2 keeps the domain attached until a job
+brings a different one, the core resets, or the core goes away.
+
+2/2 handles the job completion in the hardirq instead of waking a thread
+for three register writes and a fence signal.
+
+Measured on a Radxa ROCK 4D with an open runtime that issues about 150
+jobs a core per token of a language model: decode 4% faster over four
+models, text identical.
+
+*** If the board says the per-job attach was what corrupted overlapping
+*** jobs on the two cores, that goes here with the numbers. If it says the
+*** runtime was, this paragraph does not exist.
+
+Both are untested on RK3588, which is the hardware the driver ships for.
