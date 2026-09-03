@@ -97,7 +97,9 @@ say "has a timeout ever happened, and did a suspend follow it"
 # forcing one needs a rebuilt kernel and a flash, and this board's NPU has been
 # recorded as not recovering from one -- which is the symptom 04/14 is supposed
 # to remove and therefore not a thing to trigger casually mid round.
-n=$(dmesg 2>/dev/null | grep -c "NPU job timed out" || echo 0)
+# ⚠ grep -c prints its 0 AND exits 1, so `|| echo 0` printed a second 0 under
+# it and the test below read "0\n0" as an illegal number. The count is enough.
+n=$(dmesg 2>/dev/null | grep -c "NPU job timed out"); n=${n:-0}
 printf '  "NPU job timed out" in dmesg: %s\n' "$n"
 if [ "$n" -gt 0 ]; then
 	dmesg | grep -A 3 "NPU job timed out" | tail -12 | sed 's/^/      /'

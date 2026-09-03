@@ -1,6 +1,6 @@
 From 76e54a8c6fda771a23af9ae1bbeb95facf22df9b Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Thu, 3 Sep 2026 09:21:41 +1200
+Date: Thu, 3 Sep 2026 21:06:20 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
@@ -36,19 +36,18 @@ at the end for Tomeu. Three things on this series changed:
   14/14  enables both cores and both IOMMUs. v11 enabled rknn_core_0
          alone, "left to whoever can test it". It has been tested.
 
-*** BOARD RESULT HERE: 4/14, sashiko-3-suspend.sh, then delete this line ***
-
 One thing Sashiko raised on 4/14 that an argument does not settle.
 pm_runtime_put_autosuspend() is asynchronous and the delay is 50 ms, so
 on a workload whose gap between submits is shorter than that the domain
 does not cycle after a reset, 10/14's reset pulse on power-on does not
-fire, and rocket_core_reset()'s own resets are all that run. Whether
-the core reset alone is enough on RK3576 is a question for the
-hardware, and I would rather report a measurement than a guess:
-
-  [fill in: does the domain cycle at rest, and after an induced
-   timeout, on the ROCK 4D -- genpd active_time and the regulator's
-   use_count, before and after]
+fire, and rocket_core_reset()'s own resets are all that run. What I can
+report: on the ROCK 4D both cores sit runtime-suspended at rest and, over
+a run that decodes a 3.8B model for a while, accumulate 11.4 s active
+and 17.8 s suspended in sysfs, so the domain does cycle under a real
+workload. Whether it cycles after a timed-out job depends on the gap to
+the next submit, as Sashiko says; I have not induced one -- that is a
+kernel with JOB_TIMEOUT_MS lowered and a flash -- so the reset path
+after a timeout is still an argument on my side, not a measurement.
 
 Findings Sashiko labelled pre-existing, for Tomeu, all in code this
 series does not touch:
