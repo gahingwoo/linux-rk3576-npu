@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """
 Build the RESERVED_0 table for DPU register 0x4050, out of the vendor-compiled
-.rknn files in vendor-capture/geom.
+.rknn files in the directory it is given.
 
 This is the table promised to Igor Paunovic on linux-rockchip in the v9 05/13
 thread, where the claim was that RESERVED_0 "is 34 in most of the regular
@@ -189,11 +189,11 @@ def main():
     def p(s=""):
         W.append(s)
 
-    p("DPU 0x4050 RESERVED_0 across 94 vendor-compiled .rknn on this disk")
+    p("DPU 0x4050 RESERVED_0 across %d vendor-compiled .rknn under %s" % (len(files), GEOM))
     p("=" * 68)
     p()
     p("Regenerate with reserved0-build.py, which reads only the files in")
-    p("vendor-capture/geom and prints this whole page, numbers included.")
+    p("the directory it is given and prints this whole page, numbers included.")
     p()
 
     # ---------------------------------------------------------------- method
@@ -464,7 +464,19 @@ def main():
     for (r0, v4), n in sorted(lock.items()):
         p("    RESERVED_0 %-3d  <->  0x4044 = 0x%08x    %d dispatches" % (r0, v4, n))
     p()
-    p("%d of %d, no exceptions. 0x2001/0x501c moves with them:" % (sum(lock.values()), len(reg)))
+    r0_to, v4_to = defaultdict(set), defaultdict(set)
+    for r0, v4 in lock:
+        r0_to[r0].add(v4)
+        v4_to[v4].add(r0)
+    onetoone = bool(reg) and all(len(v) == 1 for v in r0_to.values()) \
+               and all(len(v) == 1 for v in v4_to.values())
+    if not reg:
+        p("(no regular dispatches in this corpus, so nothing to pair)")
+    elif onetoone:
+        p("%d of %d, no exceptions. 0x2001/0x501c moves with them:" % (sum(lock.values()), len(reg)))
+    else:
+        p("NOT one-to-one in this corpus: a RESERVED_0 value meets more than one")
+        p("0x4044 value or the other way round, %d regular dispatches. 0x501c:" % len(reg))
     p()
     s = defaultdict(Counter)
     for o in reg:
@@ -474,25 +486,30 @@ def main():
           % (r0, ", ".join("0x%x (%d)" % (k, v)
                            for k, v in sorted(s[r0].items()))))
     p()
-    p("Sweeping every register in the stream, 0x4044 is the ONLY one whose")
-    p("value partitions the two RESERVED_0 groups one-to-one, and 0x501c the")
-    p("only other whose value sets are disjoint between them. So the bit is")
-    p("not a loose constant with no company: it is one third of a single")
-    p("per-op decision in the bias-and-scale path of the output stage.")
-    p()
+    if MINE:
+        p("Sweeping every register in the stream, 0x4044 is the ONLY one whose")
+        p("value partitions the two RESERVED_0 groups one-to-one, and 0x501c the")
+        p("only other whose value sets are disjoint between them. So the bit is")
+        p("not a loose constant with no company: it is one third of a single")
+        p("per-op decision in the bias-and-scale path of the output stage.")
+        p()
     dws = Counter((o["RESERVED_0"], o["r4044"], o["r501c"]) for o in dwo)
-    p("The depthwise dispatches are the honest limit on that. They read")
-    for (r0, v4, v5), n in sorted(dws.items()):
-        p("    RESERVED_0 %d, 0x4044 = 0x%x, 0x501c = 0x%x, %d dispatches"
-          % (r0, v4, v5, n))
-    p("38 is 34 with field bit 2 -- word bit 13 -- added, so on the word-bit")
-    p("16-against-17 axis depthwise sits with the 34 group while its 0x4044")
-    p("sits with the 66 group. The lockstep is a statement about the regular")
-    p("datapath only, and I am not claiming more than that.")
-    p()
-    p("What selects the arm in the first place is still open. It is not the")
-    p("shape, not the file, not the toolkit build, and not the day the file")
-    p("was compiled: 2026-08-08 and 2026-08-09 each produced both arms.")
+    if dws:
+        p("The depthwise dispatches read")
+        for (r0, v4, v5), n in sorted(dws.items()):
+            p("    RESERVED_0 %d, 0x4044 = 0x%x, 0x501c = 0x%x, %d dispatches"
+              % (r0, v4, v5, n))
+    else:
+        p("(no depthwise dispatches in this corpus)")
+    if MINE:
+        p("38 is 34 with field bit 2 -- word bit 13 -- added, so on the word-bit")
+        p("16-against-17 axis depthwise sits with the 34 group while its 0x4044")
+        p("sits with the 66 group. The lockstep is a statement about the regular")
+        p("datapath only, and I am not claiming more than that.")
+        p()
+        p("What selects the arm in the first place is still open. It is not the")
+        p("shape, not the file, not the toolkit build, and not the day the file")
+        p("was compiled: 2026-08-08 and 2026-08-09 each produced both arms.")
 
     # ------------------------------------------------------ for the driver
     p()
