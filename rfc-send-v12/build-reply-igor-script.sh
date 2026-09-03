@@ -12,20 +12,20 @@ References: <CAEWPSH5_PmfUCEm5O53=32NQjPKMd4vm--Y2R=4ErMoehtt=tA@mail.gmail.com>
 Hi Igor,
 
 Here it is, below the line. It is the file that printed every number in
-the table, with the changes it needed to run anywhere else: the reader
-for the container is inlined, the directory is an argument, and the
-sentences that only hold for my files -- the named same-geometry pairs,
-g_pw24, the note on my earlier mail -- print only when those files are
-present. So
+the table, changed only where it had to be before it could run on a
+machine that is not mine. The reader for the container is inlined, so
+it needs numpy and nothing else. The directory is an argument:
 
     python3 reserved0-build.py DIR > out.md
 
-over any directory of .rknn files prints the page for that corpus, and
-it needs only numpy. The meaning of the bits was arrived at by trial and
-error against the files and the board, and where a corpus disagrees
-with mine the numbers will simply disagree: the "What it does follow"
-block tests the 0x4044 pairing on whatever it is given and says
-one-to-one or not, with the counts, rather than assuming it.
+And the parts of the page that only hold for my files print only when
+those files are present. That covers the named same-geometry pairs,
+g_pw24, and the note on my earlier mail.
+
+The meaning of the bits came from trial and error against the files and
+the board, so where your corpus disagrees with mine the numbers will
+disagree. The "What it does follow" block tests the 0x4044 pairing on
+whatever it is given and reports one-to-one or not, with the counts.
 
 Thank you for checking 01/14 in v11.
 
