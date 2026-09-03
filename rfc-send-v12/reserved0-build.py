@@ -189,7 +189,7 @@ def main():
     def p(s=""):
         W.append(s)
 
-    p("DPU 0x4050 RESERVED_0 across %d vendor-compiled .rknn under %s" % (len(files), GEOM))
+    p("DPU 0x4050 RESERVED_0 across %d vendor-compiled .rknn" % len(files))
     p("=" * 68)
     p()
     p("Regenerate with reserved0-build.py, which reads only the files in")
