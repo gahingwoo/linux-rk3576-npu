@@ -1,6 +1,6 @@
-From 9a314b2d6074f7af362ddca6dcfe2edb734e67c6 Mon Sep 17 00:00:00 2001
+From 05b8d1fa354cd397bed610398dd9f90c4afdf0f5 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Fri, 4 Sep 2026 22:45:24 +1200
+Date: Fri, 4 Sep 2026 22:55:31 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -38,9 +38,9 @@ the end. Four things on this series changed:
          asks 800 mV of its 800 MHz step and nothing sets the rail
          either. On the ROCK 4D at the 750 mV its PMIC boots with, two
          jobs at once make the second core write single words wrong,
-         about one row in three thousand, where either core alone is
-         exact; at 594 MHz, or at 786 with the rail at 800 mV, four
-         passes of 5400 rows are clean. This takes 594, under the
+         eleven to twenty five rows of a 5400 row pass, where either
+         core alone is exact; at 594 MHz, or at 786 with the rail at
+         800 mV, four such passes are clean. This takes 594, under the
          lowest step of that table, so the description is right on a
          board that says nothing about an NPU rail. Losing 192 MHz
          costs less than losing a core, and the patch has the numbers.

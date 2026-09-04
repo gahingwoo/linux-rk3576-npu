@@ -1,4 +1,4 @@
-From 2eaf06ad2a353869590bac25de73b811c77e0afa Mon Sep 17 00:00:00 2001
+From 09aa15dea17994237d18e04533d4d20f96746639 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v12 13/14] arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
@@ -34,10 +34,10 @@ voltage it happens to boot with supports.
 On a ROCK 4D with both cores enabled and vdd_npu_s0 at the 750 mV its
 PMIC comes up with, two jobs in flight at once make the second core
 write single words of its output wrong: the right value with a bit of
-the accumulator set, always the same position in the array, about one
-row in three thousand. Either core alone is exact. Four device trees,
-same board, kernel and userspace, four passes of 5400 rows each through
-a matrix multiply checked against the same arithmetic on the CPU:
+the accumulator set, always the same position in the array. Either core
+alone is exact. Four device trees, same board, kernel and userspace,
+four passes of 5400 rows each, every row compared with the same
+multiply done one row at a time:
 
   786 MHz, 750 mV    11 to 25 wrong words a pass
   594 MHz, 750 mV    0, 0, 0, 0
