@@ -1,6 +1,6 @@
-From 2db517b48c7457846ae82db445ebdaca764a8191 Mon Sep 17 00:00:00 2001
+From 9a314b2d6074f7af362ddca6dcfe2edb734e67c6 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Fri, 4 Sep 2026 22:37:35 +1200
+Date: Fri, 4 Sep 2026 22:41:01 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
@@ -33,24 +33,17 @@ at the end for Tomeu. Four things on this series changed:
          name rather than by compatible, and core->soc was dereferenced
          two statements later. Checked, and the probe fails with -ENODEV.
 
-  13/14  gives CLK_RKNN_DSU0 a rate. It clocks both cores and the CBUF
-         they share, nothing in mainline sets it, and the block comes up
-         at 786 MHz; Rockchip's own OPP table for this NPU asks 800 mV of
-         800 MHz and 725 of 600, and nothing sets the rail either. On the
-         ROCK 4D at the 750 mV its PMIC boots with, two jobs at once make
-         the second core write single words wrong -- the right value with
-         a bit of the accumulator set, one row in about three thousand --
-         where either core alone is exact. Four device trees, same board
-         and kernel, four passes of 5400 rows each: 786 MHz at 750 mV is
-         wrong 11 to 25 words a pass, and 594 at 750, 786 at 800 and 786
-         at 850 are each zero. The rate here is 594, under the lowest step
-         of that table, so it is right on a board that describes no NPU
-         rail. It costs less than it looks: what 786 MHz costs is the
-         second core, so decode goes 24.3, 20.3, 6.8, 8.7 to 23.6, 19.5,
-         6.4, 8.3 tokens a second on four models and the prompt goes the
-         other way, 1037, 1565, 5073, 3604 ms to first token becoming 912,
-         1283, 4032, 3011. An OPP table with the rail attached is the
-         proper answer and wants driver support this series does not have.
+  13/14  gives CLK_RKNN_DSU0 a rate. Nothing in mainline sets it and
+         the NPU comes up at 786 MHz, while Rockchip's own OPP table
+         asks 800 mV of its 800 MHz step and nothing sets the rail
+         either. On the ROCK 4D at the 750 mV its PMIC boots with, two
+         jobs at once make the second core write single words wrong,
+         about one row in three thousand, where either core alone is
+         exact; at 594 MHz, or at 786 with the rail at 800 mV, four
+         passes of 5400 rows are clean. This takes 594, under the
+         lowest step of that table, so the description is right on a
+         board that says nothing about an NPU rail. Losing 192 MHz
+         costs less than losing a core, and the patch has the numbers.
 
   14/14  enables both cores and both IOMMUs. v11 enabled rknn_core_0
          alone, "left to whoever can test it". It has been tested.

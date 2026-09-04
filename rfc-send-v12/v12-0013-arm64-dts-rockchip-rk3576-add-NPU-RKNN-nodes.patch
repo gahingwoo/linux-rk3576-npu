@@ -1,4 +1,4 @@
-From 6dc994001b26dde9d23243c7b2124a91ee124d3f Mon Sep 17 00:00:00 2001
+From 2eaf06ad2a353869590bac25de73b811c77e0afa Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v12 13/14] arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
@@ -23,22 +23,21 @@ The IOMMU in front of each core lists that core's domain only.
 Label the outer PD_NPU node so a board can attach the NPU rail to the
 domain that gates the block.
 
-Clock the NPU inside the voltage its rail is given. CLK_RKNN_DSU0 clocks
-both cores and the CBUF they share, and nothing in mainline sets its
-rate: the block comes up at 786.432 MHz. Rockchip's own OPP table for
+Clock the NPU inside the voltage its rail is given. CLK_RKNN_DSU0
+clocks both cores and the CBUF they share, nothing in mainline sets its
+rate, and the block comes up at 786.432 MHz. Rockchip's OPP table for
 this NPU asks 800 mV of its 800 MHz step at the worst leakage bin and
 725 mV only at 600 MHz, and nothing in mainline sets the rail either, so
 a board that follows this DTS runs the NPU a third faster than the
 voltage it happens to boot with supports.
 
-The margin is not theoretical. On a ROCK 4D with both cores enabled and
-vdd_npu_s0 at the 750 mV its PMIC comes up with, two jobs in flight at
-once make the second core write single words of its output wrong: the
-right value with a bit of the accumulator set, always the same position
-in the array, roughly one row in three thousand, where either core alone
-is exact. Four device trees, same board, kernel and userspace, four
-passes of 5400 rows each through a matrix multiply checked against the
-same arithmetic on the CPU:
+On a ROCK 4D with both cores enabled and vdd_npu_s0 at the 750 mV its
+PMIC comes up with, two jobs in flight at once make the second core
+write single words of its output wrong: the right value with a bit of
+the accumulator set, always the same position in the array, about one
+row in three thousand. Either core alone is exact. Four device trees,
+same board, kernel and userspace, four passes of 5400 rows each through
+a matrix multiply checked against the same arithmetic on the CPU:
 
   786 MHz, 750 mV    11 to 25 wrong words a pass
   594 MHz, 750 mV    0, 0, 0, 0
@@ -49,16 +48,15 @@ same arithmetic on the CPU:
 table, whose 725 mV every board here provides, so it is right on a board
 that describes no NPU rail at all.
 
-It costs less than it looks, because what 786 MHz costs is the second
-core. Decoding four language models on this board, one core at 786 MHz
-against both cores at 594: 24.3, 20.3, 6.8 and 8.7 tokens a second
-become 23.6, 19.5, 6.4 and 8.3, and the prompt, which is where a second
-core is worth something, goes the other way: 1037, 1565, 5073 and
-3604 ms to the first token become 912, 1283, 4032 and 3011. With the
-rail described at 800 mV both cores run at 786 and it is 866, 1184,
-3877 and 2925.
+Losing 192 MHz costs less than losing a core. Decoding four language
+models, one core at 786 MHz against both cores at 594, tokens a second
+go from 24.3, 20.3, 6.8 and 8.7 to 23.6, 19.5, 6.4 and 8.3, and the
+prompt, where the second core earns its keep, goes from 1037, 1565,
+5073 and 3604 ms to the first token down to 912, 1283, 4032 and 3011. A
+board that describes its rail at 800 mV runs both cores at 786 and
+reaches 866, 1184, 3877 and 2925.
 
-An OPP table with the rail attached is the proper answer and wants
+An OPP table with the rail attached is the proper answer, and it wants
 driver support this series does not have.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
