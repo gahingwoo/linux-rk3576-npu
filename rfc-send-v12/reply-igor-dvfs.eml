@@ -19,8 +19,12 @@ days. Short version: solved, and the fix is a voltage.
 
 The fault. Two NPU cores with jobs in flight at the same time, and the
 second one writes single words of its output wrong: the right value
-plus a bit of the accumulator. One core is always exact. It took four
-days because it is invisible to a single threaded harness.
+plus a bit of the accumulator. Of 64 wrong words I took apart, 63 are
+an integer away from the right one and 25 of those by exactly 1024,
+and re-reading the same word after invalidating the CPU's cache of the
+buffer gave the same wrong value 48 times out of 48, so it is what the
+hardware wrote. One core is always exact. It took four days because it
+is invisible to a single threaded harness.
 
 The cause. Mainline sets no rate for CLK_RKNN_DSU0 and no board sets
 vdd_npu_s0, so my ROCK 4D runs the NPU at 786.432 MHz on 750 mV, while
@@ -51,8 +55,14 @@ and 1000 MHz on 850 mV. And whatever the table ends up as, it needs
 the voltage column with the rate: a rate without its rail is what
 mainline has today, and it is what corrupts.
 
-Happy to send the rest, how the bit was pinned down and why an
-assigned-clock on the SCMI clock hangs this board, if it is useful.
+One SCMI note, since you are reading rates through it now. On RK3576
+an assigned-clock-rates on the SCMI clock in the NPU node hangs the
+board before the console comes up, with no kernel output at all. I
+have not proven why, but the vendor's driver never sets that rate from
+DT either: rockchip_opp_config_clks() returns early when the clock is
+an SCMI clock and the device is not runtime active, so the rate is
+only ever written from the runtime resume path with the domains
+already on. Your EL3 path is a read, so none of this touches it.
 
 Cheers,
 Jiaxing
