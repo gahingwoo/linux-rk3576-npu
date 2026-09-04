@@ -22,8 +22,8 @@ grep -q '^Subject: Re: \[RFC\] accel/rocket: DVFS on RK3588' "$M" || {
 
 # ⚠ EVERY NUMBER IN IT IS A PROMISE. These are the ones the board measured on
 # 2026-09-04; if the mail ever stops carrying them the mail has drifted.
-for s in '786.432 MHz' '11 to 25 wrong rows a pass' '48 times out of 48' \
-         '83 scheduler timeouts' '25 by exactly 1024'; do
+for s in '786.432 MHz' '11 to 25 wrong rows a pass' '786 MHz, 800 mV' \
+         '5400 rows' 'two cores busy at once'; do
 	grep -qF "$s" "$M" || { echo "$M no longer says: $s" >&2; exit 1; }
 done
 
