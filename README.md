@@ -53,6 +53,20 @@ Two questions in the cover have gone unanswered across v9, v10 and v11: whether
 `RK3576_PD_NPU` a regulator in one patch, and whether 13/14's power domain
 topology is right. The second has had no reply at all.
 
+**v12 is written and held.** It is v11 with the three fixes Sashiko's review
+earned and one the board found, and it goes out the day there is something to
+answer rather than three days after v11 with nobody having spoken. The board one
+stands on its own: `CLK_RKNN_DSU0` clocks both NPU cores and the buffer they
+share, nothing in mainline sets its rate, and the block comes up at 786 MHz,
+while Rockchip's own OPP table asks 800 mV of its 800 MHz step and nothing sets
+the rail either. On this ROCK 4D at the 750 mV its PMIC boots with, two jobs
+running at once make the second core write single words wrong, about one row in
+three thousand, where either core alone is exact. Four device trees on the same
+board and kernel, four passes of 5400 rows each: 786 MHz at 750 mV is wrong 11 to
+25 words a pass, and 594 at 750, 786 at 800 and 786 at 850 are each clean. 13/14
+now assigns 594 MHz, under the lowest step of that table, so the description is
+right on a board that says nothing about an NPU rail.
+
 The testing is his and it is worth reading rather than counting. On 19 August he
 re-ran v8 on three RK3588 cores against a **differential base**, the same tree
 and config with 1/12 and 2/12 not applied, two passes each at two log levels,
