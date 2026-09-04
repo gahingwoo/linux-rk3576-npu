@@ -1,0 +1,91 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC] accel/rocket: DVFS on RK3588 - a hardware constraint,
+ and some numbers
+In-Reply-To: <20260903091646.7183-1-royalnet026@gmail.com>
+References: <20260801131656.58450-1-royalnet026@gmail.com>
+ <20260903091646.7183-1-royalnet026@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Igor,
+
+> One honest gap: I could not yet take the voltage-vs-frequency
+> curve (my devfreq module holds the NPU rail at 850 mV as a
+> regulator consumer, so undervolting from a second consumer is
+> refused). Future work.
+
+I took one on RK3576 this week, from the correctness side rather than
+the throughput side, and it answered something I had been chasing for
+four days.
+
+Same wall as yours on the rail: a second consumer is refused. So the
+curve is one device tree per point, flashed and rebooted.
+
+The setting first. Mainline sets no rate for CLK_RKNN_DSU0, which
+clocks both NPU cores and the convolution buffer they share, and no
+board sets vdd_npu_s0 either, so my ROCK 4D runs the NPU at
+786.432 MHz on the 750 mV its PMIC comes up with. Rockchip's own OPP
+table for this NPU asks 800 mV of its 800 MHz step at the worst
+leakage bin, and 725 mV only at 600.
+
+One core is exact at that setting. Two cores with jobs in flight at
+the same time are not: the second one writes single words of its
+output wrong, always the same position in the array, and the wrong
+value is the right value plus a small integer. Of 64 wrong words I
+took apart, 63 differed from the correct one by an integer to within
+a twentieth, and 25 by exactly 1024, so it reads as a bit of the
+accumulator rather than as anything the software could have computed.
+Re-reading the same word after invalidating the CPU's cache of the
+buffer gave the same wrong value 48 times out of 48, so the hardware
+wrote it.
+
+The curve. Four device trees, same board, kernel and userspace. A
+pass is 5400 rows of a batched matrix multiply, each row compared
+with the same multiply done one row at a time:
+
+  786 MHz, 750 mV    11 to 25 wrong rows a pass
+  594 MHz, 750 mV    0, 0, 0, 0
+  786 MHz, 800 mV    0, 0, 0, 0
+  786 MHz, 850 mV    0, 0, 0, 0
+
+50 mV at one rate is the whole difference between exact and wrong,
+and 800 mV is the vendor's own number for that step.
+
+Two things in it for your series.
+
+The first is the OPP question you put to Tomeu, whether the table
+should stop at 600 rather than follow the vendor range. From here the
+column that must not be dropped is the voltage one. A rate without
+its voltage is what mainline has today, and it is what corrupts.
+
+The second is a method note, and I raise it because it would have
+fooled me. Your numbers are one inference thread pinned to one A76
+with a bit-exact oracle, which is the harness I would have built, and
+on RK3576 a single-threaded harness cannot see this fault at all: it
+needs two cores with work in flight at the same time. If your 900 and
+1000 MHz rows were taken with one NPU core busy, they may not survive
+three of them at 850 mV. One run with all three loaded and the oracle
+on would settle it, and it is cheap next to what a wrong OPP table
+costs later.
+
+On the SCMI side, an addition to what I told you in August. I said
+routing the RK3576 NPU clock through SCMI gave zero completed jobs
+and 83 scheduler timeouts. I now know one thing not to do: an
+assigned-clock-rates on the SCMI clock in the NPU node hangs the
+board before the console comes up, with no kernel output at all. I
+have not proven why. What I can point at is that the vendor's driver
+never sets that rate from DT either. rockchip_opp_config_clks()
+returns early when the clock is an SCMI clock and the device is not
+runtime active, so the rate is only ever set from the runtime resume
+path with the domains already on. Your EL3 telemetry is a read, so
+none of this touches it, but if you end up writing the SCMI rate from
+a notifier the ordering will matter.
+
+And a correction to my own August mail in this thread. I said our
+DSU0 "sits at 594 to 786 MHz permanently". It is 786.432 MHz with
+nothing set. 594 is what my v12 now assigns in the DT, for the reason
+above.
+
+Cheers,
+Jiaxing
