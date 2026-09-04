@@ -13,32 +13,43 @@ Hi Igor,
 > One honest gap: I could not yet take the voltage-vs-frequency
 > curve [...] Future work.
 
-I took one on RK3576 this week, from the correctness side. Same wall
-on the rail as yours, so it is one device tree per point.
+I took one on RK3576 this week, from the correctness side, and it
+turned out to be the answer to a fault I had been chasing for four
+days. Short version: solved, and the fix is a voltage.
 
-Mainline sets no rate for CLK_RKNN_DSU0 and no board sets vdd_npu_s0,
-so my ROCK 4D runs the NPU at 786.432 MHz on 750 mV, while Rockchip's
-own table for this NPU asks 800 mV of its 800 MHz step at the worst
-leakage bin. One core is exact there. Two cores with jobs in flight at
-the same time are not: the second one writes single words wrong, and
-the wrong value is the right value plus a bit of the accumulator. A
-pass below is 5400 rows of a batched matrix multiply, each row against
-the same multiply done one row at a time:
+The fault. Two NPU cores with jobs in flight at the same time, and the
+second one writes single words of its output wrong: the right value
+plus a bit of the accumulator. One core is always exact. It took four
+days because it is invisible to a single threaded harness.
+
+The cause. Mainline sets no rate for CLK_RKNN_DSU0 and no board sets
+vdd_npu_s0, so my ROCK 4D runs the NPU at 786.432 MHz on 750 mV, while
+Rockchip's own table for this NPU asks 800 mV of its 800 MHz step at
+the worst leakage bin. Same wall as yours on the rail, so the curve is
+one device tree per point. A pass below is 5400 rows of a batched
+matrix multiply, each row against the same multiply done one row at a
+time:
 
   786 MHz, 750 mV    11 to 25 wrong rows a pass
   594 MHz, 750 mV    0, 0, 0, 0
   786 MHz, 800 mV    0, 0, 0, 0
   786 MHz, 850 mV    0, 0, 0, 0
 
-50 mV at one rate is the whole difference between exact and wrong, and
-that is my answer to the OPP question you put to Tomeu: the column
-that must not be dropped is the voltage one.
+The fix, two of them, both measured. Give the rail 800 mV and keep
+786 MHz: both cores run, nine models come out identical, and my time
+to first token drops about 20%. Or leave the rail alone and clock the
+NPU at 594: also exact, and still ahead of one core at 786, because
+what 786 MHz costs is the second core. My v12 takes 594 in the SoC
+dtsi, since a board that describes no NPU rail has to be correct too,
+and my runtime now reads the rail and the clock out of sysfs and only
+runs the two cores together inside the vendor's envelope.
 
-The part worth checking on RK3588 is that this is invisible to a
-single threaded harness. Your rows are one inference thread with a
-bit-exact oracle, and the fault here needs two cores busy at once. If
-900 and 1000 MHz were taken with one NPU core busy, three of them at
-850 mV are untested.
+What I would do on RK3588. Your rows are one inference thread with a
+bit-exact oracle, so they cannot see this class at all. Before the OPP
+table is settled, run the oracle with all three cores loaded at 900
+and 1000 MHz on 850 mV. And whatever the table ends up as, it needs
+the voltage column with the rate: a rate without its rail is what
+mainline has today, and it is what corrupts.
 
 Happy to send the rest, how the bit was pinned down and why an
 assigned-clock on the SCMI clock hangs this board, if it is useful.
