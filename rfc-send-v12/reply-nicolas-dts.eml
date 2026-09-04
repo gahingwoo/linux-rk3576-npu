@@ -1,0 +1,41 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [RFC] accel/rocket: DVFS on RK3588 - a hardware constraint,
+ and some numbers
+In-Reply-To: <c495dae1976dab842d77f4a4a142217eb77b6fb7.camel@ndufresne.ca>
+References: <20260801131656.58450-1-royalnet026@gmail.com>
+ <c495dae1976dab842d77f4a4a142217eb77b6fb7.camel@ndufresne.ca>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Nicolas,
+
+> In the DTS, I've removed the assigned clock/freq, to me keeping it
+> would be toward forward compatibility, and is fine, but I don't
+> always fully grasp all the subtil trap of DT compatibility
+
+A data point from RK3576, where one clock feeds both NPU cores and the
+convolution buffer they share.
+
+With no assigned rate the block comes up at 786.432 MHz, and no board
+sets vdd_npu_s0, so it runs on whatever the PMIC boots with: 750 mV
+here, where Rockchip's own table asks 800 mV of its 800 MHz step. One
+core is exact there. Two cores with jobs in flight at the same time
+write single words wrong. A pass is 5400 rows of a batched matrix
+multiply, each row against the same multiply done one row at a time:
+
+  786 MHz, 750 mV    11 to 25 wrong rows a pass
+  594 MHz, 750 mV    0, 0, 0, 0
+  786 MHz, 800 mV    0, 0, 0, 0
+  786 MHz, 850 mV    0, 0, 0, 0
+
+So the assigned rate is load bearing until something else carries the
+rail. If your OPP table carries it, dropping the rate is better than
+keeping it. If the driver may also run with no OPP table, which is
+what you say it should do, then the DTS still needs a rate that is
+correct at the voltage the board boots with.
+
+Does that hold on RK3588, where the three cores share one clock too?
+
+Cheers,
+Jiaxing

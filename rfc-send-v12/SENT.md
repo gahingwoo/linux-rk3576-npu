@@ -40,3 +40,13 @@ Says: the two-core fault is solved and the fix is a voltage; the four device
 tree rows; both fixes and what each costs; v12 takes 594 MHz in the SoC dtsi;
 the run he should do on RK3588 (all three cores loaded at 900 and 1000 MHz on
 850 mV) before settling an OPP table; the SCMI ordering that hangs this board.
+
+## 2026-09-04 question to Nicolas Dufresne, same thread
+`reply-nicolas-dts.eml`, sent 23:19 NZST, msgid
+`<20260904111902.87135-1-gahing@gahingwoo.com>`, Result 250.
+In-Reply-To `<c495dae1976dab842d77f4a4a142217eb77b6fb7.camel@ndufresne.ca>`
+(his 2026-08-17, the RK3588 DVFS proof of concept). To Nicolas; Cc Igor,
+Tomeu, linux-rockchip, dri-devel. He removed the assigned clock and rate from
+his DTS and wants the driver to run with no OPP table; this says the rate is
+load bearing on RK3576 until something carries the rail, with the four rows,
+and asks whether it holds on RK3588.
