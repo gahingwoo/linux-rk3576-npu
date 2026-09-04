@@ -1,12 +1,7 @@
 From 9a314b2d6074f7af362ddca6dcfe2edb734e67c6 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Fri, 4 Sep 2026 22:41:01 +1200
+Date: Fri, 4 Sep 2026 22:45:24 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
-
-1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
-by name", carried inside the series since v11 so that it applies to a
-plain next-20260814 with nothing outside it to follow. It keeps his
-authorship and its four tags. Tested on a Radxa ROCK 4D.
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
 only. The RK3576 carries two cores of the same RKNN block, wired up
@@ -14,11 +9,16 @@ differently. Two extra convolution buffer clocks, two power domains per
 core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
 that packs the task number into sixteen bits rather than twelve.
 
+1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
+by name", carried inside the series since v11 so that it applies to a
+plain next-20260814 with nothing outside it to follow. It keeps his
+authorship and its four tags. Tested on a Radxa ROCK 4D.
+
 What changed since v11
 
 Sashiko reviewed v11, which is what v11 was for. Most of what it found
-is in the driver as it stands and not in this series; those are listed
-at the end for Tomeu. Four things on this series changed:
+is in the driver as it stands rather than in this series; those are at
+the end. Four things on this series changed:
 
   3/14   pm_runtime_get_if_active() has three answers, not two: 1 for
          active, 0 for suspended, and -EINVAL when runtime PM is not
@@ -77,13 +77,15 @@ settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
 which also makes every RK3576 board force that domain off at probe. I
 asked whether it wants splitting; Abel Vesa's Reviewed-by may be the
 answer, and I would rather split it than have it merged on my silence.
-And 13/14 gives each core both NPU domains, which is the description
+13/14 also gives each core both NPU domains, which is the description
 that has been tested here rather than the topology; if it should be one
 domain per core, 6/14's minItems has to change with it.
 
 The bindings are unchanged since v9, where dt_binding_check was clean on
 all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
-clean on all 13 rk3576 and all 48 rk3588 dtbs.
+clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to a
+dts rather than to a binding, and CHECK_DTBS is clean on all 13 rk3576
+dtbs with it.
 
 The tags:
 
