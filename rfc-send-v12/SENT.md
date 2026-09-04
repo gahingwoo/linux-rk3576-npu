@@ -29,3 +29,14 @@ the script's own prose keeps its double hyphens, it is a file.
 ## v12 -- NOT SENT, on purpose
 
 v12 is prepared (README.md here). It waits for a reply on v11.
+
+## 2026-09-04 reply to Igor's DVFS RFC
+`reply-igor-dvfs.eml`, sent 2026-09-04 23:08 NZST, msgid
+`<20260904110853.85150-1-gahing@gahingwoo.com>`, Result 250.
+In-Reply-To `<20260903091646.7183-1-royalnet026@gmail.com>` (his 09-03 09:17,
+the mail that named the voltage-vs-frequency gap).
+To Igor; Cc Tomeu Vizoso, Huseyin BIYIK, linux-rockchip, dri-devel.
+Says: the two-core fault is solved and the fix is a voltage; the four device
+tree rows; both fixes and what each costs; v12 takes 594 MHz in the SoC dtsi;
+the run he should do on RK3588 (all three cores loaded at 900 and 1000 MHz on
+850 mV) before settling an OPP table; the SCMI ordering that hangs this board.
