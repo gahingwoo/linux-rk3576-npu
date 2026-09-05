@@ -63,3 +63,23 @@ identical; that the first unbind Oopses on our kernel for a reason that is
 ours (attach-once detaching in rocket_job_fini through a group
 rocket_core_fini had already put), with the trace; and that an accel device
 takes the next free minor, which cost an hour.
+
+## 2026-09-05 Tested-by on Igor's patch -- PREPARED, NOT SENT
+`reply-igor-testedby.eml` + `send-reply-testedby.sh` (DRY=1 clean).
+In-Reply-To `<20260904125936.26234-1-royalnet026@gmail.com>`, which is Igor's
+core-removal PATCH rather than the DVFS thread.
+
+Why it exists: the same `Tested-by` already went out on 2026-09-05 05:13, but
+in the DVFS thread. Igor asked at 07:01 for it on the patch itself -- a tag in
+another thread is not under the patch, so b4 will not collect it when Tomeu
+applies, and him reposting it on our behalf reads as a from/email mismatch.
+Same tag, same test, correct thread. He will carry it on his next revision if
+we do not send this.
+
+Also from that mail, for the record: the climbing accel minor is a devm leak,
+not just "the next free minor". `rocket_device_init()` uses
+`devm_drm_dev_alloc()` against the module's `rknn` platform device, which is
+only unregistered in `rocket_unregister()`; `rocket_device_fini()` calls
+`drm_dev_unregister()` and nothing else, so the minor's `xa_erase()` drmm
+action waits for the last `drm_dev_put()` at module exit. Every unbind leaves
+an unregistered drm_device holding its minor. Igor's, on his own patch.
