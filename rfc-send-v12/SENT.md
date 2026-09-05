@@ -50,3 +50,16 @@ Tomeu, linux-rockchip, dri-devel. He removed the assigned clock and rate from
 his DTS and wants the driver to run with no OPP table; this says the rate is
 load bearing on RK3576 until something carries the rail, with the four rows,
 and asks whether it holds on RK3588.
+
+## 2026-09-05 reply to Igor: the S-o-b answer and his fix tested on RK3576
+`reply-igor-sob.eml`, sent 2026-09-05 17:13 NZST, msgid
+`<20260905051323.189794-1-gahing@gahingwoo.com>`, Result 250.
+In-Reply-To `<20260904124659.25971-1-royalnet026@gmail.com>`.
+To Igor; Cc Tomeu, linux-rockchip, dri-devel.
+Says: drop our Signed-off-by on his 1/7 copy, keep Reviewed-by on both;
+`Tested-by: Jiaxing Hu # RK3576, two cores` with the two unbind/rebind rounds
+(`bound: 0` then `bound: 2`, cores 0 and 1 both times) and nine models
+identical; that the first unbind Oopses on our kernel for a reason that is
+ours (attach-once detaching in rocket_job_fini through a group
+rocket_core_fini had already put), with the trace; and that an accel device
+takes the next free minor, which cost an hour.
