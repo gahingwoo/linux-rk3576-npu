@@ -1,4 +1,4 @@
-From 646f143e24d67484f4b810d0cd245e04e1306863 Mon Sep 17 00:00:00 2001
+From 2d49b6cfa1d7090dad2f8292b78863e43047fb26 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 2 Sep 2026 11:05:56 +1200
 Subject: [PATCH 1/2] accel/rocket: keep the IOMMU domain attached across jobs
@@ -29,11 +29,51 @@ The per-job detach also went through iommu_group_get(core->dev) and
 never put the group, so it leaked a group reference on every job. The
 detach is gone from that path and the reset path uses core->iommu_group,
 which the core already holds.
+
+The core teardown order changes with it. rocket_core_fini() put the IOMMU
+group and cleared the pointer before calling rocket_job_fini(), which now
+detaches through that pointer, so the first unbind of a core dereferenced
+NULL inside iommu_detach_group() on a ROCK 4D:
+
+  pc : mutex_lock+0x20/0x54
+  lr : iommu_detach_group+0x20/0x40
+  rocket_job_fini+0x30/0x5c
+  rocket_core_fini+0x40/0x50
+  rocket_remove+0x64/0xac
+  unbind_store+0xb4/0xb8
+
+Stopping the scheduler and detaching first, then disabling runtime PM and
+dropping the group, is the order this patch needs.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
+ drivers/accel/rocket/rocket_core.c |  7 ++-
  drivers/accel/rocket/rocket_core.h |  9 ++++
  drivers/accel/rocket/rocket_job.c  | 85 +++++++++++++++++++++++++++---
- 2 files changed, 86 insertions(+), 8 deletions(-)
+ 3 files changed, 92 insertions(+), 9 deletions(-)
 
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 91f690176..d36321b17 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -120,11 +120,16 @@ int rocket_core_init(struct rocket_core *core)
+ 
+ void rocket_core_fini(struct rocket_core *core)
+ {
++	/*
++	 * rocket_job_fini() stops the scheduler and detaches whatever domain
++	 * was left attached, through core->iommu_group, so it has to run
++	 * while that group is still held.
++	 */
++	rocket_job_fini(core);
+ 	pm_runtime_dont_use_autosuspend(core->dev);
+ 	pm_runtime_disable(core->dev);
+ 	iommu_group_put(core->iommu_group);
+ 	core->iommu_group = NULL;
+-	rocket_job_fini(core);
+ }
+ 
+ void rocket_core_reset(struct rocket_core *core)
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
 index 8c8d1f453..f83242d5a 100644
 --- a/drivers/accel/rocket/rocket_core.h
