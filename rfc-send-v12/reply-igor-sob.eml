@@ -23,11 +23,46 @@ keeps my sign-off because there I did.
 > You may want it on RK3576 too, where the same code runs with two
 > cores.
 
-*** RK3576 TEST HERE ***
+Tested on a ROCK 4D, two cores, on next-20260730 with my series and two
+patches of my own on top. Unbinding both cores in bind order and binding
+them again, twice over:
+
+  bound: 0            both gone, the device torn down
+  bound: 2            core 0 and core 1 again
+  bound: 0
+  bound: 2            core 0 and core 1 again
+
+Without your patch the second unbind never happens and the numbering
+walks off the end; with it the count reaches zero and a rebind starts
+clean. Nine models then decode with their batched prompt identical to
+their token loop.
+
+  Tested-by: Jiaxing Hu <gahing@gahingwoo.com> # RK3576, two cores
+
+On my kernel the first unbind Oopsed even with your patch, and that one
+is mine. A patch of mine that keeps the IOMMU domain attached across
+jobs detaches it in rocket_job_fini() through core->iommu_group, and
+rocket_core_fini() put that group and cleared the pointer before calling
+it.
+
+  pc : mutex_lock+0x20/0x54
+  lr : iommu_detach_group+0x20/0x40
+  rocket_job_fini+0x30/0x5c
+  rocket_core_fini+0x40/0x50
+  rocket_remove+0x64/0xac
+
+Mainline and my posted series do not detach there, so neither has this.
+I mention it because your patch is what made me run unbind at all, and
+it found a bug in my unsent work the same afternoon.
+
+Not the kernel's fault, but it cost me an hour: an accel device takes
+the next free minor, so after two rebinds the NPU sat at
+/dev/accel/accel2 while my userspace opened accel0 and reported no
+hardware.
 
 Three clients bit-exact at 900 and 1000 MHz is the test I was hoping
-for, and the aggregate being 2.5x one client is the part that makes it
-mean something. Thanks for running it before sending.
+for, and the aggregate at 2.5x one client is what shows the three cores
+really did overlap. Thanks for running it before sending.
 
 Cheers,
 Jiaxing
