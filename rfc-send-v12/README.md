@@ -46,12 +46,15 @@ on this series' restructuring of the job and reset paths, so they cannot be a
 standalone series and are not folded into v12 either, which has waited
 through eleven versions and should stay reviewable. They follow it.
 
-Held until:
-- the board says whether the core-pair overlap corruption was this kernel's
-  per-job attach/detach or the runtime (the `board_intermittent.sh` recipe in
-  charsiu); if it was the kernel, patch 1 fixes a corruption and the cover
-  should say so with the numbers;
-- Igor has run them on RK3588, which is the hardware the driver ships for.
+Held until Igor has run them on RK3588, which is the hardware the driver
+ships for. That is the only condition left.
+
+The other one is answered. The core-pair overlap corruption is neither this
+kernel's per-job attach/detach nor the runtime: it is the NPU rail. charsiu
+had already serialised the two cores over it on 2026-08-30 (`ea220c1`), three
+days before this branch existed, and the four device tree rounds put it on
+the voltage. So patch 1 does not fix a corruption, and the cover says that
+rather than claiming it. v12's 13/14 carries the clock that avoids it.
 
 What they are worth on the ROCK 4D, measured 2026-09-02 with charsiu:
 decode +4% on four models, the per-call floor down, and the per-job
