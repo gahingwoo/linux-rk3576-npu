@@ -1,5 +1,5 @@
-*** DRAFT. Held until the board attributes the overlap fault and Igor has run
-*** these on RK3588. See rfc-send-v12/README.md. Delete these lines to send.
+*** DRAFT. Held until Igor has run these on RK3588. See rfc-send-v12/README.md.
+*** Delete these two lines to send.
 
 Two patches on top of "[PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN)
 enablement"; the prerequisite-patch-id trailers name it. Neither applies
@@ -19,8 +19,19 @@ Measured on a Radxa ROCK 4D with an open runtime that issues about 150
 jobs a core per token of a language model: decode 4% faster over four
 models, text identical.
 
-*** If the board says the per-job attach was what corrupted overlapping
-*** jobs on the two cores, that goes here with the numbers. If it says the
-*** runtime was, this paragraph does not exist.
+Holding the domain moves work into the teardown path, so that is where it
+was tested. With Igor Paunovic's core removal fix on top, the whole device
+was unbound and rebound twice and came back with both cores each time
+(bound: 0, then bound: 2, cores 0 and 1), and nine models produced
+identical text afterwards. The first of those unbinds Oopsed until 1/2
+reordered rocket_core_fini(); that trace is in its commit message.
+
+On the same board, two jobs in flight on the two cores write single words
+wrong, and that is not these patches. It happens with the per-job attach
+in place as well, and what stops it is the NPU rail: at the 750 mV the
+PMIC boots with it is wrong 11 to 25 rows of a 5400 row pass, and at 800
+mV, which is what Rockchip's OPP table asks of the 800 MHz step, or at
+594 MHz on 750 mV, four such passes are clean. 13/14 of v12 takes the
+clock. Nothing here moves either one.
 
 Both are untested on RK3588, which is the hardware the driver ships for.
