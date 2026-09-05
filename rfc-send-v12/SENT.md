@@ -64,7 +64,9 @@ ours (attach-once detaching in rocket_job_fini through a group
 rocket_core_fini had already put), with the trace; and that an accel device
 takes the next free minor, which cost an hour.
 
-## 2026-09-05 Tested-by on Igor's patch -- PREPARED, NOT SENT
+## 2026-09-05 Tested-by on Igor's patch -- SENT
+Sent 21:01 NZST, Result 250, msgid
+`<20260905090134.239404-1-gahing@gahingwoo.com>`.
 `reply-igor-testedby.eml` + `send-reply-testedby.sh` (DRY=1 clean).
 In-Reply-To `<20260904125936.26234-1-royalnet026@gmail.com>`, which is Igor's
 core-removal PATCH rather than the DVFS thread.
@@ -73,8 +75,7 @@ Why it exists: the same `Tested-by` already went out on 2026-09-05 05:13, but
 in the DVFS thread. Igor asked at 07:01 for it on the patch itself -- a tag in
 another thread is not under the patch, so b4 will not collect it when Tomeu
 applies, and him reposting it on our behalf reads as a from/email mismatch.
-Same tag, same test, correct thread. He will carry it on his next revision if
-we do not send this.
+Same tag, same test, correct thread.
 
 Also from that mail, for the record: the climbing accel minor is a devm leak,
 not just "the next free minor". `rocket_device_init()` uses
