@@ -75,8 +75,11 @@ form of his numbers that may appear in the paper or in any future cover.
 v11 and v12 carry no version of the false claim; they kept only his two
 Tested-by lines, whose conditions are his verbatim.
 
-## ⚠ Open, and it is not a tree question
+## Corrected on-list 2026-09-12
 
-The v10 cover is on lore and the mail reached Igor. He travelled from
-2026-08-20 and never replied to it. Whether to send a correction is not
-something this file can settle.
+`rfc-send-v12/reply-igor-correction.eml`, msgid
+`<20260911122832.1364839-1-gahing@gahingwoo.com>`, Result 250. In-Reply-To the
+v10 cover so the correction sits under the message carrying the claim, To Igor,
+Cc Tomeu and both lists. It quotes what it retracts, gives his numbers as he
+wrote them, says the 0x80 signature is ours, and states that the bounding form
+in 4/14 is the only form of his result that will be used.

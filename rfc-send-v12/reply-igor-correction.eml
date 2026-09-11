@@ -1,0 +1,33 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v10 00/13] accel/rocket: RK3576 NPU (RKNN) enablement
+In-Reply-To: <20260831040804.24111-1-gahing@gahingwoo.com>
+References: <20260831040804.24111-1-gahing@gahingwoo.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Igor,
+
+A correction to what this cover said about your differential run, and to
+what I said to you about it on 27 August.
+
+The cover said a job had signalled completion with its output buffer
+never written, all 48 channels 0x80, and that across 102 induced resets
+in nine runs it appeared only on the arm without 1/13 and 2/13. None of
+that is what you reported.
+
+Your table is 12 + 8 + 12 + 13 = 45 resets, two passes per kernel, and
+you wrote that the race did not manifest in the 45 on either kernel,
+with the oracle 48/48 on both arms. The 0x80 is ours: on RK3576 a fresh
+shmem BO is zeroed and teflon's readback adds 0x80, so an output buffer
+that was never written reads back as a uniform 128. I carried our own
+signature onto your RK3588 run, which never reported it.
+
+The patch text is the part that was right, and it is the only form of
+your result I will use: 45 induced resets across three cores, the domain
+dropping every time with no MMU message on either kernel, so this is not
+rocket-wide. You were careful to say your protocol could not settle
+whether a genuinely hung block behaves differently. I turned a bounding
+result into a reproduction.
+
+Jiaxing

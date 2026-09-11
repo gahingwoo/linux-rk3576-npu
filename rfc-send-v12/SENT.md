@@ -84,3 +84,30 @@ only unregistered in `rocket_unregister()`; `rocket_device_fini()` calls
 `drm_dev_unregister()` and nothing else, so the minor's `xa_erase()` drmm
 action waits for the last `drm_dev_put()` at module exit. Every unbind leaves
 an unregistered drm_device holding its minor. Igor's, on his own patch.
+
+## 2026-09-12 the correction to what v10 said about Igor's differential
+
+`reply-igor-correction.eml`, sent 2026-09-12 00:28 NZST, msgid
+`<20260911122832.1364839-1-gahing@gahingwoo.com>`, Result 250.
+In-Reply-To `<20260831040804.24111-1-gahing@gahingwoo.com>`, the v10 cover.
+To Igor; Cc Tomeu, linux-rockchip, dri-devel.
+
+⚠ It replies to the COVER, not to him. The false sentence is in the archive
+under that message; a correction that only reached his mailbox would leave
+the cover saying he reproduced something he reported he could not.
+
+What it retracts: "a job signalled completion with its output buffer never
+written, all 48 channels 0x80" and "across 102 induced resets in nine runs it
+appeared only on the arm without them". Also names the 27 August mail to him,
+`<20260827014924.254513-1-gahing@gahingwoo.com>`, as the other instance.
+
+What it commits us to, and it is now public:
+
+- his numbers are 12 + 8 + 12 + 13 = 45, two passes per kernel, oracle 48/48
+  on BOTH arms, and the race did not manifest on either kernel;
+- 0x80 uniform is OUR RK3576 signature for an unwritten buffer, not his;
+- **the only form of his result that may be used anywhere, including the
+  paper, is the bounding one in 4/14**: 45 induced resets across three cores,
+  domain dropping every time with no MMU message on either kernel.
+
+Full write-up: `rfc-send-v10/RETRACTION.md`.
