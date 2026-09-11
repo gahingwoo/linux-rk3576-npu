@@ -52,6 +52,12 @@ Igor sent them.
 
 ## What is worth saying in the prose, and what is not
 
+⛔⛔ **RETRACTED 2026-09-12, see RETRACTION.md in this directory. The
+paragraph below is false in its count, inverted in its conclusion, and borrows
+an RK3576 signature of ours for an RK3588 run that never reported it. Igor
+wrote "The race itself did not manifest in the 45 resets on either kernel."
+Do not reuse this prose.**
+
 **Worth saying:** Igor's differential run reproduced the silent race these
 patches close. One inference in the unpatched arm signalled success with its
 output buffer never written, all 48 channels 0x80, zero kernel messages, and
