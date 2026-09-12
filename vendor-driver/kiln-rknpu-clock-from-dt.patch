@@ -1,0 +1,47 @@
+Kiln's vendor rknpu driver: take the compute clock from the device tree
+
+Kiln pins CLK_RKNN_DSU0 to 594 MHz on every power-up, with a comment saying why:
+devfreq is off, nothing else sets the compute clock, and at the CRU power-on
+default a large matmul cannot finish inside the job timeout.
+
+That is the right bring-up default and the wrong experimental one. r390 needed
+the vendor arm and the charsiu arm at the SAME clock, and with the rate
+hardcoded they would have differed whenever the charsiu DTB pinned anything
+else -- two variables in one cell, which is the mistake v12's 13/14 made and
+this project spent a day undoing.
+
+So the rate comes from assigned-clock-rates when the node says one, and falls
+back to 594 MHz when it does not. Every existing device tree keeps the old
+behaviour.
+
+⚠ THIS FILE IS NOT UNDER VERSION CONTROL ANYWHERE ELSE. ~/Documents/kiln is not
+a git repository and the vendor source is fetched rather than vendored, so this
+patch is the only record that the change exists. Re-running
+driver/fetch-vendor-driver.sh will overwrite it.
+
+--- a/driver/rknpu/rknpu_drv.c
++++ b/driver/rknpu/rknpu_drv.c
+@@ -1065,7 +1065,20 @@
+ 	 * Pin a clean GPLL-derived rate (594 MHz = 1188/2) on every power-up and log
+ 	 * the resulting rates for bring-up.
+ 	 */
+-	clk_set_rate(rknpu_dev->clks[0].clk, 594000000);
++	{
++		/*
++		 * KILN: the rate comes from the device tree when it says one, so
++		 * an experiment can hold this side at the same clock as the open
++		 * driver's arm. A hardcoded 594 made the vendor arm and the
++		 * charsiu arm two different frequencies whenever the charsiu DTB
++		 * pinned anything else, which is two variables in one cell.
++		 */
++		u32 dt_rate = 0;
++
++		if (of_property_read_u32_index(dev->of_node,
++					       "assigned-clock-rates", 0,
++					       &dt_rate) || !dt_rate)
++			dt_rate = 594000000;
++		clk_set_rate(rknpu_dev->clks[0].clk, dt_rate);
++	}
+ 	LOG_DEV_INFO(dev, "kiln clk: dsu0=%lu aclk0=%lu aclk1=%lu\n",
+ 		     clk_get_rate(rknpu_dev->clks[0].clk),
+ 		     clk_get_rate(rknpu_dev->clks[1].clk),
