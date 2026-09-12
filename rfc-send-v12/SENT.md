@@ -108,8 +108,11 @@ before the v10 cover quoted him. The 45-reset run (19 August) and the
 102-reset run (25 August) are different sessions and do not conflict. I read
 only the 19 August thread and treated its silence as an absence.
 
-Withdrawn by `reply-igor-correction-2.eml` in the same thread. Corrected
-record in `rfc-send-v10/RETRACTION.md`.
+⚠ **The withdrawal rides in the v12 cover rather than as a third mail on the
+thread.** Two standalone mails on one misquote is more noise than the misquote;
+the paragraph is in `cover-blurb.txt` before "The tags:", so it goes out when
+v12 does and nothing is sent in the meantime. Corrected record in
+`rfc-send-v10/RETRACTION.md`.
 
 ⚠ Nothing it "commits us to" holds. In particular there is no restriction on
 which of Igor's results may be cited: both runs are his and both are quotable.
