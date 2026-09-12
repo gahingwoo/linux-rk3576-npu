@@ -26,9 +26,39 @@ What it does NOT commit us to: nothing about v12, nothing about a date.
 The cover was passed through the no-dashes, no-filler edit before it went;
 the script's own prose keeps its double hyphens, it is a file.
 
-## v12 -- NOT SENT, on purpose
+## v12 -- SENT 2026-09-12 18:50 NZST, 15 of 15 at 250
 
-v12 is prepared (README.md here). It waits for a reply on v11.
+    Message-ID:  <20260912065053.1519165-1-gahing@gahingwoo.com>
+    base-commit: 68142f986ff04b2b70b31db00f719bf690f64a9a (next-20260911)
+    lore: https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/
+
+Cover plus fourteen, every one 250, all fourteen In-Reply-To the cover.
+12 To, 15 Cc.
+
+The reason it stopped waiting: v11 got zero human replies in twelve days, and
+the Sashiko review Tomeu named as the unblocker arrived 76 minutes after v11
+was posted and has been sitting unacted on. v7.3-rc2 is out, so the v7.4
+window is five to six weeks away.
+
+What it commits us to, and all of it is now public:
+
+- 3/14 tests "> 0", and the cover states why "!= 0" was withdrawn:
+  pm_runtime_get_conditional() tests power.disable_depth before
+  power.runtime_status, so -EINVAL masks a suspended device. If that reading
+  is wrong, the patch is wrong.
+- 10/14 cycles the resets BEFORE the settle delay. This is a change to code
+  Abel Vesa reviewed and the cover says so and offers to drop his tag.
+- 13/14's numbers: 192 MHz is worth 4.0 to 4.2% of decode with both cores,
+  a core is worth 26 to 37% on a 1B model. Boot-to-boot drift under 1%,
+  measured by booting 594 twice. Artifact: board-logs/r388.
+- the genpd figures on 4/14: 46.8 s active, 14.2 s idle, usage +202 over one
+  60.8 s decode. Artifact: board-logs/r387.
+- the withdrawal of the 11 September mail about Igor's two runs.
+- that 5/14 collides textually with ZhaoJinming's stable-marked fix.
+
+What it does NOT claim: that the posted series has booted. The board ran the
+three code fixes on a different lineage, which carries Igor's attach-domain
+refactor and max_cores; neither is posted here.
 
 ## 2026-09-04 reply to Igor's DVFS RFC
 `reply-igor-dvfs.eml`, sent 2026-09-04 23:08 NZST, msgid
