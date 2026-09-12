@@ -1,0 +1,144 @@
+round 394, 2026-09-13 — the withdrawn attention rule, both halves measured
+
+r393 put charsiu's prefill quadratic term at 0.004483 ms/tok^2 against the
+vendor's 0.000743, six times theirs, and said the next question was why. It is
+attention, and the answer was already in the tree.
+
+🔑 THE STAGE TABLE SAYS IT DIRECTLY. Llama-3.2-1B, 852 tokens, CPU pinned:
+
+  attention      3.82 ms a row   42.1%    <- the largest row
+  gate + up      2.28            25.1%
+  down           1.43            15.7%
+  q k v          0.59             6.5%
+  matmul rows:   4.66 ms a row inside the NPU entry
+
+4.66 is exactly the four projection rows summed (0.59+0.37+2.28+1.43), so
+attention's 3.82 ms is OUTSIDE the NPU entry: it runs on the CPU. And 42.1%
+measured against 40.2% inferred from r393's quadratic term is two methods
+agreeing to two points.
+
+🔑 AND THE KNOB EXISTS AND SAYS WHY IT IS OFF. attn_npu_want_for():
+
+  CHARSIU_ATTN_NPU=auto is withdrawn -- head_dim >= 128 is only half the rule
+  and the other half (how long a prompt) has not been measured; attention
+  stays on the CPU
+
+This round measures the other half. It also measures the FIRST half, which
+nothing in this tree could previously evaluate, because nothing could say which
+model was on which side of 128 -- tools/gguf_head_dim.py now does.
+
+CONDITIONS  npu594 arm, NPU 594 MHz, rail 800 mV, CPU pinned 2016/2208,
+            charsiu_run 2026-09-12, -c 1024, arms ALTERNATING at each length,
+            2 repeats, one warm-up an arm discarded. TTFT only (-n 1).
+
+=====================================================================
+1. NPU attention against CPU attention, by head_dim and prompt length
+---------------------------------------------------------------------
+ratio = NPU arm / CPU arm, so below 1.00 the NPU arm wins
+
+  model               head_dim   ~52 tok   ~202    ~452    ~852
+  Llama-3.2-1B              64     1.269   1.259   1.250   1.257
+  Qwen3-0.6B               128     1.622   1.354   1.163   1.018
+  gemma-3-1b               256     1.121   1.021   0.923   0.877
+
+🏁 1) BOTH HALVES OF THE RULE ARE REAL. At 852 tokens the ratio is 1.257 at
+head_dim 64, 1.018 at 128 and 0.877 at 256: monotone in head_dim. And for the
+two models above the threshold the ratio FALLS with prompt length, 1.622->1.018
+and 1.121->0.877.
+
+🏁 2) gemma-3-1b WINS FROM ABOUT 230 TOKENS, AND BY 12.3% AT 852. The code
+already exists, already agrees with the CPU arm to fp16 rounding, and is off.
+
+🏁 3) THE TWO HALVES ARE NOT INDEPENDENT CONDITIONS, THEY ARE ONE QUANTITY.
+head_dim is the INNER dimension of both attention matmuls -- Q is [rows x hd]
+against K^T [hd x positions] -- and prompt length is the outer one. Both feed
+arithmetic per dispatch, which is what the NPU needs to beat its own fixed
+cost. That is why head_dim 64 is FLAT at 1.25 while the others fall: at K=64
+no prompt length in range makes a dispatch worth taking.
+
+⛔ 4) SO THE NEGATIVE RESULT ON Llama DOES NOT TEST THE RULE. Llama-3.2-1B is
+the model every speed round in this tree uses and it is the FURTHEST BELOW the
+threshold of anything on the card. Measuring there and concluding "attention on
+the NPU does not pay" would have been the same error as measuring a quantiser
+at a group nobody runs.
+
+  head_dim census of the card, which nothing could produce before today:
+    gemma-4-E2B 512 · gemma-3-1b 256 · Qwen2.5-1.5B 128 · Qwen3-0.6B 128
+    Phi-3.5-mini 96 · Llama-3.2-1B 64 · SmolLM2-1.7B 64 · tinyllama 64
+
+=====================================================================
+2. Correctness, at the LONGEST length of each sweep
+---------------------------------------------------------------------
+⚠ Checked at the longest length on purpose: an fp16 accumulator's error grows
+with how much it accumulates, so a check at a short prompt is the easy case.
+
+  Llama-3.2-1B    worst 0.0086 relative   176 layers, 0 fell back
+  Qwen3-0.6B      worst 0.013  relative   308 layers, 0 fell back
+  gemma-3-1b      worst 0.0057 relative   286 layers, 0 fell back
+
+On Llama at 202 tokens the generated text is byte-identical between the arms.
+⚠ Llama's own worst relative error grew 0.0024 -> 0.0086 from 202 to 852
+tokens, which is the reason the check moved to the long end.
+
+=====================================================================
+3. A PREDICTION, WRITTEN DOWN FIRST, AND FALSIFIED
+---------------------------------------------------------------------
+From the three models above, the crossover length L falls roughly as 1/hd^1.9:
+never at head_dim 64, about 870 tokens at 128, about 230 at 256. Written down
+before gemma-4-E2B ran: head_dim 512 should cross near 60 tokens and reach 0.8
+or lower at 852.
+
+  gemma-4-E2B        512     1.105   1.032   0.975   0.936
+                             (52)    (202)   (452)   (852)
+
+Crossover about 380 tokens and 0.936 at 852 -- WORSE than head_dim 256, not
+better. The 1/hd^2 reading is dead.
+
+⛔ 5) AND SO IS THE ROW ITSELF: gemma-4 IS NOT A head_dim 512 MEASUREMENT.
+The tell was in the same output and had to be reached by arithmetic: every
+other model ran exactly 11 x n_layer layer-calls on the NPU, and gemma-4 ran
+77 = 11 x 7 of an expected 11 x 35. Seven of thirty-five.
+
+The gguf says why:
+
+  gemma4.attention.key_length        512      <- the global layers
+  gemma4.attention.key_length_swa    256      <- the sliding-window layers
+  gemma4.attention.sliding_window_pattern  <35 items>
+
+**gemma-4 has TWO head_dims.** The pool is built for one, so `hd != a->hd`
+refuses all 28 sliding-window layers. gemma-3-1b has a single key_length and
+refuses none, which is why all 26 of its layers ran.
+
+⭐ So gemma-4's 0.936 is what SEVEN layers of thirty-five bought. And the
+head_dim its other 28 layers want is 256 -- the best-winning head_dim in this
+whole sweep.
+
+=====================================================================
+4. THE INSTRUMENT SAID "fell back on 0" WHILE 80% OF THE LAYERS LEFT
+---------------------------------------------------------------------
+`fallbacks` counted the two fp16 matmul failures and nothing else; five earlier
+`return -1`s took the CPU path without touching a counter. The number printed
+was the number that was easy to count.
+
+Fixed, one counter a reason, with the compound conditions split so each clause
+has its own -- head_dim shared a line with the layer index and the kv head
+count, so even a counter on that line could not have said which fired:
+
+  gemma-4-E2B   ran 21 layers, fell back on 0, refused 84
+                  head_dim     84
+  gemma-3-1b    ran 78 layers, fell back on 0, refused 0
+
+21 + 84 = 105 = 3 chunks x 35 layers, and 21 = 3 x 7. The diagnosis above is
+now read off the instrument rather than inferred from a multiple of eleven.
+
+=====================================================================
+⚠ WHAT THIS ROUND DOES **NOT** SUPPORT
+   A new default. Three clean models is not a rule, and this tree has been
+   burned twice: CHARSIU_ATTN_NPU=auto was already withdrawn once, and the
+   last chunk rule derived rather than measured cost SmolLM2 77%. The axis
+   needs Qwen2.5-1.5B (128, a replicate on another architecture),
+   Phi-3.5-mini (96, between the two sides) and the two other head_dim 64
+   models before anything changes.
+   Any head_dim above 256, because gemma-4 does not measure one.
+   Anything about decode. This is TTFT only, -n 1.
+   One board, one clock, one rail.
