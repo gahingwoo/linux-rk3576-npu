@@ -52,14 +52,21 @@ One thing Sashiko raised on 4/14 that an argument does not settle.
 pm_runtime_put_autosuspend() is asynchronous and the delay is 50 ms, so
 on a workload whose gap between submits is shorter than that the domain
 does not cycle after a reset, 10/14's reset pulse on power-on does not
-fire, and rocket_core_reset()'s own resets are all that run. What I can
-report: on the ROCK 4D both cores sit runtime-suspended at rest and, over
-a run that decodes a 3.8B model for a while, accumulate 11.4 s active
-and 17.8 s suspended in sysfs, so the domain does cycle under a real
-workload. Whether it cycles after a timed-out job depends on the gap to
-the next submit, as Sashiko says; I have not induced one -- that is a
-kernel with JOB_TIMEOUT_MS lowered and a flash -- so the reset path
-after a timeout is still an argument on my side, not a measurement.
+fire, and rocket_core_reset()'s own resets are all that run.
+
+Measured on the domain rather than on the device, since the objection is
+about the domain: over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D,
+genpd's npu domain took 46.8 s active and 14.2 s idle, which sum to the
+wall clock, and its idle-state usage count rose by 202. npu0 and npu1
+rose by 210 and 217, and current_state reads off-0 either side. So the
+domain cycles about two hundred times a minute under a real decode and
+the pulse does fire.
+
+Whether it cycles after a TIMED-OUT job is the half Sashiko is actually
+asking about, and that depends on the gap to the next submit. I have not
+induced one, because it needs a kernel with JOB_TIMEOUT_MS lowered and a
+flash, so that half is still an argument on my side rather than a
+measurement.
 
 Findings Sashiko labelled pre-existing, for Tomeu. The list is the five
 that recur; it raised thirteen distinct ones across the nine mails, and

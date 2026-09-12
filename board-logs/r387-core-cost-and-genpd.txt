@@ -1,0 +1,80 @@
+round 387, 2026-09-12, boot id 9cf29da8-0505-4eea-910a-8758b3ae4e43
+
+WHY THIS FILE IS IN GIT. board-logs/ stopped at r386 on 2026-08-25 and every
+September measurement has lived in dirty/, which is gitignored. v12's 13/14 was
+written from there on 09-04 and four of its claims do not match what survives
+in it. A log nobody can diff against is a log nobody checks.
+
+CONDITIONS, the same for every reading below and printed by the harness itself:
+
+  dsu0        786431991 Hz (786 MHz)
+  vdd_npu_s0  800 mV
+  cores       accel0, both rknn cores bound
+  governor    ondemand
+  kernel      the v11-attach tree flashed on this board
+
+=====================================================================
+1) WHAT ONE NPU CORE IS WORTH
+=====================================================================
+
+tests/board_core_cost.sh in charsiu, five repeats an arm, arms ALTERNATING,
+one warm-up per model discarded. Both arms spell CHARSIU_NPU_ONEDEV. Median
+and full range; no reading was dropped.
+
+  model            arm                TTFT ms          tok/s
+  ---------------  -----------------  ---------------  ------------------
+  Qwen3-0.6B       two cores          158 (158..159)   28.38 (28.30..29.76)
+                   one core           166 (162..166)   22.71 (22.66..22.78)
+  tinyllama-1.1b   two cores          266 (262..274)   22.58 (22.46..23.39)
+                   one core           281 (277..293)   16.46 (16.42..16.47)
+  Phi-3.5-mini     two cores         1042 (1032..1055)  7.22 (7.20..7.23)
+                   one core          1144 (1132..1161)  4.96 (4.95..4.98)
+  gemma-4-E2B      two cores          538 (518..555)    9.56 (9.50..9.58)
+                   one core           590 (574..605)    7.01 (6.92..7.04)
+
+  the second core is worth, on decode:  -20.0  -27.1  -31.3  -26.7 %
+                                TTFT:   +5.1   +5.6   +9.8   +9.7 %
+
+⛔ THIS REVERSES WHAT 13/14 SAYS. Its sentence is "the prompt, where the second
+core earns its keep". The second core is worth 20 to 31% of DECODE and only 5
+to 10% of the prompt. That is what the serialised default predicts once it is
+said out loud: batched prefill submits do not overlap, so the second core is
+not helping the prompt much; decode is where it is working.
+
+⚠ WHAT THIS IS NOT. It is what a CORE is worth at 786 MHz and 800 mV. What
+192 MHz is worth is a different quantity and needs the 594 MHz device tree,
+which needs a flash. 13/14 put both in one cell and mislabelled the arm:
+1037/1565/5073/3604 is the SERIAL default, two cores never at once, not one
+core.
+
+=====================================================================
+2) DOES THE NPU POWER DOMAIN CYCLE UNDER A REAL WORKLOAD
+=====================================================================
+
+Sashiko's open finding on 4/14: pm_runtime_put_autosuspend() is asynchronous
+with a 50 ms delay, so a workload whose submit gap is shorter never cycles the
+domain, 10/14's power-on reset pulse never fires, and rocket_core_reset()'s own
+resets are all that run.
+
+⚠ THE COVER ANSWERED THIS WITH THE WRONG INSTRUMENT. "11.4 s active and 17.8 s
+suspended in sysfs" came from power/runtime_active_time, which is per DEVICE,
+and the objection is about the DOMAIN. That pair also has no artifact anywhere
+in this tree; it appears in the cover letter and nowhere else.
+
+rfc-send-v12/sashiko-3-genpd.sh, reading /sys/kernel/debug/pm_genpd/<domain>/,
+across one 60.8 s decode of Phi-3.5-mini at 192 tokens:
+
+  domain    active delta   idle delta    idle-state usage delta
+  npu         +46777 ms     +14177 ms      +202
+  nputop      +46601 ms     +14344 ms      +202
+  npu0        +45945 ms     +14983 ms      +210
+  npu1        +46017 ms     +14901 ms      +217
+
+  active + idle = 60954 ms against 60800 ms of wall clock, which is the
+  instrument checking itself. current_state reads off-0 before and after.
+
+So the domain cycles about two hundred times a minute under a real decode and
+the power-on pulse fires. Sashiko's case is still open for the path it is
+actually about: whether it cycles after a TIMED-OUT job depends on the gap to
+the next submit, and inducing a timeout needs a kernel with JOB_TIMEOUT_MS
+lowered and a flash. That half remains an argument, not a measurement.
