@@ -1,0 +1,114 @@
+round 388, 2026-09-12 — what 192 MHz is worth, and what a core is worth
+
+The question v12's 13/14 has never been able to answer. It claimed "losing
+192 MHz costs less than losing a core" from a single row that moved the core
+count and the clock together and mislabelled the baseline arm. Here they are
+separated, each measured, on one image.
+
+IMAGE      sdcard-v12fixes.img: the r386 buildroot rootfs with the kernel and
+           device trees replaced. Kernel 7.2.0-rc5-next-20260730+ #10, built
+           2026-09-12 16:56, carrying the three fixes the v12 code review
+           found. Two device trees in one extlinux menu, differing in four
+           lines: the two assigned-clock-rates.
+BINARY     charsiu_run built on the desk the same day, static, pushed to
+           /root/charsiu_run_new. ⚠ NOT the image's own /opt/charsiu/charsiu_run,
+           see the trap at the end.
+PROTOCOL   tests/board_core_cost.sh, five repeats an arm, the arms ALTERNATING
+           inside a boot, one warm-up a model discarded, every reading kept.
+RAIL       800 mV in every arm. At 750 mV the 786 arm computes wrong answers,
+           so a 594/750 against 786/750 pair would compare a correct run with
+           a broken one rather than two speeds.
+
+=====================================================================
+1) DRIFT FIRST, because the two clocks cannot share a boot
+=====================================================================
+
+The rate is in the device tree, so the arms are different boots, and this tree
+has a rule against A/B across sessions. The rule names a quantity, so measure
+it: 594, reboot, 594 again.
+
+  decode tok/s           594 boot A   594 boot B    drift
+  Llama-3.2-1B two cores    17.86        17.84      -0.11%
+  Llama-3.2-1B one core     11.17        11.17       0.00%
+  SmolLM2-135M two cores    41.63        41.28      -0.84%
+  SmolLM2-135M one core     38.29        38.23      -0.16%
+
+Boot-to-boot drift is under 1%. Anything larger is a result.
+
+=====================================================================
+2) THE TWO QUANTITIES
+=====================================================================
+
+decode tok/s, median of five, every reading in the raw logs:
+
+                      594 MHz   786 MHz   what 192 MHz is worth
+  Llama-1B  two cores   17.85     18.60         +4.2%
+            one core    11.17     13.77        +23.3%
+  SmolLM    two cores   41.46     43.12         +4.0%
+            one core    38.26     41.90         +9.5%
+
+                      two cores  one core   what a CORE is worth
+  Llama-1B  at 594 MHz   17.85     11.17        -37.4%
+            at 786 MHz   18.60     13.77        -26.0%
+  SmolLM    at 594 MHz   41.46     38.26         -7.7%
+            at 786 MHz   43.12     41.90         -2.8%
+
+🏁 On the configuration that ships, two cores: losing 192 MHz costs 4.0 to
+4.2% of decode. Losing a core costs 26 to 37% on a 1B model. The claim in
+13/14 holds, by roughly seven to nine times.
+
+⭐ AND THE TWO ARMS CROSS-CHECK EACH OTHER. The clock is worth 23% on ONE core
+and 4% on two. With both cores running the bottleneck is no longer the clock,
+which is why the shipping configuration can afford to give up 192 MHz. The
+one-core response is far outside the drift band, so the direction is not in
+doubt even where the two-core number is only four times it.
+
+⚠ A core is worth much less on a small model: 2.8 to 7.7% on 135M against 26
+to 37% on 1B. The second core's dispatch overhead is not repaid at that size.
+
+⚠ TTFT barely moves with the clock: 267 -> 263 ms on Llama, 101 -> 99 on
+SmolLM, both inside a couple of percent. Do not read a prefill result out of
+this round.
+
+=====================================================================
+3) ⛔ THE TRAP, and it cost the first three arms of this round
+=====================================================================
+
+The image's own /opt/charsiu/charsiu_run is dated 2026-08-24. It predates the
+affinity pin of 09-11, so its decode is subject to the scheduling lottery this
+project spent that day diagnosing. Measured on ONE boot, one arm, alternating
+old against new:
+
+  SmolLM2-135M   old 16.99 (15.65..17.96, 14.8% spread)
+                 new 28.36 (27.57..30.25,  9.7%)          +67%
+  Llama-3.2-1B   old  7.37 ( 7.22..7.53,   4.3%)
+                 new 10.16 (10.12..10.44,  3.2%)          +38%
+
+With the old binary the arms OVERLAPPED and one core read FASTER than two.
+With the new one the spread is 0.1 to 0.8% and Llama's core cost, -26%,
+reproduces r387's 20 to 31% range taken on a different rootfs entirely.
+
+🔑 The lesson: a number belongs to the BINARY that produced it. This round
+checked the model, the corpus, the clock, the rail and the boot id, and did
+not check how old the program doing the measuring was. The image was three
+weeks old and so was everything in it.
+
+⚠ Also found: tests/board_core_cost.sh sets CHARSIU_NPU_MAXN and
+CHARSIU_COEF_ELEMS and the first ad-hoc probe here did not, which alone moved
+Llama's TTFT from 15195 to 9457 ms on the same boot. Two probes that do not
+set the same environment are two experiments.
+
+=====================================================================
+4) THE KERNEL FIXES, exercised
+=====================================================================
+
+Five boots across three device-tree arms, all clean:
+
+  - both NPU cores probe, /dev/accel/accel0 appears, core 0 and core 1 both
+    report version 1179210311
+  - the pmdomain reset-before-delay reordering powers the four NPU domains up
+    and down with no SError, no timeout and no new dmesg line
+  - the match-data guard at the top of rocket_probe() never fired, which is
+    correct: both devices bind by compatible
+  - the only errors in dmesg are the seventeen "Failed to create device link
+    (0x180) with supplier soc" lines, present in every round since r242
