@@ -1,0 +1,138 @@
+round 391, 2026-09-12 — what the CPU clock is worth, the half r390 did not touch
+
+r390 swept the NPU clock and closed with its own warning: the vendor's
+published figures are "at the maximum CPU *and* NPU frequencies", only the NPU
+half was varied, and a decode that ignores the NPU clock is a decode that may
+well be bound by the CPU. This is that measurement.
+
+🔑 UNLIKE THE NPU CLOCK, THIS ONE MOVES WITHIN ONE BOOT. The NPU rate lives in
+the device tree, so r390 spent a reboot per arm and had to measure the
+boot-to-boot drift it was warned about. cpufreq is sysfs. Every point below is
+the same boot, the same load, the same binary, swept up and then back down.
+
+⚠ THE FREQUENCY IS CONFIRMED, NOT ASSUMED. scaling_setspeed is a request and
+scaling_cur_freq is what happened; every block printed both and every block
+got what it asked for. This kernel exposes no thermal zone, so the up-then-down
+sweep is the only throttling detector there is.
+
+⚠⚠ THE CPU-ONLY ARM IS A POSITIVE CONTROL AND IT IS NOT DECORATION. If a
+measured arm comes back flat, "the CPU clock does not matter here" and "my knob
+never took effect" are the same reading. SmolLM2-135M with CHARSIU_NPU=0, same
+harness, same parser, MUST move. It moved 2.49x.
+
+CONDITIONS  two boots. Vendor on the vendor786 arm (RKNPU bound, NPU 786.432
+            MHz, boot 515b234c); charsiu on npu594 (rocket bound, both cores,
+            NPU 594 MHz, boot 831b92ba). Rail 800 mV in both. Vendor figures
+            from their own RKLLMPerfStat via vendor_bench; charsiu from
+            charsiu_run dated 2026-09-12. 3 repeats a point, one warm-up
+            discarded, swept up and back down.
+
+⚠⚠ THE TWO RUNTIMES ARE AT DIFFERENT NPU CLOCKS HERE, SO NO ABSOLUTE
+CROSS-RUNTIME NUMBER BELOW IS A LIKE-FOR-LIKE COMPARISON. What is compared
+across them is each one's ELASTICITY -- how its own numbers move when its own
+CPU clock moves -- which is measured inside one boot and one arm.
+
+=====================================================================
+1. DECODE, tok/s, -n 64          up      down     mean
+---------------------------------------------------------------------
+   1008 / 1008 MHz   vendor    12.52    12.84    12.68
+                     charsiu   17.64    17.65    17.65
+                     control   15.41    16.11    15.76
+   1416 / 1416 MHz   vendor    13.84    13.84    13.84
+                     charsiu   19.49    19.53    19.51
+                     control   23.14    23.14    23.14
+   2016 / 2208 (max) vendor    15.22    15.66    15.44
+                     charsiu   21.49    21.52    21.51
+                     control   39.05    39.28    39.17
+
+   1008 -> max is +119% of A72 clock.
+   vendor   x1.2177     charsiu  x1.2188     control  x2.485
+
+🏁 1) THEIR DECODE RIDES THE CPU. r390 found the NPU clock worth -0.9% to
+them; the CPU clock is worth +21.8%. Whatever bounds their decode, it is much
+closer to the CPU than to the NPU.
+
+🏁 2) AND SO DOES OURS, BY THE SAME FACTOR. x1.2188 against x1.2177 -- the same
+number to three digits, from two different boots and two different runtimes.
+
+🏁 3) SO THE DECODE RATIO IS FLAT IN CPU FREQUENCY. 1.392, 1.410, 1.393 across
+a clock that more than doubles. That is the opposite of r390, where the NPU
+clock moved the ratio 1.389 -> 1.461. ⭐ The fairness worry about section 1 is
+answered for decode: running at their published maximum moves both columns by
+the same proportion and leaves the ratio where it was.
+
+   charsiu's repeats agree to 0.06-0.2%; theirs to 2.6-2.9%, with BOTH
+   endpoints reading faster on the second visit. Not throttling. Unexplained.
+
+=====================================================================
+2. WHAT schedutil ACTUALLY GAVE THEM -- 111 samples during one vendor run
+---------------------------------------------------------------------
+   policy4 (A72)   1200 MHz  66% of samples, 2208 14%, 2016 13%, rest 7%
+   policy0 (A53)   1416 MHz  75% of samples, 1008 16%, rest 9%
+   scored          13.27 tok/s, TTFT 431.3 ms
+
+   r389 read 12.85 and r390 read 12.73 on this governor, so all three rounds
+   measured them at about 1200 MHz on the big cluster. Their published
+   condition is max. The gap is 16.4% and it is on their side -- but by 🏁2 it
+   is the same 16% on ours, so it does not move the ratio.
+
+=====================================================================
+3. PREFILL, two prompt lengths so rate and fixed cost separate
+---------------------------------------------------------------------
+   vendor, 50 and 113 tokens      short     long    ms/token   fixed
+     schedutil                    437.3    772.8      5.325    171.0
+     max CPU                      352.3    692.6      5.402     82.2
+                                                      +1.4%    -51.9%
+
+   charsiu, 16 and 79 tokens       short     long    ms/token   fixed
+     schedutil                     267      754       7.730    143.3
+     max CPU                       224      677       7.190    109.0
+                                                      -7.0%    -23.9%
+
+🏁 4) THEIR PREFILL RATE DOES NOT USE THE CPU AT ALL AND THEIR FIXED COST IS
+MADE OF IT. Per token the two conditions are the same number to within 1.4%;
+the whole TTFT improvement is the intercept, and it HALVES. With r390's 6.5%
+for the NPU clock: their rate is the NPU's, their fixed cost is the CPU's.
+
+🏁 5) OURS SPLITS THE OTHER WAY, AND THE FIXED COSTS CROSS OVER. Our rate does
+move with the CPU (-7.0%) and our fixed cost moves much less than theirs
+(-23.9% against -51.9%). At schedutil our fixed cost is 16% BELOW theirs
+(143.3 against 171.0); at max CPU it is 33% ABOVE (109.0 against 82.2).
+⭐ Which runtime starts a prompt faster depends on the governor, and every
+round this tree has run picked the governor that flatters us.
+
+⚠ A one-prompt TTFT comparison cannot see any of this. Two lengths cost one
+extra run per condition and turn one uninterpretable number into two.
+
+=====================================================================
+⛔ AND THE FIRST CHARSIU SWEEP OF THIS ROUND WAS THROWN AWAY
+---------------------------------------------------------------------
+It read 13.85 tok/s at max CPU where r388 recorded 17.85 at a LOWER clock,
+which is impossible, so it was not published -- it was reproduced on the same
+boot against the alternative and the difference was found. The script had
+copied clock_cost.sh's three environment knobs. The tree's board environment
+has five, and the missing one was CHARSIU_NPU_MAXN.
+
+Its C default is 8192. The model's output head is 128256 rows wide. Under 8192
+that head silently stays on the CPU, and it is worth 55% of decode
+(13.89 -> 21.50 at max CPU, same boot, same binary, one variable).
+
+⚠⚠ THIS IS THE SAME BUG AS CHARSIU_COEF_ELEMS, ONE KNOB OVER. job.c already
+carries the argument in full -- only charsiu-runner and charsiu-serve set the
+variable, every board test sets it too, therefore the C default was never what
+anything measured -- and that argument was acted on for COEF_ELEMS and not for
+MAXN, which sits three lines away in llama.c with the same two setters and the
+same board tests. Fixing the instance instead of the class.
+
+=====================================================================
+⚠ NOT MEASURED HERE
+   The two runtimes at the SAME NPU clock under a CPU sweep. The elasticities
+   are within-arm and stand; the ratio VALUES in 🏁3 pair charsiu at 594 with
+   the vendor at 786 and are not like-for-like.
+   charsiu at schedutil with -n 64 and the correct environment. schedutil puts
+   the A72 at 1200 MHz for both runtimes, between the 1008 and 1416 rows, and
+   this function is not smooth enough to interpolate.
+   The control scales SUPER-linearly (clock x2.19, tok/s x2.49). Not chased;
+   possibly the DSU or memory clock moving with the CPU OPP. Every conclusion
+   above is within-arm and unaffected.
+   One board. No thermal zone on this kernel.
