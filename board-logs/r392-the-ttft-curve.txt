@@ -1,0 +1,105 @@
+round 392, 2026-09-12 — the TTFT curve, and the two-point fit it kills
+
+r391 separated prefill into a per-token rate and a fixed cost by timing two
+prompt lengths and fitting a line. So did r389 before it, which is where the
+"the vendor is 1.23x faster per prompt token" figure came from. This round
+measured the curve those lines were fitted to.
+
+CONDITIONS  npu594 arm, boot 831b92ba, NPU 594 MHz, rail 800 mV, CPU pinned at
+            2016/2208 MHz with the userspace governor, charsiu_run 2026-09-12,
+            Llama-3.2-1B Q4_0, -n 1 so the figure is the prompt's.
+            3 readings a point, one warm-up discarded.
+
+=====================================================================
+1. TTFT against prompt length
+---------------------------------------------------------------------
+    tokens  batched  left    TTFT ms       range      marginal ms/tok
+        27       26     1        348    347..353      -
+        52       52     0        441    440..444      (leftover upstream)
+       102      102     0        857    852..860      8.320
+       202      202     0       1477   1475..1479     6.200
+       302      302     0       2251   2248..2258     7.740
+       452      452     0       3583   3520..3600     8.880
+       602      602     0       5096   5082..5155     10.087
+       852      852     0       8121   8002..8259     12.100
+
+🏁 1) TTFT IS CONVEX IN PROMPT LENGTH. The marginal cost per token roughly
+doubles from 202 tokens to 852. Attention is O(n^2) and this is what that looks
+like. ⛔ An intercept extrapolated to zero from two points on this curve is not
+a fixed cost; it is an artefact of where the two points were.
+
+🏁 2) AND IT IS NOT MONOTONE, WHICH A CONVEX FUNCTION CANNOT BE. 8.320 ms a
+token between 52 and 102 against 6.200 between 102 and 202. Section 2 below is
+why.
+
+⚠ 3) THE LEFTOVER TOKEN IS REAL AND THE RUNTIME ANNOUNCES IT. At 27 tokens the
+prompt runs as a batched 26 plus ONE token through llama_forward, inside the
+prompt timer. r391's long point was 79 tokens -- 78 batched plus one -- and its
+short point was 16, with no leftover. The line printed on every such run says
+"prompt batched for 78 of 79 tokens, the rest a token at a time" and no round
+was reading it.
+
+=====================================================================
+2. The chunk width, on one prompt, everything else held
+---------------------------------------------------------------------
+  chunk   widths actually run     median TTFT   readings
+     48   2x48+1x6                    809 ms    814 808 809
+     80   1x80+1x22                   809 ms    805 811 809
+     52   1x52+1x50                   830 ms    830 823 831
+     64   1x64+1x38                   849 ms    850 849 843
+    102   1x102  <- the default       857 ms    859 855 857
+     34   3x34                        870 ms    870 866 871
+
+🏁 4) THE SHIPPED DEFAULT IS 5.9% SLOWER THAN CHUNKING AT 80 AT THIS LENGTH.
+charsiu_run's nominal chunk is 80 and onechunk_on() widens a prompt that fits
+under the model's 160-token ceiling into one chunk, so 102 tokens run as 1x102.
+Within-cell spread is at most 6 ms against a 48 ms gap, so the ordering holds.
+
+⚠ NOT "fewer chunks is better": one chunk of 102 is nearly the worst row and
+three of 34 is the worst. NOT a clean multiple-of-16 rule either: 1x64+1x38
+would then beat 1x52+1x50 and it does not.
+
+⚠⚠ AND THE DEFAULT IS NOT SIMPLY WRONG. onechunk_on() went in against
+measurement -- TTFT fell on all four vendor-protocol models, 5.1% and 5.7% on
+the two whose baselines repeat -- and those are 128-token prompts. It wins at
+128 and loses at 102. A non-monotone response to prompt length, not a
+regression.
+
+⛔ SIX CELLS AT ONE PROMPT LENGTH CANNOT CHOOSE A DEFAULT. The comment above
+the knob records what the last derived-rather-than-measured chunk rule cost:
+SmolLM2 77% slower. Nothing is changed on this evidence.
+
+=====================================================================
+3. What this round WITHDRAWS
+---------------------------------------------------------------------
+⛔ r391 section 3, the whole prefill decomposition: 5.325 against 7.730
+   ms/token, 171.0 against 143.3 ms fixed, "theirs halves and ours falls 24%".
+⛔ r389 / evidence-pack 1b: "7.71 against 6.25 ms/token, fixed costs within 8%,
+   the vendor is 1.23x faster per prompt token". That was the headline prefill
+   number and it is unsupported. It has a fault of its own on top of the three
+   above: the two secants are over DIFFERENT token ranges, 16..79 ours against
+   50..113 theirs, and on a convex curve a secant over a higher range is
+   steeper, so they were never comparable.
+
+WHAT SURVIVES, because none of these faults depends on the CPU clock -- the
+same prompt, the same chunking, the same leftover, under two governors:
+
+                          TTFT ms                 gain at max CPU
+                     schedutil   max CPU
+  vendor    50 tok       437.3     352.3              -19.4%
+           113 tok       772.8     692.6              -10.4%
+  charsiu   16 tok         267       224              -16.1%
+            79 tok         754       677              -10.2%
+
+Both gain more at a short prompt than a long one. That is the model-free form
+of "the part the CPU touches is more fixed than per-token", and it is as far as
+two points a side can go.
+
+=====================================================================
+⚠ NOT MEASURED HERE
+   The vendor's own curve. Their half of the comparison needs the same ladder
+   on the vendor arm, which is a reboot, and until it exists the per-token
+   prefill gap is unmeasured rather than 1.23x.
+   Any prompt length but 102 for the chunk sweep.
+   Any model but Llama-3.2-1B, for either table.
+   One board.
