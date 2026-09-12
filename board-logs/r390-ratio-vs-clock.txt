@@ -1,0 +1,59 @@
+round 390, 2026-09-12 — does the charsiu/vendor ratio depend on the clock?
+
+r389 measured their runtime against ours at 594 MHz and got 1.44x on decode.
+A single ratio is only worth quoting if it is a constant. It is not.
+
+⚠ TO MEASURE THIS AT ALL, KILN'S DRIVER HAD TO STOP PINNING THE CLOCK.
+rknpu_drv.c carried a hardcoded clk_set_rate(clks[0], 594000000) with a comment
+explaining that devfreq is off and nothing else sets the compute clock. That is
+correct as a bring-up default and fatal as an experiment: the vendor arm and
+the charsiu arm would have been two different frequencies whenever the charsiu
+DTB pinned anything else. It reads assigned-clock-rates from the device tree
+now and falls back to 594.
+
+CONDITIONS  one Image, one board, rail 800 mV in every arm, same prompt,
+            -n 64, ignore-eos, context 512. Vendor figures from their own
+            RKLLMPerfStat; charsiu's from r388, same protocol, same board.
+
+=====================================================================
+
+              594 MHz   786 MHz    change     spread at 786
+  charsiu       17.85     18.60     +4.2%     18.51..18.63
+  vendor        12.85     12.73     -0.9%     12.72..12.76
+  ratio         1.389     1.461     +5.2%
+
+  charsiu TTFT    267       263     -1.5%
+  vendor  TTFT    467       437     -6.5%
+
+  the NPU clock itself rose 32.4%.
+
+🏁 1) THE RATIO IS NOT A CONSTANT. 1.389 at 594 and 1.461 at 786, a 5.2% move,
+which is far outside either arm's spread (0.3% and 0.6%). The paper cannot
+quote a single multiple for decode any more than it can for the quality ladder.
+Same shape of error, found twice in one day.
+
+🏁 2) THEIR DECODE DOES NOT USE THE NPU CLOCK AT ALL. A 32.4% clock increase
+buys them -0.9%, with a 0.3% spread, so it is not noise. Ours buys +4.2%, small
+but the right sign. Whatever bounds their decode, it is not this clock.
+
+⭐ That bears directly on the fairness argument for section 1 of the evidence
+pack. Their published figures are "at the maximum CPU and NPU frequencies", and
+the worry has always been that our arms run slower than the conditions they
+published. On DECODE that worry is much smaller than it looked: the NPU clock
+is nearly inert for them.
+
+⚠⚠ AND THE OBVIOUS EXTENSION IS NOT SUPPORTED. Only the NPU clock was varied.
+"Maximum frequency" in their header is CPU *and* NPU. A decode that ignores the
+NPU clock is a decode that may well be bound by the CPU, which is exactly the
+thing this round did not touch. Do not read this as "their published figures
+would be reproduced at 594 MHz".
+
+🔑 3) THE TWO METRICS SWAP SIDES. The clock is nearly inert for their decode
+and worth 6.5% of their prefill; for charsiu it is worth 4.2% of decode and
+almost nothing on prefill. So the answer to "does frequency favour one of us"
+depends on which half is being asked about, and the two halves point opposite
+ways.
+
+⚠ Not measured here: CPU frequency, either side. Devfreq, either side -- their
+device tree asks for it over an OPP table to 800 MHz and Kiln's patch has
+always pinned instead, so neither arm has ever scaled dynamically. One board.
