@@ -33,12 +33,12 @@ the end. Four things on this series changed:
          asks 800 mV of its 800 MHz step and nothing sets the rail
          either. On the ROCK 4D at the 750 mV its PMIC boots with, two
          jobs at once make the second core write single words wrong,
-         eleven to twenty five rows of a 5400 row pass, where either
-         core alone is exact; at 594 MHz, or at 786 with the rail at
-         800 mV, four such passes are clean. This takes 594, under the
-         lowest step of that table, so the description is right on a
-         board that says nothing about an NPU rail. Losing 192 MHz
-         costs less than losing a core, and the patch has the numbers.
+         thirteen to twenty rows of a 5400 row pass, where either core
+         alone is exact; at 594 MHz, or at 786 with the rail at 800 mV,
+         four such passes are clean. 594 MHz is a divider off GPLL and
+         sits between that table's 500 and 600 MHz steps, both of which
+         ask 725 mV, so it is inside the voltage a board that describes
+         no NPU rail already provides.
 
   14/14  enables both cores and both IOMMUs. v11 enabled rknn_core_0
          alone, "left to whoever can test it". It has been tested.
@@ -56,11 +56,15 @@ the next submit, as Sashiko says; I have not induced one -- that is a
 kernel with JOB_TIMEOUT_MS lowered and a flash -- so the reset path
 after a timeout is still an argument on my side, not a measurement.
 
-Findings Sashiko labelled pre-existing, for Tomeu, all in code this
-series does not touch:
+Findings Sashiko labelled pre-existing, for Tomeu. The list is the five
+that recur; it raised thirteen distinct ones across the nine mails, and
+the one not here worth naming is that a 64-bit DMA address is truncated
+to 32 bits, which faults the IOMMU above 4 GB:
 
   - the job completion path takes iommu_group_get(core->dev) and never
-    puts it, one group reference a job (flagged on all nine mails);
+    puts it, one group reference a job (flagged on seven of the nine).
+    5/14 MOVES this call rather than adding or removing it, so the leak
+    is pre-existing but not untouched;
   - the shared IRQ handler touches registers without checking the PM
     state;
   - runtime suspend has no synchronize_irq();
@@ -91,13 +95,18 @@ other. I had read only the 19 August thread and should have searched
 before saying in public that he had not measured it. That mail is
 withdrawn. Both of his Tested-by lines stand as he sent them.
 
+Link to v11: https://lore.kernel.org/all/20260831081956.84871-1-gahing@gahingwoo.com/
+
 The tags:
 
+  2/14   Tested-by: Igor Paunovic   # RK3588, three cores
   3/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
                                     # reset, differential base,
                                     # JOB_TIMEOUT_MS=2
   4/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
                                     # reset, JOB_TIMEOUT_MS=2
+  5/14   Reviewed-by: Igor Paunovic
+  6/14   Reviewed-by: Krzysztof Kozlowski
   7/14   Acked-by: Conor Dooley
   8/14   Acked-by: Conor Dooley
   9/14   Reviewed-by: Abel Vesa

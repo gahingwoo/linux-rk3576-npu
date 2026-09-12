@@ -1,6 +1,6 @@
 # Sashiko's review of v11, adjudicated
 
-Sashiko reviewed all nine mails of v11 on 2026-08-31. That it ran at all is the
+Sashiko reviewed v11 on 2026-08-31, nine mails. That it ran at all is the
 point of v11: v9 and v10 named Igor Paunovic's clock patch with a
 `prerequisite-patch-id:` trailer, which the bot cannot follow, so v11 carries it
 as 1/14 and the whole series was reviewable.
@@ -11,7 +11,7 @@ Tomeu on their own:
 
 | finding | mails |
 |---|---|
-| `iommu_group` reference leak in the job completion path | 9 of 9 |
+| `iommu_group` reference leak in the job completion path | 7 of 9 |
 | shared IRQ handler touches registers without checking PM state | most |
 | runtime suspend lacks `synchronize_irq()` | 3 |
 | `num_cores` used as both array length and probe index | 2 |

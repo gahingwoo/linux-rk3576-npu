@@ -58,4 +58,5 @@ rather than claiming it. v12's 13/14 carries the clock that avoids it.
 
 What they are worth on the ROCK 4D, measured 2026-09-02 with charsiu:
 decode +4% on four models, the per-call floor down, and the per-job
-`iommu_group` reference leak Sashiko flagged on every v11 mail gone.
+`iommu_group` reference leak Sashiko flagged on seven of the nine v11
+mails gone.
