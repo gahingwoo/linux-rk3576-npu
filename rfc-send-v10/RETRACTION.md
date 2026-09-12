@@ -66,8 +66,28 @@ one.
 
 - **2026-09-11** `<20260911122832.1364839-1-gahing@gahingwoo.com>`, the wrong
   correction, sent to Igor, Tomeu and both lists.
-- **2026-09-12** `rfc-send-v12/reply-igor-correction-2.eml`, withdrawing it in
-  the same thread, with his 25 August words quoted back.
+- **2026-09-11 19:29Z** `<20260911192833.105634-1-royalnet026@gmail.com>`, Igor
+  setting it straight himself, the same day: "both sets of numbers are mine,
+  from two different days", "the signature is shared, not carried over", and
+  "If you respin, both statements can stand next to each other."
+- **the withdrawal rides in the v12 cover**, not as a third mail on the thread.
+  See `rfc-send-v12/cover-blurb.txt`, the paragraph before "The tags:".
+
+## What Igor asked for, and it is not yet in the series
+
+His reply invites both results to stand together, and gives the bound that
+must ride with the second: "one event in 53 differential resets, zero in 49
+with the patches, timing-dependent, and my protocol cannot tell a genuinely
+hung block from a lost completion. It bounds; it does not prove."
+
+The 25 August result belongs on the patches that close the race, 2/14 and
+3/14, NOT on 4/14: his message was a reply to `[PATCH v9 02/13]` and he calls
+it "the silent flavour of the race THESE TWO PATCHES close". 4/14's 45-reset
+paragraph is about the domain dropping, and of it he says "That is what the
+patch text describes, and it is right."
+
+⚠ The differential removed both patches together, so the evidence bounds the
+PAIR and not either one of them.
 
 ## What stands
 
