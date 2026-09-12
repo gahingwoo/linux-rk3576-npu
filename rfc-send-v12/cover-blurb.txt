@@ -5,96 +5,86 @@ core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
 that packs the task number into sixteen bits rather than twelve.
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
-by name", carried inside the series since v11 so that it applies to a
-plain next-20260814 with nothing outside it to follow. It keeps his
-authorship and its four tags. Tested on a Radxa ROCK 4D.
+by name", carried in the series since v11 so it applies to a plain
+next-20260911 with nothing outside it to follow. It keeps his authorship
+and its four tags. Tested on a Radxa ROCK 4D.
 
-What changed since v11
-
-Sashiko reviewed v11, which is what v11 was for, and the C patches then
-went through a line-by-line regression pass of their own. Most of what
-Sashiko found is in the driver as it stands rather than in this series;
-those are at the end. Five things on this series changed:
+Five things changed since v11:
 
   3/14   clears the raw interrupt status beside the mask. Masking alone
-         left the DPU bit latched all the way to rocket_core_reset(),
-         and the hardirq decides on raw status alone, so a fault from
-         the IOMMU sharing this core's line would wake the threaded
-         handler again and "No handler is running now" would stop being
-         true partway through the function.
+         left the DPU bit latched until rocket_core_reset(), and the
+         hardirq decides on raw status alone, so a fault from the IOMMU
+         sharing this core's line would wake the threaded handler again
+         and "No handler is running now" would stop holding partway
+         through the function.
 
-         ⚠ It still tests "> 0", and an earlier draft of this version
-         changed that to "!= 0" on the reasoning that -EINVAL means
-         runtime PM is not managing the device and the block is
-         therefore powered. That reasoning is wrong and the change is
-         withdrawn. pm_runtime_get_conditional() tests
-         power.disable_depth BEFORE power.runtime_status, so -EINVAL
-         MASKS a suspended device rather than excluding one; and this
-         driver makes exactly that state twice, in
-         pm_runtime_force_suspend() -- its own system sleep callback,
-         which disables runtime PM before turning the clocks off -- and
-         in rocket_core_fini(), which suspends then disables before
-         cancelling the timeout worker. Either would have put a register
-         write on a powered-down block, which is the async SError this
-         patch exists to avoid causing.
+         It still tests "> 0". An earlier draft of this version changed
+         that to "!= 0", on the reasoning that -EINVAL means runtime PM
+         is not managing the device and the block is therefore powered.
+         That is wrong and the change is withdrawn.
+         pm_runtime_get_conditional() tests power.disable_depth before
+         power.runtime_status, so -EINVAL masks a suspended device
+         rather than excluding one, and this driver makes that state
+         twice: in pm_runtime_force_suspend(), its own system sleep
+         callback, which disables runtime PM before turning the clocks
+         off, and in rocket_core_fini(), which suspends then disables
+         before cancelling the timeout worker. Either would have put a
+         register write on a powered-down block.
 
-  10/14  cycles the resets BEFORE the settle delay 9/14 adds, not after.
+  10/14  cycles the resets before the settle delay 9/14 adds, not after.
          PD_NPU0 and PD_NPU1 ask for both, and the old order spent the
          delay and then deasserted a reset with nothing between it and
          rockchip_pmu_restore_qos(). The reset is SRST_A_RKNN0/1_BIU,
-         which is the bus interface those writes go through.
+         the bus interface those writes go through.
 
   11/14  checks the match data at the top of rocket_probe(), before
          anything is allocated. of_device_get_match_data() returns NULL
          for a device bound by name rather than by compatible, and such
          a device has no of_node, so the walk of matching nodes that
-         sizes rdev->cores[] never counted it: storing into that array
-         first and checking afterwards writes past the end under the
-         check's own premise.
+         sizes rdev->cores[] never counted it. Storing into that array
+         and checking afterwards writes past the end.
 
-  13/14  gives CLK_RKNN_DSU0 a rate. Nothing in mainline sets it and
-         the NPU comes up at 786 MHz, while Rockchip's own OPP table
-         asks 800 mV of its 800 MHz step and nothing sets the rail
-         either. On the ROCK 4D at the 750 mV its PMIC boots with, two
-         jobs at once make the second core write single words wrong,
-         thirteen to twenty rows of a 5400 row pass, where either core
-         alone is exact; at 594 MHz, or at 786 with the rail at 800 mV,
-         four such passes are clean. 594 MHz is a divider off GPLL and
-         sits between that table's 500 and 600 MHz steps, both of which
-         ask 725 mV, so it is inside the voltage a board that describes
-         no NPU rail already provides.
+  13/14  gives CLK_RKNN_DSU0 a rate. Nothing in mainline sets it and the
+         NPU comes up at 786 MHz, while Rockchip's OPP table asks 800 mV
+         of its 800 MHz step and nothing sets the rail either. On the
+         ROCK 4D at the 750 mV its PMIC boots with, two jobs at once
+         make the second core write single words wrong, thirteen to
+         twenty rows of a 5400 row pass, where either core alone is
+         exact; at 594 MHz, or at 786 with the rail at 800 mV, four such
+         passes are clean. 594 MHz is a divider off GPLL and sits
+         between that table's 500 and 600 MHz steps, both of which ask
+         725 mV, so it is inside the voltage a board that describes no
+         NPU rail already provides.
 
   14/14  enables both cores and both IOMMUs. v11 enabled rknn_core_0
          alone, "left to whoever can test it". It has been tested.
 
-One thing Sashiko raised on 4/14 that an argument does not settle.
-pm_runtime_put_autosuspend() is asynchronous and the delay is 50 ms, so
-on a workload whose gap between submits is shorter than that the domain
-does not cycle after a reset, 10/14's reset pulse on power-on does not
-fire, and rocket_core_reset()'s own resets are all that run.
+Sashiko raised one thing on 4/14 that an argument does not settle.
+pm_runtime_put_autosuspend() is asynchronous with a 50 ms delay, so on a
+workload whose submit gap is shorter the domain does not cycle after a
+reset, 10/14's power-on pulse never fires, and rocket_core_reset()'s own
+resets are all that run.
 
-Measured on the domain rather than on the device, since the objection is
-about the domain: over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D,
-genpd's npu domain took 46.8 s active and 14.2 s idle, which sum to the
-wall clock, and its idle-state usage count rose by 202. npu0 and npu1
-rose by 210 and 217, and current_state reads off-0 either side. So the
-domain cycles about two hundred times a minute under a real decode and
-the pulse does fire.
+Measured on the domain rather than on the device: over one 60.8 s decode
+of Phi-3.5-mini on a ROCK 4D, genpd's npu domain took 46.8 s active and
+14.2 s idle, which sum to the wall clock, and its idle-state usage count
+rose by 202. npu0 and npu1 rose by 210 and 217, and current_state reads
+off-0 either side. The domain cycles about two hundred times a minute
+under a real decode, and the pulse fires.
 
-Whether it cycles after a TIMED-OUT job is the half Sashiko is actually
-asking about, and that depends on the gap to the next submit. I have not
-induced one, because it needs a kernel with JOB_TIMEOUT_MS lowered and a
-flash, so that half is still an argument on my side rather than a
-measurement.
+Whether it cycles after a timed-out job is the half Sashiko is asking
+about, and that depends on the gap to the next submit. Inducing one needs
+a kernel with JOB_TIMEOUT_MS lowered and a flash, so that half is still
+an argument rather than a measurement.
 
-Findings Sashiko labelled pre-existing, for Tomeu. The list is the five
-that recur; it raised thirteen distinct ones across the nine mails, and
-the one not here worth naming is that a 64-bit DMA address is truncated
-to 32 bits, which faults the IOMMU above 4 GB:
+Findings Sashiko labelled pre-existing, for Tomeu. These five recur; it
+raised thirteen across the nine mails, and the one not listed worth
+naming is a 64-bit DMA address truncated to 32 bits, which faults the
+IOMMU above 4 GB.
 
   - the job completion path takes iommu_group_get(core->dev) and never
-    puts it, one group reference a job (flagged on seven of the nine).
-    5/14 MOVES this call rather than adding or removing it, so the leak
+    puts it, one group reference a job, flagged on seven of the nine.
+    5/14 moves this call rather than adding or removing it, so the leak
     is pre-existing but not untouched;
   - the shared IRQ handler touches registers without checking the PM
     state;
@@ -102,22 +92,21 @@ to 32 bits, which faults the IOMMU above 4 GB:
   - num_cores is used both as an array length and as the probe index;
   - rdev is leaked through devres on probe deferral.
 
-⚠ 5/14 MOVES the iommu_detach_group(NULL, iommu_group_get(core->dev))
-line out of the IRQ handler and into rocket_job_next_locked(). An
-independent posting, "accel/rocket: Fix iommu_group leak and unsafe IRQ
-register access" from ZhaoJinming, changes the same line, and it is
-marked for stable with the same Fixes tag as ours. Whichever lands
-first, the other will conflict textually; say which you would rather
-take.
+5/14 moves the iommu_detach_group(NULL, iommu_group_get(core->dev)) line
+out of the IRQ handler and into rocket_job_next_locked(). ZhaoJinming's
+"accel/rocket: Fix iommu_group leak and unsafe IRQ register access"
+changes the same line, is marked for stable, and carries the same Fixes
+tag as ours. Whichever lands first the other conflicts; say which you
+would rather take.
 
 Still open from v9, no reply since. 9/14 does three things: it adds the
-settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
-which also makes every RK3576 board force that domain off at probe. I
-asked whether it wants splitting; Abel Vesa's Reviewed-by may be the
-answer, and I would rather split it than have it merged on my silence.
-13/14 also gives each core both NPU domains, which is the description
-that has been tested here rather than the topology; if it should be one
-domain per core, 6/14's minItems has to change with it.
+settle delay, renames a macro, and gives RK3576_PD_NPU a regulator, which
+also makes every RK3576 board force that domain off at probe. I asked
+whether it wants splitting; Abel Vesa's Reviewed-by may be the answer,
+and I would rather split it than have it merged on my silence. 13/14 also
+gives each core both NPU domains, which is the description that has been
+tested here rather than the topology; if it should be one domain per
+core, 6/14's minItems has to change with it.
 
 The bindings are unchanged since v9, where dt_binding_check was clean on
 all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
@@ -125,14 +114,14 @@ clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to a
 dts rather than to a binding, and CHECK_DTBS is clean on all 13 rk3576
 dtbs with it.
 
-One correction to an earlier posting. On 11 September I replied to the
-v10 cover saying that the 102 induced resets and the all-0x80 buffer it
-described were not Igor Paunovic's. They are his. He reported both on
+A correction to an earlier posting. On 11 September I replied to the v10
+cover saying that the 102 induced resets and the all-0x80 buffer it
+described were not Igor Paunovic's. They are his: he reported both on
 25 August in the v9 02/13 thread, and the 45 resets of 19 August and the
-102 of 25 August are two different runs of his, neither contradicting the
-other. I had read only the 19 August thread and should have searched
-before saying in public that he had not measured it. That mail is
-withdrawn. Both of his Tested-by lines stand as he sent them.
+102 of 25 August are two different runs of his. I had read only the
+19 August thread, and should have searched before saying in public that
+he had not measured it. That mail is withdrawn, and both of his
+Tested-by lines stand as he sent them.
 
 Link to v11: https://lore.kernel.org/all/20260831081956.84871-1-gahing@gahingwoo.com/
 
