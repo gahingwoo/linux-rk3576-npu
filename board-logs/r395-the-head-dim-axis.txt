@@ -1,0 +1,64 @@
+round 395, 2026-09-13 — the head_dim axis filled in, and the threshold is wrong
+
+r394 measured three models and said three was not a rule. Four more, same
+script, same ladder, same arms alternating, clock pinned. Every one reports
+`refused 0`, so gemma-4's two-head_dim problem is its own.
+
+ratio = NPU attention arm / CPU arm. Below 1.00 the NPU wins.
+
+  model              head_dim   ~52 tok   ~202    ~452    ~852
+  Llama-3.2-1B             64     1.269   1.259   1.250   1.257
+  SmolLM2-1.7B             64     1.478   1.452   1.341   1.358
+  tinyllama-1.1b           64     1.237   1.293   1.275   1.290
+  Phi-3.5-mini             96     1.369   1.365   1.278   1.213
+  Qwen2.5-1.5B            128     1.109   1.094   1.084   1.023
+  Qwen3-0.6B              128     1.622   1.354   1.163   1.018
+  gemma-3-1b              256     1.121   1.021   0.923   0.877
+  ---
+  gemma-4-E2B        512 + 256    1.105   1.032   0.975   0.936   <- see r394
+
+  at 852 tokens, by head_dim:   64 -> 1.302 (3 models)   96 -> 1.213
+                               128 -> 1.021 (2 models)  256 -> 0.877
+
+🏁 1) MONOTONE IN head_dim, ACROSS SEVEN MODELS AND FIVE ARCHITECTURES.
+1.302, 1.213, 1.021, 0.877. Nothing out of order.
+
+🏁 2) THE TWO head_dim 128 MODELS ARE A REPLICATE AND THEY AGREE TO 0.5%.
+Qwen2.5-1.5B reads 1.023 and Qwen3-0.6B 1.018 at 852 tokens -- different
+architectures, different layer counts, different sizes. That is the strongest
+single piece of evidence on this axis and it was the point of running both.
+
+⛔ 3) AND IT SHOWS THE WITHDRAWN RULE'S THRESHOLD IS TOO LOOSE. "head_dim >=
+128" would enable this arm on Qwen2.5 and Qwen3, where it BREAKS EVEN at the
+longest prompt measured and loses at every shorter one. The threshold for a WIN
+is 256, not 128 -- and even there it needs about 230 tokens.
+
+⚠ 4) WHICH IS SUPPORTED BY EXACTLY ONE MODEL. gemma-3-1b is the only clean
+head_dim 256 point on the card. ⛔ So the default still does not move: n=1 for
+the only case that wins.
+
+⭐ 5) AND THAT IS THE ARGUMENT FOR FIXING THE POOL'S SINGLE head_dim.
+gemma-4-E2B's 28 sliding-window layers are head_dim 256 -- the winning value --
+and they cannot enter the pool, which holds one head_dim (r394). Letting it
+hold two would do two things at once: take gemma-4 from 20% of its attention
+layers accelerated to 100%, and give this axis its SECOND head_dim 256 point,
+which is the one thing it is short of.
+
+=====================================================================
+⚠ Correctness, at the LONGEST length of each sweep
+---------------------------------------------------------------------
+  Qwen2.5-1.5B   worst 0.012 relative   308 layers, 0 fell back, 0 refused
+  Phi-3.5-mini   worst 0.016            352 layers, 0 fell back, 0 refused
+  SmolLM2-1.7B   worst 0.0085           264 layers, 0 fell back, 0 refused
+  tinyllama      worst 0.0094           242 layers, 0 fell back, 0 refused
+
+Every layer-call is 11 x n_layer as it should be. The refusal counters added in
+r394 say zero on all four, which is the first time this tree could assert that
+rather than compute it from a multiple of eleven.
+
+=====================================================================
+⚠ NOT MEASURED HERE
+   Any head_dim above 256 on a model that can actually use it.
+   Decode. This is TTFT only, -n 1.
+   Whether the crossover length at head_dim 256 generalises: one model.
+   One board, one clock, one rail.
