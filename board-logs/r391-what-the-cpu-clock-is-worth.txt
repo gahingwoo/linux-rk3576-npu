@@ -124,6 +124,24 @@ anything measured -- and that argument was acted on for COEF_ELEMS and not for
 MAXN, which sits three lines away in llama.c with the same two setters and the
 same board tests. Fixing the instance instead of the class.
 
+---------------------------------------------------------------------
+THE DEFAULT WAS CHANGED, AND VERIFIED ACROSS THE ZOO
+
+262144 is now the default at both sites. The card carried three models when
+that was written; seven more were copied over the network, byte sizes checked
+against the desk, and board_text_all.sh run over all of them with the new
+binary and NO environment set -- so every row below is the bare default doing
+what only the wrappers used to do:
+
+  Phi-3.5-mini   Qwen2.5-1.5B   Qwen3-0.6B   SmolLM2-1.7B   SmolLM2-135M
+  gemma-3-1b     gemma-4-E2B    tinyllama-1.1b   Llama-3.2-1B
+
+  9 models compared, 0 differing, every one "prompt batched, text identical"
+
+Every row says `prompt batched`, not `prompt a token`, so the batched path was
+actually exercised on each. Text is also byte-identical between MAXN=8192,
+MAXN=262144 and the bare default on the three models checked directly.
+
 =====================================================================
 ⚠ NOT MEASURED HERE
    The two runtimes at the SAME NPU clock under a CPU sweep. The elasticities
@@ -132,6 +150,14 @@ same board tests. Fixing the instance instead of the class.
    charsiu at schedutil with -n 64 and the correct environment. schedutil puts
    the A72 at 1200 MHz for both runtimes, between the 1008 and 1416 rows, and
    this function is not smooth enough to interpolate.
+   ⛔ AND THE PREFILL SPLIT IN SECTION 3 IS PROVISIONAL. `prefill_width()`
+   does `w &= ~1`, so the 79-token point ran as a batched 78 plus ONE token
+   through the token loop, inside the prompt timer, while the 16-token point
+   had no leftover. The slope absorbed a decode step that the intercept did
+   not. The runtime printed "prompt batched for 78 of 79 tokens, the rest a
+   token at a time" and the round was not reading it. Corrected by arithmetic
+   the slope is near 6.6-7.0 ms/token and the intercept near 119-155 ms;
+   board_ttft_curve.sh measures it on even token counts instead.
    The control scales SUPER-linearly (clock x2.19, tok/s x2.49). Not chased;
    possibly the DSU or memory clock moving with the CPU OPP. Every conclusion
    above is within-arm and unaffected.
