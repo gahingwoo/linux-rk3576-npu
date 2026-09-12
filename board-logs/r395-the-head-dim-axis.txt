@@ -37,7 +37,17 @@ is 256, not 128 -- and even there it needs about 230 tokens.
 head_dim 256 point on the card. ⛔ So the default still does not move: n=1 for
 the only case that wins.
 
-⭐ 5) AND THAT IS THE ARGUMENT FOR FIXING THE POOL'S SINGLE head_dim.
+⭐ 5) AND THAT IS THE ARGUMENT FOR WIDENING THE MIRROR'S SINGLE head_dim.
+
+⚠⚠ WHICH IS A TRADE-OFF AND NOT A BUG, and r394 was written as though it might
+be one. The tree knows gemma-4 has two head_dims and says so BY NAME:
+attn_block_job carries `hd`, this layer's head, and `hdmax`, the cache's
+stride, because "on gemma4 they differ ... Indexing the cache by the live head
+would make layer 4 read where layer 0 wrote". The CPU path handles both
+correctly. The fp16 mirror deliberately refuses the mismatching layers rather
+than, in its own words, squeezing them in beside. What r394 and r395 add is the
+COST of that choice, which nothing had measured.
+
 gemma-4-E2B's 28 sliding-window layers are head_dim 256 -- the winning value --
 and they cannot enter the pool, which holds one head_dim (r394). Letting it
 hold two would do two things at once: take gemma-4 from 20% of its attention
