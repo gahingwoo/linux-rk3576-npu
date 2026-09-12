@@ -95,7 +95,19 @@ TO=(--to='tomeu@tomeuvizoso.net' --to='heiko@sntech.de' --to='robh@kernel.org'
     --to='p.zabel@pengutronix.de' --to='ogabbay@kernel.org'
     --to='zhangqing@rock-chips.com')
 
-CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 1/13, Reviewed-by 4/13
+CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 2,3,4/14, Reviewed-by 5/14
+    #
+    # ⚠ EVERYONE WHOSE TAG THE SERIES CARRIES GETS THE MAIL. Three were
+    # missing and none of them is on the To list under another address:
+    # Abel Vesa reviewed 9/14 and 10/14, and Sebastian Reichel and Sidong
+    # Yang gave 1/14 its Reviewed-by and Tested-by. A reviewer who does not
+    # receive the version carrying his tag cannot object when it stops
+    # applying, which is exactly what happened to 10/14 in this version.
+    # Krzysztof and Conor are covered by krzk+dt@ and conor+dt@ on To.
+    #
+    --cc='abel.vesa@oss.qualcomm.com'     # Abel Vesa, Reviewed-by 9/14 and 10/14
+    --cc='sebastian.reichel@collabora.com' # Sebastian Reichel, Reviewed-by 1/14
+    --cc='sidong.yang@furiosa.ai'         # Sidong Yang, Tested-by 1/14
     --cc='u.kleine-koenig@baylibre.com'   # Uwe Kleine-Koenig, the header on 11/13
     --cc='chaoyi.chen@rock-chips.com'     # Chaoyi Chen, confirmed the PC_TASK_CON layout
     --cc='diederik@cknow-tech.com'        # Diederik de Haas, the iommu binding
