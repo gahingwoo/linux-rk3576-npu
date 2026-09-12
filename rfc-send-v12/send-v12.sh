@@ -24,6 +24,17 @@ LOG=/tmp/v12-send.log
 
 REGEN=${REGEN:-1}
 TREE=${TREE:-$HOME/Desktop/linux-next-v8}
+#
+# ⚠⚠ BOTH OF THESE WERE HARDCODED AND BOTH WENT STALE. BRANCH was `v12-prep`
+# and BASE was `master`, which in that clone is pinned at next-20260814 -- so
+# REGEN=1 kept re-emitting a base-commit that was 29 days old and unreachable
+# from any branch, and it would have silently ignored a rewritten series on a
+# new branch. The clone is SHALLOW, so refreshing the base needs a real
+# `git fetch --depth 1 origin tag next-YYYYMMDD` first; bumping BASE alone
+# gets you "fatal: bad revision".
+#
+BRANCH=${BRANCH:-v12-prep-2}
+BASE=${BASE:-next-20260911}
 if [ "$REGEN" = 1 ]; then
 	rm -f v12-0*.patch
 	# ⚠⚠ --base, OR THE NOTE ASSERTS SOMETHING THE MAIL DOES NOT CARRY.
@@ -46,8 +57,8 @@ if [ "$REGEN" = 1 ]; then
 	# exists. Igor caught the missing Notes block in v9 by reading exactly
 	# this carefully.
 	git -C "$TREE" format-patch --notes -v12 --cover-letter \
-	    --base=master \
-	    -o "$PWD" master..v12-prep >/dev/null
+	    --base="$BASE" \
+	    -o "$PWD" "$BASE..$BRANCH" >/dev/null
 	for f in 0*.patch; do [ -e "$f" ] && mv "$f" "v12-$f"; done
 	# ⚠ THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
 	# cover-blurb.txt so that regenerating cannot throw it away.

@@ -1,4 +1,4 @@
-From c1a6d952848a3b51cf3251989e742dbaefc43a33 Mon Sep 17 00:00:00 2001
+From 58715997dc1ed35a4a5de72a6ce9880ce868a235 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v12 12/14] accel/rocket: add RK3576 NPU (RKNN) support
@@ -15,31 +15,32 @@ differences:
    skipped by the driver-core single-domain auto-attach, so the list has
    to be attached explicitly;
  - PC_TASK_CON packs the task number with sixteen bits rather than
-   twelve, moving the three controls above it up by four.
+   twelve, moving the two controls above it up by four and adding a third.
 
-That last one is the reason this series has been reporting, since v3,
-that the block accepts exactly one task per reset. rocket_registers.h is
-generated from the RK3588 description, so writing it unchanged to an
-RK3576 asks for task_number 0x7001, which is 28673 tasks, and puts
-TASK_COUNT_CLEAR on a bit that does nothing. The counter is then only
-ever cleared by a reset.
+That last one is the reason this series has been reporting, since v3, that
+the block accepts exactly one task per reset. rocket_registers.h is
+generated from the RK3588 description, so writing it unchanged to an RK3576
+asks for task_number 0x7001, which is 28673 tasks, and puts
+TASK_COUNT_CLEAR inside the sixteen-bit task number, where it inflates the
+count rather than clearing it. The counter is then only ever cleared by a
+reset.
 
-The layout was confirmed by Chaoyi Chen of Rockchip, including a fourth
+The layout was confirmed by Chaoyi Chen of Rockchip, including the third
 control at BIT(18), task_last_layer_clear, which belongs on every submit
 alongside the count clear:
 
   https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
 
-With that written correctly a job of several tasks runs to completion,
-the completion interrupt arrives, and /proc/interrupts counts up. A
-convolution submitted three times with three different inputs is byte
-exact against the CPU reference each time, with no reset in between and
-with nothing retiring the job but the interrupt.
+With that written correctly a job of several tasks runs to completion, the
+completion interrupt arrives, and /proc/interrupts counts up. A convolution
+submitted three times with three different inputs is byte exact against the
+CPU reference each time, with no reset in between and with nothing retiring
+the job but the interrupt.
 
 Counting the cores now walks the driver's own match table instead of a
-second, hand-kept list of compatibles. The array sized from that count
-is indexed by every core that goes on to probe, so the two lists cannot
-be allowed to disagree.
+second, hand-kept list of compatibles. The array sized from that count is
+indexed by every core that goes on to probe, so the two lists cannot be
+allowed to disagree.
 
 All of it hangs off the soc_data added earlier, so the RK3588 path keeps
 its existing counts and behaviour.
@@ -53,13 +54,13 @@ carries every subsystem's tables with it.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
- drivers/accel/rocket/rocket_core.c   | 20 +++++++++++++++
+ drivers/accel/rocket/rocket_core.c   | 20 ++++++++++++++
  drivers/accel/rocket/rocket_core.h   |  8 +++---
  drivers/accel/rocket/rocket_device.c |  7 ++++-
  drivers/accel/rocket/rocket_drv.c    | 16 +++++++++---
  drivers/accel/rocket/rocket_drv.h    |  2 ++
- drivers/accel/rocket/rocket_job.c    | 38 +++++++++++++++++++++++++---
- 6 files changed, 80 insertions(+), 11 deletions(-)
+ drivers/accel/rocket/rocket_job.c    | 39 +++++++++++++++++++++++++---
+ 6 files changed, 81 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
 index b202d1581..91f690176 100644
@@ -165,10 +166,10 @@ index 46e6ee1e7..923add5bd 100644
  			num_cores++;
  
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 5bf2df4aa..8a6786488 100644
+index 7ed64c131..f387b4656 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
-@@ -228,13 +228,23 @@ static void rocket_remove(struct platform_device *pdev)
+@@ -231,13 +231,23 @@ static void rocket_remove(struct platform_device *pdev)
  static const struct rocket_soc_data rk3588_soc_data = {
  	.num_clks = 4,
  	.num_resets = 2,
@@ -194,7 +195,7 @@ index 5bf2df4aa..8a6786488 100644
  
  static int find_core_for_dev(struct device *dev)
  {
-@@ -293,7 +303,7 @@ static struct platform_driver rocket_driver = {
+@@ -296,7 +306,7 @@ static struct platform_driver rocket_driver = {
  	.driver	 = {
  		.name = "rocket",
  		.pm = pm_ptr(&rocket_pm_ops),
@@ -221,17 +222,18 @@ index 2c673bb99..0cd692a66 100644
  struct rocket_iommu_domain {
  	struct iommu_domain *domain;
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index a3dd265c8..8fe5bcb8d 100644
+index 8cffe93f6..c5396c62d 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -21,6 +21,29 @@
+@@ -21,6 +21,30 @@
  
  #define JOB_TIMEOUT_MS 500
  
 +/*
-+ * PC_TASK_CON packs the task number with three controls, and the field widths
-+ * are not the same on every SoC. rocket_registers.h is generated from the
-+ * RK3588 description, where the task number is twelve bits:
++ * PC_TASK_CON packs the task number with control bits above it, and neither
++ * the width of the number nor the count of the controls is the same on every
++ * SoC. rocket_registers.h is generated from the RK3588 description, where the
++ * task number is twelve bits and there are two:
 + *
 + *   RK3588   BIT[11:0] task_number, BIT[12] pp_en, BIT[13] count_clear
 + *   RK3576   BIT[15:0] task_number, BIT[16] pp_en, BIT[17] count_clear,
@@ -254,7 +256,7 @@ index a3dd265c8..8fe5bcb8d 100644
  static struct rocket_job *
  to_rocket_job(struct drm_sched_job *sched_job)
  {
-@@ -142,10 +165,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+@@ -142,10 +166,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
  	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
  	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
  

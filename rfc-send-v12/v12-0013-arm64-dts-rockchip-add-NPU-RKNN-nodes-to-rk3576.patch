@@ -1,60 +1,71 @@
-From c9e74f35ec58f4bbcd793e90386bffcc6478c974 Mon Sep 17 00:00:00 2001
+From 457853c558c39610eca0ea0335781d0149294ab6 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
-Subject: [PATCH v12 13/14] arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
+Subject: [PATCH v12 13/14] arm64: dts: rockchip: add NPU (RKNN) nodes to
+ rk3576
 
 Add the two RKNN cores and their IOMMUs. Both cores are disabled by
 default; boards enable what they wire up.
 
 PD_NPU0 and PD_NPU1 are siblings under PD_NPUTOP and hold one core each,
 but the convolution buffer and the DSU sit above them: ACLK_RKNN_CBUF,
-HCLK_RKNN_CBUF and CLK_RKNN_DSU0 belong to the block rather than to
-either core, and PD_NPUTOP already lists all three. Add them to both
-core domains as well, so a core domain switching state has the clocks of
-the path it shares running, and give each core domain the BIU reset that
-the pmdomain driver now cycles once power is on.
+HCLK_RKNN_CBUF and CLK_RKNN_DSU0 belong to the block rather than to either
+core, and PD_NPUTOP already lists all three. Add them to both core domains
+as well, so a core domain switching state has the clocks of the path it
+shares running, and give each core domain the BIU reset that the pmdomain
+driver now cycles once power is on.
 
-Each core lists both core domains, its own first, so that a core in use
-has the whole block powered. Whether a single core can reach the shared
-path with the sibling domain off is not something this series
-establishes; listing both is the description that has been tested here.
-The IOMMU in front of each core lists that core's domain only.
+Each core lists both core domains, its own first, so that a core in use has
+the whole block powered. Whether a single core can reach the shared path
+with the sibling domain off is not something this series establishes;
+listing both is the description that has been tested here. The IOMMU in
+front of each core lists that core's domain only.
 
 Label the outer PD_NPU node so a board can attach the NPU rail to the
 domain that gates the block.
 
-Clock the NPU inside the voltage its rail is given. CLK_RKNN_DSU0
-clocks both cores and the CBUF they share, nothing in mainline sets its
-rate, and the block comes up at 786.432 MHz. Rockchip's OPP table for
-this NPU asks 800 mV of its 800 MHz step at the worst leakage bin and
-725 mV only at 600 MHz, and nothing in mainline sets the rail either, so
-a board that follows this DTS runs the NPU a third faster than the
-voltage it happens to boot with supports.
+Clock the NPU inside the voltage its rail is given. CLK_RKNN_DSU0 clocks
+both cores and the CBUF they share, nothing in mainline sets its rate, and
+the block comes up at 786.432 MHz. Rockchip's OPP table for this NPU asks
+800 mV of its 800 MHz step at the worst leakage bins, and nothing in
+mainline sets the rail either, so a board that follows this DTS runs the
+NPU above the step whose voltage it happens to boot with.
 
-On a ROCK 4D with both cores enabled and vdd_npu_s0 at the 750 mV its
-PMIC comes up with, two jobs in flight at once make the second core
-write single words of its output wrong: the right value with a bit of
-the accumulator set, always the same position in the array. Either core
-alone is exact. Four device trees, same board, kernel and userspace,
-four passes of 5400 rows each, every row compared with the same
-multiply done one row at a time:
+On a ROCK 4D with both cores enabled and vdd_npu_s0 at the 750 mV its PMIC
+comes up with, two jobs in flight at once make the second core write single
+words of its output wrong: the right value with a bit of the accumulator
+set, always the same position in the array. Either core alone is exact.
+Four device trees, same board, kernel and userspace, four passes of 5400
+rows each, every row compared with the same multiply done one row at a
+time:
 
-  786 MHz, 750 mV    11 to 25 wrong words a pass
+  786 MHz, 750 mV    13 to 20 wrong rows a pass
   594 MHz, 750 mV    0, 0, 0, 0
   786 MHz, 800 mV    0, 0, 0, 0
   786 MHz, 850 mV    0, 0, 0, 0
 
-594 MHz is a divider off GPLL and sits below the lowest step of that
-table, whose 725 mV every board here provides, so it is right on a board
-that describes no NPU rail at all.
+594 MHz is a divider off GPLL and sits between that table's 500 and 600 MHz
+steps, both of which ask 725 mV at every leakage bin, so it is inside the
+voltage a board that describes no NPU rail already provides.
 
-Losing 192 MHz costs less than losing a core. Decoding four language
-models, one core at 786 MHz against both cores at 594, tokens a second
-go from 24.3, 20.3, 6.8 and 8.7 to 23.6, 19.5, 6.4 and 8.3, and the
-prompt, where the second core earns its keep, goes from 1037, 1565,
-5073 and 3604 ms to the first token down to 912, 1283, 4032 and 3011. A
-board that describes its rail at 800 mV runs both cores at 786 and
-reaches 866, 1184, 3877 and 2925.
+The trade it buys is a core against a clock, and only one half of that has
+been measured here. What a core is worth, at 786 MHz and 800 mV, one core
+against two, five runs an arm with the arms alternating and one warm-up
+discarded, median of five with the full range beside it:
+
+  Qwen3-0.6B      28.38 (28.30..29.76) -> 22.71 (22.66..22.78) tok/s
+  TinyLlama-1.1B  22.58 (22.46..23.39) -> 16.46 (16.42..16.47)
+  Phi-3.5-mini     7.22 (7.20..7.23)   ->  4.96 (4.95..4.98)
+  gemma-4-E2B      9.56 (9.50..9.58)   ->  7.01 (6.92..7.04)
+
+so 20 to 31% of decode, and 5 to 10% of the prompt. The second core earns
+its keep on decode rather than on the prompt, which is what a serialised
+batched prefill predicts: the submits do not overlap, so the prompt has
+little for a second core to do.
+
+What 192 MHz is worth has NOT been measured on this board, and this patch
+does not claim it. Both cores correct at 594 is the reason for the rate;
+that it beats one core at 786 is an expectation, not a result.
 
 An OPP table with the rail attached is the proper answer, and it wants
 driver support this series does not have.
@@ -65,7 +76,7 @@ Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
  1 file changed, 83 insertions(+), 3 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
-index b0c0d3c8b..ce96e639a 100644
+index d418bfc04..e9cd11b58 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
 @@ -1042,7 +1042,7 @@ power: power-controller {

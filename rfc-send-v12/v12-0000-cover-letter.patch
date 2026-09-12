@@ -1,6 +1,6 @@
-From bad18e2957668859d305d5567dd95f7cc33fd692 Mon Sep 17 00:00:00 2001
+From 0083222e39dca7892c31dc8e337d84d19d29fecd Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Fri, 4 Sep 2026 22:56:05 +1200
+Date: Sat, 12 Sep 2026 16:42:33 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -135,30 +135,30 @@ Jiaxing Hu (13):
   dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
   dt-bindings: power: rockchip: allow resets in a power domain node
   dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
-  pmdomain/rockchip: add optional per-domain power-on settle delay
-  pmdomain/rockchip: cycle optional power-domain resets on power-on
+  pmdomain: rockchip: add optional per-domain power-on settle delay
+  pmdomain: rockchip: cycle optional power-domain resets on power-on
   accel/rocket: select the per-core clock and reset counts from match
     data
   accel/rocket: add RK3576 NPU (RKNN) support
-  arm64: dts: rockchip: rk3576: add NPU (RKNN) nodes
-  arm64: dts: rockchip: rk3576-rock-4d: enable NPU
+  arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+  arm64: dts: rockchip: enable the NPU on rk3576-rock-4d
 
  .../bindings/iommu/rockchip,iommu.yaml        |  28 ++++
- .../npu/rockchip,rk3588-rknn-core.yaml        |  47 ++++++-
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 +++++-
  .../power/rockchip,power-controller.yaml      |   8 ++
  .../boot/dts/rockchip/rk3576-rock-4d.dts      |  22 +++
- arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 +++++++++++-
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 ++++++++++-
  drivers/accel/rocket/rocket_core.c            |  32 ++++-
  drivers/accel/rocket/rocket_core.h            |  11 +-
  drivers/accel/rocket/rocket_device.c          |   7 +-
- drivers/accel/rocket/rocket_drv.c             |  39 +++++-
+ drivers/accel/rocket/rocket_drv.c             |  42 +++++-
  drivers/accel/rocket/rocket_drv.h             |   2 +
- drivers/accel/rocket/rocket_job.c             | 131 +++++++++++++++---
- drivers/pmdomain/rockchip/pm-domains.c        |  75 +++++++---
- 12 files changed, 425 insertions(+), 63 deletions(-)
+ drivers/accel/rocket/rocket_job.c             | 135 +++++++++++++++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  83 ++++++++---
+ 12 files changed, 440 insertions(+), 63 deletions(-)
 
 
-base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
+base-commit: 68142f986ff04b2b70b31db00f719bf690f64a9a
 -- 
 2.43.0
 

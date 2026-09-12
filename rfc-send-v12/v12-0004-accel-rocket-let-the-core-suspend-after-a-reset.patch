@@ -1,4 +1,4 @@
-From a05522b78eb0dab9fda1d054f195a6fc6725ca6f Mon Sep 17 00:00:00 2001
+From 590863bddc2a61d927d0565eb391d3aba40b7cdd Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v12 04/14] accel/rocket: let the core suspend after a reset
@@ -26,13 +26,13 @@ It also matches the put in the completion path a few lines away, so the
 reset path no longer leaves the device in a state the rest of the driver
 never produces. The remaining put, on the error path in rocket_job_run(),
 is a plain pm_runtime_put() and is left alone here: it unwinds a
-get_sync() that never reached the hardware, and changing it belongs in
-its own patch.
+pm_runtime_resume_and_get() that never reached the hardware, and changing
+it belongs in its own patch.
 
 Igor Paunovic ran the differential on RK3588: 45 induced resets across
 three cores, with and without the two preceding patches, and the domain
-dropped every single time with no MMU message on either kernel. So this
-is not rocket-wide. His conditions cross a healthy block with a lowered
+dropped every single time with no MMU message on either kernel. So this is
+not rocket-wide. His conditions cross a healthy block with a lowered
 timeout rather than a hung one, which he was careful to say his protocol
 cannot settle, but it is what scopes the change to RK3576.
 
@@ -45,10 +45,10 @@ Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced 
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 2a9511f1f..5364ff753 100644
+index 0be8db391..b588049aa 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -418,12 +418,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -421,12 +421,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  
  	/*
  	 * No handler is running now, but we might still have stuck jobs. Let's

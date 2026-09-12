@@ -1,4 +1,4 @@
-From d946dd76db1589c2c5ebc5bf508f89e1ff1aee2b Mon Sep 17 00:00:00 2001
+From 5bd35cb05f05406ae9dc103b5378419f4304c119 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:38 +1200
 Subject: [PATCH v12 11/14] accel/rocket: select the per-core clock and reset
@@ -7,20 +7,29 @@ Subject: [PATCH v12 11/14] accel/rocket: select the per-core clock and reset
 The RK3576 carries the same RKNN block with a different set of clocks and
 resets, so the counts cannot stay compile-time constants. Add a soc_data
 struct to the of_device_id match data and take the bulk counts from it.
-RK3588 keeps four clocks and two resets, so nothing changes for it, and
-the arrays keep their present sizes: the SoC that needs a longer one
-grows it in the patch that adds the names.
+RK3588 keeps four clocks and two resets, so nothing changes for it, and the
+arrays keep their present sizes: the SoC that needs a longer one grows it
+in the patch that adds the names.
 
 rocket_core_reset() is switched over as well. It is the same array, and
-leaving it on ARRAY_SIZE() would walk entries that were never acquired
-once a SoC asks for fewer.
+leaving it on ARRAY_SIZE() would walk entries that were never acquired once
+a SoC asks for fewer.
+
+soc is checked at the top of rocket_probe(), before anything is allocated
+and before the per-core fields are stored. of_device_get_match_data()
+returns NULL for a device that bound by name rather than by compatible, and
+such a device has no of_node, so it was never counted by the walk of
+matching nodes that sizes rdev->cores[]. Storing into that array first and
+checking afterwards would be writing past the end under the check's own
+premise, and returning from there is the one error path in this function
+that would skip the unwind the path below it does.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
  drivers/accel/rocket/rocket_core.c |  8 ++++----
  drivers/accel/rocket/rocket_core.h |  7 +++++++
- drivers/accel/rocket/rocket_drv.c  | 23 ++++++++++++++++++++---
- 3 files changed, 31 insertions(+), 7 deletions(-)
+ drivers/accel/rocket/rocket_drv.c  | 26 +++++++++++++++++++++++---
+ 3 files changed, 34 insertions(+), 7 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
 index 5dd260bac..b202d1581 100644
@@ -78,31 +87,41 @@ index f6d738285..ba74c5339 100644
  
  	int irq;
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 8bbbce594..5bf2df4aa 100644
+index 8bbbce594..7ed64c131 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
-@@ -176,8 +176,20 @@ static int rocket_probe(struct platform_device *pdev)
+@@ -159,8 +159,22 @@ static const struct drm_driver rocket_drm_driver = {
  
- 	rdev->cores[core].rdev = rdev;
- 	rdev->cores[core].dev = &pdev->dev;
-+	rdev->cores[core].soc = of_device_get_match_data(&pdev->dev);
- 	rdev->cores[core].index = core;
+ static int rocket_probe(struct platform_device *pdev)
+ {
++	const struct rocket_soc_data *soc = of_device_get_match_data(&pdev->dev);
+ 	int ret;
  
 +	/*
 +	 * soc is dereferenced without a check by every one of its users, and
 +	 * rocket_core_init() below is the first of them. A device that bound
-+	 * by name rather than by compatible has no match data, so fail here
-+	 * rather than at the first dereference.
++	 * by name rather than by compatible has no match data, so fail before
++	 * anything is allocated rather than at the first dereference: the
++	 * number of cores comes from a walk of matching DT nodes, and a device
++	 * with no of_node was never counted by it.
 +	 */
-+	if (!rdev->cores[core].soc) {
++	if (!soc) {
 +		dev_err(&pdev->dev, "no match data for this device\n");
 +		return -ENODEV;
 +	}
 +
- 	rdev->num_cores++;
+ 	if (rdev == NULL) {
+ 		/* First core probing, initialize DRM device. */
+ 		rdev = rocket_device_init(drm_dev, &rocket_drm_driver);
+@@ -176,6 +190,7 @@ static int rocket_probe(struct platform_device *pdev)
  
- 	ret = rocket_core_init(&rdev->cores[core]);
-@@ -213,8 +225,13 @@ static void rocket_remove(struct platform_device *pdev)
+ 	rdev->cores[core].rdev = rdev;
+ 	rdev->cores[core].dev = &pdev->dev;
++	rdev->cores[core].soc = soc;
+ 	rdev->cores[core].index = core;
+ 
+ 	rdev->num_cores++;
+@@ -213,8 +228,13 @@ static void rocket_remove(struct platform_device *pdev)
  	}
  }
  
@@ -117,7 +136,7 @@ index 8bbbce594..5bf2df4aa 100644
  	{}
  };
  MODULE_DEVICE_TABLE(of, dt_match);
-@@ -240,7 +257,7 @@ static int rocket_device_runtime_resume(struct device *dev)
+@@ -240,7 +260,7 @@ static int rocket_device_runtime_resume(struct device *dev)
  	if (core < 0)
  		return -ENODEV;
  
@@ -126,7 +145,7 @@ index 8bbbce594..5bf2df4aa 100644
  	if (err) {
  		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
  		return err;
-@@ -260,7 +277,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
+@@ -260,7 +280,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
  	if (!rocket_job_is_idle(&rdev->cores[core]))
  		return -EBUSY;
  

@@ -1,28 +1,42 @@
-From 79f3412505330c5fef34cd87d99040de2f4415b0 Mon Sep 17 00:00:00 2001
+From 5babcbee89ec801a4fe1fb0262e4865db4e2199a Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Fri, 31 Jul 2026 14:31:40 +1200
-Subject: [PATCH v12 09/14] pmdomain/rockchip: add optional per-domain power-on
- settle delay
+Subject: [PATCH v12 09/14] pmdomain: rockchip: add optional per-domain
+ power-on settle delay
 
-The RK3576 NPU domains need a short settle time after the idle request
-is released before the registers behind the domain answer. Without it
-the QoS writes that rockchip_pmu_restore_qos() issues land while the
-domain is still coming up, and the NPU throws an async SError on the
-first cold power-on.
+The RK3576 NPU domains need a short settle time after the idle request is
+released before the registers behind the domain answer. Without it the QoS
+writes that rockchip_pmu_restore_qos() issues land while the domain is
+still coming up, and the NPU throws an async SError on the first cold
+power-on.
 
 Give rockchip_domain_info an optional delay_us and wait for it between
 releasing idle and restoring QoS. Rename DOMAIN_M_O_R_G to
 DOMAIN_M_O_R_G_W, since the suffixes name the fields the macro sets and
-this one now also carries a wakeup delay; RK3576 is its only user, so
-the old spelling is not kept around.
+this one now also carries a wakeup delay; RK3576 is its only user, so the
+old spelling is not kept around.
 
 While the macro is being rewritten, give it the regulator argument that
 DOMAIN_M_O_R and DOMAIN_M_R already take. Without .need_regulator set,
-rockchip_pd_regulator_enable() returns early for every RK3576 domain, so
-a domain-supply in the device tree is never looked up and never enabled.
-Add a DOMAIN_RK3576_R spelling that passes true and use it for
-RK3576_PD_NPU, which is the one RK3576 domain with a rail of its own;
-every other domain passes false and is unchanged.
+rockchip_pd_regulator_enable() returns early for every RK3576 domain, so a
+domain-supply in the device tree is never looked up and never enabled. Add
+a DOMAIN_RK3576_R spelling that passes true and use it for RK3576_PD_NPU,
+which is the one RK3576 domain with a rail of its own; every other domain
+passes false and is unchanged.
+
+Two things beyond the delay, both worth saying out loud because neither is
+what the subject describes.
+
+RK3576_PD_NPU also gets need_regulator here, which makes
+rockchip_pm_add_one_domain() call rockchip_pd_power(pd, false) at probe on
+all thirteen in-tree rk3576 boards. Twelve of them describe no
+domain-supply, so the first power-on takes a dummy regulator and a dev_warn
+rather than failing. It is deliberate, and it is what the delay is for:
+without the domain being forced off at probe, a bootloader that leaves the
+NPU powered means ->power_on is never called and neither the delay nor
+10/14's reset pulse ever runs.
+
+If that is too much for one patch, say so and it splits.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
