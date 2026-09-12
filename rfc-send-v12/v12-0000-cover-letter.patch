@@ -1,6 +1,6 @@
 From c023223163a88f97bfab2715bfbd4e7ef8c5f13d Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Sat, 12 Sep 2026 18:34:43 +1200
+Date: Sat, 12 Sep 2026 18:38:30 +1200
 Subject: [PATCH v12 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -16,22 +16,46 @@ authorship and its four tags. Tested on a Radxa ROCK 4D.
 
 What changed since v11
 
-Sashiko reviewed v11, which is what v11 was for. Most of what it found
-is in the driver as it stands rather than in this series; those are at
-the end. Four things on this series changed:
+Sashiko reviewed v11, which is what v11 was for, and the C patches then
+went through a line-by-line regression pass of their own. Most of what
+Sashiko found is in the driver as it stands rather than in this series;
+those are at the end. Five things on this series changed:
 
-  3/14   pm_runtime_get_if_active() has three answers, not two: 1 for
-         active, 0 for suspended, and -EINVAL when runtime PM is not
-         managing the device at all. The test was "> 0", so under
-         CONFIG_PM=n the INTERRUPT_MASK write this patch exists to add
-         never happened. It now tests for zero, the one answer that
-         means the domain may be down, and puts the reference only when
-         one was taken. Igor's Tested-by is kept; it is one condition,
-         but say so if it should go.
+  3/14   clears the raw interrupt status beside the mask. Masking alone
+         left the DPU bit latched all the way to rocket_core_reset(),
+         and the hardirq decides on raw status alone, so a fault from
+         the IOMMU sharing this core's line would wake the threaded
+         handler again and "No handler is running now" would stop being
+         true partway through the function.
 
-  11/14  of_device_get_match_data() returns NULL for a device bound by
-         name rather than by compatible, and core->soc was dereferenced
-         two statements later. Checked, and the probe fails with -ENODEV.
+         ⚠ It still tests "> 0", and an earlier draft of this version
+         changed that to "!= 0" on the reasoning that -EINVAL means
+         runtime PM is not managing the device and the block is
+         therefore powered. That reasoning is wrong and the change is
+         withdrawn. pm_runtime_get_conditional() tests
+         power.disable_depth BEFORE power.runtime_status, so -EINVAL
+         MASKS a suspended device rather than excluding one; and this
+         driver makes exactly that state twice, in
+         pm_runtime_force_suspend() -- its own system sleep callback,
+         which disables runtime PM before turning the clocks off -- and
+         in rocket_core_fini(), which suspends then disables before
+         cancelling the timeout worker. Either would have put a register
+         write on a powered-down block, which is the async SError this
+         patch exists to avoid causing.
+
+  10/14  cycles the resets BEFORE the settle delay 9/14 adds, not after.
+         PD_NPU0 and PD_NPU1 ask for both, and the old order spent the
+         delay and then deasserted a reset with nothing between it and
+         rockchip_pmu_restore_qos(). The reset is SRST_A_RKNN0/1_BIU,
+         which is the bus interface those writes go through.
+
+  11/14  checks the match data at the top of rocket_probe(), before
+         anything is allocated. of_device_get_match_data() returns NULL
+         for a device bound by name rather than by compatible, and such
+         a device has no of_node, so the walk of matching nodes that
+         sizes rdev->cores[] never counted it: storing into that array
+         first and checking afterwards writes past the end under the
+         check's own premise.
 
   13/14  gives CLK_RKNN_DSU0 a rate. Nothing in mainline sets it and
          the NPU comes up at 786 MHz, while Rockchip's own OPP table
@@ -82,6 +106,14 @@ to 32 bits, which faults the IOMMU above 4 GB:
   - runtime suspend has no synchronize_irq();
   - num_cores is used both as an array length and as the probe index;
   - rdev is leaked through devres on probe deferral.
+
+⚠ 5/14 MOVES the iommu_detach_group(NULL, iommu_group_get(core->dev))
+line out of the IRQ handler and into rocket_job_next_locked(). An
+independent posting, "accel/rocket: Fix iommu_group leak and unsafe IRQ
+register access" from ZhaoJinming, changes the same line, and it is
+marked for stable with the same Fixes tag as ours. Whichever lands
+first, the other will conflict textually; say which you would rather
+take.
 
 Still open from v9, no reply since. 9/14 does three things: it adds the
 settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
