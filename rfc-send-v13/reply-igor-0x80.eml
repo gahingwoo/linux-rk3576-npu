@@ -1,0 +1,71 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v12 03/14] accel/rocket: wait for a running IRQ
+ handler before resetting a core
+In-Reply-To: <20260912113717.6819-1-royalnet026@gmail.com>
+References: <20260912065053.1519165-1-gahing@gahingwoo.com>
+ <20260912065053.1519165-4-gahing@gahingwoo.com>
+ <20260912113717.6819-1-royalnet026@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Igor,
+
+Taken. The two paragraphs go.
+
+3/14 loses the one beginning "Igor also ran a differential on RK3588"
+and the one beginning "His own bound on it is the right one". Your
+summary replaces them, as you wrote it:
+
+  45 induced resets on 19 August, 102 on 25 August and 74 today,
+  every reset recovered, no MMU faults, no lockdep report from rocket
+  or the scheduler in the runs where lockdep was still armed, and of
+  the 420 inferences scored, 384 matched the CPU reference within 1
+  on all 48 output channels while 36 returned the all-0x80 buffer of
+  a job the reset had cancelled.
+
+You list "bounds and does not prove" among what stands, so I keep that
+one sentence out of the removed text. Say if you would rather it went
+with the rest.
+
+Both Link: lines stay, with your message as a third.
+
+One thing in your text to settle before it goes in: "74 today" has no
+referent in a commit message. I would write the date, unless you would
+rather phrase it yourself.
+
+The tags:
+
+  2/14  # RK3588, three cores
+     -> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+  3/14  # RK3588, three cores, induced reset, differential base,
+        JOB_TIMEOUT_MS=2
+     -> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+  4/14  unchanged
+
+All three then read the same, which is your point.
+
+None of this touches what 3/14 rests on. The argument is the code
+path: the wait is on desc->wait_for_threads rather than on a lock, so
+it would have hung with no lockdep report. Your runs bounded that;
+they never established it.
+
+The 0x80 signature holds on RK3576 too, for the reason you name. A
+fresh shmem BO is zeroed and teflon's readback adds 0x80, so an output
+buffer nobody wrote comes back a uniform 128 and cannot be told from a
+computed constant at the tflite level. That trap already cost us one
+retraction of our own. Your kprobe run is the part neither of us had
+before: two cancellations, two 0x80 files, matched to 2 ms against a
+280 ms round period.
+
+The uAPI question is Tomeu's. What I can say from here is that the
+blind spot is not yours. PREP_BO cannot tell a cancelled job from one
+that ran, so your protocol, mine and the mesa one all read the same
+buffer, and none of us can close it from userspace.
+
+v13 with these changes, and nothing else to 2/14, 3/14 or 4/14.
+
+Thanks for going back through twenty runs of your own data. It would
+have stood unchallenged in the commit message.
+
+Jiaxing
