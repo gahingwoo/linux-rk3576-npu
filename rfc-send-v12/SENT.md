@@ -101,13 +101,15 @@ written, all 48 channels 0x80" and "across 102 induced resets in nine runs it
 appeared only on the arm without them". Also names the 27 August mail to him,
 `<20260827014924.254513-1-gahing@gahingwoo.com>`, as the other instance.
 
-What it commits us to, and it is now public:
+⛔⛔ **THIS MAIL WAS WRONG AND HAS BEEN WITHDRAWN.** Igor reported the 102
+resets and the all-0x80 buffer himself, on 2026-08-25, in
+`CAEWPSH5mxTbUkNouxm6yecMZYvDowquhvYvhaXQ8HoMtHD5U1g@mail.gmail.com`, six days
+before the v10 cover quoted him. The 45-reset run (19 August) and the
+102-reset run (25 August) are different sessions and do not conflict. I read
+only the 19 August thread and treated its silence as an absence.
 
-- his numbers are 12 + 8 + 12 + 13 = 45, two passes per kernel, oracle 48/48
-  on BOTH arms, and the race did not manifest on either kernel;
-- 0x80 uniform is OUR RK3576 signature for an unwritten buffer, not his;
-- **the only form of his result that may be used anywhere, including the
-  paper, is the bounding one in 4/14**: 45 induced resets across three cores,
-  domain dropping every time with no MMU message on either kernel.
+Withdrawn by `reply-igor-correction-2.eml` in the same thread. Corrected
+record in `rfc-send-v10/RETRACTION.md`.
 
-Full write-up: `rfc-send-v10/RETRACTION.md`.
+⚠ Nothing it "commits us to" holds. In particular there is no restriction on
+which of Igor's results may be cited: both runs are his and both are quotable.

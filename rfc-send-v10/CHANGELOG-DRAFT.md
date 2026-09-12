@@ -52,11 +52,9 @@ Igor sent them.
 
 ## What is worth saying in the prose, and what is not
 
-⛔⛔ **RETRACTED 2026-09-12, see RETRACTION.md in this directory. The
-paragraph below is false in its count, inverted in its conclusion, and borrows
-an RK3576 signature of ours for an RK3588 run that never reported it. Igor
-wrote "The race itself did not manifest in the 45 resets on either kernel."
-Do not reuse this prose.**
+⚠ **A banner here on 2026-09-12 called the paragraph below false. That banner
+was wrong and is gone; see RETRACTION.md. The paragraph quotes Igor's 25 August
+message (`CAEWPSH5mxTb...`) faithfully, and both the 102 and the 0x80 are his.**
 
 **Worth saying:** Igor's differential run reproduced the silent race these
 patches close. One inference in the unpatched arm signalled success with its
