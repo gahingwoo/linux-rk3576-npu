@@ -1,0 +1,106 @@
+round 397, 2026-09-13 — the prefill chunk width has a period of 4, and that is
+                        the whole of "the one-chunk knob depends on the model"
+
+Evidence pack 1h measured the one-chunk widening at ONE prompt length on ONE
+model and found the shipped default 5.9% slower. It went in against 128-token
+prompts where it won 5.1 and 5.7%. Two points, opposite signs, and nothing
+between them.
+
+=====================================================================
+0. FIRST, THE KNOB'S DOMAIN, WHICH NOBODY HAD NAMED
+---------------------------------------------------------------------
+onechunk_on() widens when `n_ids > chunk && n_ids <= cap`, chunk 80 and cap
+163840/widest_k_slice. So it can only ever act on prompts of 81..cap tokens.
+
+⚠ AND cap IS PER MODEL. Llama-3.2-1B and Qwen3-0.6B have 160. gemma-3-1b has
+**80**, so its condition is `n > 80 && n <= 80` and the knob CANNOT FIRE on it
+at any length. Every earlier discussion of this knob treated it as global.
+
+=====================================================================
+1. THE FIRST RUN WAS BIASED AND A CONTROL CAUGHT IT
+---------------------------------------------------------------------
+The sweep runs both arms at each length. The first version ran "on" then "off"
+inside every repeat, so the on arm always took the colder of the pair.
+
+gemma-3-1b is the model where the knob cannot act, so both its arms ran
+IDENTICAL widths at every length and their ratio had to be 1.000. It read:
+
+    82 tok 1.019   114 tok 1.014   146 tok 1.012
+   178 tok 1.037   210 tok 1.038   274 tok 1.036
+
+1.2% rising to 3.8%. That is the order, not the knob, and it was large enough
+to account for most of what the first run called a loss on two models.
+
+🔑 The control was added to check the knob's DOMAIN and what it caught was the
+EXPERIMENT. Alternating the order as well as the arms brings every
+identical-width pair to within 1.2%.
+
+=====================================================================
+2. WITH THE ORDER ALTERNATING: the knob splits by model
+---------------------------------------------------------------------
+  model            in band (113/114 tok)   one-chunk width   controls
+  Qwen3-0.6B          0.944  knob WINS          1x112        1.002, 0.988
+  tinyllama-1.1b      1.069  knob LOSES         1x114        0.998, 0.997
+  Llama-3.2-1B        1.074  knob LOSES         1x114        0.993, 0.998
+  gemma-3-1b          cannot fire              1x80+tail     1.007, 1.029, 1.022
+
+⚠ tinyllama is one of the models the default was FITTED on, where it won 5.7%.
+It now loses 6.9%. Several things landed in between -- the MAXN default, the
+affinity pin, the QoS hold, the per-layer head_dim -- and "a default fitted
+under conditions that changed" is what this tree keeps finding.
+
+=====================================================================
+3. THE MECHANISM: THE PERIOD IS 4
+---------------------------------------------------------------------
+112 and 114 are two tokens apart and the sign reverses. Sweeping the width
+itself, prompts built to an exact token count ("A record." is 4 tokens, " cat"
+is exactly 1), one chunk, clock pinned, 3 repeats:
+
+  Llama-3.2-1B, ms a token, width in brackets
+
+    [106] 8.274   [108] 7.370   [110] 8.209   [112] 7.571   [114] 8.395
+    [116] 7.466   [118] 8.475   [120] 7.492   [122] 8.320   [124] 7.185
+    [126] 8.246   [128] 7.797   [130] 8.354   [132] 7.205   [134] 8.343
+    [136] 7.324   [138] 8.203   [140] 7.050   [142] 8.345   [144] 7.333
+    [146] 8.349   [148] 7.466   [150] 8.480
+
+🏁 1) STRICT ALTERNATION, ELEVEN OF ELEVEN. Every width ≡ 0 (mod 4) is cheaper
+a token than both its neighbours at ≡ 2. About 11% on this model.
+
+⛔ 2) AND IT IS NOT 16, WHICH IS WHAT I EXPECTED AND WROTE DOWN FIRST. The
+FEATURE ATOM the mesa work landed on is 16, so 112, 128 and 144 were the
+predicted dips. 128 reads 7.797 against 7.185 at 124 and 7.205 at 132 -- the
+WORST of the three nearest multiples of 4. 16 is not special here; 4 is.
+
+🏁 3) REPLICATED ON A SECOND ARCHITECTURE, SIX OF SIX.
+
+  Qwen3-0.6B, ms a token  [106] 6.505  [108] 6.119  [110] 6.459  [112] 6.319
+                          [114] 6.722  [116] 6.282  [118] 6.714  [120] 6.264
+                          [122] 6.618  [124] 6.016  [126] 6.567  [128] 6.248
+
+  every ≡ 0 below both ≡ 2 neighbours, about 6.3%.
+
+🏁 4) AND ON A THIRD, DILUTED EXACTLY AS IT SHOULD BE. gemma-3-1b cannot widen,
+so its first chunk is always 80 and only the TAIL varies: 5 of 6 pairs in the
+right order and the effect down to about 2%, because the constant 80 carries
+most of the work.
+
+🔑 5) SO "THE KNOB DEPENDS ON THE MODEL" WAS NEVER ABOUT THE MODEL. Qwen3 wins
+because its tokeniser lands the widened width on 112, which is ≡ 0. Llama and
+tinyllama lose because theirs lands on 114, which is ≡ 2. One rule, different
+residues.
+
+⭐ 6) THE TREE ALREADY CHOSE 4, FOR A DIFFERENT REASON. prefill_width()'s own
+comment prefers "4 + 4 rather than 6 + 2" because "4 is a width the board has
+measured EXACT on 225 to 277 real tensors" and 6 has never been run. That was
+a correctness argument. It turns out to name the same number as the cost.
+
+=====================================================================
+⚠ WHAT THIS DOES NOT SUPPORT
+   Rounding every chunk down to a multiple of 4. At 114 tokens that is 1x112
+   plus two tokens through the token loop, about 940 ms against 957 for
+   1x114 -- a 1.8% win -- while simply NOT widening gives 1x80+1x34 at 892 ms,
+   which is better than both. The per-token rate is not the whole cost.
+   Any claim about widths outside 106..150, or below 80.
+   Decode. This is TTFT only.
+   One board, one clock, one rail.
