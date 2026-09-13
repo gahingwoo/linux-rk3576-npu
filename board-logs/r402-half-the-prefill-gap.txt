@@ -1,0 +1,103 @@
+round 402, 2026-09-13 — half the prefill gap against the vendor, and the
+                        coefficient comparison that would have lied about it
+
+r401 took the fp16 attention arm from losing at every length to winning above
+about 376 tokens and made it the default. Attention is the whole of prefill's
+quadratic term -- every other stage is linear in the prompt -- so this asks
+what that did to the curve the vendor is compared against.
+
+  board     ROCK 4D, boot 2606ab9f, npu 594 MHz, cpu 2016/2208 MHz pinned
+  binary    /root/charsiu_run_dflt  7c3eb46
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf, -c 1024
+  ladder    tests/board_ttft_curve.sh, 3 repeats a point, one warm-up dropped
+  ⚠ vendor  the r393 curve. Their runtime needs their driver, which needs the
+            other boot, and this board is on rocket.
+
+=====================================================================
+1. THE DRIFT CONTROL, WHICH IS WHY THE VENDOR'S OLD NUMBERS CAN BE USED
+---------------------------------------------------------------------
+Both charsiu arms ran in ONE boot: CHARSIU_ATTN_NPU=0 is exactly the
+configuration r393 measured, so it is a control on the board rather than on
+the change.
+
+    tokens      r393    today    drift
+        27       346      349    +0.9%
+        52       434      441    +1.6%
+       102       852      813    -4.6%
+       202      1457     1479    +1.5%
+       302      2267     2260    -0.3%
+       452      3503     3596    +2.7%
+       602      5149     5147     0.0%
+       852      8082     8316    +2.9%
+
+🏁 1) WITHIN 3% EXCEPT ONE POINT. That is the cross-boot drift this tree
+already budgets for, so a vendor curve from that boot can be compared against
+a charsiu curve from this one -- with 3% of slop carried explicitly.
+
+=====================================================================
+2. ⛔ THE COEFFICIENTS SAY THE OPPOSITE OF THE CURVES
+---------------------------------------------------------------------
+Fitting a + bn + cn^2 to today's two arms:
+
+    CPU arm     196.4 ms   5.278 ms/tok   0.004974 ms/tok^2
+    default     120.2 ms   6.538 ms/tok   0.002106 ms/tok^2
+
+The quadratic more than halves, which is the result one wants to report. Read
+with the vendor's 45.8 / 6.095 / 0.000743 and their 33 template tokens folded
+in, the difference is -127.5 + 0.394n + 0.001363n^2, whose crossover is about
+195 tokens -- WORSE than r393's 248, from a change that made the runtime
+faster at every length it touched.
+
+⛔ 2) THE FIT IS NOT THE INSTRUMENT, AND THE CONTROL SAYS SO. The same
+configuration fitted 187.9 / 5.456 / 0.004483 in r393 and 196.4 / 5.278 /
+0.004974 today -- an 11% swing in the quadratic between two curves that agree
+to 3% point by point. Over an eight-point ladder these three parameters are
+correlated: a lower c is bought with a higher b. Comparing runtimes by their
+c is comparing a number neither curve independently determines.
+
+🔑 3) r392 KILLED "1.23x PER PROMPT TOKEN" FOR THE SAME REASON one round
+earlier -- two points fitting a line -- and tools/ttft_compare.py exists
+because of it. It interpolates INSIDE each curve and never fits across them.
+I wrote the fit anyway and had the paragraph drafted before the control was
+read.
+
+=====================================================================
+3. WHAT THE CURVES SAY: matched input text, the same vendor curve
+---------------------------------------------------------------------
+   charsiu tok    CPU arm (r393 config)      the default now
+        27           charsiu 1.184x            charsiu 1.184x
+        52           charsiu 1.201x            charsiu 1.193x
+       102           charsiu 1.146x            charsiu 1.153x
+       202           charsiu 1.033x            charsiu 1.031x
+       302           vendor  1.054x            vendor  1.064x
+       452           vendor  1.126x            vendor  1.087x
+       602           vendor  1.225x            vendor  1.167x
+       852           vendor  1.380x            vendor  1.193x
+
+🏁 4) THE VENDOR'S LEAD AT 852 TOKENS IS HALVED: 1.380x to 1.193x. At 602,
+1.225x to 1.167x; at 452, 1.126x to 1.087x. The deficit at the long end went
+from +38% to +19%.
+
+⚠ 5) THE CROSSOVER DID NOT MOVE, and that is by construction rather than by
+accident: it sits between 202 and 302 tokens, and the arm does not turn on
+below 448. The 302 row reading 1.054x before and 1.064x after is the same code
+path twice -- 2260 against 2282 ms, 1%, the board.
+
+⚠ 6) AND MATCHED TOKENS STILL DISAGREE WITH MATCHED TEXT. Per token the
+vendor is 1.09x to 1.50x across the ladder, because their chat template makes
+the same string 33 more tokens for them. Both readings are true; r393 is where
+that was worked out and neither one may be quoted alone.
+
+=====================================================================
+4. WHAT IS LEFT OF THE QUADRATIC
+---------------------------------------------------------------------
+Attention is the whole of it: every other prefill stage is linear in the
+prompt. At 852 tokens ours is 2.75 ms a row, about 2340 ms. The vendor's
+quadratic term over the same prompt is 0.000743 * 852^2 = 539 ms.
+
+⛔ 7) SO THEIR ATTENTION IS STILL 4.3x CHEAPER THAN OURS, AND OUR FENCE ALONE
+IS 880 ms -- more than their whole quadratic. The fp16 attention matmuls run
+at 0.119 TMAC/s where the same silicon does 0.45 to 0.70 on int4, because both
+of them are skinny on one axis: k = 64 for the scores, n = 64 for the values.
+Closing the rest of this gap is not CPU-side work and it is not more of what
+r401 did.
