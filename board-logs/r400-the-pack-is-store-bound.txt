@@ -1,0 +1,201 @@
+round 400, 2026-09-13 — the fp16 activation pack halves with a vector
+                        converter, and what is left of it is the STORE
+
+r399 printed the counters this path had been keeping since it was written and
+put the pack at 1357 ms of 2943 -- 46% of the fp16 attention path. The reading
+taken from it, 235 ns an element, was wrong: it divided `pack` by `calls`, and
+the two differ by a factor of the CONTEXT LENGTH, because attention's values
+matmul contracts over k = kv and one head of one chunk is m*kv elements and not
+m*head_dim. Fourteen instructions cannot cost 235 ns and that number sent this
+round looking for a wall that is not there. `packel` is in the report now.
+
+  board       ROCK 4D, boot 2606ab9f, npu 594 MHz, cpu 2016/2208 MHz pinned
+  binaries    /root/charsiu_run_pack  74e60ef   (the vector pack)
+              /root/charsiu_run_tri   235635d   (plus the causal triangle)
+  model       Llama-3.2-1B-Instruct-Q4_0.gguf, -c 1024, CHARSIU_ATTN_NPU=1
+  arms        named in both directions, alternating, one warm-up discarded
+
+⚠ EVERY LINE BELOW IS ON THE CHARSIU_ATTN_NPU=1 ARM, WHICH IS NOT THE DEFAULT
+for this model. Section 3 is what that costs.
+
+=====================================================================
+1. THE VECTOR CONVERTER: CHARSIU_FP16_PACK=0 against =1
+---------------------------------------------------------------------
+gcc does not vectorise the scalar loop at -O2 -- the two branches stop it, and
+objdump shows ubfx/sub/lsr/and/cmp/orr/orr/cmp/orr/and/strh per float.
+
+   tokens     elements   scalar     pack   ns/el    vector     pack   ns/el
+   ------     --------   ------     ----   -----    ------     ----   -----
+      102     10027008     1020       38    3.79      1006       20    2.00
+      302     52363264     2884      196    3.74      2781       95    1.81
+      602    172818432     6686      630    3.65      6268      301    1.74
+      852    312082432    10302     1132    3.63      9852      534    1.71
+
+🏁 1) THE PACK HALVES AT EVERY LENGTH. 1132 -> 534 ms at 852 tokens, and the
+saving is 1.92 ns an element at every one of the four (18/10.0M, 101/52.4M,
+329/172.8M, 598/312M). TTFT -4.4% at 852.
+
+🏁 2) TEXT IDENTICAL, 24 tokens, md5 8b02145b. It has to be: the conversion is
+the same integer arithmetic four lanes at a time, and tests/pack_f16run.c walks
+all 2^32 float bit patterns against the scalar definition on the desk. That
+test was run against two deliberately wrong versions first -- the native
+vcvt_f16_f32, which differs on 10.5% of floats, and an off-by-one on the flush
+boundary, which differs on 0.4% and would survive any sampled check.
+
+=====================================================================
+2. THE CAUSAL TRIANGLE: convert the zeros, or memset them
+---------------------------------------------------------------------
+Row r of the probabilities has pos+1 entries that can be nonzero and zeros to
+the end of k. The softmax wrote those zeros itself. Vector pack on in both.
+
+   tokens   convert   pack     memset   pack   skipped   TTFT ratio
+   ------   -------   ----     ------   ----   -------   ----------
+      102       996     20       1005     18      40%        1.009
+      302      2810     95       2747     88      36%        0.978
+      602      6226    300       6190    271      35%        0.994
+      852      9672    536       9660    494      31%        0.999
+
+🏁 3) THE PROMISE HOLDS ON HARDWARE. CHARSIU_FP16_TRI_CHECK=1 at 852 tokens
+read back all 98,114,560 elements it was told to skip: every one was zero.
+Text identical, same md5 8b02145b.
+
+⛔ 4) AND IT IS WORTH ALMOST NOTHING. Skipping 31% of the elements takes the
+pack down 8%, and at no length does TTFT move outside its own spread (852:
+9672 against 9660, spread +-150). The direction is consistent at all four
+lengths, so it is not noise in the PACK column -- it is simply small.
+
+🔑 5) WHY, AND THIS IS THE USEFUL PART: memset costs 72% of what converting
+costs. At 602 tokens the triangle replaced 60M conversions with 60M memset
+elements and saved 29 ms -- 0.48 ns an element, against 1.74 ns to convert one.
+The arithmetic is not the cost. THE STORE IS. 312M elements is 624 MB written
+into the device buffer, and 534 ms of it is 1.17 GB/s, which is what a
+write-combining mapping looks like and is nothing like DRAM.
+
+So the pack has a floor of about 375 ms at 852 tokens and no amount of
+cleverness with the conversion goes under it. 1132 -> 534 was the whole prize.
+
+=====================================================================
+3. ⛔ AND IT DOES NOT REACH THE DEFAULT. CHARSIU_ATTN_NPU=0 against =1
+---------------------------------------------------------------------
+Everything above is on an arm that is OFF for this model. r394 left the rule
+half written -- "head_dim >= 128 is only half of it and the other half, how
+long a prompt, has not been measured" -- so this is that other half, measured
+with the faster pack in place.
+
+    tokens   CPU ms   range        NPU ms   range        NPU/CPU
+    ------   ------   -----        ------   -----        -------
+       102      812   810..815        998   995..1002      1.229
+       302     2278  2266..2291      2752  2751..2753      1.208
+       602     5141  5107..5175      6270  6180..6359      1.220
+       852     8136  8130..8142      9648  9492..9803      1.186
+
+   correctness at 852, both arms on the same rows: worst 0.0086 relative
+   (layer 15), 176 layers ran, 0 fell back, 0 refused
+
+⛔ 6) THERE IS NO CROSSOVER, AND THE REASON IS THAT THE RATIO IS FLAT. 1.19 to
+1.23 over an eight-fold range of prompt length, with no trend. A fixed cost
+would shrink as a fraction; this does not, so at head_dim 64 the NPU arm is
+proportionally worse and there is no length at which it starts to pay.
+
+🏁 7) THE OTHER HALF OF THE RULE IS NOT A LENGTH. r394's open question is
+answered in the negative for head_dim 64: the rule cannot be "head_dim >= 128
+OR a long enough prompt". Whatever selects the arm, it is head_dim.
+
+🔑 8) THE PACK DID MOVE IT, JUST NOT FAR ENOUGH. Against the same CPU column,
+the scalar-pack binary from section 1 sits at 1.256 / 1.266 / 1.300 / 1.266.
+So halving the pack took NPU/CPU from about 1.27 to about 1.20 -- a real and
+consistent 6%, and still the wrong side of 1.
+
+=====================================================================
+4. WHERE THE NPU ARM'S TIME GOES NOW, at 852 tokens
+---------------------------------------------------------------------
+   11264 calls, 352 submits, 0 refused; 3337 ms accounted
+
+     fence   1052 ms   32%
+     read     977 ms   29%   <- the poison check, see r401
+     pack     783 ms   23%   (was 1132 before the vector converter)
+     psync    368 ms   11%   the two cache maintenance ioctls, WHOLE buffer
+     emit      94 ms    3%
+     coefs     45 ms    1%
+     submit    18 ms    1%
+     wcopy      0 ms    0%   charsiu_fp16_woffset already removed it
+
+⚠ `read` being 29% is not a copy. The readback asks "did this op write
+nothing" by summing 0xdeadbeef matches over EVERY output word before the
+memcpy. That is the next round.
+
+=====================================================================
+5. THE POISON CHECK: count every word, or stop at the first live one
+---------------------------------------------------------------------
+The readback asked "did this op write nothing" by summing 0xdeadbeef matches
+over EVERY output word and comparing the sum against the cell count. It can
+stop at the first word that is not poison.
+
+   tokens   count ms   read ms    first ms   read ms   TTFT ratio
+   ------   --------   -------    --------   -------   ----------
+      102       1002        34         998        28       0.996
+      302       2764       124        2778        92       1.005
+      602       6440       339        6026       238       0.936
+      852       9652       581        9555       403       0.990
+
+🏁 9) READ DOWN 31% AT 852 TOKENS and down at every length. Text identical,
+md5 8b02145b. A partially written output is accepted silently exactly as
+before, so this changed what it costs to reach the outcome and not the
+outcome.
+
+=====================================================================
+6. ⭐ THE THING NOTHING WAS COUNTING: the softmax between the two matmuls
+---------------------------------------------------------------------
+With the clock pinned, the stage table says attention is 5.48 ms a row on the
+NPU arm against 4.05 on the CPU arm, and charsiu_fp16_times accounted for
+2129 ms of the 4669. The rest was a RESIDUAL, and this tree has called a
+residual a measurement three times in one day before. So it got a clock.
+
+   the loop, one core   1305 / 1308 ms
+   the loop, pooled       466 /  488 ms      2.7x
+
+It was a bare `for (h) for (r)` -- the one stage of this path with no pool
+behind it, sitting between two that have one. Attention went 5.45 -> 4.46 ms a
+row, reproduced on both repeats of an alternating A/B.
+
+⛔ 10) AND REMOVING THE TRAILING ZERO LOOP WAS WORTH NOTHING. `for (t = pos+1;
+t < npad; t++) sr[t] = 0.0f` is 58% of a row and the softmax's exponentials
+are 14x it, so the stage stayed at 4.45/4.47. It is still the right code --
+the pack memsets that tail anyway -- but the saving is not why.
+
+🔑 11) THE ORDER THAT MAKES IT SAFE. The promise was verified on hardware
+while the zero loop still enforced it (section 3), and only then was the
+enforcement removed. Past pos the scratch now holds the RAW scores, so the
+pack's memset is the answer rather than an optimisation. Text identical
+between the CPU and NPU attention arms afterwards, md5 f50208bf.
+
+=====================================================================
+7. THE LAYER, FULLY ACCOUNTED, at 852 tokens
+---------------------------------------------------------------------
+   of 3433 ms in the layer:
+     kv surfaces        42 ms
+     scores group     1561 ms
+     softmax           466 ms   (pooled; 1305 on one core)
+     values group     1363 ms
+     unaccounted         1 ms
+
+   of the 2924 ms in the two group calls:
+     fence   915   31%      the hardware
+     other   668   23%      ⭐ untimed work inside the call, 1.9 ms a call
+     pack    489   17%      floor is about 375, see section 1e
+     read    404   14%
+     psync   216    7%      prep/fini on the WHOLE in buffer
+     plan    136    5%      release + make_plan + want
+     emit     56    2%
+     coefs    27    1%
+     submit   12    0%
+
+🏁 12) WHERE THE ARM STANDS. Attention went 5.48 -> 4.44 ms a row over this
+round against a CPU arm at 4.00, so it is 11% behind where it was 37% behind.
+And 1020 ms of what remains -- other 668, psync 216, plan 136 -- is named
+overhead rather than hardware. The fence is 915 ms and everything else in the
+call is 2009 ms.
+
+⛔ 13) SO SECTION 3'S CONCLUSION STANDS FOR NOW AND NOT FOREVER. There is no
+crossover at head_dim 64 today. Whether there is one depends on `other`, which
+is 23% of the call and was invisible until this round gave it a name.
