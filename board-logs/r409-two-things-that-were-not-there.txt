@@ -131,3 +131,54 @@ WATCHED to fire. It does, exit status 1.
 reads exactly like a thing whose value is nothing. An unmounted directory reads
 as an empty one and an unmounted debugfs reads as a clock of zero, and both
 produced output that looks like a completed round.
+
+=====================================================================
+5. ⭐ THE SOFTMAX RUNS INSIDE THE VALUES PACK
+---------------------------------------------------------------------
+charsiu_fp16_op.fill lets the caller produce the halves instead of handing
+over floats. npufp16 keeps the offsets, the bound and the causal tail -- xtri0
+still memsets [pos + 1, k) exactly as it did -- and asks for the live part.
+
+852 tokens, arms alternating, text identical and 9 of 9 models identical to
+their token loops with fp16 attention forced:
+
+    FUSE=0   layer 1909 / 1918 ms    softmax 361    values pack 152
+    FUSE=1   layer 1873 / 1875       softmax   0    values pack 477
+
+⚠ 11) ABOUT 40 ms, NOT THE 150 THE PACK COLUMN SUGGESTED. The softmax's 361 ms
+moved into the pack almost intact. 188 million exponentials at about 1.9 ns
+each is arithmetic bound, so taking the intermediate out of DRAM buys the round
+trip and nothing else. The 152 ms in the pack column was never a cost a fusion
+removes; it was the cost of reading what the softmax had just written, and only
+that part goes.
+
+⚠⚠ 12) AND IT IS A SECOND COPY OF THE SOFTMAX by construction, because the
+point is to write halves where the other writes floats. tests/softmax_half.c
+requires the two to agree to the LAST BIT over both arms of fast_softmax and
+fourteen lengths -- what reaches the hardware is a half, and one element
+rounding the other way changes a token. A tolerance would not have held it.
+
+=====================================================================
+6. WHAT THE DAY IS WORTH, AND WHICH INSTRUMENT SAYS SO
+---------------------------------------------------------------------
+Three changes: the register stream cache, the input prep, the fused softmax.
+
+🏁 13) THE LAYER TIMER IS THE ONE THAT REPEATS. r408 measured attention at
+1988 ms; it is 1873 and 1875 now, with the stage columns accounting for it:
+emit 57 -> 21, psync 129 -> 73, softmax + values pack 513 -> 477. About 115 ms.
+
+⚠ 14) THE TTFT INSTRUMENTS DISAGREE WITH EACH OTHER BY MORE THAN THAT. An
+in-boot A/B at 852 tokens, four repeats an arm, alternating, clock verified:
+
+    all three off   7094 7156 7147 7028    median 7120
+    all three on    6806 7031 7026 6839    median 6932
+
+That reads as 190 ms, but the ladder run minutes later put 852 at 7089 with a
+range of 6861..7611 -- eleven percent, against r408's 3.5% at the same point --
+and its other seven points are within 1% of r408's. So one ladder point went
+bad and the two TTFT protocols now differ by more than the change.
+
+🔑 15) SO THE CLAIM IS 115 ms AT THE LAYER, WHICH IS DIRECTLY MEASURED AND
+REPEATS, AND NOT 190 AT TTFT. The shipped curve stays r408's -- 7016 ms at 852
+against the vendor's 6026.8, their lead 1.164x -- which now understates this
+build. Re-quoting it needs a ladder whose 852 point behaves, not this one.
