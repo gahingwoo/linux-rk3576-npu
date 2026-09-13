@@ -1,0 +1,228 @@
+round 407, 2026-09-13 — the int8 KV road, and the factor that was holding it up
+                        was the OUTPUT WIDTH, not the weight dtype
+
+The handoff that opened this session put the int8 K surface first on measured
+grounds: r404's "2.4x on the scores matmul, fence 507 -> 211, saves 296 ms",
+scale per position, fixed at append, never repacked. Clean by design.
+
+Three of the four things that sentence rests on are wrong, and the first
+board hour says so.
+
+  board     ROCK 4D, boot 2606ab9f (same boot as r400-r406), npu 594 MHz,
+            cpu 2016/2208 MHz pinned
+  binaries  /root/charsiu_int4_cost c85421c (r404's own binary, unchanged),
+            /root/npu_fp16_test_w8 (new --w8 / --w8map / --w8a8 arms),
+            /root/charsiu_run_cn 2c43b3d
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf, 852 token prompt, -c 1024
+
+=====================================================================
+1. ⛔⛔⛔ THE 2.4x WAS THE OUTPUT WIDTH
+---------------------------------------------------------------------
+r404 compared three weight dtypes in one probe at one batching, which was the
+right instrument and the reason its number was believed. What it did not hold
+still is what the DPU WRITES.
+
+`wide8` is the four byte accumulator output stage and job.c gates it:
+
+    if (job->acc_out)        wide8 = 0x3f;
+    if (mm->wdtype != INT8)  wide8 = 0;
+
+so for fp16 the wide output comes from `w4_dpu` instead, which is on whatever
+acc_out says. r404's fp16 arm wrote FOUR bytes an output and its int8 arm
+wrote ONE. At m=78 k=64 n=864 that is 270 kB against 67 kB, and the whole
+difference it reported is that.
+
+CHARSIU_WIDE8=0x3f gives the int8 arm the same four byte output. Same binary,
+same boot, two passes, us a submit:
+
+    shape             fp16 w    int8 w 1B out    int8 w 4B out
+    k=64   n=864     180/166       74/75          160/160
+    k=1024 n=64      103/103       71/70           71/70
+    k=1024 n=1024    402/409      233/244         281/282
+
+🏁 1) THE SCORES SHAPE IS 1.04x, NOT 2.4x. The weight dtype is worth nothing
+there. The K surface -- the one the handoff put FIRST, the clean one, the one
+that never needs repacking -- buys about 20 ms of a 7100 ms TTFT.
+
+⭐ 2) AND THE VALUES SHAPE IS REAL. At k=1024 n=64 the narrow and wide int8
+arms are the SAME number, 70 and 71 us both ways, because that output is 20 kB
+and the width cannot matter. 103/70 = 1.45x with nothing riding along.
+
+⛔ 3) SO THE RISK ORDER IN THE HANDOFF IS EXACTLY INVERTED. It said do K (2.4x,
+clean, never repack) and leave V (1.45x, needs a repack). K is worth nothing
+and V is the only one worth anything -- and V is the one that needs the repack,
+the one whose scale axis is shared across the context, and now also the one
+that needs int8 PROBABILITIES, which section 2 explains and which no round has
+ever gated for quality.
+
+🔑 4) THE SHAPE OF THE ERROR, AGAIN. A factor attributed to the variable that
+was being swept while a second variable moved with it. Same as the 6x quadratic
+r405 withdrew, same as "ic > 32" when the rule was "ic a multiple of 16". The
+tell was available and cheap: the two arms had different OUTPUT BYTE COUNTS and
+nothing printed them.
+
+=====================================================================
+2. ⭐ w8a16 DOES NOT EXIST: AN int8 WEIGHT FORCES AN int8 ACTIVATION
+---------------------------------------------------------------------
+The road assumed w8a16 -- int8 cache, fp16 query -- because the precision
+register composes out of two halves that are each confirmed on the vendor's own
+file: 0x00000000 for int8 weights, 0x20000000 for a 16 bit activation. Their
+SUM appears in zero of its 8308 dispatches. Two confirmed halves are not a
+confirmed whole.
+
+npu_fp16_test --w8 ran it and came back with numbers that were not the MAC, not
+the MAC of the bytes, and not either of those plus the lift. --w8map decomposes
+instead of guessing a fourth time: three weight patterns against four
+activations, K=64 N=864, out[0][0] as int32.
+
+                          a=0    a=onehot0    a=onehot1          a=1
+    w=0                     0        -7680        -7680      -245760
+    w=1                     0        -7620        -7620      -243840
+    w=i+1                   0        -7560        -7440      -182400
+
+    fp16 control, same grid, same reader
+    w=0                     0            0            0            0
+    w=1                     0            1            1           64
+    w=i+1                   0            1            2         2080
+
+🏁 5) EVERY CELL IS 60 TIMES THE SIGNED WEIGHT BYTE, and 60 is 0x3c -- the HIGH
+BYTE of an fp16 1.0. The hardware is reading the activation buffer as BYTES.
+
+  - a=0 is 0 on every row, so the coefficient record contributes nothing in
+    acc_out mode: no bias, no lift.
+  - w=0 with one live half gives 60 * (int8)0x80 = -7680.
+  - onehot p lands on weight byte 2p+1, so onehot0 -> w=2 gives 60*(-126) and
+    onehot1 -> w=4 gives 60*(-124). Both exact.
+  - a=1 counts 32 live bytes: the odd byte of each half in the first 64 byte
+    positions. 60*(-128)*32 = -245760, and the w=i+1 cell is -182400 = 60 *
+    sum(2t+2-128) over t=0..31. Exact.
+
+So 0x20000000 does nothing for an int8 weight. The int8 KV road is w8a8, and
+the QUERY has to be quantised too.
+
+⭐ 6) w8a8 IS EXACT. At m=1, K=64, N=864, symmetric int8 both sides: worst
+|int32 read - the integer MAC| is 0 over 864 channels, largest |MAC| 29663. At
+m>1 the accumulator is not flat -- charsiu_acc_index is that order, and the
+probe now reports both readings so it cannot say "wrong" when it means "I
+cannot read this".
+
+⛔ 7) AND THE PER OUTPUT CHANNEL SCALE TABLE DOES NOT REACH THE OUTPUT. The two
+arms differ only in job.weight_scales and their outputs are identical to the
+last digit: -26488 21836 23136 -29003 both ways, against a wanted -104.283
+111.759 145.739 -216.952. In acc_out mode the answer is the raw accumulator and
+the requant, which is where that table lives, is bypassed.
+
+That is survivable -- the scores scale is per position and the softmax already
+multiplies every element by a row scale, so it is one extra load and multiply
+an element -- but it is a different patch from the one the handoff described,
+and it had been assumed rather than checked. The hardware having a per channel
+table (r406, and job.weight_scales landed for it) is true; the acc_out path
+reading it is not.
+
+=====================================================================
+3. ⛔ THE SCORES MATMUL WAS ALREADY A TRIANGLE
+---------------------------------------------------------------------
+Section 1 leaves the cost model: holding m and k still and moving only n, at
+m=78 k=64 fp16, us a submit --
+
+    n     864    432    224    112
+    us    174     94     61     42          about 22 + 0.176*n
+
+-- so three quarters of the scores fence is the output write and the weight
+fetch, both linear in n. Which raised the obvious idea: a chunk of rows
+starting at p0 attends to nothing after its own last row, so the columns past
+p0+m are computed, written, and then memset by the values pack. xtri0 has been
+telling the pack that since r400 and the scores matmul did not know.
+
+Built it (CHARSIU_ATTN_NPU_CAUSAL_N, both arms named). Four lengths, arms
+alternating, one warm-up discarded:
+
+    tokens   rect ms  scores ms    tri ms  scores ms   TTFT t/r
+       102       929         19       928         19      0.999
+       302      2380         70      2344         70      0.985
+       602      4918        216      4886        216      0.993
+       852      7105        385      7102        385      1.000
+
+    the same tokens out of both arms at 852: identical, 8b02145bf030
+
+⛔ 8) ZERO, AND THE REASON IS IN THE FUNCTION. T is pos0 + j->n -- the BLOCK's
+own last position, not the prompt's -- so npad was already the block's causal
+width. What this narrows is the rb sub-loop, and that runs once:
+llama_prefill_chunk_cap is 163840/1024 = 160 here and a->mmax is 5120/(kv/32) =
+160 too.
+
+⛔ 9) AND SUB-CHUNKING TO MAKE IT LIVE IS A NET LOSS, by arithmetic and not by
+another round. Splitting the 160 row block in two takes the columns computed at
+852 tokens from 537600 to 499200 -- 7% -- while doubling the task count, which
+r403 priced at 0.27 ms a row a doubling, 10% of attention.
+
+Kept, default on, because it is never MORE work and it pays if a->mmax falls
+below the chunk cap, which a longer context does. The zero is in the comment.
+
+=====================================================================
+4. ⭐⭐⭐ WHERE THE PREFILL ACTUALLY GOES, READ RATHER THAN PROJECTED
+---------------------------------------------------------------------
+852 tokens, 11 chunks, 8.27 ms a row, 7046 ms with staging excluded:
+
+    attention   2.75 ms a row  33.2%       gate + up   2.36  28.5%
+    down        1.53           18.5%       q k v       0.63   7.6%
+    silu * up   0.40            4.8%       o proj      0.39   4.7%
+
+    attention's 1988 ms:  kv surfaces 40  scores group 709  softmax 361
+                          values group 877
+
+    the scores group:  plan 73  pack 40  psync 16  emit 28  poison 25
+                       fence 504  read 11
+    the values group:  plan 20  pack 152  psync 112  emit 28  poison 32
+                       fence 385  read 46
+
+And the int4 projections, which are the other two thirds:
+
+    1232 calls, 4.91 ms a row inside the NPU entry
+    pack 0.89   submit 0.07   fence 1.78   READ 2.14   prep 0.02 ms a row
+
+🏁 10) THE SINGLE LARGEST LINE IN THE PREFILL IS THE READBACK OF THE int4
+ACCUMULATOR: 2.14 ms a row is 1823 ms, 26% of the whole prompt, and it is
+LARGER THAN THE FENCE it waits on (1.78) and larger than attention's two fences
+put together (889).
+
+It is a permuted gather -- charsiu_acc_index's order, through a table of one
+entry per four channels -- moving about 2.5 GB at roughly 1.4 GB/s.
+
+⚠ 11) AND THE TREE HAS ALREADY CLOSED THE TWO OBVIOUS DOORS, with measurements
+in the code: pooling it lost twice (283 -> 463 ms and 241 -> 430, the same
+190 ms both times, which is the barrier and not the work), READ4 is 2.3x slower
+on eight models, and READ_FUSE is 2.3% slower. The note ends "the read is at its
+floor FOR THIS ACCUMULATOR LAYOUT".
+
+That qualifier is the whole remaining lead. The layout is the one variable
+nobody has moved. The fp16 path at the same shapes reads FLAT and copies
+nothing at all -- charsiu_fp16_out_w hands back a pointer -- and it differs
+from the int4 path in the M axis (height against width) and in DPU 0x4028,
+which fp16 writes as n/4-1 and every other dtype writes as 0.
+
+⚠ NOT SETTLED HERE, and the one cheap arm that looked like it would settle it
+does not: with CHARSIU_M_AXIS=w the fp16 job writes NOTHING (every output still
+0xdeadbeef, which reads as -6.26e18 and is what that number is in this round's
+notes), and at m=2 n=864 neither axis writes. That is the shape wedge this file
+already carries a warning about, not an answer about ordering.
+
+=====================================================================
+5. WHAT THIS ROUND LEAVES
+---------------------------------------------------------------------
+⛔ int8 KV is not the road. K is 1.04x. V is 1.45x and worth about 120 ms, and
+   it now costs an int8 V surface with a repack on every ladder growth, int8
+   PROBABILITIES whose quality nothing has ever gated, a CPU side per channel
+   scale because acc_out ignores the table, and the m>1 accumulator order.
+   120 ms of 7100 for all of that.
+
+⭐ The named target is the int4 readback, 1823 ms, and the question is whether
+   that accumulator can be written flat. It needs a probe on the int4 path of
+   the kind npu_fp16_test --outmap is for fp16 -- a known answer at m>1, read
+   both ways -- and then, if it is the M axis or 0x4028, a stream change.
+
+🔑 12) THREE OF THE FOUR CLAIMS THAT OPENED THIS SESSION CAME FROM ONE PROBE
+THAT CHECKS NOTHING. --cost's header says so in capitals and it was still read
+as a dtype factor, a design, and a projection to a TTFT. A timing probe with no
+oracle can only ever tell you what a dispatch COSTS -- and only if every other
+thing about the dispatch is held still, which is the part that went wrong.
