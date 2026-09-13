@@ -67,12 +67,22 @@ lengths, so it is not noise in the PACK column -- it is simply small.
 🔑 5) WHY, AND THIS IS THE USEFUL PART: memset costs 72% of what converting
 costs. At 602 tokens the triangle replaced 60M conversions with 60M memset
 elements and saved 29 ms -- 0.48 ns an element, against 1.74 ns to convert one.
-The arithmetic is not the cost. THE STORE IS. 312M elements is 624 MB written
-into the device buffer, and 534 ms of it is 1.17 GB/s, which is what a
-write-combining mapping looks like and is nothing like DRAM.
+The arithmetic is not the cost. The MEMORY is: 312M elements is 1.25 GB read
+and 624 MB written, and 534 ms of that is 3.5 GB/s, which is what one core
+streaming through DRAM looks like.
 
-So the pack has a floor of about 375 ms at 852 tokens and no amount of
-cleverness with the conversion goes under it. 1132 -> 534 was the whole prize.
+⛔ THE FIRST VERSION OF THIS PARAGRAPH SAID 1.17 GB/s AND CALLED IT A
+write-combining mapping. That counted only the bytes WRITTEN and then inferred
+a hardware property from the number it left out. The read side is two thirds
+of the traffic. Corrected before it reached section 12: the mapping is
+ordinary cached memory, which section 7's readback confirms from the other
+direction at 7.7 GB/s.
+
+⚠ AND "ONE CORE" IS THE WORD THAT MATTERED. This paragraph concluded a floor
+of about 375 ms and "no amount of cleverness goes under it" -- true only for
+one core. r401 put the pack on the pool: 492 -> 228 ms. A bandwidth argument
+that never names how many cores are spending the bandwidth is half an
+argument.
 
 =====================================================================
 3. ⛔ AND IT DOES NOT REACH THE DEFAULT. CHARSIU_ATTN_NPU=0 against =1

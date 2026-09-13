@@ -1,0 +1,146 @@
+round 401, 2026-09-13 — the fp16 attention arm crosses the CPU arm, and r400's
+                        "no crossover" was a fact about the code
+
+r400 section 3 measured the NPU attention arm at 1.19 to 1.23 times the CPU arm
+over an eight-fold range of prompt length, FLAT, and concluded there is no
+crossover length at head_dim 64. That conclusion was right about that binary
+and wrong about the hardware. The ratio was flat because the fp16 path's per
+element costs grew with the prompt exactly as the CPU arm's arithmetic does --
+three of them on one core, and one of them doing work proportional to the
+answer before the hardware was even asked.
+
+  board     ROCK 4D, boot 2606ab9f, npu 594 MHz, cpu 2016/2208 MHz pinned
+  binaries  /root/charsiu_run_sent  (one sentinel a row)
+            /root/charsiu_run_pool2 (plus the pool on three per-op loops)
+            /root/charsiu_run_auto  (plus CHARSIU_ATTN_NPU=auto)
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf, -c 1024, 852 token prompt
+  arms      named in both directions, alternating, one warm-up discarded
+
+=====================================================================
+1. THE POISON WAS THE EXPENSIVE HALF, AND NOTHING HAD TIMED IT
+---------------------------------------------------------------------
+r400 short circuited the READBACK's 0xdeadbeef check. Its twin writes the
+poison into every cell of every output before every submit, and that loop sat
+in the one region of charsiu_fp16_matmul_group with no clock on it -- the
+668 ms that r400 section 7 could only call `other`.
+
+One sentinel a row instead. A job writes its whole output or none of it, so a
+row whose first word survived is a row that was not written.
+
+   tokens   every cell   poison+read    one a row   poison+read   TTFT ratio
+   ------   ----------   -----------    ---------   -----------   ----------
+      102          978            54          969            45        0.991
+      302         2598           214         2542           155        0.978
+      602         5584           636         5404           437        0.968
+      852         8688          1130         8422           760        0.969
+
+🏁 1) POISON + READ DOWN 33% at 852 tokens, text identical (md5 8b02145b), and
+`other` went from 668 ms to 2. The point of naming a hole is that it stops
+being one.
+
+🔑 2) AND IT IS STRICTLY MORE INFORMATIVE. The every-cell form could only ever
+answer "all of it is poison" or "not all", so a half written output was
+accepted in silence. src/sentinel.h reports how many rows were never written;
+tests/sentinel.c drives all three verdicts on six shapes, because a check that
+has never been seen to fire is not a check and the hardware has never fired
+this one.
+
+=====================================================================
+2. ⭐ THREE PER-OP LOOPS, ALL ON ONE CORE, WITH THE POOL TWO FRAMES UP
+---------------------------------------------------------------------
+pack, poison and readback each walk nops independent regions. The softmax
+between the two matmuls had just been put on the pool (r400 section 6); these
+three had never asked.
+
+   CHARSIU_FP16_POOL=0   pack 492/505   poison 345/342   read 418/418
+   CHARSIU_FP16_POOL=1   pack 228/222   poison 326/326   read 344/339
+
+   attention   4.09 / 4.12  ->  3.69 / 3.71 ms a row     (CPU arm 4.00)
+
+🏁 3) THE PACK IS 2.2x. Which also corrects r400 section 5: that paragraph
+concluded a floor of 375 ms and "no amount of cleverness goes under it", from
+a bandwidth argument that never said how many cores were spending the
+bandwidth.
+
+⛔ 4) THE POISON BARELY MOVED, and that is the answer to what is left in it:
+the two dma_sync ioctls around it, which are charged on the WHOLE buffer
+object and not on the few words written. Same shape as rounds 318 and 366.
+
+=====================================================================
+3. ⭐⭐ THE ARM CROSSES, AND THE OTHER HALF OF THE RULE IS A LENGTH
+---------------------------------------------------------------------
+Three repeats an arm a length, alternating, one boot:
+
+    tokens   CPU ms   range        NPU ms   range        NPU/CPU
+    ------   ------   -----        ------   -----        -------
+        52      440   440..443        529   524..536       1.202
+       102      812   811..813        960   959..967       1.182
+       202     1478  1471..1484      1675  1668..1727       1.133
+       452     3552  3532..3588      3706  3699..3717       1.043
+       852     8073  8063..8121      7809  7787..7829       0.967
+
+   correctness at 852: worst 0.0086 relative, 176 layers, 0 fell back
+
+🏁 5) MONOTONE, AND IT CROSSES AT ABOUT 680 TOKENS. r400's flat ratio is gone
+because what made it flat is gone.
+
+🔑 6) THE SHAPE OF THE CORRECTION MATTERS. r400 did not mismeasure anything --
+its numbers reproduce. It answered "is there a crossover" for a runtime whose
+fp16 path spent 1550 ms of its 2924 on one core doing work proportional to the
+answer. A negative result about a program is a fact about that program, and it
+expires when the program changes.
+
+=====================================================================
+4. ⛔ THE OBVIOUS WAY TO SHIP IT IS WRONG, TWICE
+---------------------------------------------------------------------
+The crossover is a property of the WHOLE prompt, and attn_npu_layer sees one
+chunk. The first implementation therefore tested each chunk's own running
+position against the threshold, which looks strictly better -- CPU for the
+early chunks, NPU for the late ones, best of both.
+
+   852 tokens        CPU 8302   always on 7782
+     MIN=128  7786     MIN=256  7911     MIN=384  7755     MIN=512  7844
+
+⛔ 7) NO THRESHOLD BEATS SIMPLY BEING ON. The early chunks lose little and the
+spread over the four thresholds (7755 to 7911) is wider than the best of them
+is ahead. Per chunk selection buys nothing.
+
+   202 tokens        CPU 1474   always on 1669
+     MIN=128  1619     MIN=256  1584     MIN=384  1589     MIN=512  1582
+
+⛔⛔ 8) AND AT MIN=512 EVERY LAYER IS REFUSED AND IT STILL COSTS 107 ms. A 202
+token prompt never reaches 512, so that arm ran the CPU attention for all of
+it -- and paid 1582 against the CPU arm's 1474. The K and V surfaces are
+allocated and fed by attn_npu_append, which builds the mirror itself, whatever
+attn_npu_layer decides.
+
+🔑 9) A REFUSAL THAT LEAVES THE COST BEHIND IS NOT A REFUSAL. The decision has
+to happen in attn_npu_get, before the mirror exists -- and it then needs the
+length of the whole prompt, which nothing inside llama.c can see, because a
+prompt arrives one chunk at a time and every function knows the running
+position and none knows the total. llama_prefill_hint is the caller saying so.
+
+=====================================================================
+5. auto, MEASURED
+---------------------------------------------------------------------
+   tokens    off     on   auto   layers auto ran
+      102    808    960    812    0
+      202   1477   1671   1478    0
+      452   3567   3686   3550    0
+      852   8163   7978   7754    176
+
+   text identical at every length and every arm (md5 d7a70198f5 at 202+)
+
+🏁 10) auto IS THE CPU ARM WHERE THE CPU ARM WINS AND THE NPU ARM WHERE IT
+WINS, and the 107 ms is gone because the mirror is not built at all.
+
+⚠ auto AT 852 READS FASTER THAN `on` HERE AND THAT IS NOT A RESULT. The three
+arms ran in a fixed order inside each repeat, so the last one gets the warmest
+board -- the bias gemma-3 caught in the chunk band sweep. The magnitude of the
+NPU arm's win comes from section 3, where the arms alternate; this table is
+evidence about WHICH ARM auto PICKS, and nothing else.
+
+⚠ auto is NOT the default. Threshold 768 against a measured 680, one model,
+one boot. No head_dim clause: r395 found the NPU arm ahead at head_dim 256
+with the slower code and that inference still holds, but "still ahead" is not
+a crossover length, and this board has 736 MB free and gemma-3 is 722.
