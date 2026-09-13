@@ -235,3 +235,75 @@ CHARSIU_ATTN_NPU_CHECK is the instrument; the sentences are not.
 🏁 18) auto SIDESTEPS IT ANYWAY. At 202 tokens auto refuses, so its text is
 the CPU arm's to the byte -- which is the other reason a threshold is better
 than an always-on default.
+
+=====================================================================
+10. THE SOFTMAX REDUCES OVER THE ANSWER WHERE THE MATMUL LEFT IT
+---------------------------------------------------------------------
+A NULL Y has meant "leave it where it is" since this unit was written, and the
+comment beside it says exactly why a softmax should use it: the caller reads
+every one of those floats either way, so the copy out is a write and a second
+read on top. The mirror copied anyway -- into a scratch of its own -- because
+the values matmul reads the probabilities AFTER the next group call would have
+released the buffer. Section 6's two handles made that false.
+
+   attention  3.28 -> 3.00 ms a row      layer 2441 -> 2209 ms
+   scores read 257 -> 10 ms
+   scores plan 73 -> 146, because the release's fini on a HELD buffer is real
+   work and it lands in that timer -- so the honest figure is 330 -> 156
+
+🔑 19) AND THE PACK CAN ONLY READ IT THERE BECAUSE OF xtri0. The answer's rows
+are npad apart, the values matmul contracts over kv, and kv > npad, so a pack
+reading k elements a row would run off the end of every row into the next one.
+It reads xtri0 + r <= pos + 1 <= npad. The causal triangle was worth nothing
+when it was added (section 2 of r400) and is now load bearing twice over.
+
+🏁 20) AND IT DELETES A TRAP. The scratch was [H][mmax][kv] and had to be
+indexed by mmax and never by m -- a chunk with fewer rows than the last one
+would land a row's tail on the previous chunk's probabilities, and every token
+after it would attend to positions that are not in its prompt. A comment was
+the only thing holding that off. The answers are laid out by the matmul's own
+plan now: no stride here to get wrong, no 10.5 MB allocation, no inherited
+tail.
+
+=====================================================================
+11. THE CURVE, THIRD TIME TODAY
+---------------------------------------------------------------------
+    tokens        52     102     202     452     852    crossover
+    r400        1.229   1.208     -     1.220   1.186    none, flat
+    r401 §3     1.202   1.182   1.133   1.043   0.967    ~680
+    §6          1.196   1.174   1.108   1.002   0.916    ~452
+    §10         1.204   1.162   1.092   0.977   0.886    ~402
+
+   correctness unchanged throughout: worst 0.0086 relative at 852
+
+🏁 21) 5.48 -> 3.00 ms A ROW over the round, against a CPU arm at 4.00. The
+arm that had no crossover at any length now wins by 11% at 452 tokens and 25%
+at 852.
+
+⚠ 22) THE THRESHOLD STAYS AT 512 ANYWAY, and that is a decision. It was 13%
+above the crossing when chosen and is now 27% above it, leaving 402..512 on
+the CPU arm where the measured gap is 2.3% -- inside one length's spread.
+Against that: one model. gemma-3 crosses far earlier; a model that crossed
+LATER than Llama is the one a tight threshold would hurt.
+
+=====================================================================
+12. WHAT IS LEFT, at 852 tokens, layer 2209 ms
+---------------------------------------------------------------------
+     fence    880   40%   the hardware, 0.119 TMAC/s against the int4 path's
+                          0.45 to 0.70 -- both attention matmuls are skinny on
+                          one axis (k=64 or n=64) and that is structural
+     softmax  457   21%   pooled already; four passes a row could be three
+     pack     202    9%
+     poison   195    9%   ⭐ almost entirely the two dma_syncs
+     plan     166    8%   ⭐ almost entirely the release's fini
+     psync    135    6%
+     kv        41    2%
+     rest     133    6%
+
+⭐ 23) THE NEXT ONE IS THE SYNC COUNT. The scores handle does four dma_syncs
+of its 8.6 MB output buffer per call -- release-fini, poison-prep, poison-fini,
+fence-prep -- and poison + plan is 308 ms of it. Writing the sentinels BEFORE
+the release, while the buffer is still prepped, folds two of the four away.
+⚠ It needs the next call's plan to equal this one's, which is true for 15 of
+every 16 calls (same shapes, one per layer) and false when npad grows; f->last
+already exists for exactly that comparison.
