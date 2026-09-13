@@ -1,0 +1,102 @@
+round 405, 2026-09-13 — the number the whole plan was aimed at was never
+                        determined, and the vendor's own file says where to
+                        look instead
+
+"The quadratic term is the whole deficit and theirs is six times smaller" has
+organised this work since r393. It came from least squares `a + bn + cn^2` on
+eight points a side: charsiu 0.004483, vendor 0.000743, ratio 6.0. r402 already
+showed the fit is not the instrument for COMPARING two curves. This round asks
+whether it determines its own c at all.
+
+=====================================================================
+1. ⛔ IT DOES NOT, AND TWO INDEPENDENT READINGS SAY SO
+---------------------------------------------------------------------
+**The same configuration, two boots.** r402 re-ran the CPU-attention ladder --
+the same configuration r393 fitted -- in one boot with a drift control:
+
+    r393    187.9 / 5.456 / 0.004483
+    r402    196.4 / 5.278 / 0.004974      an 11% swing in c
+
+from curves that agree to 3% point by point at seven of eight lengths. Over
+eight points the three parameters trade against each other; a lower c is
+bought with a higher b.
+
+**The marginal, which does not trade them.** (T(n2)-T(n1))/(n2-n1) is b + 2cn,
+so the slope of the marginal column IS 2c, and it is local rather than global:
+
+    from 200 tokens up    charsiu c 0.001556   vendor c 0.000974   ratio 1.60x
+    from 100 tokens up    charsiu c 0.002118   vendor c 0.000111   ratio 19.1x
+
+⛔ 1) ONE POINT MOVES IT BY TWELVE TIMES. The vendor's 135 token reading is
+the worst residual in their own curve, +5.3%, and including or excluding it
+takes the ratio from 1.6 to 19. Six or seven points of a noisy marginal do not
+determine a slope here.
+
+🏁 2) THE DIRECTION SURVIVES AND THE MAGNITUDE DOES NOT. Our prefill grows
+faster with length than theirs: ahead at 202 tokens, behind at 852. That is a
+statement about measured points and needs no fit. "Six times" is an artefact.
+
+🔑 3) THIS IS THE 3x3 CONVOLUTION SHAPE, not the wall's. The wall was a
+residual attributed to hardware. This is a RULE FITTED TO THE WRONG QUANTITY --
+the same as "ic > 32" for the conv rule, which was really "ic a multiple of
+16". The fit describes both curves to 2% and still does not pin either c.
+
+=====================================================================
+2. WHAT THE VENDOR'S OWN FILE SAYS, WHICH NEEDED NO FIT AT ALL
+---------------------------------------------------------------------
+tools/rkllm_regcmd.py reads their dispatches out of the .rkllm. 8808
+convolutions, and 4940 of them carry **fp16 weights**:
+
+    ic       oc     M    wbits   what it is
+    64       32/64/96/128   32..128   16.0   the SCORES matmul  (2112 ops)
+    2688..4064   64         32..48    16.0   the VALUES matmul
+
+🏁 4) THE VENDOR RUNS ATTENTION ON THE NPU, IN fp16, AT THE SAME THIN SHAPES
+WE DO. ic = 64 is the head_dim; oc = 64 with ic stepping by 32 is the values
+matmul contracting over live positions. So "their attention is cheaper because
+ours is the wrong shape" cannot be the explanation: it is the same shape.
+
+🏁 5) AND OUR REGISTER STREAM MATCHES THEIRS. cmp_vendor.py at their own
+values shape, M=48 K=2688 N=64 fp16/fp16: **identical 119, different 0, vendor
+only 0**, charsiu only 23 -- all of them the RDMA block, which they leave set
+from a previous op. A check that could have failed and did not.
+
+⛔ 6) THEIR ic STEPS BY 32 AND OURS DOUBLES. 2688, 2720, 2752, 2784 -- the V
+surface's contraction extent tracks the live positions to 32. Ours climbs by
+doubling, so at 852 tokens we contract over 1024 where they would use 864.
+That is 19%, measured against nothing yet, and it is the one concrete
+difference the diff found.
+
+=====================================================================
+3. ⛔ AND THE SHAPE HYPOTHESIS THAT CAME OUT OF IT IS REFUTED
+---------------------------------------------------------------------
+Their scores matmul caps oc at 128 while ours runs at npad, up to 864. The
+obvious reading is that a wide oc is bad at ic = 64 and they know it.
+
+    k=64, m=78, fp16      n     32     64    128    256    512    864
+                     TMAC/s  0.005  0.010  0.015  0.020  0.024  0.026
+
+⛔ 7) MONOTONE THE OTHER WAY. Wider is better at every step, and our n = 864
+is already the best point on this curve. Their oc <= 128 is not a throughput
+rule. Same for m: 0.008 / 0.013 / 0.018 at m = 32 / 64 / 128.
+
+🔑 8) WHAT IS LEFT IS A REAL k DEPENDENCE, with the fixed cost removed:
+marginal 33.5 us a MMAC at k = 64 against 4.5 at k = 1024, which is 7x and is
+what a feature-atom machine does when you fill four atoms instead of sixty
+four. That is the same rule the conv work landed on in a different dress.
+
+=====================================================================
+4. SO WHAT IS THE PLAN AIMED AT NOW
+---------------------------------------------------------------------
+Not a coefficient. The measured point-by-point comparison: at 852 tokens 7191
+against 6027, their lead 1.193x. And the stage table that has to move:
+
+    attention   2343 ms    of which fence 893, softmax 358, syncs 301, pack 200
+    int4/int8 KV surfaces   1.8x to 2.4x on the fence (r404)      -470 ms
+    the syncs, on surfaces a quarter the size                     -200 ms
+    the softmax, still three passes a row                         -180 ms
+                                                             TTFT about 6340
+
+⚠ 9) WHICH IS STILL BEHIND 6027, and saying so is the point. Every previous
+version of this plan ended in "and then we win" because it was aimed at a
+number that was never determined.
