@@ -78,3 +78,41 @@ guess than a fitted coefficient, and it is still a guess.
 contraction extent steps by 32 where ours doubles, so at 852 tokens we reduce
 over 1024 where 864 would do -- 19% of the values matmul, and it needs a
 finer ladder in attn_npu_fit rather than a new dtype.
+
+=====================================================================
+4. ⛔ SECTION 2 WAS RIGHT TO FLAG IT AND WRONG ABOUT THE DIRECTION
+---------------------------------------------------------------------
+CHARSIU_KV_V_AXIS=chan simulates the axis the hardware actually uses for the
+values surface: a running absmax per HEAD_DIM CHANNEL over the whole context,
+with every earlier position of a channel re-rounded from a shadow of the
+unrounded V when that channel's scale grows. The shadow is why it is faithful:
+a real surface repacks when its scale moves, and the cache holds rounded
+values by then.
+
+    V scale axis        int8                  int4            (desk / board)
+    per position    20.2706 / 41.1458     27.9903 / 62.9110
+    per channel     20.1692 / 41.0019     26.6690 / 76.5588
+    fp16 baseline   20.3096 / 40.9987
+
+🏁 5) THE REAL AXIS IS BETTER. int8 per channel is +0.008% on the board and
+0.7% BETTER than fp16 on the desk. A per-channel scale adapts to each
+head_dim's own magnitude; a per-position one makes 64 dims of differing size
+share one scale and the small ones lose. Section 2 called the values row a
+lower bound on the damage and it was an upper one.
+
+🏁 6) SO THE GATE IS PASSED ON BOTH SURFACES, ON THE LAYOUT EACH WOULD
+ACTUALLY BE BUILT WITH -- K per position, which IS the scores matmul's output
+channel, and V per channel, which is the values matmul's. Neither is the
+convenient axis chosen and then read as if it were the other.
+
+⛔ 7) int4 STAYS DEAD: +31% on the desk, +87% on the board. And the two
+configurations disagree about which int4 axis is worse -- chan is better on
+the desk and worse on the board -- which is a reason not to reason about int4
+at all rather than a reason to choose.
+
+⚠⚠ 8) THE FIRST VERSION OF THIS PATCHED ONLY THE BATCHED PATH, and the desk's
+charsiu_ppl runs the token loop without --batch. The per-channel arm came back
+equal to its control TO THE LAST DIGIT, twice -- 20.2706 and 27.9903 -- which
+is what an arm that never ran looks like, and is the only reason the table
+above is not the first one written down. The rule that caught it is already in
+this tree: an arm equal to its control to the last digit never ran.
