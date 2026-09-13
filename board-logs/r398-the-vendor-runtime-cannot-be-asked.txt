@@ -1,0 +1,96 @@
+round 398, 2026-09-13 — the vendor's accuracy is not measurable through their
+                        runtime, and now the reason is known at three levels
+
+The vendor column of every quality claim in this tree is a RECONSTRUCTION:
+tools/rkllm_rebuild.py reads their stored weights and scores them with our
+quantiser. Evidence pack section 2 says so, and says the reconstruction is
+unvalidated against their real runtime. This round tried to validate it.
+
+=====================================================================
+1. THE ROUTE THAT SHOULD HAVE WORKED
+---------------------------------------------------------------------
+Perplexity needs logits and RKLLM_INFER_GET_LOGITS is refused. But accuracy
+does not need logits: teacher-forced TOP-1 AGREEMENT against a common origin
+has perplexity's structure and needs only a token back.
+
+  reference  Llama-3.2-1B f16, the origin both quantisations came from,
+             scored on the desk CPU. charsiu_ppl grew --top1, which is one
+             assignment because the log softmax already needs the largest
+             logit.
+  arm A      our q4_0 through the board's NPU path. charsiu_ppl had never
+             been built for aarch64 at all, so every quality number in this
+             tree until today came from the CPU path; the Makefile has the
+             target now.
+  arm B      their w4a16 through librkllmrt, fed RAW TOKEN IDS with
+             RKLLM_INPUT_TOKEN so their 33-token chat template is bypassed
+             and both runtimes are asked about the same sequence.
+
+Arm A ran: 55.0% top-1 agreement with the f16 origin over 420 positions, own
+hit rate 29.5% against the origin's 37.1%.
+
+=====================================================================
+2. ⛔ ARM B DOES NOT WORK, AND IT DOES NOT SAY SO
+---------------------------------------------------------------------
+Feeding raw token ids, every prefix returned token 0, and asked for ten tokens
+it returns:
+
+    prefix  32 -> tok 0  text "!!!!!!!!!!"
+    prefix  50 -> tok 0  text "!!!!!!!!!!"
+    prefix  62 -> tok 0  text "!!!!!!!!!!"
+
+Over 65 prefixes there were 7232 `meet unkown shape, op name:
+matmul_qkv_rkllm_spilt_0` lines and 7231 `2features matmul run failed`, and a
+token came back every time. The errors start at prefix 68 and climb from 64 to
+192 a call; prefixes 32 to 62 report NO error at all and still answer 0.
+
+🏁 1) THEIR EXPORT DOES NOT SUPPORT RKLLM_INPUT_TOKEN. It is in their header,
+it is accepted, it returns a value, and the value is the null one.
+
+🏁 2) AND THAT CORRECTS WHAT THIS TREE RECORDED ABOUT GET_LOGITS. That was
+closed as "the model refuses logits", with the error
+`meet unkown shape, op name: matmul_qk_rkllm_spilt_0`. It is the SAME error
+class on a sibling op. The constraint was never about logits: **their export
+carries a fixed set of compiled shapes**, and anything off that set fails.
+
+⛔ 3) SO THE FAILURE MODE IS THE ONE THIS PROJECT KEEPS MEETING. A path that
+returns a plausibly shaped answer which is actually the zero result: the
+all-0x80 output buffer of a cancelled rocket job, the unwritten shmem BO that
+reads back a uniform 128, and now token 0 ten times over.
+
+=====================================================================
+3. ⛔ AND MY SELF-TEST PASSED ON IT
+---------------------------------------------------------------------
+vendor_next has a --selftest that feeds one prefix, then a different one, then
+the first again, and refuses to continue unless the first and third agree. It
+was written against exactly the right risk -- a leaked KV cache would make
+every prefix answer a longer question than it was asked -- and it passed:
+
+    selftest prefix 224 -> 25, prefix 207 -> 11, prefix 224 -> 25
+    selftest ok
+
+🔑 A SELF-TEST FOR REPRODUCIBILITY IS NOT A SELF-TEST FOR VALIDITY.
+"!!!!!!!!!!" is perfectly reproducible. The check that found it was printing
+the TEXT, which took one flag and should have been in the tool from the start:
+the first thing to ask a runtime is not "do you answer the same way twice" but
+"what do you say".
+
+=====================================================================
+4. WHAT THIS LEAVES
+---------------------------------------------------------------------
+Three routes to their runtime's accuracy and three refusals:
+
+  logits           RKLLM_INFER_GET_LOGITS, unsupported shape
+  raw tokens       RKLLM_INPUT_TOKEN, returns token 0 with no error
+  text prompts     works, but applies a chat template we cannot reproduce
+                   exactly -- our offset to theirs measured +34 on one string
+                   and +33 on another, so the two are not the same template
+
+⭐ So section 2's reconstruction is not the second-best route to the vendor's
+quality. It is the ONLY one, and this round is why. The pack should say that
+rather than "unvalidated".
+
+⚠ NOT MEASURED HERE
+   Whether a text-prompt comparison could still say something weaker. It could:
+   same passage, greedy, count tokens before divergence. It would compare two
+   different framings of the prompt, which is a caveat, not a blocker.
+   One board, one export, one model.
