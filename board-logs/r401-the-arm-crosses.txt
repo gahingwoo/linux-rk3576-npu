@@ -408,3 +408,31 @@ times in one day, which is why the whole table is in the comment beside it.
 0.119 TMAC/s against the int4 path's 0.45 to 0.70 on the same silicon, because
 both of them are skinny on one axis (k = 64 for the scores, n = 64 for the
 values). That is the next wall and it is not a CPU-side one.
+
+=====================================================================
+17. THE SHIPPED CONFIGURATION, FOUR MODELS
+---------------------------------------------------------------------
+CHARSIU_ATTN_NPU=auto, threshold 448, final build, clock pinned, two repeats
+an arm. `mirror` is whether attn_npu_get built one at all.
+
+   model                        tokens   auto ms   off ms   gain   mirror
+   -----                        ------   -------   ------   ----   ------
+   Llama-3.2-1B-Instruct-Q4_0      202      1477     1479      -    no
+                                   852      7202     8295   13.2%   yes
+   Llama-3.2-1B-Instruct-Q8_0      202      1469     1485      -    no
+                                   852      6995     8084   13.5%   yes
+   SmolLM2-135M-Instruct-Q4_0      201       598      594      -    no
+                                   851      3199     3672   12.9%   yes
+   gemma-3-1b-it-Q4_0              202      1539     1510      -    no
+                                   852      6005     7489   19.8%   yes
+
+   text identical between the two arms on every row
+
+🏁 31) 13 TO 20% ON A LONG PROMPT, AND THE CPU ARM TO THE MILLISECOND ON A
+SHORT ONE. The short rows are not "about the same" -- the mirror is not built,
+so auto and off run the identical code path and the difference is the board.
+
+⛔ 32) STILL NOT THE DEFAULT, AND THE BLOCKER IS UNCHANGED: none of these four
+is a model whose layers REFUSE. gemma-4 refused 308 of 385 layer calls, and
+such a model under auto builds the mirror, feeds it, and uses a fifth of it.
+It is 2.84 GB and this board has 425 MB free.
