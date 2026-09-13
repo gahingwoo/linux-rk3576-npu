@@ -173,3 +173,59 @@ At 852 tokens, against a gap of about 790 ms:
   the gather   1.96 ms a row, and the only untried lever is the accumulator
               LAYOUT, which is what npudev.c's own note excludes when it says
               the read is at its floor "for this accumulator layout"
+
+=====================================================================
+7. ⛔⛔⛔ WITHDRAWN THE SAME NIGHT: IT IS WRONG ON FIVE MODELS OF NINE
+---------------------------------------------------------------------
+Sections 1, 2 and 5 were written after the 852 token A/B and the ladder, both
+of which are Llama-3.2-1B. tests/board_text_all.sh compares the batched path
+against the token loop for EVERY model on the card, and it is the check that
+stands between "it batches" and "it is right". Run before merging to stable:
+
+    CHARSIU_NPU_DEFER_READ=1    9 models compared, 5 differing
+    CHARSIU_NPU_DEFER_READ=0    9 models compared, 0 differing
+
+⛔ 11) SO THE DEFERRAL IS OFF BY DEFAULT AND SECTION 5's LADDER IS NOT THE
+SHIPPED NUMBER. What ships is this morning's ladder: 7016 ms at 852 tokens,
+their lead 1.164x, crossover about 250 tokens. Section 5's 6815 and 1.131x
+describe an arm that returns wrong text on Qwen2.5, Qwen3, gemma-3 and gemma-4.
+
+🔑 12) AND THE SINGLE MODEL CHECK COULD NOT HAVE CAUGHT IT. Llama-3.2-1B is
+identical in both arms, hash 8b02145bf030, at 24 generated tokens and at 852
+prompt tokens. board_text_all.sh's own header says this: "prefill_control.sh
+has only ever been pointed at llama, because the number it exists to explain is
+llama's". The model every speed round uses is the model this fault does not
+touch.
+
+Two real faults were found and fixed on the way, and neither was the whole
+cause:
+
+  - g->pend held a POINTER into g->obuf, which batch_outbuf reallocs when it
+    grows -- and the deferral is what MAKES it grow, since it skips an entry
+    that still owes a gather. Llama's distinct geometries fit inside the
+    initial capacity of 8 and five other models cross it. An index now.
+  - the bseen snapshot was restored at g->bseen_n, which is a high water mark
+    and can grow between the defer and the flush.
+
+🔑 13) THE DIAGNOSTIC THAT NARROWED IT. CHARSIU_NPU_DEFER_READ=2 records the
+deferral and then flushes it before returning, so the same record-and-restore
+machinery runs at the moment the plain path would have run it:
+
+    =2    9 models compared, 0 differing
+    =1    9 models compared, 5 differing
+
+That proves the machinery right and puts the fault in the pool state that
+changes BETWEEN the two calls. After it, the field is found by reading the list
+of g-> fields the gather touches rather than by guessing at causes.
+
+⚠ 14) ONE SUCH FIELD, FOUND AND NOT SUFFICIENT: g->bd1, the per ROW activation
+scale the int8 read back multiplies by, is one array on the pool sized for one
+call, and the next tensor's pack overwrites it. The w4 branch of the same loop
+reads a per channel scale off the slot and does not care. Refusing the deferral
+for int8 tensors took it to 7 of 9 rather than 0, so that field is really a
+hazard and there is at least one more.
+
+🔑 15) THE SHAPE OF THE MISTAKE. The mechanism was confirmed by the right
+instrument -- the FENCE moved 1.82 to 1.32, which is not something noise does
+-- and a correct mechanism was read as a correct change. What the fence
+measures is that the overlap HAPPENED, not that the answer survived it.
