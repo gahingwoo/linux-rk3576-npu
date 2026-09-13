@@ -1,0 +1,175 @@
+round 408, 2026-09-13 — the gather runs while the next job does, and what that
+                        is worth against the vendor
+
+r407 named the target and measured its ceiling: the gather of the int4
+accumulator is the largest line in the prefill, larger than the fence it waits
+behind and larger than both of attention's fences together, and the fence is a
+SLEEPING ioctl so every core is idle for it. This round moves the work instead
+of trying to make it smaller, which is what every previous attempt did.
+
+  board     ROCK 4D, boot 2606ab9f (r400-r407's boot), npu 594 MHz,
+            cpu 2016/2208 MHz pinned, governor userspace
+  binary    /root/charsiu_run_final, charsiu 91d51b0
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf
+  vendor    r393's ladder, measured on this board with their runtime and
+            their driver. ⚠ THE TWO CANNOT SHARE A BOOT -- one arm needs
+            rocket and the other the vendor rknpu -- so their column is a
+            different boot, and r393 measured that drift at worst 2.2% over
+            the same charsiu ladder.
+
+=====================================================================
+1. WHAT WAS BUILT
+---------------------------------------------------------------------
+charsiu_npu_matmul_defer leaves the answer in the device buffer and returns.
+The next charsiu_npu_matmul* call flushes it from just after ITS OWN SUBMIT, so
+the gather runs while that job is on the hardware. charsiu_npu_flush is the
+caller's obligation before anything reads Y.
+
+The two places it is legal are the ones llama.c already marks as sharing an
+input: q/k/v and gate/up multiply one RMSNorm output, are adjacent calls, and
+neither reads the other's answer.
+
+⚠ THREE THINGS THE DEFERRED GATHER TAKES OFF THE POOL RATHER THAN OFF ITS OWN
+TENSOR, each a wrong answer that still reads as fluent text:
+
+  - `g->bseen` says which output ranges have been ASSIGNED rather than added
+    to, and the call it now runs inside has reset it for its own slices.
+  - `g->bout_stride` is wide * m * 4 and is set per call. gate and up share a
+    shape, so the first version worked by luck; q and k do not.
+  - batch_outbuf keys buffers on (wide, slots), so gate and up land on the SAME
+    entry -- exactly the pair this is for. It now skips an entry that owes a
+    gather and allocates a second, rather than flushing before the submit that
+    was meant to hide it.
+
+=====================================================================
+2. IT WORKS, AND THE FENCE IS THE TELL
+---------------------------------------------------------------------
+852 tokens, three passes an arm, arms alternating, one warm-up discarded:
+
+    CHARSIU_NPU_DEFER_READ=0   TTFT 6955 / 6927 / 6941   fence 1.82 ms a row
+    CHARSIU_NPU_DEFER_READ=1   TTFT 6611 / 6626 / 6794   fence 1.32
+
+    the same 24 tokens out of both arms: identical, 8b02145bf030
+
+🏁 1) THE FENCE, NOT THE TTFT, IS WHAT SAYS IT RAN. It falls 1.82 -> 1.32
+because the job finishes while the CPU is gathering the previous one, so the
+wait that follows is already over. A TTFT that moved without the fence moving
+would have been noise, and at this board's ~3% spread that matters.
+
+🔑 2) AND THE ENTRY SPLIT NOW HAS A NEGATIVE RESIDUAL, which is the overlap
+itself: pack 0.81 + submit 0.06 + fence 1.32 + read 2.05 sums to MORE than the
+entry, by 0.54 ms a row. The stages are still each measured correctly; they
+simply no longer happen one after another.
+
+=====================================================================
+3. ⛔ AND THE OBVIOUS WAY TO WIDEN IT LOSES
+---------------------------------------------------------------------
+The deferral only pays where the caller has a second independent matmul, which
+is about a quarter of the gather. Rows are independent ALWAYS, so splitting one
+tensor's chunk in two should give every tensor something to hide behind.
+
+The hardware side was priced first, charsiu_int4 --cost at k=2048 n=8192:
+m=78 is 4792 us and m=39 is 2925, so two halves cost 22% more NPU time.
+
+    no split      TTFT 6829 / 6631   pack 0.81   fence 1.33   read 2.05
+    ROWSPLIT=8    TTFT 9153 / 9004   pack 1.46   fence 1.13   read 4.35
+
+⛔ 3) THE FENCE FELL AND EVERYTHING ELSE DOUBLED. The gather more than doubled
+for the same total bytes and the pack nearly did, because both carry per CALL
+costs that do not scale with m: charsiu_pack_input fills the whole input buffer
+with the zero point before writing anything, and the read walks Y once per
+slot. Halving the rows doubles the calls and pays each of those twice.
+
+🔑 Same shape as the dma_sync note in npufp16.c: a cost charged on the WHOLE
+buffer does not halve when the work does. Default off, code kept, measurement
+in the comment.
+
+=====================================================================
+4. TWO NOTES IN ONE FILE DISAGREED, AND THE BOARD SETTLED IT
+---------------------------------------------------------------------
+npudev.c says the four-row gather "lost 2.3x to its four write streams". It
+also says, three hundred lines earlier, that tools/bench_gather measured that
+same form 1.4 to 2.2x FASTER. Both were true of where they were run.
+
+⚠ 4) AND bench_gather HAD NEVER BEEN RUN ON THE BOARD. It had a host build rule
+only, no board log mentions it, and its own header says the host cannot answer
+its question -- "the host is aarch64 with caches that dwarf the board's ... the
+ratio is the thing to carry". Built for aarch64 and run here at m = 78:
+
+    n=1024  gather 11.41 ms   walk 1.29x   gather4 1.18x
+    n=2048  gather 26.65      walk 1.14x   gather4 1.32x
+    n=8192  gather 108.35     walk 1.17x   gather4 1.26x
+
+⛔ 5) AND A REAL BUG NEXT DOOR: the pooled read's grain was `read4 == 2 ? 2 : 1`,
+so selecting the FOUR row form gave the pool a grain of 1 and every worker got
+a range read_rows4 refuses for not being four aligned. A knob that disabled the
+thing it selects, and the 2.3x was measured through it.
+
+⚠ 6) FIXED, AND IT CHANGED NOTHING: read 2.31/2.46 ms a row against the pair
+form's 2.04/2.46 and the row loop's 2.29/2.29. So the standing note is
+CONFIRMED rather than overturned, and the microbenchmark still disagrees with
+the runtime by 1.26x. The difference between them is the POOL -- one thread
+with four write streams against four threads with sixteen -- which is a
+sentence bench_gather's header does not contain and now should.
+
+=====================================================================
+5. ⭐ THE LADDER, AND WHERE IT PUTS US AGAINST THEM
+---------------------------------------------------------------------
+Eight lengths, three repeats a point, one warm-up discarded, CPU pinned, NPU
+594 MHz, shipped defaults. Their column is r393's measured ladder -- not a fit:
+6026.8 has a range of 6026.4..6028.8 -- on this board with their runtime, and
+their chat template costs exactly 33 tokens at every length, so the rows are
+MATCHED INPUT TEXT.
+
+    ch tok   ch ms   vn tok    vn ms    winner   ratio  |  r393    this am
+        27     330       60    413.2   charsiu   1.252  |   346      347
+        52     417       85    529.6   charsiu   1.270  |   434      439
+       102     761      135    931.8   charsiu   1.224  |   852      814
+       202    1398      235   1528.5   charsiu   1.093  |  1457     1476
+       302    2126      335   2145.0   charsiu   1.009  |  2266     2257
+       452    3251      485   3194.7   vendor    1.018  |  3503     3465
+       602    4627      635   4200.5   vendor    1.102  |  5149     4818
+       852    6815      885   6026.8   vendor    1.131  |  8081     8121*
+
+    * r393's own 852 point; "this am" is this session's first ladder, before
+      any of today's changes.
+
+🏁 7) THE CROSSOVER MOVED FROM ABOUT 250 TOKENS TO ABOUT 330. At 302 of our
+tokens we are now level (1.009) where this morning we were 1.9% behind, and
+everything shorter is a charsiu win by 9 to 27%.
+
+🏁 8) AT 852 THEIR LEAD IS 1.131x, FROM 1.341x IN r393 THIS MORNING. The two
+steps of that are r402's fp16 attention arm (1.341 -> 1.164) and this round's
+gather overlap (1.164 -> 1.131).
+
+⚠ 9) AND THE LADDER IS A WEAKER INSTRUMENT THAN THE A/B IN SECTION 2. It
+compares two binaries across two runs; section 2 alternates two arms inside one
+binary and watches the FENCE move, which is the mechanism. The ladder's 852
+point has a range of 6609..6849, which is wider than the change it is being
+asked to show. Read the ladder for the SHAPE and section 2 for the size.
+
+⚠ 10) ONE BOARD, ONE MODEL, AND THEIR COLUMN IS A DIFFERENT BOOT -- the two
+runtimes need different drivers and cannot share one. r393 measured that drift
+on the same charsiu ladder at worst 2.2%, mean -0.64%.
+
+=====================================================================
+6. WHAT IS LEFT, WITH ITS SIZE
+---------------------------------------------------------------------
+The projections' entry is now pack 0.81 + submit 0.06 + fence 1.32 + read 2.05,
+and the CPU side (2.86) exceeds the NPU side (1.32). So more overlap buys
+nothing: the gather itself is the critical path now, and every lever on the
+gather is measured and lost (section 4).
+
+At 852 tokens, against a gap of about 790 ms:
+
+  attention   1988 ms total -- fences 889, softmax 361, and 697 of pack, cache
+              syncs, plan, emit and poison around them. Of that:
+                pack 152 on the values side, which converts the softmax's own
+                output a second time -- a fused softmax that wrote fp16
+                straight into the input surface would remove most of it
+                psync 128 + plan 93, whole-buffer dma_syncs
+                emit 56, register streams rebuilt for shapes that repeat every
+                layer (the vendor precompiles these; we could cache them)
+  the gather   1.96 ms a row, and the only untried lever is the accumulator
+              LAYOUT, which is what npudev.c's own note excludes when it says
+              the read is at its floor "for this accumulator layout"
