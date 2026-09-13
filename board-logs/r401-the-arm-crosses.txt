@@ -144,3 +144,61 @@ evidence about WHICH ARM auto PICKS, and nothing else.
 one boot. No head_dim clause: r395 found the NPU arm ahead at head_dim 256
 with the slower code and that inference still holds, but "still ahead" is not
 a crossover length, and this board has 736 MB free and gemma-3 is 722.
+
+=====================================================================
+6. A HANDLE EACH, BECAUSE THE SYNCS ARE CHARGED ON THE WHOLE BUFFER
+---------------------------------------------------------------------
+charsiu_fp16's `want` grows its five buffers and never shrinks them, and
+charsiu_bo_prep/_fini are dma_sync over a WHOLE buffer object. One handle
+serving both attention matmuls therefore sized every buffer for the larger
+shape and synced that size for both: the scores group needs 393 kB of input
+and paid for 5.2 MB, the values group needs 655 kB of output and paid for
+8.6 MB. Thirteen times each way, four syncs a call.
+
+   ⚠ THIRD TIME IN THIS TREE. Round 318 (the shared output buffer, 14 MB of
+   cache maintenance a token becoming 280) and round 366 (per-device sizing,
+   13.4 ms a token against 11.6) are the same sentence, and both notes live in
+   npudev.c above code that does it right. npufp16.c never got the memo.
+
+   attention  3.69 -> 3.24 ms a row      layer 2797 -> 2411 ms
+   psync 212 -> 133   poison 323 -> 207   read 357 -> 292
+   plan  136 ->  93   pack   239 -> 221   fence 925 -> 882
+
+🏁 11) AND THE TWO STAGE TABLES SEPARATE, which is half the value:
+
+     scores  176 submits, 1086 ms:  fence 496  read 245  poison 174  pack  44
+     values  176 submits,  815 ms:  fence 386  pack 177  psync 116  read  47
+
+The scores matmul is a readback problem and the values matmul is a pack
+problem, and one table could not say that.
+
+=====================================================================
+7. THE CURVE MOVED AGAIN, AND THE THRESHOLD IS DATED NOT DERIVED
+---------------------------------------------------------------------
+    tokens     52     102     202     452     852
+    r401 §3  1.202   1.182   1.133   1.043   0.967    crossover ~680
+    with §6  1.196   1.174   1.108   1.002   0.916    crossover ~452
+
+🔑 12) CHARSIU_ATTN_NPU_MIN IS 512 NOW AND WAS 768 AN HOUR AGO. A threshold
+chosen against a curve is only as current as the curve. The comment in
+attn_npu_min_tokens says to re-measure rather than scale it.
+
+=====================================================================
+8. THREE MODELS, 852 TOKENS, auto AGAINST THE CPU ARM
+---------------------------------------------------------------------
+   model                            auto ms      CPU ms    text
+   -----                            -------      ------    ----
+   Llama-3.2-1B-Instruct-Q4_0     7391/7434   8237/8285    identical
+   Llama-3.2-1B-Instruct-Q8_0     7535/7576   7995/8264    identical
+   SmolLM2-135M-Instruct-Q4_0     3391/3380   3648/3646    identical
+
+🏁 13) 7 TO 10% ON EVERY ONE, no refusals, and below the threshold `auto` is
+the CPU arm to the millisecond because the mirror is never built.
+
+⛔ 14) auto IS STILL NOT THE DEFAULT AND THE BLOCKER IS NAMED. All three are
+head_dim 64 -- which r395's axis says is the WORST case, so the direction is
+covered -- but none of them is a model whose layers REFUSE. gemma-4 refused
+308 of its 385 layer calls (r395/r396), and such a model under auto would
+build the mirror, feed it, and use it for a fifth of its layers. That is the
+107 ms shape from section 4 wearing a different hat, and it is one board round
+to settle. This board has 736 MB free and gemma-3 is 722.
