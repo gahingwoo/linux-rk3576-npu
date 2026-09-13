@@ -307,3 +307,49 @@ the release, while the buffer is still prepped, folds two of the four away.
 ⚠ It needs the next call's plan to equal this one's, which is true for 15 of
 every 16 calls (same shapes, one per layer) and false when npad grows; f->last
 already exists for exactly that comparison.
+
+=====================================================================
+13. THE SOFTMAX SCALE RIDES ALONG
+---------------------------------------------------------------------
+Attention wants softmax(x * scale) and took a pass of its own to get it --
+read and write over rows that total 186 million floats at 852 tokens.
+Multiplication by a POSITIVE constant is monotonic, so max(x * s) is
+max(x) * s and the multiply folds into the exponential pass's existing load.
+
+   softmax    458 / 463  ->  359 / 361 ms     (four passes a row become three)
+   attention  3.00 / 2.99 -> 2.87 / 2.89 ms a row     layer 2206 -> 2109
+
+🏁 24) BIT IDENTICAL, NOT MERELY CLOSE. The old form stored x[i] * s and read
+it back, and an fp32 product is exactly representable in fp32, so the store
+and reload changed nothing. Text identical to the CPU arm AND to the previous
+build, worst relative error unchanged at 0.0086 -- and the CPU arm is the
+right control here because it applies its scale inside attn_dot and was not
+touched.
+
+=====================================================================
+14. WHERE THE ROUND ENDS
+---------------------------------------------------------------------
+   attention, 852 tokens      5.48  ->  2.88 ms a row     CPU arm 4.00
+   the layer                  4669  ->  2109 ms
+
+   fence    880   42%   the hardware
+   softmax  360   17%
+   pack     202   10%
+   poison   195    9%   ⭐ the two dma_syncs, not the sentinels
+   plan     166    8%   ⭐ the release's fini
+   psync    135    6%
+   rest     171    8%
+
+⭐ 25) THE NEXT ONE IS STILL THE SYNC COUNT, AND THE OBVIOUS FOLD DOES NOT
+WORK. The scores handle does four whole-buffer dma_syncs of its 8.6 MB output
+per call. Writing the sentinels before the release, while the buffer is still
+prepped, would fold two away -- except that the sentinel sits on the first
+word of each ROW and the softmax then writes every word of every row, so a
+sentinel written before the softmax is gone by the time the job runs. It would
+have to be written after the values pack has finished reading, which is a
+caller-side entry point (poison_and_release) rather than anything inside
+charsiu_fp16_matmul_group.
+
+⚠ 26) AND THE CURVE IN SECTION 11 IS NOW DATED BY TWO MORE CHANGES. The
+threshold stays at 512 regardless, for the reason in section 22 -- but the
+crossover is below 402 and nobody has measured where.
