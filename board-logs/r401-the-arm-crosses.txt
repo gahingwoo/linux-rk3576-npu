@@ -353,3 +353,58 @@ charsiu_fp16_matmul_group.
 ⚠ 26) AND THE CURVE IN SECTION 11 IS NOW DATED BY TWO MORE CHANGES. The
 threshold stays at 512 regardless, for the reason in section 22 -- but the
 crossover is below 402 and nobody has measured where.
+
+=====================================================================
+15. THE SENTINELS GO IN BEFORE THE RELEASE
+---------------------------------------------------------------------
+Section 25 said the obvious fold does not work, and named the shape that does:
+write the sentinels once the values pack has finished reading the scores, so
+the release's fini carries them and the next group skips a prep and a fini of
+its whole 8.6 MB output buffer. That is a caller-side entry point,
+charsiu_fp16_poison_and_release, because only the caller knows when it has
+finished reading.
+
+   scores group   907 / 914  ->  710 / 712 ms      poison 162 -> 24
+   attention      2.88 / 2.86 -> 2.75 / 2.76 ms a row    layer 2107 -> 1996
+
+🏁 27) PREDICTED 15 OF EVERY 16 AND MEASURED 165 OF 176. One shape per layer,
+changing only when the chunk does: 11 chunks of 16 layers with the first of
+each missing. The runtime counts it rather than the comment asserting it.
+
+🔑 28) AND THE PREDICATE IS A TESTED FUNCTION, because it is the piece that
+fails SILENTLY. If it says the buffer is still poisoned when it is not, the
+readback finds live data, reports a healthy job, and reports exactly what it
+would report for a healthy job -- the check stops being a check and no log
+says so. charsiu_poison_matches in src/sentinel.h, seven cases in
+tests/sentinel.c, including that offsets alone are not enough: a sentinel sits
+at o[r * n] for r < m.
+
+⚠ The values group reads 800 -> 885 because poison_and_release is called from
+inside its timer. The honest pair is 1707 -> 1595. The scores handle is now
+72% fence.
+
+=====================================================================
+16. THE ROUND, END TO END
+---------------------------------------------------------------------
+   attention, 852 tokens      5.48  ->  2.75 ms a row      CPU arm 4.00
+   the layer                  4669  ->  1996 ms
+
+    tokens      52     102     202     302     452     852   crossover
+    r400       1.229   1.208     -       -     1.220   1.186   none, flat
+    §3         1.202   1.182   1.133     -     1.043   0.967    ~680
+    §6         1.196   1.174   1.108     -     1.002   0.916    ~452
+    §10        1.204   1.162   1.092     -     0.977   0.886    ~402
+    §15        1.207   1.153   1.087   1.035   0.964   0.864    ~376
+
+   correctness unchanged at every step: worst 0.0086 relative at 852 tokens,
+   text identical to the CPU arm (md5 f50208bf) at every build after §10
+
+🏁 29) AN ARM WITH NO CROSSOVER AT ANY LENGTH NOW WINS BY 3.6% AT 452 TOKENS
+AND 16% AT 852. CHARSIU_ATTN_NPU_MIN is 448, re-derived from this curve four
+times in one day, which is why the whole table is in the comment beside it.
+
+⚠ 30) WHAT IS LEFT IS MOSTLY THE HARDWARE. Of 1996 ms in the layer, fence is
+880 -- and the scores handle is 72% fence. The fp16 attention matmuls run at
+0.119 TMAC/s against the int4 path's 0.45 to 0.70 on the same silicon, because
+both of them are skinny on one axis (k = 64 for the scores, n = 64 for the
+values). That is the next wall and it is not a CPU-side one.
