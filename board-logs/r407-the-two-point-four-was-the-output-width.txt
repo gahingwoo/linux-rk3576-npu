@@ -255,7 +255,42 @@ another) and a flush before the caller consumes Y. q, k and v are independent
 of each other and are three tensors in a row; gate+up feeds down and is not.
 
 =====================================================================
-6. WHAT THIS ROUND LEAVES
+6. ⭐⭐⭐ AND THE CEILING IS MEASURED, NOT PROJECTED -- AND IT IS AHEAD
+---------------------------------------------------------------------
+Section 5's 1610 ms is arithmetic on two fields of a stage table, which is a
+better class of guess than r404's and is still a guess. It rests on `read`
+being 1.93 ms of WALL CLOCK rather than a counter that already overlaps
+something. CHARSIU_NPU_NO_READ=1 measures it: the fence still runs, the
+hardware still computes, the gather is skipped, and Y is left holding whatever
+was there.
+
+852 tokens, two passes each, arms alternating:
+
+    shipped     TTFT 6931 / 6933   8.02 ms a row   fence 1.82   read 1.93
+    no gather   TTFT 5450 / 5422   6.27 ms a row   fence 2.02   read 0.00
+
+    the vendor, same text, 885 of their tokens               6027 ms
+
+🏁 15) THE CEILING IS ABOUT 5436 ms AND THE VENDOR IS 6027. This is the first
+time in this project that the target has been a number somebody measured
+rather than a projection from a factor -- and the last two such factors both
+turned out not to be factors.
+
+⚠ 16) IT IS A CEILING AND NOT A RESULT, twice over. It REMOVES the work rather
+than moving it, and the text it produces is garbage by construction ("The
+capital of France is" comes back " is the 120, 156, 157,") -- which is the
+check that says the arm ran at all. A real pipeline still has to do the
+gather; its floor is max(pack + read, fence) = 2.75 ms a row against this arm's
+2.95, so the two are close and this one is, if anything, slightly pessimistic.
+
+🔑 17) AND THE FENCE GREW BY 0.20 ms A ROW WHEN THE GATHER WENT, 1.82 to 2.02.
+That is the honest part of the number: some of the second device's wait was
+already being absorbed by the first device's gather, so that much of the 1.93
+was never idle to begin with. Printing it is why this arm is worth more than
+the subtraction it replaces.
+
+=====================================================================
+7. WHAT THIS ROUND LEAVES
 ---------------------------------------------------------------------
 ⛔ int8 KV is not the road. K is 1.04x. V is 1.45x and worth about 120 ms, and
    it now costs an int8 V surface with a repack on every ladder growth, int8
@@ -263,8 +298,9 @@ of each other and are three tensors in a row; gate+up feeds down and is not.
    scale because acc_out ignores the table, and the m>1 accumulator order.
    120 ms of 7100 for all of that.
 
-⭐ The named target is the int4 readback, and there are now two roads into it
-   with a measured number on each:
+⭐ The named target is the int4 readback -- 1.93 ms a row, the largest line in
+   the prefill -- and the ceiling for moving it is MEASURED at about 5436 ms
+   against the vendor's 6027 (section 6). Two roads:
 
    a) MOVE IT, not make it faster. 1.96 ms a row of NPU idle against 1.82 of
       CPU idle, both read off one line. A cross-tensor pipeline is worth about
