@@ -199,9 +199,10 @@ the CPU arm to the millisecond because the mirror is never built.
 head_dim 64 -- which r395's axis says is the WORST case, so the direction is
 covered -- but none of them is a model whose layers REFUSE. gemma-4 refused
 308 of its 385 layer calls (r395/r396), and such a model under auto would
-build the mirror, feed it, and use it for a fifth of its layers. That is the
-107 ms shape from section 4 wearing a different hat, and it is one board round
-to settle. This board has 736 MB free and gemma-3 is 722.
+build the mirror, feed it, and use it for a fifth of its layers.
+
+⛔⛔ WITHDRAWN IN SECTION 18. Both halves of that paragraph were wrong: gemma-4
+refuses NOTHING any more, and the board it "could not fit on" already had it.
 
 =====================================================================
 9. head_dim 256: gemma-3-1b, and a text difference that is not a fault
@@ -433,6 +434,39 @@ SHORT ONE. The short rows are not "about the same" -- the mirror is not built,
 so auto and off run the identical code path and the difference is the board.
 
 ⛔ 32) STILL NOT THE DEFAULT, AND THE BLOCKER IS UNCHANGED: none of these four
-is a model whose layers REFUSE. gemma-4 refused 308 of 385 layer calls, and
-such a model under auto builds the mirror, feeds it, and uses a fifth of it.
-It is 2.84 GB and this board has 425 MB free.
+is a model whose layers REFUSE. -- WITHDRAWN, see section 18.
+
+=====================================================================
+18. ⛔ THE BLOCKER DID NOT EXIST, AND NEITHER DID THE REASON IT COULD NOT
+    BE TESTED
+---------------------------------------------------------------------
+Sections 14 and 32 said auto cannot be a default until it is measured on a
+model whose layers REFUSE, cited gemma-4 at 308 refusals of 385, and said the
+board could not hold it. Both halves are wrong and the second one is why the
+first stood.
+
+   gemma-4-E2B-it-Q4_0, 852 tokens, 852-token prompt, clock pinned
+
+     auto  14697 / 13996 ms     ran 385 layers, fell back on 0, refused 0
+     on    14334 / 14405 ms     ran 385 layers, fell back on 0, refused 0
+     off   19815 / 19832 ms
+     text identical on every arm, md5 3e98bb06
+
+🏁 33) 28% -- THE LARGEST OF ANY MODEL -- AND ZERO REFUSALS. 385 is 35 layers
+times 11 chunks: every layer call of every chunk ran on the hardware. The 308
+refusals were a fact about the tree before r396 gave the mirror a head per
+layer, and I quoted it out of a board log instead of re-running it.
+
+⛔ 34) AND THE MODEL WAS ALREADY ON THE BOARD. `ls /opt/charsiu/models/`
+returned three files, from which "this board has three models" was written
+down, a blocker was declared untestable for want of 2.4 GB, and 689 MB of
+gemma-3 was copied over a byte-identical file already sitting in
+/opt/vendor/models -- next to gemma-4 and five others.
+
+🔑 35) "THERE IS NO SPACE" AND "I DID NOT FIND SPACE" ARE DIFFERENT SENTENCES,
+and only the second one was true. `df -h` then `du -sh <mount>/*` is thirty
+seconds and answers what is on a board; one `ls` answers what is in one
+directory. The stale pointer in my own notes -- models live in
+/opt/charsiu/models and /root/.charsiu/models -- is what stopped the looking:
+an index that is out of date is worse than no index, because it reads like an
+answer.
