@@ -202,3 +202,36 @@ covered -- but none of them is a model whose layers REFUSE. gemma-4 refused
 build the mirror, feed it, and use it for a fifth of its layers. That is the
 107 ms shape from section 4 wearing a different hat, and it is one board round
 to settle. This board has 736 MB free and gemma-3 is 722.
+
+=====================================================================
+9. head_dim 256: gemma-3-1b, and a text difference that is not a fault
+---------------------------------------------------------------------
+Put on the board's /opt/vendor (425 MB left after), md5 999b17a8, same file as
+the desk. It also brings the sliding window, which is the one branch of the
+pooled softmax callback nothing else here exercises.
+
+   gemma-3-1b, 852 tokens     auto 6222/6109   on 6097/6154   off 7577/7466
+
+🏁 15) 18% AT head_dim 256, against 8% at head_dim 64. r395's axis holds with
+this code, and from the right side: the model that gains least is the one the
+threshold was calibrated on.
+
+⚠ 16) AND AT 202 TOKENS THE ALWAYS-ON ARM WRITES DIFFERENT TEXT. md5 3f636ee2
+against the CPU arm's e75b85b2. That is not a fault and the tree already owns
+the instrument that says so:
+
+   gemma-3 at 202, both arms on the same rows: worst 0.0013 to 0.0025 relative
+   Llama   at 202, both arms on the same rows: worst 0.0015 to 0.0025 relative
+
+Identical error magnitudes, and Llama's text AGREES. The top four logits after
+the prompt agree in rank and to 0.05 in 19.9. gemma-3 simply meets a close
+logit inside eight generated tokens and Llama does not.
+
+🔑 17) SO "THE TEXT DIFFERS" IS NOT A VERDICT ON THIS ARM, and neither is "the
+text agrees". Same lesson as neon_control.sh this morning, where two of twelve
+models diverged on a 7e-5 gap between two equally good tokens.
+CHARSIU_ATTN_NPU_CHECK is the instrument; the sentences are not.
+
+🏁 18) auto SIDESTEPS IT ANYWAY. At 202 tokens auto refuses, so its text is
+the CPU arm's to the byte -- which is the other reason a threshold is better
+than an always-on default.
