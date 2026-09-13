@@ -1,0 +1,133 @@
+round 409, 2026-09-14 — two costs around the fp16 attention groups, and two
+                        measurements that were answering smaller questions
+
+  board     ROCK 4D. ⚠ TWO BOOTS: 2606ab9f for the deferred-gather bisection
+            and 1ae59450 from mid-morning on. NPU 594 MHz on both, verified
+            after the fact on the second (see section 4), cpu 2016/2208 pinned
+  binaries  /root/charsiu_run_bi, _bd1, _site, _att, _emit, _r409
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf unless a section says otherwise
+
+=====================================================================
+1. ⛔ THE DEFERRED GATHER: THE FAILURE COUNT IS NOT A MEASUREMENT
+---------------------------------------------------------------------
+r408 section 7 left the deferred gather off, wrong on 5 of 9 models, cause not
+found. CHARSIU_NPU_DEFER_READ became a POSITION selector so the flush could be
+moved without moving anything else:
+
+    2  at the end of the deferring call                  0 of 9 differ
+    3  at the top of the next call                       5 of 9
+    4  after batch_outbuf                                5 of 9
+    5  after the pack and emit, before the submit        5 of 9
+    1  after the submit, the only overlapping position   9 of 9
+    1  repeated                                          9 of 9
+
+That reads as a clean bisection: =2 clean says the record-and-restore machinery
+is right, and the step from 5 to 1 is the pack, worth 4 of the 9. g->bd1 is in
+the pack and is exactly the right shape of hazard -- its own allocation comment
+says "a single array would hand every slice the last one's scales", and a
+deferred gather makes that one scope up. Snapshotting it took =1 from 9 to 5.
+
+⛔ 1) AND THEN TWO RESULTS THAT CANNOT BOTH BE TRUE OF A DETERMINISTIC FAULT:
+
+  - the bd1 snapshot changed =3 from 5 differing to 8. At position 3 the flush
+    runs before the next call has touched anything, so g->bd1 still holds the
+    deferring tensor's own values and the restore writes bytes that are already
+    there. A provable no-op moved the count by three models.
+  - CHARSIU_DEFER_SITE=qkv defers a strict SUBSET of the sites and came back 8
+    differing against the superset's 5. Fewer deferrals cannot cause more
+    failures.
+
+🔑 2) SO "N OF 9 MODELS DIFFER" IS NOT STABLE ENOUGH TO COMPARE TWO BUILDS
+WITH, and every inference from 5 against 7 against 9 was reading its variance,
+including the attribution of the 9-to-5 step to bd1. That attribution is
+withdrawn. The snapshot stays because it is a real hazard by construction, not
+because it was measured.
+
+⚠ 3) AND I HAD CHECKED REPEATABILITY, ONCE. =1 twice on one build, 9 and 9.
+That was then relied on for every later comparison, including one where the
+change was a provable no-op. A control run once is not a property of the
+instrument.
+
+What repeats is the two ends: =0 is 0 of 9 twice and =2 is 0 of 9 twice on two
+builds. A non-repeatable failure count points at a race or a read of memory
+that is not there, rather than at a field somebody forgot to snapshot. Parked,
+default off.
+
+=====================================================================
+2. ⭐ THE REGISTER STREAM IS THE SAME BYTES EVERY LAYER BUT ONE WORD
+---------------------------------------------------------------------
+charsiu_emit_job depends on the shape and four addresses. A chunk's sixteen
+layers ask the fp16 unit for the same shapes at the same offsets in buffers
+that have not moved -- except the KV surface, which is per layer.
+
+A cache keyed on all of it hit 0 of 176 groups, measured, which is the useful
+half of that reading: it says the shapes DO repeat and names the one field
+that does not.
+
+charsiu_patch_weight_addr rewrites that word (CNA 0x1110). tests/patch_waddr.c
+holds it to the only standard worth having -- the patched stream must be byte
+for byte what emit_job would have produced, at every shape attention runs and
+all three weight dtypes -- and the patch refuses unless exactly one word
+carries the address, which is the guard against an emitter that later folds it
+into a size register as well.
+
+    171 of 176 groups on the values handle, 165 of 176 on the scores one
+    emit 28 -> 10 ms and 29 -> 11
+
+The misses are the chunk boundaries, where the prompt's extent changes n.
+
+=====================================================================
+3. ⭐ AND THE PREP ON THE INPUT SURFACE INVALIDATES A BUFFER NOBODY WRITES
+---------------------------------------------------------------------
+attn_npu_layer already makes this argument for the KV surfaces: "the hardware
+only ever reads these, so the CPU's copy is never stale and there is nothing to
+invalidate". The fp16 input surface is the same kind of buffer. What the prep
+also does is wait on the buffer's fence, and that wait is over before the next
+group starts.
+
+    psync 111 -> 62 ms on the values group, 18 -> 11 on the scores one
+
+⚠ 4) THE PACK GIVES 13 ms OF IT BACK, because it now takes the cache misses the
+invalidate used to absorb. Net about 43 ms. Reporting the psync column alone
+would have claimed 56.
+
+🏁 5) BOTH CORRECT ON ALL NINE MODELS with fp16 attention FORCED on: 9 compared,
+0 differing. That arm is worth naming on its own -- the shipped threshold is
+448 tokens and board_text_all's prompts are 64 to 88, so the default run has
+never exercised the fp16 attention path at all. This is the first check that
+does.
+
+⚠ 6) AND ~79 ms IS BELOW WHAT THE TTFT LADDER CAN RESOLVE. The ladder's 852
+point has a range of about 3% on this board, which is 200 ms. The evidence for
+this round is the stage columns and the hit counters, which are direct, and
+NOT a TTFT number. The shipped figure stays r408's: 7016 ms at 852 tokens
+against the vendor's 6027.
+
+=====================================================================
+4. ⛔⛔ TWO MEASUREMENTS THAT WERE ANSWERING SMALLER QUESTIONS
+---------------------------------------------------------------------
+⛔ 7) /opt/vendor IS ITS OWN PARTITION AND IT CAME UNMOUNTED. board_text_all
+searched the same four directories, found 2 gguf files instead of 9, and
+printed "2 models compared, 0 differing". Nothing was wrong with the check. It
+now prints every directory with its gguf count and refuses below
+CHARSIU_TEXT_MIN_MODELS.
+
+⛔ 8) THE BOARD REBOOTED MID-SESSION AND CAME UP WITH debugfs NOT MOUNTED, so
+every script's `$(cat /sys/kernel/debug/clk/... 2>/dev/null)` returned empty
+and the headers printed "npu clk   Hz". A full TTFT ladder ran and completed
+under a rate nobody could read. The rate was 594 MHz, confirmed afterwards by
+mounting debugfs, but that was luck rather than evidence.
+
+tests/board_clk.sh mounts debugfs if it has to and refuses otherwise.
+
+⚠ 9) AND THE FIRST VERSION OF THAT REFUSAL COULD NOT FIRE: `exit 1` inside a
+function used as `$(npu_clk)` ends the subshell, not the script, so it printed
+a blank clock and carried on. Exactly the hole it was written to close, with a
+guard in it that did nothing. Callers do `NPUCLK=$(npu_clk) || exit 1` now, and
+CHARSIU_NPU_CLK_PATH exists so the refusal can be pointed at nothing and
+WATCHED to fire. It does, exit status 1.
+
+🔑 10) BOTH OF TODAY'S HOLES ARE THE SAME SENTENCE: a thing that is not there
+reads exactly like a thing whose value is nothing. An unmounted directory reads
+as an empty one and an unmounted debugfs reads as a clock of zero, and both
+produced output that looks like a completed round.
