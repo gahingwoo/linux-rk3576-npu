@@ -1,0 +1,96 @@
+round 396, 2026-09-13 — the fp16 mirror holds a head per layer, and gemma-4 doubles its win
+
+r394 found gemma-4-E2B running 7 of its 35 attention layers on the NPU and the
+other 28 silently on the CPU, because its sliding-window layers are head_dim
+256 where its full ones are 512 and the fp16 mirror was built for one.
+
+⚠⚠ THAT WAS A TRADE-OFF AND NOT A BUG, and r394 was written as though it might
+be one. `a->hd` is the float cache's STRIDE: attn_kcache_at and attn_vcache_at
+are correct only at the stride, and the comment beside them names gemma4 --
+"indexing the cache by the live head would make layer 4 read where layer 0
+wrote". The mirror refused the mismatching layers rather than pack a 256 long
+head into a 512 wide buffer and read 256 columns of whatever was there. With
+nothing measured that was the right call. r394 and r395 measured it.
+
+WHAT CHANGED  a->hd stays exactly what it was, the stride. A new a->lhd[layer]
+              carries the layer's own head, and it is what sizes the mirror's
+              buffers and what the packers are given. Eight sites; the two
+              repack loops now carry BOTH widths on one line -- packed at the
+              layer's head, addressed at the stride -- and say so.
+
+              The model already knew: llama_load fills L->head_dim from
+              key_length_swa for window layers and m->head_dim is already the
+              LARGER of the two, because the cache is one allocation.
+
+              The memory estimate is summed per layer now as well. Sizing every
+              layer at the stride over-counted gemma-4 by a third, which is a
+              cap that refuses a run the hardware would have taken.
+
+=====================================================================
+1. Coverage
+---------------------------------------------------------------------
+  before   ran  21 layers, fell back on 0, refused 84   (head_dim 84)
+  after    ran 105 layers, fell back on 0, refused 0
+
+105 = 3 chunks x 35 layers. Every layer reaches the hardware.
+
+=====================================================================
+2. What it bought, gemma-4-E2B, NPU 594 MHz, CPU pinned
+---------------------------------------------------------------------
+  ratio = NPU attention arm / CPU arm; below 1.00 the NPU wins
+
+    tokens    7 of 35 layers    35 of 35     CPU ms     NPU ms (after)
+        52             1.105       1.131       1028               1163
+       202             1.032       1.042       3609               3759
+       452             0.975       0.896       8962               8032
+       852             0.936       0.804      19900              16000
+
+🏁 1) 0.936 -> 0.804 AT 852 TOKENS, AND 0.804 IS THE BEST NUMBER ON THE WHOLE
+AXIS -- better than gemma-3-1b's 0.877 at head_dim 256. In wall clock the
+prompt goes 19900 ms to 16000, 19.6% off, where before the change it was 6.5%.
+The fix is worth 14% of gemma-4's long-prompt TTFT on its own.
+
+🏁 2) THE CROSSOVER MOVED IN, about 380 tokens to about 274.
+
+⚠ 3) THE SHORT END GOT SLIGHTLY WORSE, 1.105 -> 1.131 at 52 tokens and 1.032 ->
+1.042 at 202. 28 more layers each paying a dispatch that does not yet earn its
+keep is exactly what the axis predicts below the crossover; it is not noise and
+it is not a reason to stop.
+
+⚠ 4) AND gemma-4 IS STILL NOT A CLEAN head_dim 512 POINT. It is a mixture, 7
+layers at 512 and 28 at 256, and now all of them run. What it is not is a
+measurement of either head_dim on its own.
+
+⛔ 5) THE PER-LAYER ARITHMETIC IS TEMPTING AND IT DOES NOT SEPARATE THE TWO.
+The 7 head_dim 512 layers are worth 6.4 points of the ratio and the 28 at 256
+are worth 13.2, which is 0.91 a layer against 0.47 -- twice the benefit per
+layer for twice the head. That reads like the head_dim scaling this axis was
+looking for, and it is not evidence for it: the 512 layers are the GLOBAL ones
+and the 256 are the sliding-window ones, so at 852 tokens a 512 layer attends
+over up to 852 positions and a 256 layer over at most 512. The work ratio is
+about 1.7 and the benefit ratio is 1.94. Head length and attention span move
+together in this model and nothing here can pull them apart.
+
+=====================================================================
+3. Correctness
+---------------------------------------------------------------------
+Both arms on the same rows, at the longest length of the sweep:
+  worst 0.0017 to 0.002 relative over 385 layer-calls, 0 fell back, 0 refused.
+That is at or below every other model on the axis.
+
+⚠ For the seven single-head_dim models a->lhd[l] equals a->hd at every layer,
+so the path is unchanged by construction -- and `by construction` is not a
+board round, which is why board_text_all.sh ran over all nine afterwards.
+
+⛔ AND THE FIRST OF THOSE RUNS PROVED NOTHING, WHICH TOOK NOTICING. It ran at
+the default, and at the default attn_npu_want_for() returns 0 and
+attn_npu_get() returns NULL on its first line: every line changed in this round
+is unreachable. Nine models, zero differing, and not one of them had executed
+the code. The run that counts is the same sweep with CHARSIU_ATTN_NPU=1, which
+is what the verdict below is.
+
+=====================================================================
+⚠ STILL NOT A REASON TO CHANGE THE DEFAULT
+   Two models now win and both are gemma. The head_dim 128 pair still only
+   breaks even at the longest prompt, and head_dim 64 and 96 lose everywhere.
+   CHARSIU_ATTN_NPU stays off.
