@@ -1,0 +1,80 @@
+round 406, 2026-09-13 — the quality gate on the last big lever: int8 is free,
+                        int4 is dead, and the simulation is optimistic in a
+                        way that matters
+
+r404 priced an int8 or int4 KV surface on the hardware -- 2.4x on the scores
+matmul, 1.8x on the values one -- and r405 established that the plan should be
+aimed at the measured stage table rather than at a fitted coefficient. On that
+table the KV surface dtype is the largest single item left. Building it is a
+real project. This is the question that gates it, asked before any of it.
+
+  CHARSIU_KV_BITS=8|4 rounds each head's hd floats through a symmetric absmax
+  quantiser as they enter the cache and leaves them as floats. It makes
+  nothing faster. Applied before the fp16 mirror is appended too, so both
+  attention arms see the same numbers.
+
+=====================================================================
+1. THE ANSWER
+---------------------------------------------------------------------
+Board, shipping config, batched, tests/corpus/long.txt (md5 4237c8fc),
+Llama-3.2-1B-Instruct-Q4_0:
+
+    attention arm    KV fp16      KV int8            KV int4
+    CPU              40.9987      41.1458 (+0.36%)   62.9110 (+53%)
+    NPU              40.9213      41.0076 (+0.21%)   --
+
+  desk, CPU path, same corpus:  20.3096 / 20.2706 / 27.9903 (+38%)
+
+🏁 1) int8 COSTS 0.2 TO 0.4 PERCENT. Two arms, two quantiser configurations,
+the same direction and the same size.
+
+⛔ 2) int4 COSTS 38 TO 53 PERCENT AND IS DEAD. Which also settles the dtype
+question r404 left open: int4 was the FASTER weight at k = 1024 (0.087 against
+int8's 0.071) and it cannot be used. Both surfaces are int8, so the fence
+factors are 2.4x on the scores matmul and 1.45x on the values one, not 1.8.
+
+=====================================================================
+2. ⚠⚠ AND THE SIMULATION IS OPTIMISTIC FOR THE VALUES SURFACE
+---------------------------------------------------------------------
+This is the part to carry forward rather than the number.
+
+The hardware's coefficient buffer holds one scale per OUTPUT CHANNEL.
+
+  scores matmul   output channels are POSITIONS. A scale per position, shared
+                  across head_dim. That is exactly what this simulates.
+  values matmul   output channels are HEAD_DIM INDICES. A real surface needs
+                  one scale per head_dim index, shared across EVERY POSITION
+                  in the context -- and this simulates one per position shared
+                  across head_dim, which is the other axis.
+
+⛔ 3) SO THE VALUES ROW IS A LOWER BOUND ON THE DAMAGE, NOT A MEASUREMENT OF
+IT. A scale shared across a whole context is coarser than one shared across 64
+elements of one position, and V's magnitude varies with position. The honest
+next step is to simulate THAT axis -- a running per-head_dim absmax over the
+whole context -- before anything is built.
+
+🔑 4) THIS IS THE SAME SHAPE AS THE DAY'S OTHER THREE. A number that gates a
+decision gets measured the way the decision will be made, not the way that is
+easy to measure. Quantising along the convenient axis and reading the answer
+as if it were the other one is how "six times" happened.
+
+=====================================================================
+3. WHERE THE PLAN STANDS, ENTIRELY ON MEASURED STAGE COSTS
+---------------------------------------------------------------------
+    852 tokens          charsiu 7191 ms      vendor 6027 ms     1.193x
+
+    attention 2343 ms, of which
+      fence   893   int8 surfaces: scores /2.4, values /1.45      -416 ms
+      syncs   301   the surfaces halve, and they are whole-buffer  -150 ms
+      softmax 358   still three passes a row                       -180 ms
+      pack    200
+                                                        TTFT about 6445
+
+⚠ 5) STILL BEHIND 6027 AND THE ARITHMETIC IS A PROJECTION. Every line above
+is a measured stage cost times a measured factor, which is a better class of
+guess than a fitted coefficient, and it is still a guess.
+
+⚠ 6) ONE MEASURED DIFFERENCE REMAINS UNPRICED: r405 found the vendor's
+contraction extent steps by 32 where ours doubles, so at 852 tokens we reduce
+over 1024 where 864 would do -- 19% of the values matmul, and it needs a
+finer ladder in attn_npu_fit rather than a new dtype.
