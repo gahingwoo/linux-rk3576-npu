@@ -1,6 +1,6 @@
-From a9a987c6e2c2def653f98039cb93ce46d3326984 Mon Sep 17 00:00:00 2001
+From e5cb712e6b334066689be946e4fa60e40558b8f7 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Mon, 14 Sep 2026 21:27:25 +1200
+Date: Mon, 14 Sep 2026 21:47:36 +1200
 Subject: [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -31,9 +31,9 @@ made it miss its deadline. His kprobe on drm_sched_fence_finished() is
 the direct witness: two cancellations, two all-0x80 inferences, matched
 to 2 ms against a 280 ms round period.
 
-What falls from 3/14: "no manifestation on either arm, oracle 48/48
-throughout" for 19 August, and "one event in 53 differential resets
-against zero in 49" as a bound. What stands: the provenance, and the
+What falls from 3/14: its claim that 19 August showed no manifestation on
+either arm with the oracle 48/48 throughout, and "one event in 53
+differential resets against zero in 49" as a bound. What stands: the provenance, and the
 caveat that the protocol bounds and does not prove.
 
   3/14   loses those two paragraphs. His own summary replaces them,
@@ -42,21 +42,50 @@ caveat that the protocol bounds and does not prove.
          it says what the all-0x80 buffer is, from the code. His
          2026-09-12 message is a third Link.
 
-  3/14   drops "differential base" from its Tested-by comment. 2/14 and
-         4/14 already read "RK3588, three cores, induced reset,
-         JOB_TIMEOUT_MS=2"; all three now say the same thing, which is
-         what he tested.
+  3/14   drops "differential base" from its Tested-by comment, and 2/14
+         gains "induced reset, JOB_TIMEOUT_MS=2". 4/14 already read
+         that. All three now say the same thing, which is what he
+         tested: one protocol, three patches, no differential.
 
-  2/14   gains "induced reset, JOB_TIMEOUT_MS=2" for the same reason.
+  4/14   loses "45 induced resets across three cores". He corrected that
+         in the same mail: all 45 landed on core 0, the other two being
+         bound but idle in his single client protocol. Nothing else in
+         that patch changes.
 
-The code is byte for byte what v12 posted. Nothing else in the series
-changed.
+The code is byte for byte what v12 posted. No other patch changed.
 
 This is worth a respin rather than a note in the thread because a commit
 message is the permanent record, and v12's states something its own
 witness has retracted.
 
-Still open from v12, no reply yet.
+Sashiko reviewed v12 on 12 September, ten mails, and nothing in v13
+answers any of it. Three findings are new:
+
+  4/14  [High] the runtime PM put is asynchronous, and drm_sched_start()
+        at the end of rocket_reset() lets the next job's
+        pm_runtime_resume_and_get() cancel the pending autosuspend.
+        pm_runtime_put_sync_suspend() is suggested. This is the v11
+        finding below with a second mechanism attached.
+  9/14  [High] forcing the NPU parent domain off at probe bypasses the
+        idle sequence for its child domains, risking AXI bus hangs, and
+        can make pm_genpd_add_subdomain() fail. 9/14 had not been
+        reviewed before this.
+  9/14  [Medium] need_regulator is being hijacked to force that
+        power-off, which warns on the boards that declare no
+        domain-supply.
+
+  8/14  [High] rockchip,rk3568-iommu is called an unsafe fallback for
+        rockchip,rk3576-npu-iommu, because a driver older than the July
+        2026 devm_clk_bulk_get_all change binds the fallback and enables
+        two of the five clocks. That is against a binding this cover
+        calls unchanged since v9 and Acked, so it is worth saying out
+        loud rather than leaving in the thread.
+
+Say if any of those should block the series; none of them is answered
+here and v13 changes no code.
+
+Still open from v11, and the measurement below is the half of it that
+could be measured.
 
 Sashiko raised one thing on 4/14 that an argument does not settle.
 pm_runtime_put_autosuspend() is asynchronous with a 50 ms delay, so on a
@@ -64,8 +93,8 @@ workload whose submit gap is shorter the domain does not cycle after a
 reset, 10/14's power-on pulse never fires, and rocket_core_reset()'s own
 resets are all that run. Measured on the domain rather than on the
 device, over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D, genpd's npu
-domain took 46.8 s active and 14.2 s idle, which sum to the wall clock,
-and its idle-state usage count rose by 202. The domain cycles about two
+domain took 46.8 s active and 14.2 s idle, which account for the 60.8 s
+of wall clock to within 0.2 s, and its idle-state usage count rose by 202. The domain cycles about two
 hundred times a minute under a real decode, and the pulse fires. Whether
 it cycles after a timed-out job is the half Sashiko is asking about, and
 that depends on the gap to the next submit. Inducing one needs a kernel
@@ -75,14 +104,17 @@ argument rather than a measurement.
 5/14 moves the iommu_detach_group(NULL, iommu_group_get(core->dev)) line
 out of the IRQ handler and into rocket_job_next_locked().
 ZhaoJinming's "accel/rocket: Fix iommu_group leak and unsafe IRQ
-register access" changes the same line, is marked for stable, and
-carries the same Fixes tag as ours. Whichever lands first the other
+register access" changes the same line and is marked for stable. It
+carries Fixes: 0810d5ad88a1, which is the tag on our 2/14 and 4/14; our
+5/14 carries no Fixes tag at all. Whichever lands first the other
 conflicts; say which you would rather take.
 
-Findings Sashiko labelled pre-existing, for Tomeu. These five recur; it
-raised thirteen across the nine mails, and the one not listed worth
-naming is a 64-bit DMA address truncated to 32 bits, which faults the
-IOMMU above 4 GB.
+Findings Sashiko labelled pre-existing, for Tomeu. These five recur. The
+count is from the v11 round, nine mails and thirteen distinct findings,
+and the one not listed worth naming is a 64-bit DMA address truncated to
+32 bits, which faults the IOMMU above 4 GB. The v12 round drew ten mails,
+in which the iommu_group leak appears in four and num_cores was raised to
+Critical on 12/14.
 
   - the job completion path takes iommu_group_get(core->dev) and never
     puts it, one group reference a job, flagged on seven of the nine.

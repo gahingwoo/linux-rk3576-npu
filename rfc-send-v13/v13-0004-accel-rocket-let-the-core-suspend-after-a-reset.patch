@@ -1,4 +1,4 @@
-From c5c821194f7299b9f56da4fbf3e07a6c53f60d25 Mon Sep 17 00:00:00 2001
+From 86207c317efe465b457bf36bc16d71a90751c9af Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v13 04/14] accel/rocket: let the core suspend after a reset
@@ -29,10 +29,11 @@ is a plain pm_runtime_put() and is left alone here: it unwinds a
 pm_runtime_resume_and_get() that never reached the hardware, and changing
 it belongs in its own patch.
 
-Igor Paunovic ran the differential on RK3588: 45 induced resets across
-three cores, with and without the two preceding patches, and the domain
-dropped every single time with no MMU message on either kernel. So this is
-not rocket-wide. His conditions cross a healthy block with a lowered
+Igor Paunovic ran the differential on RK3588: 45 induced resets, all of
+them on core 0 with the other two cores bound but idle in his single
+client protocol, with and without the two preceding patches, and the
+domain dropped every single time with no MMU message on either kernel. So
+this is not rocket-wide. His conditions cross a healthy block with a lowered
 timeout rather than a hung one, which he was careful to say his protocol
 cannot settle, but it is what scopes the change to RK3576.
 

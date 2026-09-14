@@ -114,3 +114,74 @@ answered".
 ⚠ **The base must be refreshed at send time**, not now: next-20260911 is
 already three days old and the cover sentence claims the series applies to the
 tag it names.
+
+## The audit, 2026-09-14 — five false claims, and the reason to keep holding
+
+A review of the prepared series against the lore thread found nine things. Five
+changed the text; the other four are recorded here because they were checked.
+
+⛔ **1. 04/14 carried a claim its own witness had corrected, and v13's scope
+had excluded that patch.** Its body said "45 induced resets across three
+cores". Igor's 2026-09-12 mail: *"all of those resets landed on core 0
+(fdab0000), the other two cores being bound but idle in this single-client
+protocol"*. This is the same shape as the thing v13 exists to remove, on a
+patch carrying his Tested-by, and it survived because the plan above says
+"Nothing else changes in 02/14, 03/14 or 04/14". **That line was written before
+anybody looked.** A scope decided before the audit cannot exclude what the
+audit finds.
+
+⚠ The Tested-by comment still says "# RK3588, three cores" on all three, and
+that is correct and is what he asked for: three cores were bound, the resets
+landed on one. The tag says what hardware; the body said what the resets did.
+
+⛔ **2. "Still open from v12, no reply yet" was false.** Sashiko reviewed v12 on
+12 September, ten mails, with three NEW findings: a [High] on 4/14 (the
+asynchronous put, with a second mechanism the v11 finding did not have --
+drm_sched_start() lets the next job's resume cancel the pending autosuspend),
+and on 9/14 a [High] (forcing the parent domain off at probe bypasses the child
+domains' idle sequence) and a [Medium] (need_regulator hijacked to do it).
+**9/14 had never been reviewed before.** There is also a [High] on 8/14 calling
+rk3568-iommu an unsafe fallback, against a binding this cover calls unchanged
+since v9 and Acked.
+
+⛔ **3. The cover on disk and cover-blurb.txt had diverged.** The blurb was
+edited after the splice, so the .patch still carried a paragraph that said 2/14
+"already read" a comment it gains two lines later. `REGEN=1` re-splices and it
+is gone; `REGEN=0` would have sent it, and `REGEN=0` also skips the marker
+check. Nothing to fix in the script -- the default is right -- but the two
+files can disagree and only one of them is sent.
+
+⛔ **4. "carries the same Fixes tag as ours" (the ZhaoJinming paragraph).**
+5/14 carries no Fixes tag at all. The tag ZhaoJinming's patch matches is the
+one on 2/14 and 4/14. As written a maintainer concludes both sides of the
+conflict are stable-marked fixes of the same commit.
+
+⚠ **5. "46.8 s active and 14.2 s idle, which sum to the wall clock".** They sum
+to 61.0 s against 60.8 s of wall clock, and r387's log says so honestly:
+"60954 ms against 60800 ms". "Account for it to within 0.2 s" is what is true.
+
+Also corrected: the census of Sashiko findings is from the v11 round and now
+says so; a string attributed to 3/14 was Igor's paraphrase rather than the
+patch's words; and 03/14's "with this patch and the previous one removed
+together" now says which sessions were differential, because the quote under it
+aggregates a 12 September session that ran two patched arms and no unpatched
+one. Leaving a differential framing over a non-differential session is the
+error v13 exists to remove, repeating.
+
+### Checked and correct
+
+The quote in 03/14 is character-identical to his 2026-09-13 mail. All fourteen
+diff hunks are still byte identical to v12's after three commit messages
+changed. The tag list matches the trailers one for one. The bindings are
+diff-identical to the v9 patches. No em dash, en dash or non-ASCII byte
+anywhere in the cover or the patches. No reverse-engineering framing.
+
+### ⛔ AND THE HOLD IS NO LONGER JUST ETIQUETTE
+
+The earlier reason for holding was that a respin three days after v12 resets a
+reader for a no-code change. That still stands. What is new is that **v12 has
+unanswered [High] review findings, one of them on a patch nobody had reviewed
+before, and v13 answers none of them and changes no code.** Sending it would
+put a second version on the list with the same open questions and a cover that
+now names them. That is a decision about the series, not about the text, and it
+is not mine to take.
