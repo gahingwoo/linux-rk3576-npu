@@ -70,3 +70,58 @@ is the one that cannot see it.
 NEGATIVE, so the hardware path and the wall clock are counting different calls
 -- the rate above is not a fact about the hardware". The guard fired. Nobody
 had read it against the fit on the line below.
+
+=====================================================================
+3. 🔑 THE IOMMU NUMBER: BOTH INSTRUMENTS NEED A FLASH, AND THE SAVING
+   MAY NOT EXIST TO BE MEASURED
+---------------------------------------------------------------------
+"About 19.5 ms of a decode token is the per job IOMMU attach and detach" is
+the one number in this project's writing that is derived rather than measured:
+a per call floor multiplied by a call count. Two ways to settle it were
+prepared, and preparing them answered a different question first.
+
+⛔ 6) ftrace CANNOT RUN ON THIS BOARD. The kernel the board boots is snapshotted
+in kernel/base.config, and it says
+
+    # CONFIG_FTRACE is not set
+    # CONFIG_KPROBES is not set
+
+Everything in kernel/trace/Kconfig is inside `if FTRACE`, so there is no
+function_graph tracer; fs/Makefile builds tracefs only under CONFIG_TRACING,
+so /sys/kernel/debug/tracing does not exist there at all. There is no kprobe
+route either. The symbols are all traceable in principle -- iommu_attach_group
+and iommu_detach_group are exported globals with no notrace, and
+rocket_job_run has its address taken by .run_job so it cannot be inlined -- and
+none of that matters without the tracer.
+
+So the "no patch needed" option does not exist. Getting this number requires a
+reflash whichever instrument is chosen, which makes the debug patch the plan
+rather than the fallback. It is prepared, off by default behind its own
+Kconfig, and each of its five sites is a jump label nop when disarmed.
+
+⭐⭐ 7) AND THE STRONG A/B MAY HAVE NOTHING TO WIN. An IOMMU domain belongs to
+an open DRM FILE. charsiu_npu_open_mode calls charsiu_open(NULL) twice --
+npudev.c:1561 and :1569 -- and open_any_accel answers both with the same
+/dev/accel/accel0. Two files, two domains, and rocket_job_open gives each file
+ONE scheduler entity spanning ALL cores, so either domain can land on either
+core.
+
+"Keep the domain attached across jobs" then only saves the jobs whose domain
+did not change from the previous one. If the scheduler alternates the two
+entities on a core, attach-once degenerates into detach plus attach on nearly
+every job -- the baseline plus a kref dance, a LOSS.
+
+🔑 8) SO THE CHEAP MEASUREMENT COMES FIRST, AND IT IS A CEILING. The debug
+patch now also counts, per core, how often a job arrives carrying a different
+domain than the one before it. One pointer compare. That percentage is the
+hard ceiling on anything attach-once can remove, and it is readable from the
+same run that gives the floor. Near zero and the A/B is not worth two boots,
+and the 19.5 ms was never merely unmeasured: it was a saving that was not
+available.
+
+⚠ 9) TWO MORE THINGS THE A/B AS DRAFTED GETS WRONG. attach-once/0001 also
+fixes a per job iommu_group_get leak, so its two arms differ by more than the
+knob under test. And it is two kernels and two boots, against this tree's own
+rule about never A/B-ing across boots on a board that drifts 3%. Gating the
+fast path on a runtime knob instead makes it one kernel and one boot, which is
+what every other board script here does.
