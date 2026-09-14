@@ -127,18 +127,31 @@ whole model and this cannot be worked around from the outside. The reason for
 that condition is real: add_slice reads a slice's scale at k0 / kgroup, so a
 slice spanning two groups would apply the first group's scale to both.
 
-So the lever is a PER TENSOR group width, which needs the scale gather to carry
-more than one group per slice. That is an implementation limit and not a
-hardware one, and section 2 is what it would be worth.
+A PER TENSOR group width would still help, and it needs nothing from the
+hardware: each tensor could carry its own kgroup as long as every slice of that
+tensor still lies inside one group. What is NOT available is the thing that
+would make a narrow group free.
 
-AND KMAX IS NOT PART OF IT. The two knobs move together only because of that
-condition; on the host they separate, and
+ONE DISPATCH CANNOT COVER K WIDER THAN ONE GROUP, AND THAT IS NOT AN
+IMPLEMENTATION LIMIT. I wrote in the first draft of this section that it was,
+and then followed the scale to where it is applied. The hardware returns ONE
+accumulator per output channel per slice -- `fo[j]` at npudev.c:3818 -- and the
+CPU multiplies it by that slice's single scale and adds it in. The slice's
+whole K is summed before any scale exists to apply, so the partial sums a
+second group would need are already gone. The NPU's own per-channel multiplier
+is per OUTPUT channel, not per K range, so it cannot do it either.
+
+So a narrower group costs exactly what more slices cost, always, and there is
+no version of this where it does not. That is the shape of the trade in
+sections 2 and 7 and it is not going to be engineered away.
+
+KMAX IS STILL NOT PART OF THE ARITHMETIC. On the host the two knobs separate:
 
     gemma4  KMAX 1024  GROUP 512   112.4869
     gemma4  KMAX  512  GROUP 512   112.4869
 
-are identical to the digit. The slice width contributes nothing to the
-arithmetic. A wide slice with narrow groups is the thing worth building.
+identical to the digit. The slice width changes nothing about the answer; it
+is the group that does, and the group is what forces the slice.
 
 =====================================================================
 5. THE HOUR I SPENT BELIEVING THE SHIPPING RUNTIME HAD STOPPED GROUPING
