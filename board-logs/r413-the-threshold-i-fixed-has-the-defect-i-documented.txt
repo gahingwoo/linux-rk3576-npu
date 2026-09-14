@@ -125,3 +125,44 @@ knob under test. And it is two kernels and two boots, against this tree's own
 rule about never A/B-ing across boots on a board that drifts 3%. Gating the
 fast path on a runtime knob instead makes it one kernel and one boot, which is
 what every other board script here does.
+
+=====================================================================
+4. 🏁 THE ROUND OF RECORD, AND IT IS VALID
+---------------------------------------------------------------------
+Four models, seven repeats each, ONE boot, performance governor, the vendor's
+own protocol (128 token prompt, 64 new tokens). tests/board_vendor.sh with
+CHARSIU_BENCH_PERF=1 CHARSIU_BENCH_REPEAT=7.
+
+🔑 THE BOOT ID IS THE SAME AT BOTH ENDS: 0c9923fe at the start and 0c9923fe at
+the finish. That was this round's first red flag and it did not fire. The
+previous attempt at this round died when the board reset mid-run.
+
+    model              ours     theirs    margin   own spread   verdict
+    Qwen3 0.6B        25.64      24.85     +3.2%        0.7%    ours
+    TinyLLAMA 1.1B    21.96      19.71    +11.4%        2.3%    ours
+    Phi3 3.8B          6.68       6.58     +1.5%        0.3%    ours
+    Gemma4 E2B         8.91       9.23     -3.5%        0.6%    THEIRS
+
+Leading with the one that lost: gemma-4 is 3.5% behind and that margin clears
+its own 0.6% spread, so it is a real loss and not noise. The other three are
+ahead by margins that clear their spreads too.
+
+⚠⚠ 10) AND THE RIGHT COLUMN IS A CITATION, NOT AN ARM. RKNPU is not bound on
+this boot -- only rocket is -- so the vendor runtime could not run and the
+right column is their published benchmark.md table. It has no N and no spread,
+so nothing in it can be "level within the noise": it has not got any. Their
+figures are also taken at MAXIMUM CPU AND NPU frequency and this board's NPU
+is at 594 MHz, which is the condition, not a property of either runtime.
+
+⚠ 11) TTFT IS THEIRS ON ALL FOUR, 1.38x to 1.72x, AND THAT IS THE EXPECTED
+SHAPE. This protocol is a 110 to 116 token prompt, which is far below the
+lengths where the prefill work of the last ten rounds pays; the ladder in the
+README is the instrument for prefill and it runs to 852. Quoting this TTFT
+column as the prefill story would be quoting the one prompt length chosen to
+suit their benchmark.
+
+⭐ 12) EVERY MODEL'S FIRST READING IS COLD, AND BY A LOT. ttft 1084 against a
+647 median on Qwen3, 1181 against 885, 3097 against 2896, 3014 against 2096.
+The script reports the MEDIAN, which absorbs it; a best-of-N or a mean would
+not have. The tree has had this rule since the day a 38% win turned out to be
+3%, and this round is what it looks like when the instrument already knows.
