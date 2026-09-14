@@ -56,10 +56,25 @@ different statement from nobody having SENT it. Search before writing, not
 after. Two searches would have cost five minutes: `s:"accel/rocket" AND s:"leak"`
 on lore finds it on the first page.
 
-## Note on the review that pointed here
+## Two corrections to the above, and both are mine
 
-The v13 review agent said the standalone had been posted by Chaoyi Chen on
-2026-08-14. That is a different patch — "Fix the IOMMU domain leak in
-rocket_ioctl_create_bo", a domain leak on an error path, not the group
-reference in the IRQ handler. The substance of the warning was right and the
-attribution was not, which is why it was checked rather than repeated.
+**The review agent was right about Chaoyi Chen and I checked the wrong patch.**
+I looked at `[PATCH 1/4] accel/rocket: Fix the IOMMU domain leak in
+rocket_ioctl_create_bo`, which is a different bug, and concluded the
+attribution was wrong. It is `[PATCH 3/4] accel/rocket: Fix the extra
+iommu_group_get call in rocket_job_handle_irq`, 2026-08-14, same series, and it
+is exactly this line. So there are now three copies in play: ZhaoJinming's from
+June (bundled with runtime PM guards), Chaoyi Chen's standalone from August,
+and the one withdrawn here.
+
+**And this project had already worked all of that out, on 2026-09-14.**
+`reply-chaoyi/reply-chaoyi-fixes-tag.eml` says it in as many words: it corrects
+Chaoyi's `Fixes:` tag to 0810d5ad88a1, names ZhaoJinming's June copy, names
+Igor's two offers, and says "I have the same one line change on a branch here
+and am not posting it. Yours came first as a standalone patch, and a third copy
+of a one liner would be noise."
+
+So tonight did not find a duplicate. It re-derived a decision that was already
+made and written down, because it did not read `reply-chaoyi/` first. A closed
+question does not look closed from the outside; it looks like an open one
+nobody has touched.
