@@ -64,3 +64,53 @@ invented and that he had not measured them; it was withdrawn in the v12 cover
 and this mail does not reopen it. The 0x80 mechanism is offered as
 corroboration from RK3576, one paragraph, because he wrote "exactly as you
 described for RK3576".
+
+## v13 itself — PREPARED, **NOT SENT** (2026-09-14)
+
+`v13-0000..0014`, regenerated from `v13-prep` in `~/Desktop/linux-next-v8`.
+`send-v13.sh` refuses twice over, on purpose:
+
+- the cover still carries `*** BASE HERE ***`, and
+- `BASE` is still v12's `next-20260911`.
+
+Both clear in one step: refresh the base, put the tag in the sentence.
+
+### What is in it
+
+All six things this file listed as owed, and one more that came out of
+Igor's 2026-09-13 reply.
+
+⚠ **The caveat is the last sentence of the QUOTE, not of the paragraph after
+it.** The first cut put "It bounds; it does not prove." at the end of the
+mechanism paragraph, where "it" reads as the all-0x80 buffer. Igor asked for
+exactly this and said why: *"Keep the caveat, as the last sentence above, so
+that 'it' has its referent once the paragraph around it is gone."* It now
+reads "The protocol bounds; it does not prove." inside the quote, with a
+subject of its own.
+
+🔑 **The quote was checked character for character against the list copy**,
+which is what this file promised. Normalised for wrapping, our block and his
+2026-09-13 mail are identical strings.
+
+🏁 **And the code was checked too: all 14 diff hunks are byte identical to
+v12's**, md5 by md5. The cover says "byte for byte what v12 posted" and that
+is a measurement, not a claim. Only 02 and 03 have a changed commit message;
+the other twelve are unchanged including 04.
+
+### Why it is held rather than sent
+
+v11 went twelve days with zero human replies and v12 went out partly for that
+reason. v12 is three days old. Sending v13 now would reset anyone mid-read for
+a change that touches no code, and **Igor's correction is already on the list,
+in-thread, under 03/14 itself** — so a reviewer reading that patch sees the
+correction attached to it either way. The record is not silently wrong in the
+meantime.
+
+The hold is until a review arrives or about a week, whichever comes first.
+Then v13 goes out with the correction AND whatever the review asks for, and
+the respin reason is "the witness retracted a claim" rather than "nobody
+answered".
+
+⚠ **The base must be refreshed at send time**, not now: next-20260911 is
+already three days old and the cover sentence claims the series applies to the
+tag it names.

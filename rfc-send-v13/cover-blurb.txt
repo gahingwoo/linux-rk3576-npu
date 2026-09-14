@@ -1,0 +1,120 @@
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently. Two extra convolution buffer clocks, two power domains per
+core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
+that packs the task number into sixteen bits rather than twelve.
+
+1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
+by name", carried in the series since v11 so it applies to a plain
+*** BASE HERE *** with nothing outside it to follow. It keeps his authorship
+and its four tags. Tested on a Radxa ROCK 4D.
+
+One thing changed since v12, and it is a correction rather than a fix.
+
+Igor Paunovic re-ran his induced-reset protocol on v12 as posted and
+found an error in his own reports, which v12's 3/14 carried. His script
+kept the scorer output of every inference per round and never aggregated
+it, and his summaries scored only the one inference after the forced
+autosuspend. Aggregated, the constant-0x80 result is in the rounds of
+nearly every run, on every arm, on all three dates.
+
+So the all-0x80 buffer is not a differential signal. rocket_reset()
+calls drm_sched_stop(), drm_sched_start() then completes the detached
+jobs with -ECANCELED, and PREP_BO drops the fence error, so that buffer
+is what a job cancelled by the reset looks like from userspace whatever
+made it miss its deadline. His kprobe on drm_sched_fence_finished() is
+the direct witness: two cancellations, two all-0x80 inferences, matched
+to 2 ms against a 280 ms round period.
+
+What falls from 3/14: "no manifestation on either arm, oracle 48/48
+throughout" for 19 August, and "one event in 53 differential resets
+against zero in 49" as a bound. What stands: the provenance, and the
+caveat that the protocol bounds and does not prove.
+
+  3/14   loses those two paragraphs. His own summary replaces them,
+         quoted as he wrote it, and the caveat is the last sentence of
+         the quote so that "it" has its referent. One paragraph after
+         it says what the all-0x80 buffer is, from the code. His
+         2026-09-12 message is a third Link.
+
+  3/14   drops "differential base" from its Tested-by comment, and 2/14
+         gains "induced reset, JOB_TIMEOUT_MS=2". 4/14 already read
+         that. All three now say the same thing, which is what he
+         tested: one protocol, three patches, no differential.
+
+The code is byte for byte what v12 posted. Nothing else in the series
+changed.
+
+This is worth a respin rather than a note in the thread because a commit
+message is the permanent record, and v12's states something its own
+witness has retracted.
+
+Still open from v12, no reply yet.
+
+Sashiko raised one thing on 4/14 that an argument does not settle.
+pm_runtime_put_autosuspend() is asynchronous with a 50 ms delay, so on a
+workload whose submit gap is shorter the domain does not cycle after a
+reset, 10/14's power-on pulse never fires, and rocket_core_reset()'s own
+resets are all that run. Measured on the domain rather than on the
+device, over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D, genpd's npu
+domain took 46.8 s active and 14.2 s idle, which sum to the wall clock,
+and its idle-state usage count rose by 202. The domain cycles about two
+hundred times a minute under a real decode, and the pulse fires. Whether
+it cycles after a timed-out job is the half Sashiko is asking about, and
+that depends on the gap to the next submit. Inducing one needs a kernel
+with JOB_TIMEOUT_MS lowered and a flash, so that half is still an
+argument rather than a measurement.
+
+5/14 moves the iommu_detach_group(NULL, iommu_group_get(core->dev)) line
+out of the IRQ handler and into rocket_job_next_locked().
+ZhaoJinming's "accel/rocket: Fix iommu_group leak and unsafe IRQ
+register access" changes the same line, is marked for stable, and
+carries the same Fixes tag as ours. Whichever lands first the other
+conflicts; say which you would rather take.
+
+Findings Sashiko labelled pre-existing, for Tomeu. These five recur; it
+raised thirteen across the nine mails, and the one not listed worth
+naming is a 64-bit DMA address truncated to 32 bits, which faults the
+IOMMU above 4 GB.
+
+  - the job completion path takes iommu_group_get(core->dev) and never
+    puts it, one group reference a job, flagged on seven of the nine.
+    5/14 moves this call rather than adding or removing it, so the leak
+    is pre-existing but not untouched;
+  - the shared IRQ handler touches registers without checking the PM
+    state;
+  - runtime suspend has no synchronize_irq();
+  - num_cores is used both as an array length and as the probe index;
+  - rdev is leaked through devres on probe deferral.
+
+Still open from v9, no reply since. 9/14 does three things: it adds the
+settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
+which also makes every RK3576 board force that domain off at probe. I
+asked whether it wants splitting; Abel Vesa's Reviewed-by may be the
+answer, and I would rather split it than have it merged on my silence.
+13/14 also gives each core both NPU domains, which is the description
+that has been tested here rather than the topology; if it should be one
+domain per core, 6/14's minItems has to change with it.
+
+The bindings are unchanged since v9, where dt_binding_check was clean on
+all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
+clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to
+a dts rather than to a binding, and CHECK_DTBS is clean on all 13 rk3576
+dtbs with it.
+
+Link to v12: https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/
+
+The tags:
+
+  2/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  3/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  4/14   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  5/14   Reviewed-by: Igor Paunovic
+  6/14   Reviewed-by: Krzysztof Kozlowski
+  7/14   Acked-by: Conor Dooley
+  8/14   Acked-by: Conor Dooley
+  9/14   Reviewed-by: Abel Vesa
+  10/14  Reviewed-by: Abel Vesa
