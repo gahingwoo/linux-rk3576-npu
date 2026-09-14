@@ -1,0 +1,511 @@
+round 414, 2026-09-15 — gemma4 does not lose on dispatches, and the IOMMU
+                        ceiling did not need a flash after all
+
+The user asked for two things: fix gemma4, the one model that lost the round of
+record, and stop accepting "blocked" for the items that were parked on a flash.
+Both turned out to be the same kind of mistake -- a number derived instead of
+measured, and then reasoned forward from.
+
+  board     ROCK 4D. Sections 1 to 8 ran on boot 0c9923fe, the SAME boot as
+            r413, every arm within one boot and one binary. A MAINS POWER CUT
+            then took the board down between sections 8 and 9; it came back as
+            boot 9209d67a with /opt/vendor and debugfs gone, which is what
+            tests/board_remount.sh is for. Sections 9 onward say which boot they
+            ran on. Nothing is compared across the boundary.
+  npu clk   594 MHz. Governor performance for §4 and §5, userspace at max for
+            §1, restored to schedutil after each.
+  binary    /opt/charsiu/charsiu_run_minmac, one file, md5 b36fa15fc0c9 for §1
+            and aa4225f40db1 for §4. Every A/B below moves the ENVIRONMENT, not
+            the file: two binaries is the one thing a paired arm must not be.
+
+=====================================================================
+1. ⛔ gemma4's EXTRA DISPATCHES ARE REAL AND THEY ARE NOT THE LOSS
+---------------------------------------------------------------------
+gemma-4-E2B is the model that lost the round of record: 8.91 tok/s against the
+vendor's 9.23, -3.5%, clearing its own 0.6% spread. It is also the model with
+the most NPU dispatches a layer, and the reason is architectural.
+
+gemma3 runs seven projections a layer and pays FOUR fences, because matvec_pair
+puts q, k and v in one submit and gate and up in another. gemma4 runs NINE --
+its per layer embedding adds inp_gate (256 x 1536) and proj (1536 x 256) -- and
+the two cannot pair, because proj reads what inp_gate wrote. Six fences a layer
+against four. 35 layers, so 70 extra a token, for 27.5 MMAC of arithmetic.
+
+At the fitted 78 us a call before a byte moves, that is 5.5 ms of a 112 ms
+token. So: refuse a dispatch below a MAC threshold and let the CPU have it.
+
+CHARSIU_NPU_MIN_MAC, tests/board_min_mac.sh, five alternating pairs, both arms
+naming the knob:
+
+    model              A (=0, ships)   B (=1000000)   margin   spreads
+    gemma-4-E2B         9.56 tok/s      9.17 tok/s    -4.08%   0.84 / 2.29%
+    gemma-3-1b         21.63           21.64          +0.05%   0.28 / 0.42%
+
+⛔ 1) B LOSES BY 4.08%, WHICH CLEARS BOTH ARMS' SPREADS. One CPU thread on a
+0.39 MMAC int4 matvec is slower than a whole NPU dispatch of it, per call cost
+included. The hypothesis is dead.
+
+✅ 2) THE GATE IS KNOWN TO HAVE FIRED, because it says so:
+"charsiu: blk.0.inp_gate.weight stays on the CPU -- that call is 393216 MACs,
+under CHARSIU_NPU_MIN_MAC=1000000". Round 408's lesson was a refusal nobody
+could see; this one whines once, on stderr, naming a tensor and the knob.
+
+✅ 3) AND gemma-3-1b IS A NULL CONTROL THAT CAN BE SHOWN TO BE ONE. Its
+smallest dispatch is the q/k/v pair at 1.77 MMAC, above the threshold, so the
+gate cannot reach it -- and the refusal line did NOT print for it. A control is
+only a control if the thing under test provably could not touch it.
+
+⚠ 4) THE UNIT HAD TO BE THE CALL, NOT THE TENSOR, AND THAT NEARLY BROKE IT.
+gemma4's attn_k and attn_v are 256 x 1536 -- the SAME shape as inp_gate, to the
+element. A rule keyed on the tensor refuses k and v as well, and those two ride
+q's fence for free. Summing the pair keeps them at 3.9 MMAC. The cost is charged
+to the call, so the gate belongs on the call.
+
+🔑 5) THE FENCE TABLE HAD ALREADY SAID SO AND I DID NOT READ IT. Broken out by
+output width, the narrow buckets -- n 256 (118 calls), 512, 2048, 4096 -- are
+ELEVEN of a 339 ms fence. The three wide buckets are 333. gemma4 spends its
+token on bytes, not on dispatches, and the instrument printed that before the
+board round rather than after.
+
+=====================================================================
+2. ⛔⛔ THE TEXT CHECK WAS HASHING THE CLOCK
+---------------------------------------------------------------------
+§1's first run reported "text DIFFERS -- A unique 5, B unique 5": five
+identical runs of one arm giving five different hashes. Decode is greedy and
+deterministic, and the desk reproduces bit for bit.
+
+charsiu_run prints TWO timing lines on stdout, not one:
+
+    [load 15 ms | prompt 2 tok in 113 ms, ... | gen 16 tok in 732 ms, ...]
+    [first 8 tok 24.92 tok/s, last 8 tok 19.47 tok/s]
+
+The filter was `grep -v '^\[load'`. The second line went into the hash.
+
+🔑 6) THE RATES WERE UNAFFECTED AND THE RESULT STOOD, which is exactly why this
+is worth writing down: a broken check that reports the ALARMING answer gets
+looked at. One that had reported "identical" would have been believed. The
+filter is now every line starting '[', in both scripts.
+
+=====================================================================
+3. ⛔⛔⛔ ROUND 371 REFUTED THE CPU ROW SPLIT AND THE CODE NEVER SAID SO
+---------------------------------------------------------------------
+Looking for bandwidth on gemma4 led to npu_entry.n_npu, whose comment reads as
+a live idea: the NPU alone pulls 10.46 GB/s, the NPU and four CPU threads reach
+15.46 together, about 5 GB/s is spare, and the cheapest second engine is the
+CPU, already here and already blocked in prep_bo.
+
+Round 371 ran it. The numbers went into board-logs/r371.txt and not into the
+file that implements it.
+
+    CHARSIU_NPU_CPU_FRAC   0      0.10    0.20    0.30
+    decode tok/s          12.33    7.20    3.98    2.76
+    the CPU's own share       0    8449   16388   24211 ms
+
+845 ms a percent, dead linear, against a whole decode the hardware finishes in
+5192 ms. The CPU is about sixteen times slower per row than the NPU, so a tenth
+of the rows outweighs the other nine tenths and the fence waits for the CPU on
+every call.
+
+🔑 7) THE THEORY WAS ABOUT BANDWIDTH AND cpu_rows IS COMPUTE BOUND. The 5 GB/s
+is real and still unused. What is false is that this is how to spend it. This
+is the same shape as the printed hint that outlived READ_FUSE's refutation, and
+it survived forty rounds because the refuting round wrote a log instead of a
+comment.
+
+=====================================================================
+4. 🏁 THE DEAL'S PER TASK WEIGHT: 36.8 AGAINST THE MEASURED 4.81
+---------------------------------------------------------------------
+npudev's own paragraph has said since 2026-09-08 that DEAL_US_TASK is "the only
+place in the tree where a withdrawn number is still RUNNING", and also why it
+was left alone: "changing it changes which core every slice lands on, and that
+is a board question, not a desk one".
+
+It sat for eight days because there was no way to ask. Trying the other value
+meant editing npudev.c and rebuilding, and two binaries is the one thing a
+paired arm must not be. CHARSIU_NPU_DEAL_US_TASK makes it one environment
+variable. tests/board_deal.sh, four alternating pairs, performance governor:
+
+    model          36.8       4.81      margin   A/B spread   balance
+    gemma-4-E2B    9.58 t/s   9.55 t/s  -0.31%   0.10/0.42%   1.03x -> 1.02x
+    gemma-3-1b    21.68      21.66      -0.09%   0.32/0.28%   1.08x -> 1.08x
+    Qwen3-0.6B    30.62      30.70      +0.26%   0.33/0.85%   1.06x -> 1.06x
+
+🔑 8) LEVEL ON ALL THREE, AND THE TEXT IS ONE HASH ACROSS BOTH ARMS AND ALL
+FOUR REPEATS ON EACH. The per task term does not decide this deal on these
+shapes -- the megabyte term does -- and the one place it moved anything, it
+moved gemma4 a hundredth TOWARDS balanced.
+
+✅ 9) SO THE DEFAULT IS 4.81, which is what npu_job_cost and charsiu_shapes
+have used since round 155. The deal now agrees with the cost model it was
+fitted against, and the tree has no withdrawn number executing.
+
+⚠ 10) THREE MODELS, NOT NINE. The nine model regression is what says whether it
+is level on the rest, and it is the next thing to run.
+
+=====================================================================
+5. 🏁🏁 THE IOMMU CEILING IS 100%, AND IT NEEDED NO FLASH AT ALL
+---------------------------------------------------------------------
+r413 §8 said the ceiling on attach-once needed a kernel debug patch and
+therefore a reflash. r413 §7 went further and guessed the answer: an IOMMU
+domain belongs to an open DRM file, charsiu opens accel0 twice, rocket gives
+each file ONE scheduler entity spanning all cores, so "either domain can land
+on either core" -- attach-once degenerates into detach plus attach on nearly
+every job, and "the 19.5 ms was never merely unmeasured: it was a saving that
+was not available."
+
+The premise is right. The conclusion does not follow. §7 stopped at "one entity
+spans all cores" without reading how the scheduler picks WITHIN one.
+
+    drm_sched_pick_best takes the FIRST STRICT MINIMUM
+      -- sched_main.c:976, `num_score < min_score` -- so a TIE goes to
+         sched_list[0], which is core 0.
+    rocket_job_push arms AND pushes inside one guard on rdev->sched_lock
+      -- rocket_job.c:240, and sched_lock is per DEVICE (rocket_device.h:18),
+         not per file -- so two sequential submits from one thread are ordered.
+    charsiu submits EVERY device before waiting on any
+      -- npudev.c, "ONE JOBLIST PER DEVICE, BOTH ISSUED BEFORE EITHER IS
+         WAITED ON".
+
+So: both devices sent, file 0 arms against (0,0) and takes core 0, file 1 arms
+against (1,0) and takes core 1. Only device 1 sent, file 1 ties and takes core
+0 -- and that is the ONLY case that moves a core's domain.
+
+🔑 11) WHICH IS A QUANTITY charsiu ALREADY HAS. A device with no slices
+contributes no megabytes, and account_call is the single point every matvec and
+group call passes through. The counter is eleven lines, and it ran tonight on
+the shipping path:
+
+    model          calls    both   dev0 only   dev1 only   core 0 flips
+    gemma-4-E2B    13572   11332        2240           0      0 (0.00%)
+    gemma-3-1b      6724    5060        1664           0      0 (0.00%)
+    tinyllama       5700    5700           0           0      0 (0.00%)
+
+⭐⭐ 12) NOT ONE CALL IN 26,000 SENT DEVICE 1 ALONE, and it is structural rather
+than lucky: deal_pick breaks its tie to device 0 (`load[0] <= load[1] ? 0 : 1`),
+so the first slice of any call always lands there. Core 0 therefore always
+carries domain 0, core 1 always carries domain 1, and NEITHER EVER CHANGES.
+Every per job attach and detach in the run is removable. The ceiling is 100%.
+
+⚠ 13) THIS IS A MODEL OF THE SCHEDULER, NOT A READING FROM IT, and the line
+prints saying so. Two things it cannot see: the both-devices case is a RACE --
+if device 0's job retires between the two ioctls, file 1 ties onto core 0 as
+well and flips it, so core 0's figure is a LOWER bound -- and it assumes these
+two opens are the only entities on these cores. What it settles is r413's claim
+that the saving was not available. It is available, on every job.
+
+🔑 14) MEASURING THE GAIN STILL NEEDS A FLASH. The ceiling did not; the A/B
+does, and that is the user's call. The patch is drafted and held.
+
+=====================================================================
+6. ⭐ WHERE gemma4's TOKEN ACTUALLY GOES, AND IT IS THE PER CALL FLOOR
+---------------------------------------------------------------------
+The decode stage table at the vendor's own prompt length, gemma4 against
+gemma3, one boot, performance governor. gemma4's token is 2.30x gemma3's.
+
+    stage              gemma4          gemma3         ratio
+    token embedding    1.03 ms  0.9%   0.02 ms  0.0%  51x
+    q k v              8.89     8.0    4.27     8.8   2.08
+    attention         10.13     9.1    4.27     8.8   2.37
+    o proj             7.26     6.5    3.34     6.9   2.17
+    gate + up         36.34    32.6   14.64    30.2   2.48
+    down              20.91    18.8    9.76    20.1   2.14
+    residual           6.42     5.8    0.18     0.4   36x
+    output head       16.90    15.2    9.56    19.7   1.77
+    TOTAL            111.4           48.5             2.30
+
+Every stage tracks the 2.30x except two, and both are the per layer embedding:
+`token embedding` carries per_layer_model_proj and the second table row called
+`residual` is where inp_gate, the gelu, proj and the norm are accounted. 7.45 ms
+against gemma3's 0.20.
+
+⭐⭐ 15) AND THE 6.42 IS THE PER CALL FLOOR, TO TWO PERCENT, not arithmetic.
+70 dispatches a token (35 layers x inp_gate and proj), so 6.42 / 70 = 91.7 us a
+dispatch. The fitted cost is 78 us a call + 129.1 us a MB; the pl weights are
+1536 x 256 int4 = 0.1875 MB, halved across the two cores, so
+
+    78 + 129.1 x 0.094 = 90 us   against a measured 91.7
+
+🔑 16) WHICH IS WHY §1 LOST AND WHY IT MATTERS. The block is not slow because
+the arithmetic is slow; it is 0.39 MMAC and the hardware does it in the noise.
+It is 70 ROUND TRIPS, and a round trip is the floor. Moving them to the CPU
+(§1) makes the round trip worse. Making the round trip cheaper is the only
+lever, and §5 just measured that a full IOMMU detach and attach sits inside
+100% of them.
+
+So "fix gemma4" and "the 19.5 ms IOMMU number" are the same item, and gemma4 is
+the model where the floor is the largest share of the token. That is the case
+for the flash, and the flash is the user's call.
+
+=====================================================================
+7. ⭐ ONE LINE CARVED OUT OF attach-once, AS ITS OWN Fixes: PATCH
+---------------------------------------------------------------------
+Reading §5's scheduler path surfaced a correctness bug beside it, in upstream
+rocket rather than in ours:
+
+    rocket_job_handle_irq():
+        iommu_detach_group(NULL, iommu_group_get(core->dev));
+
+iommu_group_get() returns the group with a kobject_get on it. iommu_detach_group
+takes the group mutex, calls __iommu_group_set_core_domain, and returns -- it
+consumes nothing. One group reference leaks per retired job, the kobject never
+reaches zero, and rocket_core_fini's own iommu_group_put stops releasing it.
+
+The core already holds the group for its whole life (rocket_core_init takes it
+into core->iommu_group, rocket_core_fini puts it) and the OTHER TWO call sites
+in the same file use that member -- the attach in rocket_job_run and the detach
+in rocket_reset. This one is the odd one out.
+
+⚠ 17) THIS IS NOT A NEW FINDING AND SHOULD NOT BE WRITTEN UP AS ONE.
+rfc-send-v12/attach-once/0001 has carried the same observation in its commit
+message since 2026-09-02, because attach-once deletes the whole per job detach
+and takes the leak with it. Tonight rediscovered it from the other end.
+
+🔑 18) CARVING IT OUT IS STILL WORTH DOING. attach-once adds a field to struct
+rocket_core, changes the job lifetime, and has to argue about suspend and
+reset; a maintainer can reasonably sit on it. This is one line with a Fixes: tag
+that stands alone and can go to stable, and sending it first gives the reviewer
+of the big one a smaller diff. Held in iommu-group-leak/, based on 68142f986 --
+the same base as v13-prep, which is NOT touched.
+
+    Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+
+confirmed by fetching that commit: it added all three call sites at once, two
+using core->iommu_group and one not.
+
+⛔ 19) IT IS NOT BUILT. core->iommu_group is a struct iommu_group * at
+rocket_core.h:51 and is dereferenced identically two lines away, so this is one
+expression substituted for an equal one. That is an argument, not a build, and
+the holding README says so.
+
+=====================================================================
+12. ⛔⛔⛔ I SAID "THIS NEEDS A FLASH" THREE TIMES AND IT NEEDED A BOOT MENU
+---------------------------------------------------------------------
+The board went down mid-round: no ping, ssh refused, exactly what a wedge looks
+like. It was not wedged. It had cold booted -- the DDR training is in the log --
+and was sitting at the U-Boot extlinux prompt waiting for a number:
+
+    1: NPU 594 MHz, rail 800 mV  (what 13/14 posts)
+    2: NPU 786.432 MHz, rail 800 mV
+    3: VENDOR rknpu driver (rocket disabled), devfreq over the OPP table
+    4: VENDOR rknpu at 786.432 MHz
+    Enter choice:
+
+⛔ 35) SO §5's "MEASURING THE GAIN STILL NEEDS A FLASH" IS WRONG, AND SO ARE THE
+TWO OTHER TIMES THIS ROUND SAID IT. The 786 MHz clock and the vendor runtime as
+an ARM are both entries on a menu that is already installed. r390 varied the
+NPU clock this way; the "four device trees" it mentions are these entries, not
+four reflashes. What still needs a new kernel is only an A/B that changes
+DRIVER CODE, which is attach-once and its kind.
+
+⚠ 36) CHANGING ENTRY NEEDS A REBOOT, AND A REBOOT IS THE USER'S, same class as
+power and flashing. So these are not blocked on a flash; they are blocked on a
+sentence from the user. Entry 1 was chosen to restore the board, which is the
+condition every number in this tree was taken at, not a new one.
+
+🔑 37) AND READ THE SERIAL LINE BEFORE CONCLUDING ANYTHING. tools/board/uart.py
+Uart().open() + read_for(n) is read-only; send() writes a character. usb_reset(),
+reopen() and login() cut power and are never to be called. A board halted at a
+boot prompt is indistinguishable from a dead one over the network.
+
+⛔ 38) AND IT WENT DOWN BECAUSE I BROKE THE ONE-JOB RULE. A binary census was
+started while the regression was running -- two things on the board at once,
+which is the rule's whole point. The cold retrain means a real reset, which a
+userspace collision does not obviously cause, and mains had already cut once
+tonight, so causation is not established. The rule break is, and it was mine.
+
+=====================================================================
+13. ⛔⛔⛔ I WROTE A DUPLICATE PATCH FOR A DECISION ALREADY MADE ON 09-14
+---------------------------------------------------------------------
+§7 carved the iommu_group leak out of attach-once as a standalone Fixes: patch.
+Then lore was searched, which should have come first.
+
+    ZhaoJinming, June 2026, through six revisions:
+      [PATCH v6 2/2] accel/rocket: Fix iommu_group leak and unsafe IRQ
+      register access
+    Chaoyi Chen, 2026-08-14, standalone:
+      [PATCH 3/4] accel/rocket: Fix the extra iommu_group_get call in
+      rocket_job_handle_irq
+    Igor Paunovic, 2026-07-29 and again 2026-09-09: offering to test a
+      standalone respin on RK3588 the same day, or to post it himself with
+      the original author's From: and Signed-off-by.
+
+⛔ 39) AND THIS PROJECT HAD ALREADY WORKED THAT OUT. reply-chaoyi/
+reply-chaoyi-fixes-tag.eml, written 2026-09-14, corrects Chaoyi's Fixes: tag,
+names ZhaoJinming's copy, names both of Igor's offers, and says "I have the
+same one line change on a branch here and am not posting it. Yours came first
+as a standalone patch, and a third copy of a one liner would be noise."
+
+🔑 40) A CLOSED QUESTION DOES NOT LOOK CLOSED FROM THE OUTSIDE. It looks like an
+open one nobody has touched, and "go and check" feels right both times. The
+five minutes that tell them apart are reading the tree -- here, one directory.
+"The fix is not in linux-next" meant nobody had LANDED it, which is a different
+statement from nobody having SENT it. Withdrawn; the file lost its .patch
+suffix so no send script can pick it up.
+
+=====================================================================
+14. ✅ THE REGRESSION, GREEN, ON THE THIRD BOOT OF THE NIGHT
+---------------------------------------------------------------------
+boot afe55e04, charsiu_run_minmac = 3e3a6c40a165, 594 MHz, entry 1.
+
+    nine models batched vs their own token loop   0 differing
+    gelu identity, two models                     identical
+    perplexity  41.2777   Llama-3.2-1B-Instruct-Q4_0 md5 c82c0340d974
+                          corpus/long.txt            md5 4237c8fc3163
+    decode      18.03 tok/s   against r413's 18.08 and r411's 18.17
+    IOMMU domain ceiling      0.00%, third boot running
+
+18.03 against 18.08 is 0.3%, inside the 2.5% floor §5 of r413 measured. The
+nine model check is the gate the DEAL_US_TASK change needed and it passes.
+
+⚠ 41) AND SECTION 3 REFUSED, WHICH IS THE GUARD FROM §10 WORKING. It refused
+the installed charsiu_run_scalar for not answering --version. Two more faults
+in board_regress.sh behind it: it hardcoded the scalar path and threw away the
+caller's CHARSIU_RUN_SCALAR, and it piped section 3 through `tail -14`, which
+keeps the END of a failure list and can drop the first entries. Both fixed.
+
+=====================================================================
+WHAT IS OPEN
+---------------------------------------------------------------------
+⭐ A reboot, not a flash, and it is the user's sentence. Entry 2 gives the
+   786 MHz clock (r390: +4.2% for us, -0.9% for the vendor, and gemma4 is 3.5%
+   behind). Entries 3 and 4 make the vendor runtime an ARM instead of a
+   citation, which is what would settle gemma4 properly.
+⭐ attach-once is the one that does still need a kernel. §5 says its ceiling is
+   100% and that half needed no flash at all.
+⚠ gemma4's `token embedding` row is 51x gemma3's for one matvec and a gather:
+   1.03 ms against a 0.53 ms cost model prediction. Not chased.
+⚠ The cover's "48 rk3588 dtbs" against its own "forty-nine". 49 board .dts
+   exist today; 48 may be a correct record of the v9 run. Flagged, not changed.
+⚠ smollm3 is the seventh architecture the README claims and no gguf of it has
+   ever run here. SmolLM3-3B-Q4_0 is 1727 MB; the desk is at 93% of 125 GB and
+   the board's model partition has 1.1 GB free.
+
+=====================================================================
+8. ⛔⛔⛔ THE REGRESSION THAT BACKS A MERGE HAD THREE SILENT HOLES
+---------------------------------------------------------------------
+Running the nine model regression for §4's constant change found that the
+regression itself does not do three of the things it prints headings for.
+
+    ================ 1. every architecture still knows a fact
+    arch_sanity.sh: line 35: 1: usage: arch_sanity.sh MODEL_DIR
+    ...
+    ================ 3. the vector kernels against the scalar ones
+    neon_control.sh: line 15: 1: usage: neon_control.sh MODEL_DIR [PROMPT]
+
+⛔ 20) SECTIONS 1 AND 3 HAVE NEVER RUN. regress.sh exports CHARSIU_BOARD_DIR
+and then calls both scripts with no argument; both hard-required $1. `set -e`
+does not fire because each call is inside a pipeline to `tail`, so sections 2
+through 6 print their green results underneath two headings that checked
+nothing. The merge to stable at 0c85c71 quotes "7/7 architectures" and section
+1 is where that came from.
+
+⛔ 21) AND THE CLOCK LINE READS `UNREADABLE`, because regress.sh reads
+clk_npu_dsu0 and the node is clk_rknn_dsu0. board_clk.sh has done this properly
+since round 399 -- mount debugfs, and REFUSE if it still cannot read, because
+every cross round number here assumes 594 MHz. regress.sh reinvented it as
+`|| echo UNREADABLE` and carried on.
+
+⛔⛔ 22) AND SECTION 2 MEASURED THE WRONG BINARY FOR TWENTY MINUTES.
+board_text_all.sh reads CHARSIU_RUN_BIN at line 30 and sources board_clk.sh --
+which is what makes the two names one knob -- at line 132. The alias was set a
+hundred lines AFTER the binary was chosen, so nine models were compared against
+the INSTALLED /opt/charsiu/charsiu_run while this round believed otherwise.
+
+🔑 23) THE TELL WAS `ps`, NOT THE OUTPUT. "9 models compared, 0 differing" is
+what a correct run prints and it is what this printed. r413 fixed the alias and
+not its reach, and the census then was by spelling. The census now is by
+property -- a script that reads either name -- over every file in tests/:
+20 read CHARSIU_RUN, 13 read CHARSIU_RUN_BIN, 15 sourced board_clk.sh after
+their own first read, and 4 never sourced it at all.
+
+✅ 24) ALL FOUR FIXED AND THE FIXES WATCHED FIRING, not read:
+ - arch_sanity, neon_control and spec_identity take $1 OR CHARSIU_BOARD_DIR and
+   exit 2 loudly with neither, or with a directory that is not one;
+ - 19 scripts moved or gained their board_clk.sh source to just after `set -`,
+   with a note saying why it is there and not further down;
+ - `sh -x` confirms each name now resolves the other, and the both-set-and-
+   different refusal still fires;
+ - regress.sh comes into the tree as tests/board_regress.sh, sourcing
+   board_clk.sh for the clock, passing the directory to both callers, printing
+   the binary's --version beside its md5, and saying when a model it wanted is
+   not on this board instead of comparing two empty strings.
+
+🔑 25) THE LESSON IS THE SAME ONE AND IT IS WORTH THE THIRD WRITING. A check
+that cannot run reads exactly like a check that found nothing wrong, and the
+heading above it goes on claiming the check happened. The reason this one
+survived so long is that it lived ONLY on the board, where nothing reviews it.
+
+=====================================================================
+9. ⛔ A POWER CUT, AND THE MOUNT NOTE THAT NEVER SAID WHICH DEVICE
+---------------------------------------------------------------------
+Mains power went out. The board came back on boot 9209d67a with /opt/vendor
+and /sys/kernel/debug unmounted, which it does on every boot.
+
+⛔ 26) AND THE NOTE SAID "REMOUNT /opt/vendor BY HAND" WITHOUT SAYING FROM
+WHAT. It has said that for weeks, so every reboot costs a partition hunt. It is
+/dev/mmcblk0p3 -- the 11.7 GB one, no label, holding bin/ lib/ model/ models/
+and rknpu.ko. p1 is BOOT, p2 is rootfs.
+
+⚠ 27) AND UNMOUNTED, /opt/vendor IS AN EMPTY DIRECTORY. A round that starts
+without noticing finds two models instead of nine, compares them, and prints
+"0 differing". tests/board_remount.sh mounts both and then reports the gguf
+count against a floor of seven, the clock, the boot id and the governor --
+numbers that can be wrong, rather than a line that says OK.
+
+=====================================================================
+10. ⛔⛔ THE NEON CONTROL NEVER SET THE INVARIANT IT EXISTS TO CHECK
+---------------------------------------------------------------------
+With section 3 allowed to run for the first time it reported "2 mismatches":
+Llama-3.2-1B-Instruct-Q8_0 and Qwen3-0.6B-Q4_0, each diverging partway through
+a fluent sentence. Neither is a bug. Three things were wrong with the control.
+
+⛔ 28) IT NEVER SET THE INVARIANT. The Makefile rule that builds
+charsiu_run_scalar has said since round 372:
+
+    charsiu_run_scalar == charsiu_run with CHARSIU_EXACT_ATTN and
+                          CHARSIU_EXACT_SILU set
+
+because those vector paths reorder arithmetic on purpose and have no scalar
+twin. neon_control.sh compared the DEFAULT neon arm against the scalar build.
+A comment stating an invariant, and the check for it not setting what the
+invariant requires -- the fifth instance of that shape in this tree.
+
+⛔⛔ 29) AND THE INVARIANT IS SHORT BY ONE, which only setting it could reveal.
+With ATTN and SILU set, both models still differed:
+
+    ATTN + SILU             Llama-Q8_0 DIFFERS     Qwen3-Q4_0 DIFFERS
+    ATTN + SILU + GELU      DIFFERS                DIFFERS
+    ATTN + SILU + SOFTMAX   IDENTICAL              IDENTICAL
+
+The third reordering path is the SOFTMAX. GELU is not involved. The list was
+written when there were two and did not grow when the third landed.
+
+🔑 30) CHARSIU_EXACT_GELU STAYS OUT OF THE LIST ON PURPOSE. That path is meant
+to be bit identical and section 4 checks exactly that. An invariant that names
+a knob it does not need hides the regression that knob exists to catch.
+
+⛔ 31) AND THE CONTROL WAS A DIFFERENT COMMIT. /opt/charsiu/charsiu_run_scalar
+does not answer --version at all, so it predates r413's build stamp: section 3
+was comparing two COMMITS and charging the difference to the vector kernels.
+The script now refuses a control that cannot say its commit, refuses one whose
+commit differs from the neon arm, and prints the commit both arms agree on
+beside the knobs it set. Desk, 12 models, both arms 8f792ad76145: 0 mismatches.
+
+=====================================================================
+11. ⛔ TWO MORE IN arch_sanity, FOUND BY LETTING IT RUN
+---------------------------------------------------------------------
+⛔ 32) THE ARCHITECTURE COLUMN WAS BLANK ON THE BOARD. `arch` came from
+"$ROOT/build/charsiu_check", and the board has no tree -- the binaries live in
+/opt/charsiu. So every row printed `?` for the column this section is NAMED
+after, on the only machine where the check means anything.
+
+⛔ 33) AND THE SUMMARY COUNTED FILES WHILE BEING QUOTED AS ARCHITECTURES. Seven
+is the number of gguf FILES in /opt/vendor/models; five architectures cover
+them. It now prints both lines and names the architectures. On the desk that
+reads "12/12 FILES" and "6/6 ARCHITECTURES: gemma3 gemma4 llama phi3 qwen2
+qwen3" -- SIX, not the seven the tree claims, because no smollm3 gguf is in
+either model directory. That gap was invisible while the column was blank.
+
+⚠ 34) AND /opt/charsiu/models IS 2/3: SmolLM2-135M-Instruct-Q4_0 answers "the
+capital of the United States". Whether that is new or has always been true is
+a control this round ran rather than assumed.
