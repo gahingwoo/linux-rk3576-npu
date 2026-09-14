@@ -1,0 +1,109 @@
+round 410, 2026-09-14 — the int4 accumulator layout, asked properly, and the
+                        answer is no
+
+r407 named the largest single line in the prefill: the gather that reads the
+int4 accumulator, 1.96 ms a row against the 1.82 of fence it waits behind,
+larger than both of attention's fences together. Every lever on the gather
+ITSELF is measured and lost -- pooling is on by size, the four row form is no
+better here, READ_FUSE is 2.3% slower -- and npudev's note closes them with a
+qualifier: "the read is at its floor FOR THIS ACCUMULATOR LAYOUT."
+
+The fp16 path, at the same m and the same n, comes back FLAT. So the layout was
+the one variable nobody had moved.
+
+  board     ROCK 4D, boot 1ae59450, npu 594 MHz, cpu pinned
+  binaries  /root/charsiu_run_flat, /root/npu_fp16_test_w4
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf, "The capital of France is", 12
+            generated tokens against the shipped text
+
+=====================================================================
+1. THE SWEEP THAT LOOKED LIKE IT HAD COVERED THIS
+---------------------------------------------------------------------
+Round 384: "w4a16 produces ONE row and no register makes it produce two ... every
+word that differs between the two streams has been put back one at a time."
+
+⚠ 1) THOSE TWO STREAMS WERE int8 AND w4a16, whose DPU blocks are identical to
+begin with -- that round says so in the same sentence. The stream that
+demonstrably produces flat rows at m > 1 is the fp16 one, and its DPU block is
+NOT identical to w4a16's:
+
+    0x401c   fp16 writes 1            int4 writes ow * rows
+    0x4020   fp16 writes 0            int4 writes ow - 1
+    0x4028   fp16 writes n/4 - 1      int4 writes 0
+
+None of those three had ever been offered to an int4 job.
+
+=====================================================================
+2. ASKED WITH THE RUNTIME'S OWN ORACLE
+---------------------------------------------------------------------
+A hand-rolled w4a16 probe was tried first and abandoned: its reference came out
+wrong at every setting including m = 1, because reproducing that path means
+reproducing the staging, the per channel scales and the int4 packer, and a
+probe whose reference is wrong cannot answer anything. The runtime already has
+an oracle -- its own token loop -- so the question went there instead.
+
+    CHARSIU_W4_F16DPU      bit 0: the fp16 window pair. bit 1: 0x4028
+    CHARSIU_NPU_READ_FLAT  build the read order table as the identity
+
+```
+    width axis, flat read,   F16DPU = 0, 1, 2, 3      all four WRONG
+    width axis, normal read, F16DPU = 2               identical to shipped
+    width axis, normal read, F16DPU = 1 and 3         WRONG
+    height axis (W4_BATCH=height), four cells         all WRONG
+```
+
+⛔ 2) NO REGISTER IN THAT SET MAKES IT FLAT.
+
+🔑 3) 0x4028 IS INERT FOR int4. The text does not move when it carries fp16's
+value, which is a cleaner result than it looks: it means the register that most
+obviously names an output channel count does nothing on this path, so the
+difference between the two output stages is not there.
+
+🔑 4) AND THE 0x401c/0x4020 PAIR ACTIVELY BREAKS IT. The map probe agrees with
+the text: at m = 2, K = 64, N = 64 it wrote 80 of 128 cells with the pair set
+and 128 of 128 without it. So that pair is not a layout switch, it is a write
+mask.
+
+🏁 5) THE POSITIVE CONTROL RAN. A flat read of the SHIPPED stream is garbage,
+so the knob reaches the read and the permutation is real. Without that line
+"all four wrong" could have meant the knob did nothing.
+
+⚠ 6) AND THE FIRST SIX CELLS OF THIS TABLE WERE A NULL ARM. With
+CHARSIU_M_AXIS=h and nothing else, all six came back IDENTICAL to the shipped
+text -- because w4_batch_why_not refuses the height axis, every tensor fell
+back to the token loop, and the token loop is what produced the reference. The
+runtime says so out loud ("NOT on the NPU -- int4 batches on the width axis and
+this asked for height") and it took a second look to read it.
+CHARSIU_NPU_W4_BATCH=height is the control that lifts it, and the four cells
+above are from there.
+
+=====================================================================
+3. ⚠⚠ AND THE HEIGHT ARM TOOK THE BOARD DOWN
+---------------------------------------------------------------------
+After four cells on CHARSIU_NPU_W4_BATCH=height the board stopped answering
+ssh and stopped responding to ping. The UART console came up at a login prompt
+but every command returned nothing.
+
+That knob's own comment already calls it "the board control deliberately
+reaching the arrangement that is known wrong; nothing else should ever set it".
+It now also carries the fact that the board may not survive being asked.
+
+=====================================================================
+4. WHAT THIS LEAVES
+---------------------------------------------------------------------
+The gather stays. Its cost is 1.96 ms a row and the three ways out are now all
+closed or priced:
+
+  - make it faster: every form measured, none better (r408 section 4)
+  - move it behind the next job: built, wrong on 5 of 9 models, and the failure
+    count turned out not to be a stable enough instrument to chase it with
+    (r409 section 1)
+  - make the hardware write it flat: no register in the fp16 output stage does
+    it, and the one that looked most likely is inert (this round)
+
+⭐ What is NOT closed is the M axis itself. fp16 is flat on the HEIGHT axis and
+int4 is permuted on the WIDTH axis, and the height axis for int4 is refused
+because it writes one row. Whether some other register makes the height axis
+write m rows for int4 is the question round 384 answered NO to against int8's
+stream; it has not been asked against fp16's, and section 3 is why it was not
+asked further today.
