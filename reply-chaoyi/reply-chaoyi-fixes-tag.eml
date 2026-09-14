@@ -1,0 +1,68 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+To: Chaoyi Chen <kernel@airkyi.com>,
+	Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Cc: Tomeu Vizoso <tomeu@tomeuvizoso.net>,
+	Oded Gabbay <ogabbay@kernel.org>,
+	Heiko Stuebner <heiko@sntech.de>,
+	Jeff Hugo <jeff.hugo@oss.qualcomm.com>,
+	ZhaoJinming <zhaojinming@uniontech.com>,
+	Igor Paunovic <royalnet026@gmail.com>,
+	linux-kernel@vger.kernel.org,
+	dri-devel@lists.freedesktop.org,
+	linux-rockchip@lists.infradead.org,
+	linux-arm-kernel@lists.infradead.org
+Subject: Re: [PATCH 3/4] accel/rocket: Fix the extra iommu_group_get call
+ in rocket_job_handle_irq
+In-Reply-To: <20260814022453.437-4-kernel@airkyi.com>
+References: <20260814022453.437-1-kernel@airkyi.com>
+ <20260814022453.437-4-kernel@airkyi.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Chaoyi,
+
+The fix is right. The Fixes: tag names the wrong commit.
+
+658ebeac3351 ("accel/rocket: Add IOCTL for BO creation") touches six
+files: drivers/accel/rocket/Makefile, rocket_drv.c, rocket_drv.h,
+rocket_gem.c, rocket_gem.h and include/uapi/drm/rocket_accel.h. It does
+not touch rocket_job.c at all.
+
+rocket_job.c is added by its immediate child, 0810d5ad88a1
+("accel/rocket: Add job submission IOCTL"), and that commit adds
+rocket_job_handle_irq(), the line you are changing, and the
+rocket_reset() detach that already passes core->iommu_group. So:
+
+  Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+
+which is also the tag on ZhaoJinming's copy of the same one line
+change [1], posted in June bundled with runtime PM guards for the IRQ
+handler. The leak is still there in mainline and in linux-next today.
+
+I have the same one line change on a branch here and am not posting
+it. Yours came first as a standalone patch, and a third copy of a one
+liner would be noise.
+
+No Tested-by from me yet, because it would not be true. The patch is
+carried here on next-20260911 and builds clean, but I have not booted
+a kernel with it. Respin with the corrected tag and I will run it on
+RK3576 (ROCK 4D) and reply with one.
+
+One conflict worth naming, because it has to be resolved either way.
+Our RK3576 series has a patch that moves this exact line, unchanged,
+into a new helper: "accel/rocket: factor the completion tail out of
+the IRQ handler", v12 05/14 [2]. Whichever of the two lands first, the
+other needs a rebase. The v12 cover asks Tomeu which he would rather
+take, but it names Zhao's copy only. It should have named yours.
+
+Igor Paunovic offered on 2026-07-29, and again on 2026-09-09 [3], to
+test a standalone respin of Zhao's patch or to post it himself. No
+answer to either so far. Yours is already standalone, so a v2 of it
+with the corrected tag is the shortest way out for all three copies.
+
+[1] https://lore.kernel.org/all/20260610071045.3414828-2-zhaojinming@uniontech.com/
+[2] https://lore.kernel.org/all/20260912065053.1519165-6-gahing@gahingwoo.com/
+[3] https://lore.kernel.org/all/20260909114528.9141-1-royalnet026@gmail.com/
+
+Jiaxing
