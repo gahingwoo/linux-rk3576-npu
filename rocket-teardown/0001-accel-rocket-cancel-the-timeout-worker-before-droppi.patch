@@ -1,0 +1,77 @@
+From 5cffdad57ac29653d466b1a0f7b93bf39c7c52ac Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 14 Sep 2026 23:27:29 +1200
+Subject: [PATCH] accel/rocket: cancel the timeout worker before dropping the
+ IOMMU group
+
+rocket_core_fini() puts core->iommu_group and clears the pointer, and only
+then calls rocket_job_fini(). rocket_job_fini() is what stops the timeout
+worker: drm_sched_fini() ends in
+cancel_delayed_work_sync(&sched->work_tdr), and that delayed work runs on
+core->reset.wq, which rocket_job_init() hands to drm_sched_init() as
+timeout_wq.
+
+The pointer is therefore NULL for the whole of drm_sched_fini() up to that
+cancel, with the timer still armed across it. A job that times out in
+there reaches rocket_job_timedout() and then rocket_reset(), which calls
+
+	iommu_detach_group(NULL, core->iommu_group);
+
+iommu_detach_group() takes group->mutex as its first act and does not test
+the pointer, so this is a NULL dereference.
+
+The worker does not have to start inside that window, which is what makes
+the window wider than the two statements suggest. It only has to reach the
+detach after the store. rocket_reset() calls drm_sched_stop() before it,
+and drm_sched_stop() cancel_work_sync()s two work items and can then sit
+in an uninterruptible dma_fence_wait() for a job that is still on the
+hardware. A worker parked there when rocket_core_fini() runs is waited for
+by the very cancel_delayed_work_sync() that was meant to have stopped it,
+and takes the NULL on its way out.
+
+Unbinding a core through sysfs with a job on the hardware is enough to
+reach this, and only the 500 ms job timeout has to elapse.
+
+Move rocket_job_fini() ahead of the put. The result is the reverse of the
+order rocket_core_init() acquires things in: runtime PM was enabled last
+so it is disabled first, then the job machinery, then the IOMMU group,
+which rocket_core_init() takes before rocket_job_init() and which its own
+error path already releases after it.
+
+Runtime PM stays disabled ahead of the scheduler teardown, which is where
+it belongs. Nothing rocket_job_fini() runs needs it: drm_sched_fini()
+touches no NPU register, and a timeout worker still in flight only
+decrements the usage count, with pm_runtime_put_noidle().
+destroy_workqueue(core->reset.wq) stays where it is, after
+drm_sched_fini(), because the scheduler's delayed work lives on that
+workqueue.
+
+The other worker rocket_job_fini() cancels, core->reset.work, has no
+queueing site in tree, so the scheduler timeout is the only way to reach
+the detach today.
+
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Cc: stable@vger.kernel.org
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b3b2fa9ba..c41a61b4d 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -98,9 +98,9 @@ void rocket_core_fini(struct rocket_core *core)
+ {
+ 	pm_runtime_dont_use_autosuspend(core->dev);
+ 	pm_runtime_disable(core->dev);
++	rocket_job_fini(core);
+ 	iommu_group_put(core->iommu_group);
+ 	core->iommu_group = NULL;
+-	rocket_job_fini(core);
+ }
+ 
+ void rocket_core_reset(struct rocket_core *core)
+-- 
+2.43.0
+

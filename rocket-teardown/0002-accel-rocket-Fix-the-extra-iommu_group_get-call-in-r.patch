@@ -1,0 +1,44 @@
+From 3ea5d417424d55c981c3fa8f1b01a1f4bab07b59 Mon Sep 17 00:00:00 2001
+From: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Date: Mon, 14 Sep 2026 23:33:46 +1200
+Subject: [PATCH] accel/rocket: Fix the extra iommu_group_get call in
+ rocket_job_handle_irq
+
+The rocket attaches the IOMMU group in rocket_job_run() and detaches it
+in rocket_job_handle_irq(). Calling  iommu_group_get() in
+rocket_job_handle_irq() causes the reference count to increase
+unexpectedly. And this causes rocket_core_fini() to fail to release the
+IOMMU group, leading to a resource leak.
+
+[jh: carried unchanged from Chaoyi Chen's posting of 2026-08-14, which is
+ still unapplied. The Fixes tag is corrected: rocket_job_handle_irq() and
+ the line this patch changes were both added by 0810d5ad88a1, and
+ 658ebeac3351 does not touch rocket_job.c at all. ZhaoJinming sent the
+ same one-line change earlier, on 2026-06-09, bundled with runtime PM
+ guards for the IRQ handler, and that series stalled on the second half.]
+
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Link: https://lore.kernel.org/all/20260814022453.437-4-kernel@airkyi.com/
+Link: https://lore.kernel.org/all/20260610071045.3414828-2-zhaojinming@uniontech.com/
+Signed-off-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_job.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index f40435505..1b4c0f38f 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -355,7 +355,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 				return;
+ 			}
+ 
+-			iommu_detach_group(NULL, iommu_group_get(core->dev));
++			iommu_detach_group(NULL, core->iommu_group);
+ 			dma_fence_signal(core->in_flight_job->done_fence);
+ 			pm_runtime_put_autosuspend(core->dev);
+ 			core->in_flight_job = NULL;
+-- 
+2.43.0
+

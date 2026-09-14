@@ -251,3 +251,57 @@ against a sha read off the truncated branch, came back 0, and was reported as
 "the amend did not land". It had landed. **After a git operation fails, re-read
 the shas before checking anything against them.** Never put a pipe in an `&&`
 chain that ends in a force-update.
+
+## 2026-09-14 late — both of Sashiko's remaining findings fall, and my own numbers were wrong
+
+**8/14 [High] does not stand.** The premise is right: before upstream
+`841363ebb508` ("iommu/rockchip: Take all DT clocks", in Linus's tree since
+v7.3-rc1) the driver took only `aclk` and `iface` by name. But the conclusion
+does not follow, for three independent reasons.
+
+- **There is no register access on that path.** Every MMIO site in
+  rockchip-iommu.c is behind `pm_runtime_get_if_in_use()`, and on an old
+  kernel the device never resumes: probe touches no register, there is no
+  `pm_runtime_set_active()`, and the only thing that could wake it is the
+  device link from its master. The master compatible
+  `rockchip,rk3576-rknn-core` exists nowhere upstream; it is added by 12/14 of
+  this series.
+- **The failure mode named is wrong for this block.** `841363ebb508`'s own
+  message says writes to DTE_ADDR are SILENTLY DROPPED until the extra clocks
+  run, and reads work. Not a hang, not a fault.
+- **DT ABI points the other way.** The documented guarantee is that a newer
+  kernel will not break on an older device tree. Old kernel with new DT is not
+  a combination the ABI promises.
+
+⛔ **And the suggested fix would destroy the series.** `rk_iommu_dt_ids[]` has
+exactly two entries, `rockchip,iommu` and `rockchip,rk3568-iommu`;
+`rockchip,rk3576-iommu` and `rockchip,rk3588-iommu` already bind only through
+the fallback. Drop it and the NPU has no IOMMU and 12/14 through 14/14 are
+dead. 121 in-tree bindings have the same shape (a fallback plus a
+compatible-gated clock count); `arm,mali-bifrost` is the closest precedent.
+
+**9/14 [Medium] does not stand either.** `need_regulator` exists only in
+pm-domains.c and has exactly two documented meanings there, both pre-existing;
+the probe-time power-off is the one the base tree's own comment describes. The
+warning is a one line `dev_warn` from the regulator core, and it fires in
+`->power_on`, NOT at the probe-time power-off.
+
+⛔⛔ **BUT MY OWN PARAGRAPH IN 09/14 HAD THE NUMBERS WRONG, and I wrote it
+tonight.** I said "thirteen of the forty-nine rk3588 board files give that
+domain a domain-supply; the other thirty-six take the dummy regulator and the
+warn." Thirteen was a count of SOURCE FILES containing the property, including
+.dtsi, against forty-nine BOARD FILES: two different units. Resolving the
+includes properly, and reproduced independently:
+
+    21  enable an NPU core and declare the supply
+     2  enable it with no supply, and warn today: quartzpro64, youyeetoo-yy3588
+    26  do not enable an NPU core, so ->power_on never runs and nothing warns
+
+The same error was in the paragraph the patch already had about rk3576: it
+said twelve boards "take a dummy regulator and a dev_warn", when those twelve
+never reach a first power-on at all. Only rock-4d enables a core, and it is
+the one that declares the supply. Both halves are corrected.
+
+🔑 This is the second time in one day that a number I put in outward text was
+derived from a `grep -c` over files rather than over the thing being counted.
+**Counting files is not counting boards.**
