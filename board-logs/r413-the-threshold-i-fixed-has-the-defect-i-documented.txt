@@ -199,3 +199,72 @@ in the probe, not a reading of zero: this board publishes
 nothing. A probe that prints an empty column where a number belongs is the
 shape this tree keeps being bitten by, and the frequency column is what
 carries the argument here.
+
+=====================================================================
+6. 🏁 THE LADDER, RE-MEASURED, AND THE NULL CONTROL HOLDS
+---------------------------------------------------------------------
+tests/board_ttft_curve.sh on the shipping binary, five repeats a point, same
+boot as everything above.
+
+⚠ FIRST, A CORRECTION TO THE PLAN THIS ROUND WROTE FOR ITSELF. The plan said
+"rows 27 through 302 are the null control". That was written before section 1
+moved the threshold from 320 to 272, and 302 is above 272, so its arm goes
+from OFF to ON and it MUST move. The control is 27, 52, 102 and 202. A
+control set is defined by the thing under test, and the thing under test moved
+underneath it in the same round -- the same shape as section 1 itself.
+
+    tokens   r411    r413    change    arm
+        27    332     331     -0.3%    off both sides
+        52    415     409     -1.4%    off both sides
+       102    761     750     -1.4%    off both sides
+       202   1400    1395     -0.4%    off both sides
+       302   2131    2045     -4.0%    OFF -> ON
+       452   3059    2991     -2.2%    on both sides
+       602   4115    4060     -1.3%    on both sides
+       852   5953    5905     -0.8%    on both sides
+
+🏁 16) THE FOUR CONTROL ROWS MOVED -0.3 TO -1.4%, ALL INSIDE THE 2.5% FLOOR
+section 5 measured. Below the threshold the two arms run the same code -- there
+is no mirror, no V surface, no ladder -- so they could not legitimately move,
+and they did not. The re-read stands on that.
+
+⚠ 17) AND THE THREE ROWS WHERE THE LADDER SHOULD HAVE HELPED ARE INSIDE THE
+FLOOR TOO: -2.2, -1.3, -0.8%. That is not a contradiction of r412 section 8,
+which measured 852 going 5937 -> 5859 with non-overlapping ranges. That was a
+PAIRED comparison, two binaries alternating in one boot; this is two rounds on
+two boots. A paired A/B resolves what a cross-round comparison cannot, and
+quoting this table as evidence the in place ladder did nothing would be
+comparing the wrong two things.
+
+=====================================================================
+7. ⭐ AGAINST THE VENDOR: AHEAD TO 602, LEVEL AT 852
+---------------------------------------------------------------------
+Their column is r393's measured ladder with their runtime on this board, a
+different boot; their chat template costs a constant 33 tokens at every length
+so each row is the same input text. A margin has to clear the 2.5% floor AND
+the row's own spread.
+
+    tokens     ours     theirs   margin   spread   verdict
+        27      331      413.2   +24.8%     0.6%   ahead
+        52      409      529.6   +29.5%     2.2%   ahead
+       102      750      931.8   +24.2%     2.9%   ahead
+       202     1395     1528.5    +9.6%     0.9%   ahead
+       302     2045     2145.0    +4.9%     1.0%   ahead
+       452     2991     3194.7    +6.8%     1.3%   ahead
+       602     4060     4200.5    +3.5%     0.4%   ahead
+       852     5905     6026.8    +2.1%     0.7%   LEVEL
+
+🏁 18) SO THE PUBLISHED CLAIM MOVES: "level from 302 up" becomes "ahead from 27
+through 602, level at 852". 302 and 452 were level before and clear both tests
+now.
+
+⛔ 19) AND 602 IS THE FRAGILE ROW, WHICH IS THE PART TO SAY OUT LOUD. +3.5%
+clears the 2.5% floor by one point. A slightly stricter bound puts it back to
+level. 302 (+4.9%) and 452 (+6.8%) clear comfortably; 852 (+2.1%) does not
+clear at all.
+
+⚠ 20) THIS IS THE TABLE THIS PROJECT ALREADY OVERCLAIMED ONCE. Every point
+estimate favoured us then too, and it was written up as "completely surpassed"
+and withdrawn the same day. The difference now is that the floor is MEASURED
+(twenty readings, section 5) rather than quoted, and that one row is still
+level and one is thin. Neither of those is a detail to leave out.
