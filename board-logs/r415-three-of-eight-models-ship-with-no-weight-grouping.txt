@@ -1,0 +1,212 @@
+round 415, 2026-09-15 - two of the nine models ship with no weight grouping at
+                        all, and grouping gemma3 is worth 40% of its perplexity
+
+npuquant falls back to one scale a row whenever k % group is non-zero, and
+llama_auto_kmax() pins the group at 1024 and only ever considers widening it.
+So a model whose K values are not multiples of 1024 is on the per-row path at
+every width the tree will choose, and stays there. The tree knows this and
+treats it as a licence to widen the slice for free; nobody asked what happens
+if the group NARROWS to something those K values do divide.
+
+  board     ROCK 4D, boot afe55e04 throughout, 594 MHz, boot entry 1,
+            binary 3e3a6c40a165, performance governor.
+  desk      quality, which reproduces the board to 0.005% on this measurement.
+            Every ppl here is over 511 scored positions of tests/corpus/long.txt
+            unless it says otherwise.
+
+=====================================================================
+1. WHICH MODELS ARE ON THE PER-ROW PATH, COUNTED RATHER THAN DERIVED
+---------------------------------------------------------------------
+A tensor is grouped only when the group divides its K, K being the INPUT
+width, and only when the group is strictly narrower than K -- a tensor that is
+EXACTLY one group is refused by kgroup < k. Every K below was read off a run
+with CHARSIU_NPU_VERBOSE, not worked out from n_embd and n_ff, which is how
+three of these rows came out different from the guess.
+
+    model             distinct K                       widest width that
+                                                       divides all of them
+    Llama-3.2-1B      2048 8192                        1024   ships grouped
+    Phi-3.5-mini      3072 8192                        1024   ships grouped
+    SmolLM2-1.7B      2048 8192                        1024   ships grouped
+    Qwen3-0.6B        1024 2048 3072                    512
+    tinyllama-1.1b    2048 5632                         512
+    Qwen2.5-1.5B      1536 8960                         256
+    gemma-3-1b        1024 1152 6912                    128
+    gemma-4-E2B       256 1536 2048 4096 6144 12288     128
+
+THREE OF EIGHT ARE FULLY GROUPED AT THE SHIPPING WIDTH. The other five carry
+tensors on the per-row path: tinyllama's down_proj at 5632, Qwen3's 1024 wide
+ones (a single group, which kgroup < k refuses), both of Qwen2.5's, gemma4's
+n_embd and its 256 wide per layer projection, and all three of gemma-3-1b's.
+
+AND THE WIDTH THAT GROUPS EVERYTHING IS NOT THE ONE TO WANT. For gemma-3-1b it
+is 128, and the board charges 27% of decode for that. Section 2 is what
+happens at a width that groups only the two that carry the bytes.
+
+=====================================================================
+2. WHAT THAT COSTS gemma-3-1b: FORTY PERCENT
+---------------------------------------------------------------------
+    group   1152 ->   6912 ->    decode t/s        ppl     against shipping
+    1024    ungrouped ungrouped   20.10        108.7063     ships
+     576    2 groups  12 groups   20.70  +3.0%  79.2824     -27.1%
+     384    3 groups  18 groups   18.69  -7.0%  65.4765     -39.8%
+     192    6 groups  36 groups   14.68 -27.0%  57.1298     -47.4%
+     128    9 groups  54 groups    -            47.0269     -56.7%
+    its own q4_0, on the CPU, no charsiu requantisation:  49.0532
+
+AND AT 128 IT PASSES THE FILE'S OWN q4_0: 47.0269 against 49.0532. llama.cpp's
+q4_0 is blocks of 32 with an fp16 scale, which is finer than anything here, and
+charsiu's four bits at 128 with an fp32 scale and the wsum correction still
+score better on this model and this corpus. That is one model and one text and
+it is not a general claim, but it is the first time anything in this tree has
+been on that side of the line.
+
+The decode column stops at 192 because that is where the board sweep stopped;
+128 was measured for quality only.
+
+Three readings an arm, medians, one boot, performance governor; the spreads
+are 20.07..20.10, 20.68..20.70, 18.66..18.69 and 14.68..14.69, so the 3% is
+twenty times the wider of the two arms' ranges.
+
+576 IS NOT A TRADE. It is three percent FASTER and twenty-seven percent better,
+against a shipping default that groups none of this model. 384 is the trade:
+another thirteen points of quality for seven of decode. 192 is neither.
+
+The gap to the file's own q4_0 closes from 2.22x to 1.62x at 576 and 1.33x at
+384.
+
+WHY 576 IS FASTER IS NOT SETTLED AND THE ROUND DOES NOT CLAIM IT. More groups
+means more K slices, which is more read work by the tree's own formula, and
+this went the other way.
+
+The first guess was KFIT, which lets a last slice absorb its remainder instead
+of being it, and only for ungrouped tensors -- which at 1024 is all of
+gemma-3-1b. Reading npudev killed it before the board answered:
+CHARSIU_NPU_KFIT defaults to 0, so no slice absorbs anything and the geometry
+at 1024 is 1152 -> 1024 + 128 and 6912 -> six of 1024 plus 768. At 576 it is
+two of 576 and twelve of 576.
+
+So the slice COUNT goes 2 -> 2 and 7 -> 12 and the decode goes UP. What is
+also true is that the 1024 geometry has a 128 wide slice in it, an eighth of a
+slot, and a slice costs a dispatch and a full read of n outputs whatever it
+carries. Balance rather than count is the candidate now, and it is a guess
+until something measures it.
+
+KFIT itself has never been priced -- npudev says "Off until a board round says
+it is both correct and faster" -- and this round put both arms on the board
+while it was there, which is in section 7.
+
+=====================================================================
+3. AND ON Llama, WHERE GROUPING ALREADY WORKS, IT IS STILL WORTH 12%
+---------------------------------------------------------------------
+    group    2048 ->      decode tok/s      ppl over 511
+    prime   ungrouped        -                50.7838     the control
+    1024    2 groups       21.58              41.2763     ships
+     512    4 groups       19.08  -11.6%      36.3104     -12.0%
+     256    8 groups       15.58  -27.8%      -
+
+THE UNGROUPED ROW IS A CONTROL AND IT HAD TO BE RUN. A group width of 99991
+divides nothing, so nothing groups, and it reads 50.7838. That is what says
+the shipping arm IS grouping -- which this round spent an hour doubting, see
+section 5.
+
+Three readings an arm, medians, one boot. 512 is twelve percent of quality for
+twelve percent of decode, which is a trade a user could reasonably want either
+side of. 256 is not: 28% of decode, and the quality half was not measured
+because a trade that has already lost on one axis does not need the other.
+
+=====================================================================
+4. NO SINGLE WIDTH CAN GROUP A WHOLE MODEL, AND THAT IS THE REAL LIMIT
+---------------------------------------------------------------------
+gemma-3-1b's three K values are 1152, 6912 and 1024. 576 and 384 divide the
+first two; neither divides 1024, so its o_proj stays on the per-row path at
+every width that helps the rest. There is no width that groups all three.
+
+tensor_grouped() requires kgroup == kmax, so the group is one number for the
+whole model and this cannot be worked around from the outside. The reason for
+that condition is real: add_slice reads a slice's scale at k0 / kgroup, so a
+slice spanning two groups would apply the first group's scale to both.
+
+So the lever is a PER TENSOR group width, which needs the scale gather to carry
+more than one group per slice. That is an implementation limit and not a
+hardware one, and section 2 is what it would be worth.
+
+AND KMAX IS NOT PART OF IT. The two knobs move together only because of that
+condition; on the host they separate, and
+
+    gemma4  KMAX 1024  GROUP 512   112.4869
+    gemma4  KMAX  512  GROUP 512   112.4869
+
+are identical to the digit. The slice width contributes nothing to the
+arithmetic. A wide slice with narrow groups is the thing worth building.
+
+=====================================================================
+5. THE HOUR I SPENT BELIEVING THE SHIPPING RUNTIME HAD STOPPED GROUPING
+---------------------------------------------------------------------
+The board regression came back with Llama at ppl 41.2777. paper-evidence
+records 33.8071 for the grouped arm and 41.5289 for the ungrouped one. 41.2777
+is four tenths of a percent from the ungrouped figure.
+
+It is not that figure. Every number in that table is -n 300, which scores 299
+positions; charsiu_ppl with no -n scores 511. The pack's own command run
+verbatim reproduces 33.8071 to the digit, and the true ungrouped number at 511
+is 50.7838, nowhere near.
+
+THE TELL WAS ON SCREEN THE WHOLE TIME: the tool prints "over 299 scored
+positions of 300 tokens" against "over 511 scored positions of 512" on every
+line. Two numbers landing four tenths of a percent apart do not announce that
+they are different measurements. A perplexity belongs to the model file, the
+corpus file AND the length; the pack says so now.
+
+AND BEFORE THAT THE INSTRUMENT WAS DEAD. The first three quality arms returned
+the same number to four decimals at 1024, 512 and 256. An arm equal to its
+control to the last digit means it never ran: CHARSIU_NPU_W4V=1 was missing, so
+the quantiser was at eight bits, where the group width does not participate. A
+control on Llama, where the widths certainly should differ, is what caught it.
+
+=====================================================================
+6. gemma4 IS NOT MONOTONE AND THE REASON IS NOT WHAT I GUESSED
+---------------------------------------------------------------------
+    gemma4   group 1024 (1536 ungrouped)   89.0370
+             group  512 (3 groups)        112.4869   WORSE than ungrouped
+             group  256 (6 groups)         76.8166
+             its own q4_0                  59.8873
+
+The first hypothesis was the group COUNT: 512 is the only width where k=1536
+divides into an ODD number of groups. gemma-3-1b refutes it flatly. Its whole
+ladder is monotone and the odd rungs are not special:
+
+    groups    2       3       6       9
+    ppl    79.28   65.48   57.13   47.03
+
+Three is better than two and nine is better than six, so an odd count costs
+nothing there.
+
+Not AWQ either: CHARSIU_NPU_AWQ defaults to 0.0 and no arm set it. Not the
+weight cache: that is off unless CHARSIU_NPU_CACHE is set, and it was not. Both
+the quantiser's group loop and npu_matvec's consumer were read and neither has
+a count dependency. The second corpus is what decides whether this ordering is
+a property of the weights or of one text, and that is running.
+
+=====================================================================
+7. AND NARROWING IS NOT FREE ANYWHERE ELSE, WHICH IS THE POINT
+---------------------------------------------------------------------
+The same 1024 against 512 on the two other models of the round of record that
+carry ungrouped tensors:
+
+    model        K                  1024 t/s   512 t/s
+    tinyllama    2048 5632            23.00     20.32   -11.7%
+    Qwen3-0.6B   1024 2048 3072       30.68     29.00    -5.5%
+    gemma-3-1b   1024 1152 6912       20.10     20.70    +3.0%   (at 576)
+
+gemma-3-1b is the only one that gains, and it is the only one of the three
+where NOTHING is grouped at 1024: tinyllama's 2048 tensors are two groups
+already and Qwen3's 2048 and 3072 are two and three. So the gain is not "a
+narrower group is faster"; it is something about the geometry gemma-3-1b is in
+at 1024 and gets out of at 576, and the other two have nothing to get out of.
+
+That also means the rule cannot be a constant. A narrower group is worth
+between -12% and +3% of decode depending on the model's K set, and the quality
+it buys is worth between nothing and -40% of perplexity on the same axis. What
+this asks for is a per model decision, which is what llama_auto_kmax already
+is -- it just only ever looks upward.
