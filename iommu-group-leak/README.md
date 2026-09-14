@@ -1,59 +1,65 @@
-# One patch, held: the IOMMU group reference rocket leaks per job
+# WITHDRAWN. This fix is already on the list, and it is not ours.
 
-    0001-accel-rocket-don-t-leak-an-IOMMU-group-reference-per.patch
+    WITHDRAWN-do-not-send-0001-iommu-group-leak.patch.txt
 
-NOT SENT. Nothing in this directory goes anywhere without the user saying so.
+DO NOT SEND. The file is kept only so this directory records what happened; the
+`.patch` suffix was removed so it cannot be picked up by a send script.
 
-## What it is
+## What I got wrong
 
-`rocket_job_handle_irq()` retires a job with
+I found that `rocket_job_handle_irq()` retires a job with
 
     iommu_detach_group(NULL, iommu_group_get(core->dev));
 
-`iommu_group_get()` returns the group with `kobject_get(group->devices_kobj)`.
-`iommu_detach_group()` takes the group mutex, calls
-`__iommu_group_set_core_domain()`, and returns -- it does not put anything. So
-one group reference is leaked for every job that retires, the group's kobject
-can never reach zero, and `rocket_core_fini()`'s own `iommu_group_put()` stops
-releasing it.
+which leaks one IOMMU group reference per job, wrote a one-line fix with
+`Fixes: 0810d5ad88a1`, and carved it out of `attach-once/0001` as something that
+could go to stable on its own.
 
-The core already holds the group for its whole life: `rocket_core_init()` takes
-it into `core->iommu_group` and `rocket_core_fini()` puts it. The other two
-call sites in the file use that member -- the attach in `rocket_job_run()` and
-the detach in `rocket_reset()`. This one is the odd one out, and the fix is to
-use the member there too.
+Then I searched lore, which is what I should have done first.
 
-    Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+## Who actually owns it
 
-Confirmed by fetching that commit: it added all three call sites in one patch,
-two using `core->iommu_group` and one not.
+**ZhaoJinming <zhaojinming@uniontech.com>** posted it in June 2026 and carried
+it through six revisions:
 
-## Why it is its own patch
+    [PATCH v3 2/2] accel/rocket: Fix iommu_group leak and unsafe IRQ register access
+    2026-06-09 .. [PATCH v6 2/2] 2026-06-10
+    https://lore.kernel.org/all/20260610060132.3239648-2-zhaojinming@uniontech.com/
 
-This is NOT a new finding. `rfc-send-v12/attach-once/0001` has carried the same
-observation in its commit message since 2026-09-02, because attach-once deletes
-the whole per-job detach and the leak goes with it.
+The 1/2 of that series LANDED as `9b2dedadf6a9 ("accel/rocket: Fix error path
+handling in rocket_job_run()")`, 2026-07-04. The 2/2 — the group leak — did not,
+which is why linux-next 20260911 still has the bug.
 
-Carving it out is the point. attach-once is a performance change that touches
-the job lifetime, adds a field to `struct rocket_core` and has to argue about
-suspend and reset; a maintainer can reasonably sit on it. This is one line with
-a `Fixes:` tag that stands on its own and can go to stable. Sending the small
-one first is also how the reviewer of the big one gets a smaller diff.
+**Igor Paunovic** has been trying to unstick it since July, and wrote again on
+**2026-09-09**, six days before I wrote my duplicate, offering ZhaoJinming
+either of two things: respin the leak fix alone as a standalone v7 and he tests
+it on RK3588 the same day with a Tested-by, or he posts it on ZhaoJinming's
+behalf with ZhaoJinming as author and his own Signed-off-by only as the person
+posting. "The fix is yours; I do not want to take it over, only to stop it from
+being stuck."
 
-If both go, this comes first and attach-once rebases on top.
+A third copy of that one line, from us, would step on two people who are
+actively coordinating on it.
 
-## Base
+## What is actually useful here, and it is the user's call
 
-`68142f986` -- linux-next 20260911, the same base as `v13-prep`. It does NOT
-touch v13-prep, which is held unsent and unchanged. The fix applies to the
-upstream function `rocket_job_handle_irq()`; on top of our series the same line
-lives in `rocket_job_next_locked()`, moved there verbatim by
-`33f35c4b8 ("accel/rocket: factor the completion tail out of the IRQ handler")`,
-whose "no functional change" is accurate.
+A **Tested-by on RK3576** when the standalone lands. Nobody in that thread has
+RK3576 hardware; Igor's offer is RK3588. That is the one thing this project can
+add that the thread does not already have, and it is an outward send, so it
+waits for the user.
 
-## Not built
+## The lesson, again
 
-The kernel was not rebuilt for this. `core->iommu_group` is `struct iommu_group *`
-at `rocket_core.h:51` and is dereferenced the same way two lines away in the
-same file, so the change is a substitution of an expression for an equal one.
-That is an argument, not a build. Say so if it is ever sent untested.
+"Silence of one thread is not absence" — and neither is the absence of a fix in
+the tree. `linux-next` not carrying it meant nobody had LANDED it, which is a
+different statement from nobody having SENT it. Search before writing, not
+after. Two searches would have cost five minutes: `s:"accel/rocket" AND s:"leak"`
+on lore finds it on the first page.
+
+## Note on the review that pointed here
+
+The v13 review agent said the standalone had been posted by Chaoyi Chen on
+2026-08-14. That is a different patch — "Fix the IOMMU domain leak in
+rocket_ioctl_create_bo", a domain leak on an error path, not the group
+reference in the IRQ handler. The substance of the warning was right and the
+attribution was not, which is why it was checked rather than repeated.
