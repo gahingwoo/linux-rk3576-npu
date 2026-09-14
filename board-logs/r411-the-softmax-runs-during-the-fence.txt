@@ -389,7 +389,7 @@ writing that one down. The ladder below was restarted on a board checked empty
 by `ps`.
 
 =====================================================================
-13. 🏁🏁🏁 THE LADDER WITH EVERYTHING ON, AND THE CROSSOVER IS GONE
+13. 🏁 THE LADDER WITH EVERYTHING ON: A CLEAR LEAD UNDER 250, LEVEL ABOVE
 ---------------------------------------------------------------------
 Shipping defaults: two head groups, the ladder's ceiling, the block copy, the
 deferred gather, the fence poll. Board to itself, three repeats a point, one
@@ -407,23 +407,34 @@ warm-up discarded, same boot as every other ladder in this round.
        852    5953  5948..5959     885   6026.8  charsiu   1.012   |  6328
 ```
 
-🏁 26) EVERY ROW IS charsiu. There is no crossover left to name. 852 goes
-8081 -> 7016 -> 6818 -> 6328 -> 5953 across r393, r408, r410 and this round's
-two halves, and their 1.341x lead at 852 this morning is now our 1.012x.
+🏁 26) TWO REGIMES: A CLEAR LEAD BELOW ABOUT 250 TOKENS, LEVEL ABOVE IT. 852
+goes 8081 -> 7016 -> 6818 -> 6328 -> 5953 across r393, r408, r410 and this
+round's two halves, so their 1.341x lead at 852 this morning is gone.
 
-⚠⚠ 27) AND THREE OF THE EIGHT ARE INSIDE THE MEASURED DRIFT, WHICH IS WHAT
-THEY SHOULD BE READ AS. Their column is r393's ladder with their runtime,
-which needs their driver bound and so cannot share a boot with ours; r393
-measured the boot-to-boot drift of the same charsiu ladder at 2.2% at worst.
-Against that bound:
+⛔⛔ 27) AND THE FIRST VERSION OF THIS SECTION SAID "EVERY ROW IS charsiu,
+THERE IS NO CROSSOVER LEFT" -- WHICH THE TABLE DOES NOT SUPPORT. Every point
+estimate does favour charsiu. A margin has to clear TWO things:
 
-    clear         27 (+24.5%)  52 (+27.6%)  102 (+22.4%)  202 (+9.2%)
-                 452 (+4.4%)
-    inside it    302 (+0.7%)  602 (+2.1%)  852 (+1.2%)   -- read as LEVEL
+  the drift   their column needs their driver bound, so the two columns cannot
+              share a boot; r393 measured the boot-to-boot drift of this same
+              charsiu ladder at 2.2% at worst. 302 (+0.7%), 602 (+2.1%) and
+              852 (+1.2%) are inside it.
+  the spread  452 is +4.4% over them and its own three readings span
+              3037..3179 -- 142 ms, 4.6% of its median. A margin smaller than
+              the spread of the arm it came from is not a margin.
 
-So the honest headline is not "we beat them everywhere by x". It is: **the
-vendor no longer wins at any measured length**, we are clearly ahead below 250
-tokens and at 452, and level from 302 up.
+    clear    27 (+24.5%)  52 (+27.6%)  102 (+22.4%)  202 (+9.2%)
+    level   302  452  602  852
+
+🔑 I CHECKED THE MARGIN AGAINST THE DRIFT BOUND AND NOT AGAINST THE ARM'S OWN
+SPREAD, and 452 is the row that separates the two tests: it clears 2.2% and
+does not clear its own 4.6%. The range was printed in the same table I was
+reading. This is the family that already holds best-of-N picking the noisy
+arm, the two-point fit, and the cross-session comparison -- three withdrawals
+in this tree, and this would have been the fourth.
+
+So the claim is: clearly ahead below about 250 tokens at 1.09x to 1.28x, level
+from 302 up. Not "ahead everywhere".
 
 ⚠ 28) DECODE DID NOT PAY FOR IT: 18.15 tok/s against 18.06 before the round
 began, peak 1448 MB against 1449. The fence poll runs there too and the
