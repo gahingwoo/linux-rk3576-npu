@@ -1,0 +1,184 @@
+round 411, 2026-09-14 — the fence is a sleeping ioctl and the softmax is four
+                        busy cores, and they were happening one after the other
+
+r407 read attention's 1988 ms line by line and the three largest were a scores
+fence of 504 ms, a values pack of 477 and a values fence of 385. Two of those
+are the CPU asleep in an ioctl and one is the NPU idle. Nothing made them
+exclusive except that one function did both halves of a group.
+
+  board     ROCK 4D, boot 2f21a2e1, npu 594 MHz, cpu pinned to 2016/2208 MHz
+  binaries  /root/charsiu_run_kvl, /root/charsiu_run_pipe, /root/charsiu_run_r411,
+            /root/charsiu_run_ship
+  model     Llama-3.2-1B-Instruct-Q4_0.gguf unless a section says otherwise
+  scripts   tests/board_kv_ladder.sh, tests/board_attn_pipe.sh (both new)
+
+=====================================================================
+1. FIRST, THE LADDER THE HANDOFF ASKED FOR -- AND THE FIX IT ASKED FOR
+   IS SLOWER THAN WHAT IT REPLACES
+---------------------------------------------------------------------
+kv is the values matmul's reduction extent and it climbs a doubling ladder, so
+852 tokens finish on the 1024 rung when 864 would do. r403 wrote that down as
+"19% at 852" and the handoff carried it forward as "size kv from the prompt
+hint instead of doubling, about 135 ms, low risk".
+
+⛔ 1) THAT IS THE WRONG FIX AND ARITHMETIC SAYS SO BEFORE THE BOARD DOES. The
+cost of a prompt is the sum of kv over its positions. Starting kv AT the prompt
+total charges the first 512 rows 864 apiece where the ladder charges them 32,
+64, ... 512:
+
+    ladder, no ceiling      523264 units   1.44x the ideal
+    kv = 864 from the start 736128         2.03x
+    ladder, ceiling at 864  468864         1.29x
+
+🔑 2) THE HINT IS A CEILING, NOT A FLOOR. Keep the ladder and refuse to climb
+past what the prompt will use. That is CHARSIU_ATTN_KV_CAP, and it is worth
+46 ms of layer time, reproduced in two rounds.
+
+=====================================================================
+2. ⭐ A RUNG IS THE NEXT RUNG'S BYTES AT ANOTHER ADDRESS
+---------------------------------------------------------------------
+Every growth re-packed every live position out of the float cache, one call to
+charsiu_fp16_pack_vcol per position per layer per kv head. It does not have to.
+w_group_index is
+
+    ngi*ng*ke + kgi*kg*ngsz + (n%ng)*kgsz + k%kg
+
+and the padded extent ke appears in exactly ONE of those four terms. So the
+positions already packed are already in the right order, at the wrong address:
+one memcpy per output channel group moves a whole rung.
+
+tests/fp16_regrow.c holds that against the packer over 1584 shapes, byte for
+byte, with a negative control that requires one extra packed position to BREAK
+the comparison -- otherwise a regrow that does nothing passes.
+
+852 tokens, arms rotated, three repeats a cell:
+
+    step:cap:copy   TTFT   values   layer    growth
+    200:0:1         6715     1140    1861    115 ms: 82 alloc, 32 copy
+    200:1:1         6686     1096    1815    109 ms: 76 alloc, 33 copy
+    200:1:0         6767     1091    1815    177 ms: 76 alloc, 101 packer
+    150:1:1         6680     1080    1799    151 ms
+    133:1:1         6749     1070    1793    198 ms
+    125:1:1         6804     1082    1804    258 ms
+
+🏁 3) THE COPY IS WORTH 81 ms AGAINST ITS OWN CONTROL ON THE IDENTICAL LADDER
+(200:1:0 against 200:1:1), and the growth line says why: 101 ms in the packer
+becomes 33 in the copy.
+
+⛔ 4) AND A FINER LADDER STILL LOSES, because the OTHER half of a growth is 128
+buffer objects freed and re-allocated. 5 rungs allocate 128 of them, 11 rungs
+allocate 282, and past step 150 the extent it buys costs more than it saves.
+All six arms produce the same tokens, 8b02145bf030.
+
+=====================================================================
+3. ⭐⭐⭐ THE ONE THAT MATTERS: THE HEADS IN TWO GROUPS
+---------------------------------------------------------------------
+charsiu_fp16_matmul_group is now two functions. submit() queues the job and
+returns; wait() takes the fence and reads the answers back; the old entry point
+is the two in a row. The attention layer then runs its H heads in G groups over
+two unit pairs, and it submits group g+1's scores BEFORE group g's softmax.
+
+The hardware sees the same jobs in the same order -- S0 S1 V0 V1, one job a
+submit, serialised by the driver on one file descriptor. This is NOT the two
+cores in flight together, which corrupts single words and is why the fp16 unit
+sends one job of N tasks in the first place.
+
+    tokens    PIPE=1   layer      PIPE=2   layer   ratio
+       102       903      92         885      75   0.980
+       302      2245     325        2190     270   0.976
+       602      4552     961        4332     792   0.952
+       852      6594    1724        6320    1402   0.958
+
+🏁 5) 322 ms OF LAYER AT 852 TOKENS, AND THE STAGE TABLE SAYS WHERE FROM:
+
+    PIPE=1   scores  fence 503   values  pack 476   fence 252
+    PIPE=2   scores2 fence  38   values2 pack 241   fence  94
+
+The waits collapse because the work was already done while the CPU packed. The
+pack did not get faster and the hardware did not get faster; they stopped
+taking turns.
+
+⚠ 6) G = 4 IS NOT BETTER THAN 2: 6311 against 6320, layer 1441 against 1402.
+The extra submits cost more than the finer interleave hides, so two groups is
+where this stops.
+
+⚠ 7) AND PIPE=1 IS NOT QUITE TODAY. At 1 the next call's sentinels are written
+while the values job runs rather than after it, which is free and real. The arm
+to read in this table is 1 against 2 inside ONE binary, which is what it is.
+
+=====================================================================
+4. NINE MODELS, THREE ARMS, AND THE ONE THAT COULD HAVE CAUGHT IT
+---------------------------------------------------------------------
+Splitting a group changes which op index a head has, and a head that reads
+another head's V surface is fluent and wrong. tests/board_text_all.sh with
+CHARSIU_ATTN_NPU=1, every model batched against its own token loop:
+
+    CHARSIU_ATTN_PIPE=1    9 compared, 0 differing
+    CHARSIU_ATTN_PIPE=2    9 compared, 0 differing
+    CHARSIU_ATTN_PIPE=4    9 compared, 0 differing
+
+Every row says "prompt batched", so the path being compared is the one that
+changed. Llama at 852 tokens is byte identical at all three as well.
+
+⚠ 8) AND THE SCRIPT HAD BEEN LOOKING IN THE WRONG PLACE. Seven of this board's
+nine models live in /opt/vendor/models, which was not in its search list: it
+was reached only by setting CHARSIU_BOARD_DIR by hand. A round that forgot
+found three, which is under CHARSIU_TEXT_MIN_MODELS and so refused -- the
+guard from r409 worked -- but a floor that fires every time is a floor nobody
+reads. The directory is in the list now.
+
+=====================================================================
+5. ⛔⛔ AND ONE THAT LOST, FOR THE REASON THIS TREE ALREADY KNOWS
+---------------------------------------------------------------------
+The scores unit spends 73 ms in `plan` at 852 tokens and the values unit 19.
+That is not planning, it is `want()` reallocating five buffer objects -- the
+largest 21 MB -- as the shapes grow through the first layer of each prompt
+chunk. charsiu_fp16_reserve sizes them at open instead, and it works: plan
+73 -> 1 and 19 -> 1.
+
+It also made every prep and every fini charge the reserved size. Same binary,
+852 tokens, three repeats a cell:
+
+    CHARSIU_ATTN_RESERVE=1   PIPE=1 7027  PIPE=2 6794   layer 2089 / 1854
+    CHARSIU_ATTN_RESERVE=0   PIPE=1 6661  PIPE=2 6316   layer 1724 / 1399
+
+⛔ 9) 478 ms, AND THE STAGE TABLE NAMES IT: the scores fence 503 -> 738 and the
+values psync 67 -> 167. Both are whole-buffer dma_syncs. This is the FOURTH
+time this tree has paid one on a buffer bigger than the work, and the note
+that says so is in the file the change was made in.
+
+⚠ 10) THE SIZE IS THE FAULT AND NOT THE IDEA. The ceiling arithmetic is right
+about the LADDER -- the input surface takes (k/32)*m <= 5120 and the scores
+width cannot exceed the extent, so m * n is the same 160 * 1024 on every rung
+-- and wrong about the CALLER: charsiu_run's prefill chunk is 80 rows, so a
+real group is 80 * 864 and this reserved 2.4x it. Default off, code kept, the
+number in the comment. A version that waits for the first layer call and
+reserves at ITS m would be correctly sized and has not been measured.
+
+=====================================================================
+6. ⚠⚠ AND A MEASUREMENT THAT OUTLIVED ITS OWN CONFIGURATION
+---------------------------------------------------------------------
+Three runs were queued back to back so the board would not idle: the
+reservation arm, its control, and then the NPU attention arm against the CPU
+one. The first two are what section 5 reports. The third ran with the same
+binary, whose CHARSIU_ATTN_RESERVE default was still 1 -- so it measured the
+arm that section 5 had just shown to be 478 ms slow:
+
+    tokens    CPU ms      NPU ms   NPU/CPU
+        52       438         611     1.395
+       102       812        1058     1.303
+       202      1476        1752     1.187
+       452      3566        3564     0.999
+       852      6786        6738     0.993
+
+⛔ 11) THAT TABLE IS NOT A READING OF WHAT SHIPS and nothing should be decided
+from it. The shipping NPU arm at 852 is 6316 against the same 6786 CPU one,
+0.93 rather than 0.993, and the crossover is somewhere below 452 rather than
+at it. attn_npu_min_tokens is 448 and that number was chosen against a slower
+arm; it is re-measured in section 7.
+
+🔑 THE PROCESS LESSON IS THE POINT: a queued chain runs later than it was
+written, and the run that invalidates a configuration can be the one queued
+ahead of the run that uses it. Same family as "correct code measured in a
+configuration nobody chose" -- the difference is that here the configuration
+was chosen, by me, twenty minutes earlier.
