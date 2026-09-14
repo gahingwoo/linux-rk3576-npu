@@ -185,3 +185,69 @@ before, and v13 answers none of them and changes no code.** Sending it would
 put a second version on the list with the same open questions and a cover that
 now names them. That is a decision about the series, not about the text, and it
 is not mine to take.
+
+## The kernel review, 2026-09-14 — and one of Sashiko's two Highs does not stand
+
+A read of the 14 patches against the tree, independent of the text audit.
+
+**Mechanical baseline clean.** Bisectable: the two touched subsystems build at
+each of the 14 commits, and W=1 on the final tree is warning free.
+dt_binding_check passes; dtbs_check is clean on five rk3576 boards and three
+rk3588 ones. 09's table rewrite is value preserving across all 19 RK3576 rows
+(only the intended delay=15 and the DOMAIN_RK3576_R swap). 10 is genuinely
+opt-in: the only two power-domain nodes in all of arch/arm64 and arch/arm
+rockchip DTS that carry `resets` are the two new RK3576 NPU ones, so every
+other SoC takes the optional-get's NULL.
+
+🏁 **9/14's [High] does not stand, and the patch now says why.** RK3588_PD_NPU
+carries need_regulator with req_mask 0, exactly as RK3576_PD_NPU does, so
+rockchip_pd_power(pd, false) has been running at probe on every rk3588 board
+since that domain was added, with the idle request skipped because there is
+none to make. Verified in tree: the macro's trailing argument is `regulator`
+and the row passes `false, true`. 13 of the 49 rk3588 board files attach a
+domain-supply; 36 take the dummy and the warn. If the -EINVAL half held,
+rockchip_pm_domain_probe() would fail on all 49.
+
+⚠ **4/14's [High] is right in its outcome and wrong in its mechanism**, and
+the cover now says both. rpm_resume() does NOT cancel a running autosuspend
+timer -- runtime.c carries a comment saying so and only deactivates the timer
+when timer_autosuspends is clear. What defeats the suspend is the usage count:
+rpm_check_suspend_allowed() returns -EAGAIN while it is non-zero. Both read in
+the tree. The scope is narrower than the finding suggests, because
+drm_sched_start() completes the detached jobs with -ECANCELED rather than
+re-running them; the gap needs a client with a second job queued or a resubmit
+inside 50 ms. Incomplete coverage, not a regression.
+
+⛔ **And a pre-existing bug came out of checking 3/14's own reasoning.**
+rocket_core_fini() puts and NULLs core->iommu_group BEFORE rocket_job_fini(),
+which is what cancels the timeout worker via drm_sched_fini(). A timeout in
+that window reaches rocket_reset()'s
+`iommu_detach_group(NULL, core->iommu_group)` on the stored pointer. Verified
+by reading all three functions. It is in the cover's pre-existing list for
+Tomeu, with the note that 3/14 adds a synchronize_irq() into the same window.
+
+⚠ **Patch 05's iommu_group leak is unchanged by 05**, as the cover already
+says -- and the fix is a one word change: four lines away, rocket_reset() does
+the same detach using the stored core->iommu_group with no extra get, while
+the moved line still does iommu_group_get(core->dev).
+
+### ⛔ A git mistake worth writing down, because it cost the branch
+
+Amending 09 was done as
+
+    git checkout -B v13-tmp $NINE && git commit --amend && \
+        git cherry-pick $NINE..v13-prep | tail -1 && \
+        git branch -f v13-prep v13-tmp
+
+**A pipeline's exit status is the LAST command's.** The cherry-pick hit a
+conflict, `tail` succeeded, `&&` carried on, and `git branch -f` moved
+v13-prep onto a branch holding nine patches instead of fourteen. Nothing was
+lost -- the good state was in the reflog, restored from e5cb712e6 -- but for a
+few minutes the branch was silently short five patches while the on-disk
+patches still showed the right content.
+
+🔑 It also produced a WRONG DIAGNOSIS: a check for an earlier fix was run
+against a sha read off the truncated branch, came back 0, and was reported as
+"the amend did not land". It had landed. **After a git operation fails, re-read
+the shas before checking anything against them.** Never put a pipe in an `&&`
+chain that ends in a force-update.

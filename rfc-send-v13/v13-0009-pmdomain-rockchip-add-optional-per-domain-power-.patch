@@ -1,4 +1,4 @@
-From a1cc33734b1fb899e3e8e948c8a6614c1ca7ff3a Mon Sep 17 00:00:00 2001
+From 3ddad5be97a2d97bca0d6156db3dadd4993804ad Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Fri, 31 Jul 2026 14:31:40 +1200
 Subject: [PATCH v13 09/14] pmdomain: rockchip: add optional per-domain
@@ -35,6 +35,16 @@ rather than failing. It is deliberate, and it is what the delay is for:
 without the domain being forced off at probe, a bootloader that leaves the
 NPU powered means ->power_on is never called and neither the delay nor
 10/14's reset pulse ever runs.
+
+This is not new behaviour in this driver. RK3588_PD_NPU has carried
+need_regulator since it was added and its req_mask is 0 exactly as this
+one's is, so rockchip_pd_power(pd, false) has been running at probe on every
+rk3588 board, with rockchip_pmu_set_idle_request() returning immediately
+because there is no request to make. Thirteen of the forty-nine in-tree
+rk3588 board files give that domain a domain-supply; the other thirty-six
+take the dummy regulator and the warn. The idle handshake lives in the child
+domains and on both SoCs they keep it: NPUTOP, NPU0 and NPU1 carry req and
+idle masks of their own.
 
 If that is too much for one patch, say so and it splits.
 
