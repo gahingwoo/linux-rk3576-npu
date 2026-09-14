@@ -182,3 +182,125 @@ written, and the run that invalidates a configuration can be the one queued
 ahead of the run that uses it. Same family as "correct code measured in a
 configuration nobody chose" -- the difference is that here the configuration
 was chosen, by me, twenty minutes earlier.
+
+=====================================================================
+7. ⭐⭐⭐ THE LADDER, SHIPPING DEFAULTS, SAME BOOT AS r410's
+---------------------------------------------------------------------
+Their column is r393's measured ladder with their runtime on this board; their
+chat template costs a constant 33 tokens at every length, so each row is the
+same input text.
+
+```
+    ch tok   ch ms      range   vn tok    vn ms   winner   ratio   | r410
+        27     351   349..355       60    413.2  charsiu   1.177   |  348
+        52     444   441..444       85    529.6  charsiu   1.193   |  437
+       102     809   804..815      135    931.8  charsiu   1.152   |  799
+       202    1490  1485..1492     235   1528.5  charsiu   1.026   | 1465
+       302    2265  2259..2272     335   2145.0  vendor    1.056   | 2226
+       452    3226  3222..3236     485   3194.7  vendor    1.010   | 3370
+       602    4387  4382..4390     635   4200.5  vendor    1.044   | 4654
+       852    6328  6323..6363     852   6026.8  vendor    1.050   | 6818
+```
+
+🏁 12) 852 GOES 6818 -> 6328 AND THEIR LEAD 1.131x -> 1.050x. r393 was 1.341x
+this morning. Every point is inside 1%, on the boot r410's ladder was measured
+on, so this is a within-boot comparison and not a cross-boot one.
+
+🏁 13) 452 IS 31 ms APART. The rows that still go to them are 302 by 120 ms,
+452 by 31, 602 by 187 and 852 by 301.
+
+⚠ 14) AND DECODE DID NOT MOVE: 18.06 tok/s at one group against 18.09 at two,
+peak 1449 MB against 1456. The second unit pair is opened and never submitted
+through below two rows.
+
+=====================================================================
+8. ⚠⚠ AND THE ARM ITSELF IS NOW A WASH AGAINST THE CPU AT 852
+---------------------------------------------------------------------
+Re-run with the shipping binary, two repeats a cell, arms alternating:
+
+    tokens    CPU ms         NPU ms     NPU/CPU
+       102       814            896       1.101
+       202      1488           1523       1.024
+       302      2274           2202       0.968
+       452      3230           3316       1.027   (NPU range 3222..3409)
+       652      4790           4763       0.994
+       852      6332           6300       0.995
+
+🔑 15) THE fp16 ATTENTION ARM BUYS 0.5% AT 852. That is not a regression --
+r409 measured the same arm 18% BEHIND the CPU one at this length -- it is the
+CPU arm having no idea it was in a race and the NPU arm having spent its gains
+on its own per call bookkeeping. Of the NPU arm's 1400 ms layer, about 264 is
+the hardware and the rest is pack, psync, poison, plan and read.
+
+⭐ So the lever on attention is no longer the hardware. It is the 350 ms of
+per call cost the NPU path adds on top of a softmax both arms have to do
+anyway, and `plan` -- 104 ms of it -- is buffer growth that a correctly sized
+reservation removes (section 5).
+
+⚠ 16) AND 302 WINS BY 3.2% WITH AN ARM THAT IS OFF THERE. attn_npu_min_tokens
+is 448, chosen against a slower arm, so the 302 row of the ladder runs its
+attention on the CPU and gives back 72 ms. 452 reads the other way at 1.027
+with a 187 ms range on two samples, so the threshold is NOT decided by this
+table; it needs repeats at 252, 302, 352 and 452.
+
+=====================================================================
+9. ⭐⭐⭐ THE DEFERRED GATHER: THE FAULT r408 COULD NOT NAME
+---------------------------------------------------------------------
+CHARSIU_NPU_DEFER_READ moves the previous tensor's accumulator gather into the
+window between this call's submit and its fence -- 1.93 ms a row of CPU work
+into 1.82 ms a row of sleeping ioctl. r408 measured it worth about 200 ms at
+852 tokens and then WITHDREW it: tests/board_text_all.sh said five models of
+nine came back with different text, and a round spent on the cause ended with
+the count itself falsified.
+
+⭐ 17) THE CAUSE IS ONE LINE AND IT IS NOT IN THE GATHER. npu_matmul_inner ends
+with the per channel tail scale -- an ungrouped tensor is scaled once after the
+read, and int8 always is -- and it ran whether or not the read had happened:
+
+    if (!w4_for(g, e->t) || !tensor_grouped(g, e->t))
+            Y[r*n + j] *= e->t->scale[j];
+
+With `defer` the read has NOT happened there. The scale multiplied whatever Y
+held from the previous call, and the deferred gather then overwrote Y with
+values that never got scaled at all.
+
+🔑 18) AND IT EXPLAINS WHY THE MODEL EVERY SPEED ROUND USES IS THE ONE IT DOES
+NOT TOUCH. Llama-3.2-1B Q4_0 is grouped w4 in every tensor, so the block is
+skipped for it entirely -- its `scale` line reads 0.0 ms -- and both arms
+agreed. The four models r408 named are the ones with a tensor the grouping does
+not cover: Qwen2.5, Qwen3, gemma-3, gemma-4. With the scale moved into
+npu_flush_pending, straight after the gather fills Y, all four are identical.
+
+=====================================================================
+10. ⭐ AND AN ORACLE, SO THE NEXT FAULT DOES NOT NEED A MODEL SUITE
+---------------------------------------------------------------------
+The instrument for this feature has been a pass/fail count over nine models.
+CHARSIU_NPU_DEFER_CHECK=1 gathers the answer twice instead: once at the moment
+of deferring, with exactly the state the plain path would have used, into a
+shadow seeded from Y; once at the flush, the deferred way, into Y. Then it
+compares and names the first element that differs -- tensor, row, channel,
+both values.
+
+    charsiu: the deferred gather was compared on 80 tensors, 0 differed;
+             80 deferred, 80 flushed
+
+🔑 19) ZERO AND NEVER RAN LOOK THE SAME, so the line says how many were
+compared and how many were flushed as well as how many differed. That is the
+r409 lesson applied to a new instrument before it could mislead anybody.
+
+🏁 20) AND WITH THE FIX, THE BOARD TO ITSELF: 9 models compared, 0 differing,
+CHARSIU_NPU_DEFER_READ=1. The control on the same binary with it off is also
+0 of 9. r408's road is open again.
+
+⛔⛔ 21) THE RUN BEFORE THAT ONE SAID 3 OF 9 AND IT WAS MY OWN FAULT. Three
+board jobs were queued back to back so the board would not idle, and one wait
+condition tested "has the output file anything in it" -- which `> file` makes
+true at the moment the job starts, not when it finishes. So the second job ran
+its sweep WHILE the correctness check was running: two processes on the NPU at
+once, which r363 already measured corrupting three of four. Run alone
+afterwards, the three models it named come back Llama 6 of 6, SmolLM2-135M
+1 of 1, Phi-3.5 4 of 4 identical.
+
+🔑 One board job at a time, and a wait condition has to test COMPLETION. A
+concurrent job does not look like a confound in the output; it looks exactly
+like the bug being hunted.
