@@ -248,6 +248,13 @@ attention on the CPU and gives back 72 ms. 452 reads the other way at 1.027
 with a 187 ms range on two samples, so the threshold is NOT decided by this
 table; it needs repeats at 252, 302, 352 and 452.
 
+🏁 r412 RAN THEM AND THIS IS CLOSED. 252 and 302 are level, 352 is +5.7% and
+452 is +10.8%, so the threshold is 320 for a model that shares KV heads and
+448 for one that does not. The 452 reading in the table above is an arm
+measured against itself: this round's CPU column was the empty environment,
+which stopped being the CPU arm when auto became the default. See r412 §1
+and §3.
+
 =====================================================================
 9. ⭐⭐⭐ THE DEFERRED GATHER: THE FAULT r408 COULD NOT NAME
 ---------------------------------------------------------------------
