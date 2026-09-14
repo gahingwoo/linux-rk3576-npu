@@ -199,7 +199,7 @@ same input text.
        302    2265  2259..2272     335   2145.0  vendor    1.056   | 2226
        452    3226  3222..3236     485   3194.7  vendor    1.010   | 3370
        602    4387  4382..4390     635   4200.5  vendor    1.044   | 4654
-       852    6328  6323..6363     852   6026.8  vendor    1.050   | 6818
+       852    6328  6323..6363     885   6026.8  vendor    1.050   | 6818
 ```
 
 🏁 12) 852 GOES 6818 -> 6328 AND THEIR LEAD 1.131x -> 1.050x. r393 was 1.341x
@@ -355,3 +355,30 @@ slower here. A different chunk is a different set of matmul shapes and so a
 different summation order, which can move a token on its own; what it is not
 is a knob anybody can turn without re-checking the output. The note says so
 now.
+
+=====================================================================
+12. THE GATE, WITH THE SHIPPING DEFAULTS
+---------------------------------------------------------------------
+CHARSIU_NPU_DEFER_READ=1 and CHARSIU_NPU_SPIN_US=200 are the defaults now.
+tests/board_text_all.sh, every model's batched prompt against its own token
+loop, the board to itself:
+
+    Llama-3.2-1B  SmolLM2-135M  Phi-3.5-mini  Qwen2.5-1.5B  Qwen3-0.6B
+    SmolLM2-1.7B  gemma-3-1b    gemma-4-E2B   tinyllama
+    9 models compared, 0 differing.
+
+⚠ AND THE INTERACTION THAT MATTERS WAS ALREADY COVERED. The deferred gather
+and the two-group attention run together only above the attention threshold,
+which these 88 token prompts are under. Section 11's text column is where they
+meet: every arm there is an 852 token prompt with attention on, and defer1 and
+`all` are both byte identical to base.
+
+⛔ A second pass with CHARSIU_ATTN_NPU=1 was started to force them together at
+88 tokens and was abandoned: forcing the fp16 unit into a token loop is minutes
+a model and it answers a question no shipping configuration asks.
+
+⛔⛔ AND KILLING IT TOOK TWO GOES. `pkill` is not on this board's busybox, so
+the first attempt left the Phi-3.5 run alive and the ladder started beside it --
+the same two-processes-on-the-NPU mistake as section 9's, twenty minutes after
+writing that one down. The ladder below was restarted on a board checked empty
+by `ps`.
