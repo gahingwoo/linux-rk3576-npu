@@ -12,9 +12,18 @@ power-on.
 
 Give rockchip_domain_info an optional delay_us and wait for it between
 releasing idle and restoring QoS. Rename DOMAIN_M_O_R_G to
-DOMAIN_M_O_R_G_W, since the suffixes name the fields the macro sets and
-this one now also carries a settle delay; RK3576 is its only user, so the
-old spelling is not kept around.
+DOMAIN_M_O_R_G_W for the settle delay it now carries; RK3576 is its only
+user, so the old spelling is not kept around.
+
+The suffix scheme does not survive this cleanly and it is worth saying so
+rather than leaving it for review. The letters name fields, but R already
+means two things in this family: DOMAIN_M_O_R takes r_status and r_offset
+AND a regulator under one R, while DOMAIN_M_R has no repair fields and its
+R is the regulator. DOMAIN_M_O_R_G's R was the repair pair -- it did not
+set need_regulator at all -- so the paragraph below, which gives it one,
+adds a field the name does not mention. Naming it _W_R or _RG would be
+inventing a convention rather than following one. Say which you would
+rather have.
 
 While the macro is being rewritten, give it the regulator argument that
 DOMAIN_M_O_R and DOMAIN_M_R already take. Without .need_regulator set,

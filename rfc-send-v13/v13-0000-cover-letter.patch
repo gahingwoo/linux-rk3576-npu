@@ -193,11 +193,15 @@ answer, and I would rather split it than have it merged on my silence.
 that has been tested here rather than the topology; if it should be one
 domain per core, 6/14's minItems has to change with it.
 
-The bindings are unchanged since v9, where dt_binding_check was clean on
-all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
-clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to
-a dts and not to a binding, and CHECK_DTBS is clean on all 13 rk3576
-dtbs with it.
+The bindings are unchanged since v9 and both checks were re-run for v13
+rather than quoted from then. dt-doc-validate and yamllint are clean on
+all three, with dtschema 2026.6 and yamllint 1.38.0. CHECK_DTBS was run
+from scratch over every rk3576 and rk3588 target the Makefile lists, 14
+and 58, and the only complaint is on rk3588-rock-5b-pcie-ep: a
+vpcie3v3-supply that rockchip,rk3588-pcie-ep does not allow. That one is
+present at the base commit with none of this series applied, and nothing
+here touches an rk3588 dts. 13/14 adds a property to a dts and not to a
+binding, and it is inside the 14.
 
 Applying order, because this series lands in three trees and 14/14 is not
 safe on its own. 09 and 10 go through pmdomain, 01 to 05 and 11 and 12
