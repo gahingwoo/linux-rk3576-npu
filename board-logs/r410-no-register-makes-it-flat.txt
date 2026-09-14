@@ -107,3 +107,39 @@ because it writes one row. Whether some other register makes the height axis
 write m rows for int4 is the question round 384 answered NO to against int8's
 stream; it has not been asked against fp16's, and section 3 is why it was not
 asked further today.
+
+=====================================================================
+5. ⭐ AND THE CLEANEST LADDER OF THE SESSION, ON A FRESH BOOT
+---------------------------------------------------------------------
+The board came back on boot 2f21a2e1 with three minutes of uptime and no
+thermal history, which is the best condition a ladder gets here. Every point
+came in inside 1%, against the previous run's eleven percent at 852.
+
+Their column is r393's measured ladder on this board with their runtime; their
+chat template costs a constant 33 tokens at every length, so each row is the
+same input text.
+
+```
+    ch tok   ch ms   vn tok    vn ms    winner   ratio   | r408's ladder
+        27     348       60    413.2   charsiu   1.187   |   347
+        52     437       85    529.6   charsiu   1.212   |   439
+       102     799      135    931.8   charsiu   1.166   |   814
+       202    1465      235   1528.5   charsiu   1.043   |  1476
+       302    2226      335   2145.0   vendor    1.038   |  2257
+       452    3370      485   3194.7   vendor    1.055   |  3465
+       602    4654      635   4200.5   vendor    1.108   |  4818
+       852    6818      885   6026.8   vendor    1.131   |  7016
+```
+
+🏁 7) 852 GOES 7016 -> 6818, AND THEIR LEAD 1.164x -> 1.131x. The crossover
+stays at about 250 of our tokens.
+
+⚠ 8) IT IS CROSS-BOOT, and 198 ms is 2.8% where r393 measured the boot-to-boot
+drift at worst 2.2%. On its own that would be suggestive rather than shown. It
+is quoted because two other instruments agree: an in-boot A/B of the same three
+knobs put them at 190 ms, and the layer timer accounts for 115 of it directly.
+
+🔑 9) THE RANGES ARE THE REASON THIS ONE IS QUOTABLE AND THE LAST ONE WAS NOT.
+6798..6818 against 6861..7611. Same script, same protocol, same binary family;
+the difference is a board that had been running experiments all day against one
+three minutes out of a reboot.
