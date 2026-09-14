@@ -166,3 +166,36 @@ suit their benchmark.
 The script reports the MEDIAN, which absorbs it; a best-of-N or a mean would
 not have. The tree has had this rule since the day a 38% win turned out to be
 3%, and this round is what it looks like when the instrument already knows.
+
+=====================================================================
+5. 🏁 THE NOISE FLOOR, MEASURED AT LAST: 2.5% WITHIN ONE BOOT
+---------------------------------------------------------------------
+Every "ahead" and "level" in this project is read against a 2.2% cross boot
+drift bound, and r412 §6 found the same arm reading 2274 and 2138 at 302
+tokens WITHIN one boot, 6.4% apart, unexplained. tests/board_drift.sh was
+written for that and had never run.
+
+One arm (CHARSIU_ATTN_NPU=0), one length (302 tokens), one boot, twenty
+readings back to back with nothing changed, clock and governor pinned:
+
+    median 2130   range 2110..2164   spread 2.5% of the median
+
+🔑 13) SO THE FLOOR ON A WITHIN BOOT COMPARISON IS 2.5%, and the 2.2% bound
+the documents quote is the right order of magnitude but slightly too small.
+Nothing published changes sign: 302 is +0.7%, 602 +2.1% and 852 +1.2%, all
+still level against 2.5%, and 452 was already level on its own 4.6% spread.
+
+⭐ 14) AND r411's 2274 IS NOT DRIFT. Twenty readings span 2110 to 2164. 2274
+is 5.1% above the largest of them, so it is not a sample from this
+distribution at all. Whatever produced it was not the board wandering, and
+r412 §6 was right to record it as unexplained rather than absorb it into a
+noise bound.
+
+⚠ 15) THE CPU FREQUENCY IS THE EVIDENCE, NOT THE TEMPERATURE. All twenty
+readings sat at 2016000/2208000 kHz, so nothing throttled across a run long
+enough to warm the board. The temperature column is BLANK and that is a gap
+in the probe, not a reading of zero: this board publishes
+/sys/class/thermal/cooling_device* and no thermal_zone*, so the glob matched
+nothing. A probe that prints an empty column where a number belongs is the
+shape this tree keeps being bitten by, and the frequency column is what
+carries the argument here.
