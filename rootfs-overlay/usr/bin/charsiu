@@ -13,7 +13,7 @@
 #   CHARSIU_NPU_W4_GROUP=1024 CHARSIU_NPU_MAXN=131072 CHARSIU_COEF_ELEMS=65536 \
 #   charsiu_run /opt/charsiu/models/....gguf -p "..." -n 64 -c 512 -t 4
 #
-# ⚠ KMAX AND GROUP MUST BE EQUAL. npudev.c gates the int4 path on
+# KMAX AND GROUP MUST BE EQUAL. npudev.c gates the int4 path on
 # `t->kgroup == g->kmax`; set them differently and the tensor silently takes
 # the other path. config.ini keeps one value and writes both.
 #
@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-# ⚠ NO ARGUMENTS MEANS A CONVERSATION, not the built-in demo prompt. Staging
+# NO ARGUMENTS MEANS A CONVERSATION, not the built-in demo prompt. Staging
 # costs about twenty seconds and a one-shot pays it for a single answer, so the
 # default has to be the mode that pays it once.
 INTERACTIVE=0
@@ -80,7 +80,7 @@ set -- "$@"
 E=""
 case "$NPU" in
 yes|1|true|on)
-	# ⚠ kslice writes BOTH, and they must match. See the note above.
+	# kslice writes BOTH, and they must match. See the note above.
 	E="CHARSIU_NPU=1 CHARSIU_NPU_QUANT=1 CHARSIU_NPU_W4V=1"
 	E="$E CHARSIU_NPU_KMAX=$KSLICE CHARSIU_NPU_W4_GROUP=$KSLICE"
 	E="$E CHARSIU_NPU_MAXN=$MAXN CHARSIU_COEF_ELEMS=$COEF" ;;
@@ -89,7 +89,7 @@ esac
 
 # anything under [extra] is passed through verbatim, which is the escape hatch
 # for the other hundred variables without putting them in the TUI.
-# ⚠ A line that STARTS with # is a comment too. An earlier version only
+# A line that STARTS with # is a comment too. An earlier version only
 # stripped ` #...` and so passed the section's own comment to env as an
 # argument. Anything that is not literally CHARSIU_NAME=VALUE is dropped.
 EX=$(awk '/^[ \t]*\[extra\][ \t]*$/{f=1;next} /^[ \t]*\[/{f=0}
@@ -102,7 +102,7 @@ EX=$(awk '/^[ \t]*\[extra\][ \t]*$/{f=1;next} /^[ \t]*\[/{f=0}
 	}' "$CONF")
 [ -n "$EX" ] && E="$E $EX"
 
-# ⚠ TWENTY SECONDS OF SILENCE IS THE MOST OFF-PUTTING PART OF A FIRST RUN, and
+# TWENTY SECONDS OF SILENCE IS THE MOST OFF-PUTTING PART OF A FIRST RUN, and
 # the runtime already says enough to draw a bar: it announces how many tensors
 # it will stage (n_layer * 7 + 1, seven projections a layer plus the output
 # head, 113 for the model every board round uses, which is exactly what its logs
@@ -118,7 +118,7 @@ stage_filter() {
 		n = $3 + 0
 		if (tot > 0) {
 			pct = int(n * 100 / tot); if (pct > 100) pct = 100
-			# ⚠ THE HEARTBEAT ONLY FIRES EVERY SIXTEENTH TENSOR, so for
+			# THE HEARTBEAT ONLY FIRES EVERY SIXTEENTH TENSOR, so for
 			# 113 the last one is 112 and the bar stops at 99% with no
 			# later stderr line to close it. The generated text then
 			# lands on the same line: "99%  112/113OK, Bob!". Close it
@@ -137,7 +137,7 @@ stage_filter() {
 		}
 		next
 	}
-	# ⚠ a pass-through line lands mid-bar unless the bar is closed first,
+	# a pass-through line lands mid-bar unless the bar is closed first,
 	# and \r leaves the cursor at column 0 of a line that still has a bar on it.
 	{ if (bar) { printf "\n" > "/dev/stderr"; bar = 0 }
 	  print > "/dev/stderr" }
@@ -150,7 +150,7 @@ if [ "$BENCH" = 1 ]; then
 	printf '  %s, %s threads, context %s\n\n' \
 	       "$(case "$NPU" in yes|1|true|on) echo "NPU int4";; *) echo "CPU";; esac)" \
 	       "$THREADS" "$CTX"
-	# ⚠ 64 tokens is what every board round measures, so the number here is
+	# 64 tokens is what every board round measures, so the number here is
 	# comparable with the logs rather than being a new metric nobody can
 	# check. --ignore-eos so a short answer does not shorten the sample.
 	out=$( { env $E "$RUN" "$MODEL" -p "The capital of France is" -n 64 \
@@ -173,7 +173,7 @@ fi
 
 # shellcheck disable=SC2086
 if [ -t 2 ] && [ -z "${CHARSIU_NO_PROGRESS:-}" ]; then
-	# stderr through the bar, stdout straight to the terminal. ⚠ The exit
+	# stderr through the bar, stdout straight to the terminal. The exit
 	# status has to come from charsiu_run and not from awk, hence the
 	# explicit plumbing rather than a plain pipeline.
 	{ env $E "$RUN" "$MODEL" -c "$CTX" -t "$THREADS" "$@" 2>&1 1>&3 \

@@ -1,14 +1,14 @@
 round 409, 2026-09-14 — two costs around the fp16 attention groups, and two
                         measurements that were answering smaller questions
 
-  board     ROCK 4D. ⚠ TWO BOOTS: 2606ab9f for the deferred-gather bisection
+  board     ROCK 4D. TWO BOOTS: 2606ab9f for the deferred-gather bisection
             and 1ae59450 from mid-morning on. NPU 594 MHz on both, verified
             after the fact on the second (see section 4), cpu 2016/2208 pinned
   binaries  /root/charsiu_run_bi, _bd1, _site, _att, _emit, _r409
   model     Llama-3.2-1B-Instruct-Q4_0.gguf unless a section says otherwise
 
 =====================================================================
-1. ⛔ THE DEFERRED GATHER: THE FAILURE COUNT IS NOT A MEASUREMENT
+1. THE DEFERRED GATHER: THE FAILURE COUNT IS NOT A MEASUREMENT
 ---------------------------------------------------------------------
 r408 section 7 left the deferred gather off, wrong on 5 of 9 models, cause not
 found. CHARSIU_NPU_DEFER_READ became a POSITION selector so the flush could be
@@ -27,7 +27,7 @@ the pack and is exactly the right shape of hazard -- its own allocation comment
 says "a single array would hand every slice the last one's scales", and a
 deferred gather makes that one scope up. Snapshotting it took =1 from 9 to 5.
 
-⛔ 1) AND THEN TWO RESULTS THAT CANNOT BOTH BE TRUE OF A DETERMINISTIC FAULT:
+1) AND THEN TWO RESULTS THAT CANNOT BOTH BE TRUE OF A DETERMINISTIC FAULT:
 
   - the bd1 snapshot changed =3 from 5 differing to 8. At position 3 the flush
     runs before the next call has touched anything, so g->bd1 still holds the
@@ -37,13 +37,13 @@ deferred gather makes that one scope up. Snapshotting it took =1 from 9 to 5.
     differing against the superset's 5. Fewer deferrals cannot cause more
     failures.
 
-🔑 2) SO "N OF 9 MODELS DIFFER" IS NOT STABLE ENOUGH TO COMPARE TWO BUILDS
+2) SO "N OF 9 MODELS DIFFER" IS NOT STABLE ENOUGH TO COMPARE TWO BUILDS
 WITH, and every inference from 5 against 7 against 9 was reading its variance,
 including the attribution of the 9-to-5 step to bd1. That attribution is
 withdrawn. The snapshot stays because it is a real hazard by construction, not
 because it was measured.
 
-⚠ 3) AND I HAD CHECKED REPEATABILITY, ONCE. =1 twice on one build, 9 and 9.
+3) AND I HAD CHECKED REPEATABILITY, ONCE. =1 twice on one build, 9 and 9.
 That was then relied on for every later comparison, including one where the
 change was a provable no-op. A control run once is not a property of the
 instrument.
@@ -54,7 +54,7 @@ that is not there, rather than at a field somebody forgot to snapshot. Parked,
 default off.
 
 =====================================================================
-2. ⭐ THE REGISTER STREAM IS THE SAME BYTES EVERY LAYER BUT ONE WORD
+2. THE REGISTER STREAM IS THE SAME BYTES EVERY LAYER BUT ONE WORD
 ---------------------------------------------------------------------
 charsiu_emit_job depends on the shape and four addresses. A chunk's sixteen
 layers ask the fp16 unit for the same shapes at the same offsets in buffers
@@ -77,7 +77,7 @@ into a size register as well.
 The misses are the chunk boundaries, where the prompt's extent changes n.
 
 =====================================================================
-3. ⭐ AND THE PREP ON THE INPUT SURFACE INVALIDATES A BUFFER NOBODY WRITES
+3. AND THE PREP ON THE INPUT SURFACE INVALIDATES A BUFFER NOBODY WRITES
 ---------------------------------------------------------------------
 attn_npu_layer already makes this argument for the KV surfaces: "the hardware
 only ever reads these, so the CPU's copy is never stale and there is nothing to
@@ -87,32 +87,32 @@ group starts.
 
     psync 111 -> 62 ms on the values group, 18 -> 11 on the scores one
 
-⚠ 4) THE PACK GIVES 13 ms OF IT BACK, because it now takes the cache misses the
+4) THE PACK GIVES 13 ms OF IT BACK, because it now takes the cache misses the
 invalidate used to absorb. Net about 43 ms. Reporting the psync column alone
 would have claimed 56.
 
-🏁 5) BOTH CORRECT ON ALL NINE MODELS with fp16 attention FORCED on: 9 compared,
+5) BOTH CORRECT ON ALL NINE MODELS with fp16 attention FORCED on: 9 compared,
 0 differing. That arm is worth naming on its own -- the shipped threshold is
 448 tokens and board_text_all's prompts are 64 to 88, so the default run has
 never exercised the fp16 attention path at all. This is the first check that
 does.
 
-⚠ 6) AND ~79 ms IS BELOW WHAT THE TTFT LADDER CAN RESOLVE. The ladder's 852
+6) AND ~79 ms IS BELOW WHAT THE TTFT LADDER CAN RESOLVE. The ladder's 852
 point has a range of about 3% on this board, which is 200 ms. The evidence for
 this round is the stage columns and the hit counters, which are direct, and
 NOT a TTFT number. The shipped figure stays r408's: 7016 ms at 852 tokens
 against the vendor's 6027.
 
 =====================================================================
-4. ⛔⛔ TWO MEASUREMENTS THAT WERE ANSWERING SMALLER QUESTIONS
+4. TWO MEASUREMENTS THAT WERE ANSWERING SMALLER QUESTIONS
 ---------------------------------------------------------------------
-⛔ 7) /opt/vendor IS ITS OWN PARTITION AND IT CAME UNMOUNTED. board_text_all
+7) /opt/vendor IS ITS OWN PARTITION AND IT CAME UNMOUNTED. board_text_all
 searched the same four directories, found 2 gguf files instead of 9, and
 printed "2 models compared, 0 differing". Nothing was wrong with the check. It
 now prints every directory with its gguf count and refuses below
 CHARSIU_TEXT_MIN_MODELS.
 
-⛔ 8) THE BOARD REBOOTED MID-SESSION AND CAME UP WITH debugfs NOT MOUNTED, so
+8) THE BOARD REBOOTED MID-SESSION AND CAME UP WITH debugfs NOT MOUNTED, so
 every script's `$(cat /sys/kernel/debug/clk/... 2>/dev/null)` returned empty
 and the headers printed "npu clk   Hz". A full TTFT ladder ran and completed
 under a rate nobody could read. The rate was 594 MHz, confirmed afterwards by
@@ -120,20 +120,20 @@ mounting debugfs, but that was luck rather than evidence.
 
 tests/board_clk.sh mounts debugfs if it has to and refuses otherwise.
 
-⚠ 9) AND THE FIRST VERSION OF THAT REFUSAL COULD NOT FIRE: `exit 1` inside a
+9) AND THE FIRST VERSION OF THAT REFUSAL COULD NOT FIRE: `exit 1` inside a
 function used as `$(npu_clk)` ends the subshell, not the script, so it printed
 a blank clock and carried on. Exactly the hole it was written to close, with a
 guard in it that did nothing. Callers do `NPUCLK=$(npu_clk) || exit 1` now, and
 CHARSIU_NPU_CLK_PATH exists so the refusal can be pointed at nothing and
 WATCHED to fire. It does, exit status 1.
 
-🔑 10) BOTH OF TODAY'S HOLES ARE THE SAME SENTENCE: a thing that is not there
+10) BOTH OF TODAY'S HOLES ARE THE SAME SENTENCE: a thing that is not there
 reads exactly like a thing whose value is nothing. An unmounted directory reads
 as an empty one and an unmounted debugfs reads as a clock of zero, and both
 produced output that looks like a completed round.
 
 =====================================================================
-5. ⭐ THE SOFTMAX RUNS INSIDE THE VALUES PACK
+5. THE SOFTMAX RUNS INSIDE THE VALUES PACK
 ---------------------------------------------------------------------
 charsiu_fp16_op.fill lets the caller produce the halves instead of handing
 over floats. npufp16 keeps the offsets, the bound and the causal tail -- xtri0
@@ -145,14 +145,14 @@ their token loops with fp16 attention forced:
     FUSE=0   layer 1909 / 1918 ms    softmax 361    values pack 152
     FUSE=1   layer 1873 / 1875       softmax   0    values pack 477
 
-⚠ 11) ABOUT 40 ms, NOT THE 150 THE PACK COLUMN SUGGESTED. The softmax's 361 ms
+11) ABOUT 40 ms, NOT THE 150 THE PACK COLUMN SUGGESTED. The softmax's 361 ms
 moved into the pack almost intact. 188 million exponentials at about 1.9 ns
 each is arithmetic bound, so taking the intermediate out of DRAM buys the round
 trip and nothing else. The 152 ms in the pack column was never a cost a fusion
 removes; it was the cost of reading what the softmax had just written, and only
 that part goes.
 
-⚠⚠ 12) AND IT IS A SECOND COPY OF THE SOFTMAX by construction, because the
+12) AND IT IS A SECOND COPY OF THE SOFTMAX by construction, because the
 point is to write halves where the other writes floats. tests/softmax_half.c
 requires the two to agree to the LAST BIT over both arms of fast_softmax and
 fourteen lengths -- what reaches the hardware is a half, and one element
@@ -163,11 +163,11 @@ rounding the other way changes a token. A tolerance would not have held it.
 ---------------------------------------------------------------------
 Three changes: the register stream cache, the input prep, the fused softmax.
 
-🏁 13) THE LAYER TIMER IS THE ONE THAT REPEATS. r408 measured attention at
+13) THE LAYER TIMER IS THE ONE THAT REPEATS. r408 measured attention at
 1988 ms; it is 1873 and 1875 now, with the stage columns accounting for it:
 emit 57 -> 21, psync 129 -> 73, softmax + values pack 513 -> 477. About 115 ms.
 
-⚠ 14) THE TTFT INSTRUMENTS DISAGREE WITH EACH OTHER BY MORE THAN THAT. An
+14) THE TTFT INSTRUMENTS DISAGREE WITH EACH OTHER BY MORE THAN THAT. An
 in-boot A/B at 852 tokens, four repeats an arm, alternating, clock verified:
 
     all three off   7094 7156 7147 7028    median 7120
@@ -178,7 +178,7 @@ range of 6861..7611 -- eleven percent, against r408's 3.5% at the same point --
 and its other seven points are within 1% of r408's. So one ladder point went
 bad and the two TTFT protocols now differ by more than the change.
 
-🔑 15) SO THE CLAIM IS 115 ms AT THE LAYER, WHICH IS DIRECTLY MEASURED AND
+15) SO THE CLAIM IS 115 ms AT THE LAYER, WHICH IS DIRECTLY MEASURED AND
 REPEATS, AND NOT 190 AT TTFT. The shipped curve stays r408's -- 7016 ms at 852
 against the vendor's 6026.8, their lead 1.164x -- which now understates this
 build. Re-quoting it needs a ladder whose 852 point behaves, not this one.

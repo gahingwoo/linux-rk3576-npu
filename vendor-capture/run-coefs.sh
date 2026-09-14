@@ -43,7 +43,7 @@ while [ ! -e /dev/dri/renderD129 ] && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i + 1)
 sleep 2
 dmesg -n 7 2>/dev/null
 
-# ⚠ Check the driver is actually there before running anything. The first
+# Check the driver is actually there before running anything. The first
 # attempt at this capture produced only "rknn_init = -1" with no reason, because
 # the vendor NPU driver had failed to probe: with mainline TF-A in SPI the
 # Rockchip SCMI power domain and reset protocols are missing, so enabling the

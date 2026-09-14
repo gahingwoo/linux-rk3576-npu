@@ -9,20 +9,20 @@
 # a good reason to bundle and no reason at all to do it quietly -- the patch is
 # Igor's, he is active on this series, and he may want to send a v3 himself.
 #
-# ⚠ THE TAGS ARE THE PART THAT COULD GO WRONG, and the check for them belongs
+# THE TAGS ARE THE PART THAT COULD GO WRONG, and the check for them belongs
 # in send-v11.sh, not here. Our tree's copy carried only our own Reviewed-by,
 # picked up before the others arrived, so bundling it as held would have
 # posted his patch stripped of three reviews. That is our bookkeeping and not
 # his problem, so the mail does not confess it -- send-v11.sh refuses to send
 # a 01/14 that has lost any of the three, which is the guard that matters.
 #
-# ⚠ DRY=1 prints the headers and sends nothing.
+# DRY=1 prints the headers and sends nothing.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 M=reply-igor-bundling.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
-# ⚠ MATCH ON SHORT STRINGS. A guard that greps a whole sentence fails the
+# MATCH ON SHORT STRINGS. A guard that greps a whole sentence fails the
 # moment the mail is rewrapped at 78 columns, and it did: "should not have
 # been sitting in my RFC" was present and split across a newline, and the
 # check reported it missing minutes before sending.

@@ -15,7 +15,7 @@ OVL="$REPO/vendor-capture/cap-overlay"
 MODEL=/home/parallels/Documents/kiln/model/Llama-3.2-1B-Instruct-rk3576-w4a16.rkllm
 OUT="$REPO/buildroot/br-out/images/rootfs-cap.ext2"
 MKE2FS="$REPO/buildroot/br-out/host/sbin/mke2fs"
-# ⚠ NOT /tmp: it is a tmpfs and the 1.3 GB model fills it, which silently
+# NOT /tmp: it is a tmpfs and the 1.3 GB model fills it, which silently
 # leaves the staged tree missing directories and builds a broken image.
 STAGE=$(mktemp -d "$REPO/buildroot/br-out/caproot.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT

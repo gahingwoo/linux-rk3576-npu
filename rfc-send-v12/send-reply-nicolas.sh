@@ -6,14 +6,14 @@
 # assigned clock and rate from his RK3588 DTS, and on RK3576 that rate is what
 # keeps the block inside the voltage its rail is given.
 #
-# ⚠ DRY=1 prints the headers and sends nothing. --confirm=never means git asks
+# DRY=1 prints the headers and sends nothing. --confirm=never means git asks
 # nobody anything, so this is the only way to see them first.
 set -euo pipefail
 cd "$(dirname "$0")"
 M=reply-nicolas-dts.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
 
-# ⚠ THE THREAD, OR IT IS A NEW ONE. lore has the parent as
+# THE THREAD, OR IT IS A NEW ONE. lore has the parent as
 # c495dae1976dab842d77f4a4a142217eb77b6fb7.camel@ndufresne.ca; without In-Reply-To this lands
 # as an orphan and nobody reading the RFC sees it.
 grep -q '^In-Reply-To: <c495dae1976dab842d77f4a4a142217eb77b6fb7\.camel@ndufresne\.ca>' "$M" || {
@@ -21,7 +21,7 @@ grep -q '^In-Reply-To: <c495dae1976dab842d77f4a4a142217eb77b6fb7\.camel@ndufresn
 grep -q '^Subject: Re: \[RFC\] accel/rocket: DVFS on RK3588' "$M" || {
 	echo "$M does not carry the thread's subject" >&2; exit 1; }
 
-# ⚠ EVERY NUMBER IN IT IS A PROMISE. These are the ones the board measured on
+# EVERY NUMBER IN IT IS A PROMISE. These are the ones the board measured on
 # 2026-09-04; if the mail ever stops carrying them the mail has drifted.
 for s in '786.432 MHz' 'load bearing' '11 to 25 wrong rows a pass' \
          '786 MHz, 800 mV'; do
@@ -32,7 +32,7 @@ done
 n=$(awk 'NR>11 && length>72' "$M" | wc -l)
 [ "$n" = 0 ] || { echo "$n body lines are over 72 columns" >&2; exit 1; }
 
-# ⚠ NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII in the body. The Cc header
+# NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII in the body. The Cc header
 # carries an RFC 2047 encoded name, which is ASCII on the wire by design.
 CLEAN=$HOME/.claude/skills/unicode-format-cleaner/scripts/clean_unicode.py
 if [ -f "$CLEAN" ] && ! python3 "$CLEAN" --detect "$M" >/dev/null 2>&1; then
@@ -45,7 +45,7 @@ fi
 echo "$M: $(wc -l <"$M") lines"
 echo "In-Reply-To: $(sed -n 's/^In-Reply-To: //p' "$M")"
 echo
-# ⚠ THE RECIPIENTS ARE FLAGS, NOT HEADERS. --suppress-cc=all drops the Cc the
+# THE RECIPIENTS ARE FLAGS, NOT HEADERS. --suppress-cc=all drops the Cc the
 # file carries as well as the ones git harvests: the first dry run of this
 # addressed Igor alone and neither list. The previous reply in this thread
 # passed them as flags for the same reason.

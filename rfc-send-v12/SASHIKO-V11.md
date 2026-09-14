@@ -72,7 +72,7 @@ still asserts the *core's* own resets either way, so the question is whether the
 core reset alone is enough on RK3576 -- and this project has recorded that the
 block stays dead after a timeout, which is what that would look like.
 
-⚠ Not fixed here. A synchronous put inside `scoped_guard(mutex, &core->job_lock)`
+Not fixed here. A synchronous put inside `scoped_guard(mutex, &core->job_lock)`
 is not obviously safe, and the claim is empirical. See `sashiko-3-suspend.sh`.
 
 ## 4. 03/14 -- lockless INTERRUPT_MASK race -- REFUTED

@@ -6,7 +6,7 @@
 #
 #   sh package-kernel.sh [OUTDIR]
 #
-# ⚠ THIS IS THE HEAVY DELIVERY. For the attach-once experiment alone the board
+# THIS IS THE HEAVY DELIVERY. For the attach-once experiment alone the board
 # needs only rocket.ko with the running kernel's vermagic; see
 # build-rocket-ko.sh. Publish a whole kernel only once the board has said the
 # patch is good.
@@ -22,7 +22,7 @@ rm -rf "$OUT"; mkdir -p "$OUT/stage"
 make -C "$LNEXT" -s modules_install INSTALL_MOD_PATH="$OUT/stage" INSTALL_MOD_STRIP=1
 cp "$LNEXT/arch/arm64/boot/Image" "$OUT/Image"
 cp "$LNEXT/$DTB" "$OUT/"
-# ⚠⚠ NAME THE RELEASE DIRECTORY, NOT lib/. `tar ... lib` records lib/ and
+# NAME THE RELEASE DIRECTORY, NOT lib/. `tar ... lib` records lib/ and
 # lib/modules/ as DIRECTORY MEMBERS, and GNU tar extracting a directory
 # member over Armbian's /lib -> usr/lib symlink replaces the symlink with a
 # real directory: the loader path is gone, nothing dynamic can exec, and the

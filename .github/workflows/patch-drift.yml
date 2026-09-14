@@ -62,7 +62,7 @@ jobs:
           # because the RELEASE is older than the series, and linux-next already
           # has them.
           #
-          # ⚠⚠ 1/14 IS NOT ALLOWED TO HARD FAIL. It is Igor Paunovic's
+          # 1/14 IS NOT ALLOWED TO HARD FAIL. It is Igor Paunovic's
           # clocks-by-name patch, which v9 and v10 named from outside with a
           # `prerequisite-patch-id:` trailer and v11 carries inside the series.
           # When it lands upstream it will stop applying to linux-next, and that
@@ -105,7 +105,7 @@ jobs:
           cd linux
           cp ../kernel/base.config .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-          # ⚠ DRM before ROCKET: it selects DRM_SCHED and DRM_GEM_SHMEM_HELPER
+          # DRM before ROCKET: it selects DRM_SCHED and DRM_GEM_SHMEM_HELPER
           # and cannot be y while DRM is m.
           scripts/config --enable DRM --enable DRM_ACCEL --enable DRM_ACCEL_ROCKET
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig

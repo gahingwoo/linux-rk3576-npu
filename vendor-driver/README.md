@@ -12,22 +12,22 @@ and `driver/fetch-vendor-driver.sh` will overwrite the tree it applies to.
   driver     ~/Documents/kiln, Kiln's mainline port of vendor rknpu 0.9.8.
              Builds against this board's kernel in one command:
                  make -C <kernel tree> M=~/Documents/kiln modules
-             ⚠ the rknpu.ko sitting in that directory is vermagic 7.1.3 and
+             the rknpu.ko sitting in that directory is vermagic 7.1.3 and
              will not load on 7.2.0-rc5-next. Rebuild it.
   runtime    npu-refs/rknn-llm/rkllm-runtime/Linux/librkllm_api/aarch64/
              librkllmrt.so, version 1.3.0.
-             ⚠ needs libgomp, which buildroot does not ship. This host is
+             needs libgomp, which buildroot does not ship. This host is
              aarch64 so /usr/lib/aarch64-linux-gnu/libgomp.so.1 works, copied
              to a local directory first because the buildroot compiler wrapper
              refuses host library paths.
-             ⚠ rkllm.h is C++ (<cstdint>): build with g++, not gcc.
+             rkllm.h is C++ (<cstdint>): build with g++, not gcc.
   model      Llama-3.2-1B-Instruct-rk3576-w4a16.rkllm, md5 2d3962468e...,
              the same file charsiu's quality section scores.
   dts        rk3576-rock-4d-vendor.dts and -vendor786.dts in the board kernel
              tree: rocket's four nodes disabled, the vendor's three enabled.
 ```
 
-🔑 **librkllmrt finds the NPU through the DRM render node**, which is why the
+**librkllmrt finds the NPU through the DRM render node**, which is why the
 DRM_GEM path is the one to build. `/dev/dri/renderD128` appearing is the tell;
 there is no `/dev/rknpu`.
 

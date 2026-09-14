@@ -22,7 +22,7 @@ CONDITIONS, held equal except where noted:
             "Enabled cpus: [4, 5, 6, 7]", charsiu does it in a58086c
   model     Llama-3.2-1B, w4a16 for the vendor and Q4_0 for charsiu
   prompt    identical strings, -n 16, ignore-eos, context 512
-  ⚠ rail    charsiu 800 mV, vendor 750 mV. The vendor driver sets the rail
+  rail    charsiu 800 mV, vendor 750 mV. The vendor driver sets the rail
             through npu-supply and its OPP table and does not take the device
             tree's 800 mV floor. Both arms compute correctly at 594 MHz, and
             voltage does not set clock rate, so this is a caveat rather than a
@@ -35,14 +35,14 @@ CONDITIONS, held equal except where noted:
   charsiu  18.56 tok/s   (18.47..18.58, five runs)
   vendor   12.88 tok/s   (12.71..12.95, four runs)
 
-🏁 charsiu is 1.44x the vendor's decode, measured against their runtime rather
+charsiu is 1.44x the vendor's decode, measured against their runtime rather
 than against their published figure.
 
 =====================================================================
 2) PREFILL, and the single-prompt answer is a trap
 =====================================================================
 
-⚠⚠ THE TWO RUNTIMES DO NOT TOKENISE THE SAME STRING THE SAME WAY. The vendor
+THE TWO RUNTIMES DO NOT TOKENISE THE SAME STRING THE SAME WAY. The vendor
 wraps the prompt in its own chat template and reports 50 tokens where charsiu
 reports 16. One prompt therefore measures an unknown mixture of "how fast is
 the prefill" and "how much prefill is there", and the two readings of it point
@@ -60,7 +60,7 @@ longer prompt: 79 tokens for charsiu, 113 for the vendor.
   charsiu     16 tok  265 ms    79 tok  751 ms      7.71      141.6 ms
   vendor      50 tok  466 ms   113 tok  860 ms      6.25      153.6 ms
 
-🔑 THE SLOPE IS THE RATE AND THE INTERCEPT IS THE OVERHEAD.
+THE SLOPE IS THE RATE AND THE INTERCEPT IS THE OVERHEAD.
 
   - per prompt token the vendor is 1.23x faster, 6.25 ms against 7.71. That is
     the real prefill gap and it is much smaller than any single-prompt reading
@@ -81,9 +81,9 @@ speed measured here" is unsupported, because it had never been run. It has now:
   decode    charsiu 1.44x the vendor
   prefill   the vendor 1.23x charsiu per token, fixed costs within 8%
 
-⚠ Still not supported by this round: anything about the vendor at the
+Still not supported by this round: anything about the vendor at the
 frequency their benchmark.md was taken at. This is 594 MHz on both sides. The
 vendor's device tree asks for devfreq over an OPP table reaching 800 MHz, and
 Kiln's patch pins the clock instead, so neither side scaled.
 
-⚠ And one board. Still one board.
+And one board. Still one board.

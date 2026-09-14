@@ -29,7 +29,7 @@ ones Q4 rounds hardest. If that holds, C's resolution is the remaining bug. If
 it does not, C is not the story and the next round has to look elsewhere. That
 is the point of running it before building anything.
 
-⚠ parse_tflite.py reads the Quantization table with scale at field 1 and zero
+parse_tflite.py reads the Quantization table with scale at field 1 and zero
 point at 2. The schema has min 0, max 1, scale 2, zero_point 3, so it returns
 garbage for any tensor that carries min/max, which is why its output for this
 model shows a scale of 5.99 and a zero point of 1019264715. The reader below

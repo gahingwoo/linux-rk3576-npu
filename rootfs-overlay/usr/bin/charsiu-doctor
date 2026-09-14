@@ -17,7 +17,7 @@ for a in "$@"; do
 	case "$a" in
 	-q) QUIET=1 ;;
 	--run) DORUN=1 ;;
-	# ⚠ --paste is for an issue report, so it must be plain: no colour, no
+	# --paste is for an issue report, so it must be plain: no colour, no
 	# ANSI, and it carries the things that are always asked for anyway --
 	# which kernel, which dtb, which model, what rate.
 	--paste) PASTE=1 ;;
@@ -27,7 +27,7 @@ if [ "$PASTE" = 1 ]; then
 	printf '```\n'
 	printf 'charsiu-doctor --paste\n'
 	printf 'kernel   %s\n' "$(uname -r)"
-	# ⚠ tr succeeds on empty input, so `cat ... | tr ... || uname -m` never
+	# tr succeeds on empty input, so `cat ... | tr ... || uname -m` never
 	# reaches the fallback. Test the file instead of the pipeline.
 	if [ -r /proc/device-tree/model ]; then
 		printf 'machine  %s\n' "$(tr -d '\0' < /proc/device-tree/model)"
@@ -42,7 +42,7 @@ if [ "$PASTE" = 1 ]; then
 		[ "$(cat "$r/name")" = vdd_npu_s0 ] || continue
 		printf 'rail     vdd_npu_s0 %s\n' "$(cat "$r/state" 2>/dev/null)"
 	done
-	# ⚠ grep -c EXITS 1 WHEN THE COUNT IS ZERO, so `|| echo ?` fires on the
+	# grep -c EXITS 1 WHEN THE COUNT IS ZERO, so `|| echo ?` fires on the
 	# perfectly good answer "0" and both get printed. Capture, then default.
 	nf=$(dmesg 2>/dev/null | grep -c 'MMU_DTE_ADDR\|job timed out') || nf=${nf:-0}
 	printf 'faults   %s in dmesg\n' "${nf:-?}"
@@ -132,7 +132,7 @@ if [ -z "$M" ]; then
 elif [ ! -f "$M" ]; then
 	bad "$M does not exist. charsiu-get fetches one"
 else
-	# ⚠ busybox's stat needs FEATURE_STAT_FORMAT for -c and this rootfs is
+	# busybox's stat needs FEATURE_STAT_FORMAT for -c and this rootfs is
 	# built without it, so a 1321 MB model reported as 0 MB and the memory
 	# check below became meaningless. wc -c is in every shell environment
 	# there is.

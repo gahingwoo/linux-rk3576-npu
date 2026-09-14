@@ -28,7 +28,7 @@ OPS = {0: "ADD", 1: "AVERAGE_POOL_2D", 2: "CONCATENATION", 3: "CONV_2D",
        6: "DEQUANTIZE", 32: "CUSTOM"}
 
 # ActivationFunctionType, and where the field sits in each options table.
-# ⚠ THIS IS NOT COSMETIC. perch.py scores against max(cpu, out_zp) because the
+# THIS IS NOT COSMETIC. perch.py scores against max(cpu, out_zp) because the
 # hardware was believed to ReLU the accumulator unconditionally. That reference
 # is only harmless for an operator that already ends in a ReLU. For one that
 # does not it rewrites every pixel below the zero point, so a channel can read

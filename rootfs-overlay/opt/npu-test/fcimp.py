@@ -50,7 +50,7 @@ OH, OW, OC = got.shape
 S = IH // OH
 
 
-# ⚠ The pad offset is DERIVED, not assumed. The first version of this decoder
+# The pad offset is DERIVED, not assumed. The first version of this decoder
 # hardcoded a pad of 1, which is symmetric padding, and its CPU control came
 # back 0 of 32 with every channel decoding to want + (1, 1). tflite SAME
 # padding here is asymmetric: 224 to 112 at stride 2 with a 3x3 kernel needs

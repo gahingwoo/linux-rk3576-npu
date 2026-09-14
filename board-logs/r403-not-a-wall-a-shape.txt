@@ -22,7 +22,7 @@ direction that flatters the claim.
     int4 n=8192   457.4 GMAC in 947 ms      0.48 TMAC/s
     int4 n=512     28.6 GMAC in  80 ms      0.36 TMAC/s
 
-⛔ 1) NOT 0.119. Fourteen to twenty-five times below the int4 path, not six.
+1) NOT 0.119. Fourteen to twenty-five times below the int4 path, not six.
 
 =====================================================================
 2. IS IT DISPATCH? NO, AND THE ARM ONLY EVER MAKES IT WORSE
@@ -37,22 +37,22 @@ bigger allocation somewhere.
     tasks      x1     x2     x4     x8
     attn     2.77   3.05   3.60   4.67 ms a row
 
-⛔ 2) A STRAIGHT LINE, 2.50 + 0.27 * T. So a task costs 20 us, not 90, and at
+2) A STRAIGHT LINE, 2.50 + 0.27 * T. So a task costs 20 us, not 90, and at
 the shipped block size dispatch is 0.27 of 2.77 -- TEN PERCENT of attention.
 
-⛔ 3) WHICH KILLS THE MERGE. Four query heads share a KV surface under GQA, so
+3) WHICH KILLS THE MERGE. Four query heads share a KV surface under GQA, so
 32 ops could be 8. That is a 4x cut in task count and by this line it is worth
 0.20 ms a row, SEVEN PERCENT. I had it in my head as 3x before this arm
 existed, from the same 90 us that section 1 shows is not overhead.
 
-⛔ 4) AND IT IS NOT CORE COUNT. CHARSIU_FP16_JOBS=split sends N jobs of one
+4) AND IT IS NOT CORE COUNT. CHARSIU_FP16_JOBS=split sends N jobs of one
 task instead of one job of N chained tasks, so the scheduler may use both NPU
 cores. 2.91 against 2.76 ms a row, twice each: SLOWER. Text identical either
 way, so the two-core corruption is not what is being avoided here -- the
 second core simply does not help.
 
 =====================================================================
-3. ⭐ IT IS THE SHAPE, AND THAT IS MEASURABLE INSIDE fp16
+3. IT IS THE SHAPE, AND THAT IS MEASURABLE INSIDE fp16
 ---------------------------------------------------------------------
 npu_fp16_test prices a matmul at a chosen k and n. Same dtype, same m = 78,
 same group, only the shape moving:
@@ -62,11 +62,11 @@ same group, only the shape moving:
     1024     64         40.9        1.269      0.032    <- the values shape
     1024   1024        654          3.453      0.190
 
-🏁 5) SIXTEEN TIMES THE ARITHMETIC FOR 2.6x THE FENCE. Six to seven of the
+5) SIXTEEN TIMES THE ARITHMETIC FOR 2.6x THE FENCE. Six to seven of the
 twenty times attention gives away is the SHAPE, inside fp16, with the dtype
 and the row count and the group size all held still.
 
-⛔ 6) AND THE SHAPE CANNOT BE CHANGED BY BATCHING. k is the head_dim for the
+6) AND THE SHAPE CANNOT BE CHANGED BY BATCHING. k is the head_dim for the
 scores matmul and n is the head_dim for the values one. The heads that share a
 surface share the WEIGHT, so merging them stacks ROWS -- it grows m, and
 section 2 is the measurement that says m is already nearly free. Merging
@@ -81,7 +81,7 @@ the rest between fp16 and int4 -- 0.190 at k=1024 n=1024 against 0.36 to 0.69
 for int4, which is two to three and a half times but at shapes that are not
 the same, so it is a bound and not a number.
 
-⭐ 7) ATTENTION'S WEIGHTS ARE THE KV CACHE AND WE PACK THEM OURSELVES. That is
+7) ATTENTION'S WEIGHTS ARE THE KV CACHE AND WE PACK THEM OURSELVES. That is
 the whole of the remaining road: charsiu_fp16_w_alloc builds those surfaces,
 so they could be int4 or int8 and the activation could stay fp16 -- which is
 exactly the w4a16 arrangement the projections already use at 0.36 to 0.69.
@@ -92,12 +92,12 @@ tokens would be about 780, TTFT would be about 5630, and the vendor's 6027 at
 885 of their tokens would be BEHIND for the first time. That is an arithmetic
 projection from a bounded factor and not a result.
 
-⚠ 8) THE FIRST MEASUREMENT OF THAT ROAD DOES NOT EXIST YET: int4 at the
+8) THE FIRST MEASUREMENT OF THAT ROAD DOES NOT EXIST YET: int4 at the
 attention shapes. charsiu_int4 takes m, k and n and prints no time;
 charsiu_matmul the same; npu_fp16_test is fp16 only. The bound in section 4 is
 two shapes apart and that is the gap to close before any of this is built.
 
-🔑 9) THE SHAPE OF MY OWN ERROR. "The hardware is the wall" was written from a
+9) THE SHAPE OF MY OWN ERROR. "The hardware is the wall" was written from a
 stage table, put in two board logs, the README and a handoff, and read back to
 the user as a conclusion. The three instruments that falsify it -- a MAC
 counter, a knob that makes the blocks smaller, and a static build of a probe

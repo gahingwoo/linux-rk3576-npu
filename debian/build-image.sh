@@ -54,7 +54,7 @@ done
 
 MODTAR=$(echo "$PREBUILT"/modules-*.tar.gz)
 [ -f "$MODTAR" ] || { echo "no modules tarball in $PREBUILT" >&2; exit 1; }
-# ⚠ NOT `| head -1`. head closes the pipe, tar takes SIGPIPE, and with
+# NOT `| head -1`. head closes the pipe, tar takes SIGPIPE, and with
 # pipefail that kills the whole script before it has printed a single line.
 # Let sed stop reading instead.
 KVER=$(tar tzf "$MODTAR" | awk -F/ '/^lib\/modules\//{print $3; exit}')
@@ -63,7 +63,7 @@ KVER=$(tar tzf "$MODTAR" | awk -F/ '/^lib\/modules\//{print $3; exit}')
 STAGE="$WORK/stage"
 msg "staging $SUITE into $STAGE  (kernel $KVER)"
 rm -rf "$WORK"; mkdir -p "$STAGE"
-# ⚠ EXTRACT INSIDE THE NAMESPACE, NOT OUTSIDE IT. tar clears setuid and setgid
+# EXTRACT INSIDE THE NAMESPACE, NOT OUTSIDE IT. tar clears setuid and setgid
 # when it is not root, so a host-side extraction silently produced an image
 # where su, passwd, mount and umount were all plain 0755 and no user could
 # become root. Inside the namespace we are uid 0 and the bits survive. The few
@@ -163,7 +163,7 @@ cat > "$STAGE/etc/hosts" <<EOF
 ::1		localhost ip6-localhost ip6-loopback
 EOF
 
-# ⚠ NLS_ASCII is not in this kernel, so do not let anything mount the boot
+# NLS_ASCII is not in this kernel, so do not let anything mount the boot
 # partition with the utf8 default. iso8859-1 and cp437 are both built in.
 cat > "$STAGE/etc/fstab" <<'EOF'
 /dev/mmcblk0p2  /      ext4  defaults,noatime                        0 1
@@ -183,7 +183,7 @@ DHCP=yes
 UseDomains=yes
 EOF
 
-# ⚠ THE BOARD HAD NO WORKING CLOCK AND SO NO TLS, WHICH LOOKED LIKE A NETWORK
+# THE BOARD HAD NO WORKING CLOCK AND SO NO TLS, WHICH LOOKED LIKE A NETWORK
 # FAULT FOR MOST OF A DAY. There is a hym8563 RTC on i2c and the kernel now
 # has its driver built in; timesyncd corrects it from the network and writes
 # it back, so the next cold boot starts with a plausible date.
@@ -225,7 +225,7 @@ RemainAfterExit=yes
 WantedBy=sysinit.target
 EOF
 
-# ⚠⚠ systemd HANDS A SERIAL GETTY TERM=vt220, WHICH HAS NO COLOUR AND NO
+# systemd HANDS A SERIAL GETTY TERM=vt220, WHICH HAS NO COLOUR AND NO
 # ALTERNATE SCREEN. Without smcup/rmcup whiptail cannot restore what was under
 # a dialog, so every screen of an installer stays where it was drawn and they
 # pile down the console in monochrome. It reads as a broken TUI and sends
@@ -241,7 +241,7 @@ cat > "$STAGE/etc/systemd/system/serial-getty@ttyS0.service.d/term.conf" <<'EOF'
 Environment=TERM=xterm-256color
 EOF
 
-# ⚠⚠ THE BOARD HAS NO USABLE RTC, AND A CLOCK IN THE PAST BREAKS TLS. The log
+# THE BOARD HAS NO USABLE RTC, AND A CLOCK IN THE PAST BREAKS TLS. The log
 # says it plainly:
 #
 #   rtc-hym8563 2-0051: hctosys: unable to read the hardware clock
@@ -267,7 +267,7 @@ cat > "$STAGE/etc/motd" <<EOF
 
 EOF
 
-# ⚠ machine-id must be EMPTY, not absent and not copied: systemd generates one
+# machine-id must be EMPTY, not absent and not copied: systemd generates one
 # on first boot, and an image that ships the same id on every card gives every
 # board the same DHCP identity.
 rm -f "$STAGE/etc/machine-id"; : > "$STAGE/etc/machine-id"
@@ -286,7 +286,7 @@ msg "users and services"
 	done
 "
 
-# ⚠⚠ `useradd -m` COPIES /etc/skel AND THEN CHOWNS THE COPIES, and the chown
+# `useradd -m` COPIES /etc/skel AND THEN CHOWNS THE COPIES, and the chown
 # cannot work here, so it aborted on the first file: .bashrc arrived EMPTY and
 # .profile and .bash_logout never arrived at all. Without .bashrc there is no
 # `shopt -s checkwinsize`, so bash never learns the terminal's real width and
@@ -317,7 +317,7 @@ msg "collecting the ownership table"
 OWNTAB="$WORK/ownership.txt"
 {
 	tar tvzf "$BASE"
-	# ⚠ `[ -f "$d" ] && ...` RETURNS 1 when the glob matched nothing, and as
+	# `[ -f "$d" ] && ...` RETURNS 1 when the glob matched nothing, and as
 	# the last command in the group that is enough for set -e to kill the
 	# build with no message at all.
 	for d in "$STAGE"/var/cache/apt/archives/*.deb; do
@@ -433,12 +433,12 @@ mkfs.fat -F32 -n BOOT "$BOOTFAT" >/dev/null
 mcopy -i "$BOOTFAT" "$PREBUILT/boot/Image"               ::Image
 mcopy -i "$BOOTFAT" "$PREBUILT/boot/rk3576-rock-4d.dtb"  ::rk3576-rock-4d.dtb
 
-# ⚠ loglevel=4 KEEPS THE CONSOLE FOR USERSPACE. This board's only screen is the
+# loglevel=4 KEEPS THE CONSOLE FOR USERSPACE. This board's only screen is the
 # serial line, and a driver that prints at info level halfway through a whiptail
 # dialog scribbles straight over it. Warnings and worse still come through and
 # dmesg still has everything, so nothing is lost for debugging.
 #
-# ⚠ TWO ENTRIES, ALWAYS. charsiu's installer adds a kernel by prepending a
+# TWO ENTRIES, ALWAYS. charsiu's installer adds a kernel by prepending a
 # label here and leaving the previous one selectable, so a kernel that does
 # not boot costs a menu choice rather than a card rewrite. The menu is shown
 # for three seconds; the default is the entry at the top.

@@ -4,22 +4,22 @@
 # ---------------------------------------------------------------------------
 # 2026-08-27 round 386. THE DATE FORMAT WAS WRONG, AND THE SCRIPT LIED.
 #
-# 🏁 385 GOT THE RTC BOUND: `rtc-hym8563 2-0051: registered as rtc0`, and
+# 385 GOT THE RTC BOUND: `rtc-hym8563 2-0051: registered as rtc0`, and
 # /dev/rtc0 exists. The =y fix works.
 #
-# ⚠ But the clock stayed at `Thu Jan  1 00:00:12 UTC 1970` and the script
+# But the clock stayed at `Thu Jan  1 00:00:12 UTC 1970` and the script
 # announced that time as though it had set it. Two faults:
 #
 #   * `date -s` was given MMDDhhmmYYYY.ss, which is the coreutils and BSD form.
 #     BUSYBOX TAKES @seconds / hh:mm[:ss] / [YYYY.]MM.DD-hh:mm[:ss] AND REJECTS
 #     THAT ONE. Verified against the real busybox binary. The ISO form
 #     "YYYY-MM-DD hh:mm:ss" is accepted by both, and is what it sends now.
-#   * ⚠ and it TRUSTED the exit status instead of the result. A script that
+#   * and it TRUSTED the exit status instead of the result. A script that
 #     reports a clock it did not set is worse than one that fails loudly. It
 #     reads the year back now, prints the header it received and the string it
 #     tried, and says so when the year is still wrong.
 #
-# ⚠ The rtc itself has never been written: `no valid clock/calendar values
+# The rtc itself has never been written: `no valid clock/calendar values
 # available`, so hctosys had nothing at boot. That is expected on a board whose
 # rtc supply is the system rail. Once the network sets the time, hwclock -w
 # gives it something to keep across a WARM reboot.
@@ -29,7 +29,7 @@
 # ---------------------------------------------------------------------------
 # 2026-08-27 round 385. THE CLOCK WAS THE WHOLE THING.
 #
-# 🏁 384's LADDER NAMED THE LAYER, WHICH IS WHAT A LADDER IS FOR:
+# 384's LADDER NAMED THE LAYER, WHICH IS WHAT A LADDER IS FOR:
 #
 #   1 nameserver      192.168.2.1                          ok
 #   2 ping gateway    0% loss, 0.8 ms                      ok
@@ -41,13 +41,13 @@
 # Everything works except TLS, and TLS failed on the DATE. A certificate whose
 # notBefore is after the board's idea of now is "not yet valid".
 #
-# ⚠⚠ AND I HAD ALREADY WRITTEN DOWN WHY, TWO ROUNDS EARLIER, AND FIXED IT IN
+# AND I HAD ALREADY WRITTEN DOWN WHY, TWO ROUNDS EARLIER, AND FIXED IT IN
 # ONE PLACE ONLY. CONFIG_RTC_DRV_HYM8563 was =m while the dts carries
 # hym8563 at 0x51, so rtc0 never existed and CONFIG_RTC_HCTOSYS had nothing to
 # read. The CI kernel workflow enables it. kernel/base.config, which is what
 # builds THIS image, did not. Now it does.
 #
-# ⚠ AND THAT ALONE WOULD NOT HAVE BEEN ENOUGH. The rtc's supply is
+# AND THAT ALONE WOULD NOT HAVE BEEN ENOUGH. The rtc's supply is
 # vcc_3v3_rtc_s5, whose vin-supply is vcc_5v0_sys: the system rail, not a coin
 # cell. This board forgets the time whenever it loses power. So S41timesync sets
 # the clock from an HTTP Date header (plain http measurably works) and writes it
@@ -58,7 +58,7 @@
 # ---------------------------------------------------------------------------
 # 2026-08-27 round 384. AN ADDRESS, AND STILL NO INTERNET.
 #
-# 🏁 383 FIXED THE DHCP RACE AND THE BOARD HAS AN ADDRESS:
+# 383 FIXED THE DHCP RACE AND THE BOARD HAS AN ADDRESS:
 #
 #   Waiting for eth0 carrier: [5.221] Link is Up, 1Gbps/Full
 #   udhcpc: lease of 192.168.2.4 obtained from 192.168.2.1
@@ -68,7 +68,7 @@
 # got the same lease, exit 0. So there WAS a server all along and the race was
 # the whole story. S39carrier is the fix and it works.
 #
-# ⚠ AND IT STILL CANNOT REACH huggingface.co: HTTP 000 in 0.198s. That is not a
+# AND IT STILL CANNOT REACH huggingface.co: HTTP 000 in 0.198s. That is not a
 # timeout, it is a refusal to start, and the arm could not say why because it
 # ran curl with -s, which throws the error away. An instrument that reports a
 # fault without its reason is half an instrument.
@@ -89,12 +89,12 @@
 # ---------------------------------------------------------------------------
 # 2026-08-26 round 383. THE DISCOVER WENT OUT ON A DEAD LINK.
 #
-# 🏁 382 got the whole round into the log and eth0 exists for the first time:
+# 382 got the whole round into the log and eth0 exists for the first time:
 #
 #   2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
 #      link/ether be:5a:d5:30:e9:0f
 #
-# ⚠ BUT NO IPv4, NO ROUTE, curl HTTP 000. The reason is a race, not the driver:
+# BUT NO IPv4, NO ROUTE, curl HTTP 000. The reason is a race, not the driver:
 #
 #   t=1.834  Starting network:  eth0 registers
 #   t=1.863  PHY [stmmac-0:01] driver [RTL8211F Gigabit Ethernet]
@@ -106,7 +106,7 @@
 # /etc/network/interfaces waits for the INTERFACE TO APPEAR, which it already
 # had. S39carrier now waits for CARRIER before S40network runs.
 #
-# ⚠ And no lease ever arrived afterwards either: `Lease of` appears ZERO times
+# And no lease ever arrived afterwards either: `Lease of` appears ZERO times
 # in the whole 382 log, though udhcpc had forked to background and should have
 # kept retrying. That is a second, separate question, and this round's arm 1 is
 # built to tell the two apart: it retries dhcp EXPLICITLY and prints what came
@@ -118,7 +118,7 @@
 # ---------------------------------------------------------------------------
 # 2026-08-26 round 382. WHAT 381 BROKE ON ITSELF.
 #
-# ⚠⚠ ROUND 381 LOST ITS FIRST TWO ARMS AND THE ROUND HEADER. Not to a crash:
+# ROUND 381 LOST ITS FIRST TWO ARMS AND THE ROUND HEADER. Not to a crash:
 # the round logs to /dev/console, one arm ran charsiu-config, whiptail draws by
 # CLEARING THAT CONSOLE, and everything printed before it went with the screen.
 # The network arm was the headline of that round and there is no record of it.
@@ -137,13 +137,13 @@
 #   * charsiu-get refused a 92 MB download onto a card with 172M free
 #
 # And three faults it found, all fixed in this image:
-#   * ⚠ busybox here has NO stat APPLET (CONFIG_STAT is not set), so every
+#   * busybox here has NO stat APPLET (CONFIG_STAT is not set), so every
 #     `stat -c%s ... || echo 0` returned 0 in silence. charsiu-doctor called a
 #     1321 MB model "0 MB" and then sized the memory check off it. wc -c now.
-#   * ⚠ charsiu-config did not handle --help, so it fell through to the menu
+#   * charsiu-config did not handle --help, so it fell through to the menu
 #     and opened the dialog that ate the log. It handles it, and refuses an
 #     unknown argument rather than opening anything.
-#   * ⚠ the staging bar collided with the generated text: "99%  112/113OK,
+#   * the staging bar collided with the generated text: "99%  112/113OK,
 #     Bob!". The heartbeat fires every sixteenth tensor, so for 113 the last
 #     one is 112 and nothing followed on stderr to close the line. It closes
 #     itself on the last heartbeat there will be.
@@ -174,7 +174,7 @@
 #                                    for ARM dotprod; passes any name test)
 #                   Q4_K_M.gguf   -> type 6 (q5_0) in 166 tensors
 #                   Qwen2.5-*     -> architecture qwen2
-#                 ⚠ And the reverse: Q6_K_L.gguf MEASURED AS RUNNABLE. I had
+#                 And the reverse: Q6_K_L.gguf MEASURED AS RUNNABLE. I had
 #                 called it a trap and it is not. Every type in that file is
 #                 one charsiu reads. Only the contents decide, both ways.
 #                 It uses the RUNTIME's own gguf parser, so the gate cannot
@@ -189,11 +189,11 @@
 # charsiu         The launcher. The runtime reads 109 CHARSIU_* variables; six
 #                 decide whether a decode reaches the NPU at all, and getting
 #                 one wrong does not fail loudly. It quietly runs a third as
-#                 fast on the CPU. ⚠ KMAX and W4_GROUP must be EQUAL (npudev
+#                 fast on the CPU. KMAX and W4_GROUP must be EQUAL (npudev
 #                 gates the int4 path on it), so config.ini keeps ONE value and
 #                 writes both.
 #
-# charsiu-config  ⚠ NO CURSES, unlike kiln's whiptail TUI. This rootfs has no
+# charsiu-config  NO CURSES, unlike kiln's whiptail TUI. This rootfs has no
 #                 whiptail, no dialog, no newt and no slang, and the board is
 #                 driven over a 1.5 Mbaud serial console. Plain numbered menu,
 #                 zero dependencies. Copying kiln's SHAPE is not copying its
@@ -206,7 +206,7 @@
 # Every log up to r380 has "Waiting for interface eth0 to appear......... timeout!"
 # and nobody had chased it. Root cause: CONFIG_STMMAC_ETH, STMMAC_PLATFORM and
 # DWMAC_ROCKCHIP were all =m and nothing modprobes them at boot. Now =y.
-# ⚠ The PHY was NOT the problem: rock-4d.dts says ethernet-phy-id001c.c916,
+# The PHY was NOT the problem: rock-4d.dts says ethernet-phy-id001c.c916,
 # which is a Realtek RTL8211F, and CONFIG_REALTEK_PHY=y was already set. I said
 # Motorcomm first and that was wrong. The DTS says otherwise.
 # The rootfs also had no CA store and no TLS fetcher, so ca-certificates and
@@ -220,7 +220,7 @@
 #   * arm 2: charsiu-doctor must pass with nothing critical.
 #   * arm 3: the gate, against the three models that ship on the card.
 #   * arm 4: the zoo, and a REAL download from Hugging Face, on the board.
-#     ⚠ The card is tight (2.7 GB of models in a 3584 MB rootfs), so
+#     The card is tight (2.7 GB of models in a 3584 MB rootfs), so
 #     charsiu-get's free-space check may refuse, and refusing is a PASS for
 #     that check. df is printed first so the number is visible either way.
 #   * arm 5: the launcher must produce the SAME tok/s as the raw incantation.
@@ -242,7 +242,7 @@ NGEN=64
 CE=CHARSIU_COEF_ELEMS=65536
 HEAD=CHARSIU_NPU_MAXN=131072
 ABORT=0
-# ⚠⚠ THE LOG GOES TO A FILE AS WELL AS THE SCREEN, AND THE FILE IS THE RECORD.
+# THE LOG GOES TO A FILE AS WELL AS THE SCREEN, AND THE FILE IS THE RECORD.
 #
 # Round 381 lost its header and its first two arms. The capture has ZERO ANSI
 # escapes in it, so it is a rendered screen and not raw uart bytes, and the
@@ -256,7 +256,7 @@ ABORT=0
 # A screen is not a log. Anything that draws can destroy one, and producing
 # evidence is this round's whole job.
 #
-# ⚠ AND NOT THROUGH A PIPE. `cmd | tee` puts cmd in a pipeline, so $? becomes
+# AND NOT THROUGH A PIPE. `cmd | tee` puts cmd in a pipeline, so $? becomes
 # tee's status and `capped`'s 124 timeout detection stops working. Everything
 # below goes to a temp file first and is copied to both places afterwards, so
 # exit codes survive.
@@ -313,14 +313,14 @@ arm() {
 }
 
 start() {
-	# ⚠ / is 95% full on this card, so fall back rather than fail silently.
+	# / is 95% full on this card, so fall back rather than fail silently.
 	: > "$LOGF" 2>/dev/null || LOGF=/tmp/round.log
 	: > "$LOGF" 2>/dev/null || true
 	log ""
 	log "###############################################################"
 	log "##### round 386: the date format was wrong                  #####"
 	log "###############################################################"
-	log "  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
+	log "  CHARSIU_PLAIN=1 for the whole round. whiptail clears the"
 	log "    console this log is written to, and 381 lost two arms to it."
 	CHARSIU_PLAIN=1; export CHARSIU_PLAIN
 
@@ -334,7 +334,7 @@ start() {
 	log "     date:      $(date -u)"
 	log "     rtc0:      $([ -e /dev/rtc0 ] && echo present || echo MISSING)"
 	both hwclock -r -u || log "     !! hwclock could not read the rtc"
-	log "     ⚠ the year must be >= 2025 or TLS cannot work at all"
+	log "     the year must be >= 2025 or TLS cannot work at all"
 
 	log ""
 	log "===== 1) THE NETWORK, which has never worked on this board     ====="
@@ -346,7 +346,7 @@ start() {
 	log "     carrier=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo EINVAL) speed=$(cat /sys/class/net/eth0/speed 2>/dev/null)Mb operstate=$(cat /sys/class/net/eth0/operstate 2>/dev/null)"
 	log "  -- route"
 	both ip route
-	log "  -- ⚠ THE LADDER. Whichever rung fails first is the answer."
+	log "  -- THE LADDER. Whichever rung fails first is the answer."
 	log "     1) is there a nameserver at all?"
 	both cat /etc/resolv.conf || log "     !! no /etc/resolv.conf"
 	log "     2) is the gateway reachable? (link and arp)"
@@ -367,12 +367,12 @@ start() {
 	log "     6) and once more without TLS, to separate the CA store from the rest"
 	both curl -sS -m 15 -o /dev/null -w '        HTTP %{http_code}\n' http://neverssl.com/
 	log "        plain http exit $?"
-	log "     ⚠ 384 had 6 passing and 5 failing. If 5 passes now, the clock"
+	log "     384 had 6 passing and 5 failing. If 5 passes now, the clock"
 	log "       was the only thing between this board and Hugging Face."
 
 	log ""
 	log "===== 1b) the TUI, which is new                                ====="
-	log "  whiptail is 1.8 MB of newt+slang. ⚠ It REFUSES to run without"
+	log "  whiptail is 1.8 MB of newt+slang. It REFUSES to run without"
 	log "  TERM, which a serial console often lacks, so charsiu-tui.sh"
 	log "  falls back to plain text rather than failing."
 	log "     whiptail: $(command -v whiptail || echo MISSING)"
@@ -398,7 +398,7 @@ start() {
 	log ""
 	log "===== 4) the zoo, and a real download from Hugging Face        ====="
 	log "  -- room on the card first."
-	log "     ⚠ 383 refused with 171M free, which was the space check working"
+	log "     383 refused with 171M free, which was the space check working"
 	log "     but left the download itself never tested end to end. The"
 	log "     q4_0-pure model, which no arm references, is out of the image"
 	log "     (671 MB; a copy is still in the charsiu tree). This should now"
@@ -419,7 +419,7 @@ start() {
 	log "  -- through the launcher"
 	log "     the command it builds:"
 	both charsiu --show -p "$PROMPT" -n 64
-	# ⚠ the same CHARSIU_STAGES as the by-hand arm, or the two are not the
+	# the same CHARSIU_STAGES as the by-hand arm, or the two are not the
 	# same measurement. env inherits, and the launcher's own env adds to it.
 	capped "$LIMIT" env CHARSIU_STAGES=1 charsiu -p "$PROMPT" -n 64 \
 		--ignore-eos -q > /tmp/lau.$$ 2>&1

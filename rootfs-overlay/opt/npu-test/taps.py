@@ -54,7 +54,7 @@ print(f"  {os.path.basename(model)} out{got.shape} zp={zp}, {taps} live taps", f
 print(f"  npu distinct={len(np.unique(got))} min={got.min()} max={got.max()}   "
       f"cpu distinct={len(np.unique(ref))} min={ref.min()} max={ref.max()}", flush=True)
 
-# ⚠ A flat NPU surface makes every "best match" meaningless: a constant equal to
+# A flat NPU surface makes every "best match" meaningless: a constant equal to
 # the zero point agrees with the reference wherever the reference is below it,
 # which reads as a high percentage for whichever channel is most often low. The
 # first version of this probe did exactly that, and its control caught it.

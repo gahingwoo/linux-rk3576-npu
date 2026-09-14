@@ -5,14 +5,14 @@
 # The reply to Igor's 2026-09-04 mail: drop our Signed-off-by on his 1/7 copy,
 # and his core-removal fix tested on RK3576.
 #
-# ⚠ DRY=1 prints the headers and sends nothing. --confirm=never means git asks
+# DRY=1 prints the headers and sends nothing. --confirm=never means git asks
 # nobody anything, so this is the only way to see them first.
 set -euo pipefail
 cd "$(dirname "$0")"
 M=reply-igor-sob.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
 
-# ⚠ THE THREAD, OR IT IS A NEW ONE. lore has the parent as
+# THE THREAD, OR IT IS A NEW ONE. lore has the parent as
 # 20260903091646.7183-1-royalnet026@gmail.com; without In-Reply-To this lands
 # as an orphan and nobody reading the RFC sees it.
 grep -q '^In-Reply-To: <20260904124659\.25971-1-royalnet026@gmail\.com>' "$M" || {
@@ -20,20 +20,20 @@ grep -q '^In-Reply-To: <20260904124659\.25971-1-royalnet026@gmail\.com>' "$M" ||
 grep -q '^Subject: Re: \[RFC\] accel/rocket: DVFS on RK3588' "$M" || {
 	echo "$M does not carry the thread's subject" >&2; exit 1; }
 
-# ⚠ EVERY NUMBER IN IT IS A PROMISE. These are the ones the board measured on
+# EVERY NUMBER IN IT IS A PROMISE. These are the ones the board measured on
 # 2026-09-04; if the mail ever stops carrying them the mail has drifted.
 for s in 'Drop it' 'Tested-by' 'two cores'; do
 	grep -qF "$s" "$M" || { echo "$M no longer says: $s" >&2; exit 1; }
 done
 
-# ⚠ THE MARKER. The draft holds *** RK3576 TEST HERE *** until the board answers.
+# THE MARKER. The draft holds *** RK3576 TEST HERE *** until the board answers.
 if grep -q '\*\*\*' "$M"; then echo "$M still carries a *** marker" >&2; exit 1; fi
 
 # the body stays under 72 columns; the headers are git's business
 n=$(awk 'NR>11 && length>72' "$M" | wc -l)
 [ "$n" = 0 ] || { echo "$n body lines are over 72 columns" >&2; exit 1; }
 
-# ⚠ NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII in the body. The Cc header
+# NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII in the body. The Cc header
 # carries an RFC 2047 encoded name, which is ASCII on the wire by design.
 CLEAN=$HOME/.claude/skills/unicode-format-cleaner/scripts/clean_unicode.py
 if [ -f "$CLEAN" ] && ! python3 "$CLEAN" --detect "$M" >/dev/null 2>&1; then
@@ -46,7 +46,7 @@ fi
 echo "$M: $(wc -l <"$M") lines"
 echo "In-Reply-To: $(sed -n 's/^In-Reply-To: //p' "$M")"
 echo
-# ⚠ THE RECIPIENTS ARE FLAGS, NOT HEADERS. --suppress-cc=all drops the Cc the
+# THE RECIPIENTS ARE FLAGS, NOT HEADERS. --suppress-cc=all drops the Cc the
 # file carries as well as the ones git harvests: the first dry run of this
 # addressed Igor alone and neither list. The previous reply in this thread
 # passed them as flags for the same reason.

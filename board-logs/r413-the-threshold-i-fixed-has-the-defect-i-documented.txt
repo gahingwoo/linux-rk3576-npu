@@ -16,7 +16,7 @@ written beside it has the same defect.
   model     four, on the vendor's protocol: 128 token prompt, 64 new tokens
 
 =====================================================================
-1. ⛔⛔⛔ 320 HAS THE DEFECT 448 HAD, AND I SHIPPED IT KNOWING THE RULE
+1. 320 HAS THE DEFECT 448 HAD, AND I SHIPPED IT KNOWING THE RULE
 ---------------------------------------------------------------------
 r412's header says it in as many words:
 
@@ -33,19 +33,19 @@ buys at those lengths, and the arithmetic in §8/§19 of that round puts the
 saving at 302 tokens near 62 ms, which would take that row from +2.3% against
 a 2.2% spread -- level -- to roughly +5%, which clears.
 
-⛔ 1) THE RULE WAS WRITTEN DOWN IN THE SAME FILE, TWICE. `src/llama.c` says
+1) THE RULE WAS WRITTEN DOWN IN THE SAME FILE, TWICE. `src/llama.c` says
 "If this arm gets faster again, re-measure. Do not scale this number." r412 §10
 says a justification of the form "nothing measured says otherwise" names its
 own expiry. Both were written before the ladder landed, and neither fired.
 
-🔑 2) WHAT MAKES IT INVISIBLE IS THAT THE TWO HALVES WERE RIGHT SEPARATELY.
+2) WHAT MAKES IT INVISIBLE IS THAT THE TWO HALVES WERE RIGHT SEPARATELY.
 §2 correctly re-measured a threshold against a correctly named arm. §7
 correctly made the arm faster. Nothing in either is wrong. The defect is
 only in the ORDER, and a round that lands a speedup after a threshold has to
 re-run the threshold or say it did not.
 
 =====================================================================
-2. ⚠⚠ AND THE TASK TERM IS NOT SMALL, IT IS NOT THERE
+2. AND THE TASK TERM IS NOT SMALL, IT IS NOT THERE
 ---------------------------------------------------------------------
 The runtime fits `us a call = A + B a task + C a MB` on every staged run and
 prints it. Two models, one boot, one binary, this round:
@@ -53,26 +53,26 @@ prints it. Two models, one boot, one binary, this round:
     Qwen3-0.6B      us a call = 68 + -0.1 a task + 118.4 a MB
     (second model)  us a call = 32 + 22.6 a task + 114.7 a MB
 
-⚠ 3) B READS -0.1 AND 22.6. That is not a noisy estimate of one quantity, it
+3) B READS -0.1 AND 22.6. That is not a noisy estimate of one quantity, it
 is a coefficient the data cannot determine: tasks and megabytes move together
 across the shapes a real model presents, so the fit splits their sum almost
 arbitrarily between them. The C term, which IS determined, reads 118.4 and
 114.7 against a shipped 110.0 and is fine.
 
-⛔ 4) SO `DEAL_US_TASK 36.8` IS WORSE THAN "FIVE TO TWELVE TIMES TOO LARGE",
+4) SO `DEAL_US_TASK 36.8` IS WORSE THAN "FIVE TO TWELVE TIMES TOO LARGE",
 which is how it was described last night. It is a number taken from a fit that
 never determined it, and it is still steering which core every slice lands on.
 The board list already has it. What this round adds is that re-deriving it from
 the same kind of fit will not work either: the instrument that would price it
 is the one that cannot see it.
 
-⚠ 5) AND THE RUNTIME SAYS SO ITSELF, on the Qwen3 run: "that remainder is
+5) AND THE RUNTIME SAYS SO ITSELF, on the Qwen3 run: "that remainder is
 NEGATIVE, so the hardware path and the wall clock are counting different calls
 -- the rate above is not a fact about the hardware". The guard fired. Nobody
 had read it against the fit on the line below.
 
 =====================================================================
-3. 🔑 THE IOMMU NUMBER: BOTH INSTRUMENTS NEED A FLASH, AND THE SAVING
+3. THE IOMMU NUMBER: BOTH INSTRUMENTS NEED A FLASH, AND THE SAVING
    MAY NOT EXIST TO BE MEASURED
 ---------------------------------------------------------------------
 "About 19.5 ms of a decode token is the per job IOMMU attach and detach" is
@@ -80,7 +80,7 @@ the one number in this project's writing that is derived rather than measured:
 a per call floor multiplied by a call count. Two ways to settle it were
 prepared, and preparing them answered a different question first.
 
-⛔ 6) ftrace CANNOT RUN ON THIS BOARD. The kernel the board boots is snapshotted
+6) ftrace CANNOT RUN ON THIS BOARD. The kernel the board boots is snapshotted
 in kernel/base.config, and it says
 
     # CONFIG_FTRACE is not set
@@ -99,7 +99,7 @@ reflash whichever instrument is chosen, which makes the debug patch the plan
 rather than the fallback. It is prepared, off by default behind its own
 Kconfig, and each of its five sites is a jump label nop when disarmed.
 
-⭐⭐ 7) AND THE STRONG A/B MAY HAVE NOTHING TO WIN. An IOMMU domain belongs to
+7) AND THE STRONG A/B MAY HAVE NOTHING TO WIN. An IOMMU domain belongs to
 an open DRM FILE. charsiu_npu_open_mode calls charsiu_open(NULL) twice --
 npudev.c:1561 and :1569 -- and open_any_accel answers both with the same
 /dev/accel/accel0. Two files, two domains, and rocket_job_open gives each file
@@ -111,7 +111,7 @@ did not change from the previous one. If the scheduler alternates the two
 entities on a core, attach-once degenerates into detach plus attach on nearly
 every job -- the baseline plus a kref dance, a LOSS.
 
-🔑 8) SO THE CHEAP MEASUREMENT COMES FIRST, AND IT IS A CEILING. The debug
+8) SO THE CHEAP MEASUREMENT COMES FIRST, AND IT IS A CEILING. The debug
 patch now also counts, per core, how often a job arrives carrying a different
 domain than the one before it. One pointer compare. That percentage is the
 hard ceiling on anything attach-once can remove, and it is readable from the
@@ -119,7 +119,7 @@ same run that gives the floor. Near zero and the A/B is not worth two boots,
 and the 19.5 ms was never merely unmeasured: it was a saving that was not
 available.
 
-⚠ 9) TWO MORE THINGS THE A/B AS DRAFTED GETS WRONG. attach-once/0001 also
+9) TWO MORE THINGS THE A/B AS DRAFTED GETS WRONG. attach-once/0001 also
 fixes a per job iommu_group_get leak, so its two arms differ by more than the
 knob under test. And it is two kernels and two boots, against this tree's own
 rule about never A/B-ing across boots on a board that drifts 3%. Gating the
@@ -127,13 +127,13 @@ fast path on a runtime knob instead makes it one kernel and one boot, which is
 what every other board script here does.
 
 =====================================================================
-4. 🏁 THE ROUND OF RECORD, AND IT IS VALID
+4. THE ROUND OF RECORD, AND IT IS VALID
 ---------------------------------------------------------------------
 Four models, seven repeats each, ONE boot, performance governor, the vendor's
 own protocol (128 token prompt, 64 new tokens). tests/board_vendor.sh with
 CHARSIU_BENCH_PERF=1 CHARSIU_BENCH_REPEAT=7.
 
-🔑 THE BOOT ID IS THE SAME AT BOTH ENDS: 0c9923fe at the start and 0c9923fe at
+THE BOOT ID IS THE SAME AT BOTH ENDS: 0c9923fe at the start and 0c9923fe at
 the finish. That was this round's first red flag and it did not fire. The
 previous attempt at this round died when the board reset mid-run.
 
@@ -147,28 +147,28 @@ Leading with the one that lost: gemma-4 is 3.5% behind and that margin clears
 its own 0.6% spread, so it is a real loss and not noise. The other three are
 ahead by margins that clear their spreads too.
 
-⚠⚠ 10) AND THE RIGHT COLUMN IS A CITATION, NOT AN ARM. RKNPU is not bound on
+10) AND THE RIGHT COLUMN IS A CITATION, NOT AN ARM. RKNPU is not bound on
 this boot -- only rocket is -- so the vendor runtime could not run and the
 right column is their published benchmark.md table. It has no N and no spread,
 so nothing in it can be "level within the noise": it has not got any. Their
 figures are also taken at MAXIMUM CPU AND NPU frequency and this board's NPU
 is at 594 MHz, which is the condition, not a property of either runtime.
 
-⚠ 11) TTFT IS THEIRS ON ALL FOUR, 1.38x to 1.72x, AND THAT IS THE EXPECTED
+11) TTFT IS THEIRS ON ALL FOUR, 1.38x to 1.72x, AND THAT IS THE EXPECTED
 SHAPE. This protocol is a 110 to 116 token prompt, which is far below the
 lengths where the prefill work of the last ten rounds pays; the ladder in the
 README is the instrument for prefill and it runs to 852. Quoting this TTFT
 column as the prefill story would be quoting the one prompt length chosen to
 suit their benchmark.
 
-⭐ 12) EVERY MODEL'S FIRST READING IS COLD, AND BY A LOT. ttft 1084 against a
+12) EVERY MODEL'S FIRST READING IS COLD, AND BY A LOT. ttft 1084 against a
 647 median on Qwen3, 1181 against 885, 3097 against 2896, 3014 against 2096.
 The script reports the MEDIAN, which absorbs it; a best-of-N or a mean would
 not have. The tree has had this rule since the day a 38% win turned out to be
 3%, and this round is what it looks like when the instrument already knows.
 
 =====================================================================
-5. 🏁 THE NOISE FLOOR, MEASURED AT LAST: 2.5% WITHIN ONE BOOT
+5. THE NOISE FLOOR, MEASURED AT LAST: 2.5% WITHIN ONE BOOT
 ---------------------------------------------------------------------
 Every "ahead" and "level" in this project is read against a 2.2% cross boot
 drift bound, and r412 §6 found the same arm reading 2274 and 2138 at 302
@@ -180,18 +180,18 @@ readings back to back with nothing changed, clock and governor pinned:
 
     median 2130   range 2110..2164   spread 2.5% of the median
 
-🔑 13) SO THE FLOOR ON A WITHIN BOOT COMPARISON IS 2.5%, and the 2.2% bound
+13) SO THE FLOOR ON A WITHIN BOOT COMPARISON IS 2.5%, and the 2.2% bound
 the documents quote is the right order of magnitude but slightly too small.
 Nothing published changes sign: 302 is +0.7%, 602 +2.1% and 852 +1.2%, all
 still level against 2.5%, and 452 was already level on its own 4.6% spread.
 
-⭐ 14) AND r411's 2274 IS NOT DRIFT. Twenty readings span 2110 to 2164. 2274
+14) AND r411's 2274 IS NOT DRIFT. Twenty readings span 2110 to 2164. 2274
 is 5.1% above the largest of them, so it is not a sample from this
 distribution at all. Whatever produced it was not the board wandering, and
 r412 §6 was right to record it as unexplained rather than absorb it into a
 noise bound.
 
-⚠ 15) THE CPU FREQUENCY IS THE EVIDENCE, NOT THE TEMPERATURE. All twenty
+15) THE CPU FREQUENCY IS THE EVIDENCE, NOT THE TEMPERATURE. All twenty
 readings sat at 2016000/2208000 kHz, so nothing throttled across a run long
 enough to warm the board. The temperature column is BLANK and that is a gap
 in the probe, not a reading of zero: this board publishes
@@ -201,12 +201,12 @@ shape this tree keeps being bitten by, and the frequency column is what
 carries the argument here.
 
 =====================================================================
-6. 🏁 THE LADDER, RE-MEASURED, AND THE NULL CONTROL HOLDS
+6. THE LADDER, RE-MEASURED, AND THE NULL CONTROL HOLDS
 ---------------------------------------------------------------------
 tests/board_ttft_curve.sh on the shipping binary, five repeats a point, same
 boot as everything above.
 
-⚠ FIRST, A CORRECTION TO THE PLAN THIS ROUND WROTE FOR ITSELF. The plan said
+FIRST, A CORRECTION TO THE PLAN THIS ROUND WROTE FOR ITSELF. The plan said
 "rows 27 through 302 are the null control". That was written before section 1
 moved the threshold from 320 to 272, and 302 is above 272, so its arm goes
 from OFF to ON and it MUST move. The control is 27, 52, 102 and 202. A
@@ -223,12 +223,12 @@ underneath it in the same round -- the same shape as section 1 itself.
        602   4115    4060     -1.3%    on both sides
        852   5953    5905     -0.8%    on both sides
 
-🏁 16) THE FOUR CONTROL ROWS MOVED -0.3 TO -1.4%, ALL INSIDE THE 2.5% FLOOR
+16) THE FOUR CONTROL ROWS MOVED -0.3 TO -1.4%, ALL INSIDE THE 2.5% FLOOR
 section 5 measured. Below the threshold the two arms run the same code -- there
 is no mirror, no V surface, no ladder -- so they could not legitimately move,
 and they did not. The re-read stands on that.
 
-⚠ 17) AND THE THREE ROWS WHERE THE LADDER SHOULD HAVE HELPED ARE INSIDE THE
+17) AND THE THREE ROWS WHERE THE LADDER SHOULD HAVE HELPED ARE INSIDE THE
 FLOOR TOO: -2.2, -1.3, -0.8%. That is not a contradiction of r412 section 8,
 which measured 852 going 5937 -> 5859 with non-overlapping ranges. That was a
 PAIRED comparison, two binaries alternating in one boot; this is two rounds on
@@ -237,7 +237,7 @@ quoting this table as evidence the in place ladder did nothing would be
 comparing the wrong two things.
 
 =====================================================================
-7. ⭐ AGAINST THE VENDOR: AHEAD TO 602, LEVEL AT 852
+7. AGAINST THE VENDOR: AHEAD TO 602, LEVEL AT 852
 ---------------------------------------------------------------------
 Their column is r393's measured ladder with their runtime on this board, a
 different boot; their chat template costs a constant 33 tokens at every length
@@ -254,16 +254,16 @@ the row's own spread.
        602     4060     4200.5    +3.5%     0.4%   ahead
        852     5905     6026.8    +2.1%     0.7%   LEVEL
 
-🏁 18) SO THE PUBLISHED CLAIM MOVES: "level from 302 up" becomes "ahead from 27
+18) SO THE PUBLISHED CLAIM MOVES: "level from 302 up" becomes "ahead from 27
 through 602, level at 852". 302 and 452 were level before and clear both tests
 now.
 
-⛔ 19) AND 602 IS THE FRAGILE ROW, WHICH IS THE PART TO SAY OUT LOUD. +3.5%
+19) AND 602 IS THE FRAGILE ROW, WHICH IS THE PART TO SAY OUT LOUD. +3.5%
 clears the 2.5% floor by one point. A slightly stricter bound puts it back to
 level. 302 (+4.9%) and 452 (+6.8%) clear comfortably; 852 (+2.1%) does not
 clear at all.
 
-⚠ 20) THIS IS THE TABLE THIS PROJECT ALREADY OVERCLAIMED ONCE. Every point
+20) THIS IS THE TABLE THIS PROJECT ALREADY OVERCLAIMED ONCE. Every point
 estimate favoured us then too, and it was written up as "completely surpassed"
 and withdrawn the same day. The difference now is that the floor is MEASURED
 (twenty readings, section 5) rather than quoted, and that one row is still

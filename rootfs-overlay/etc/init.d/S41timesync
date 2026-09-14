@@ -4,7 +4,7 @@
 #
 # Set the clock from the network, because TLS cannot work without it.
 #
-# ⚠ MEASURED ON ROUND 384, which is the first log with a working network:
+# MEASURED ON ROUND 384, which is the first log with a working network:
 #
 #   ping 1.1.1.1          0% loss, 9.5 ms
 #   nslookup huggingface  13.225.220.47 and three more
@@ -19,11 +19,11 @@
 # Two causes, both fixed:
 #   * CONFIG_RTC_DRV_HYM8563 was =m and nothing on this rootfs loads a module,
 #     so rtc0 never existed and CONFIG_RTC_HCTOSYS had nothing to read. Now =y.
-#   * ⚠ AND THAT IS NOT ENOUGH. The rtc's supply is vcc_3v3_rtc_s5, whose
+#   * AND THAT IS NOT ENOUGH. The rtc's supply is vcc_3v3_rtc_s5, whose
 #     vin-supply is vcc_5v0_sys: the SYSTEM rail, not a coin cell. This board
 #     forgets the time whenever it loses power, so something has to tell it.
 #
-# ⚠ NO ntpd IN THIS BUSYBOX (CONFIG_NTPD is not set) and rdate speaks a protocol
+# NO ntpd IN THIS BUSYBOX (CONFIG_NTPD is not set) and rdate speaks a protocol
 # almost nothing still answers. But plain HTTP measurably works, and every HTTP
 # response carries a Date header, which is enough to get inside a certificate's
 # validity window. It is not precise and does not need to be.
@@ -40,7 +40,7 @@ fi
 
 printf 'Clock: %s is wrong, asking the network\n' "$(date -u +%Y)"
 for u in http://neverssl.com/ http://example.com/ http://ftp.debian.org/; do
-	# ⚠ -I so nothing but the headers comes back, and plain http on purpose:
+	# -I so nothing but the headers comes back, and plain http on purpose:
 	# https is exactly what does not work until this succeeds.
 	D=$(curl -sS -I -m 8 "$u" 2>/dev/null | awk 'tolower($1)=="date:" {
 		sub(/^[Dd]ate: */,""); sub(/\r$/,""); print; exit }')
@@ -51,7 +51,7 @@ done
 
 # "Tue, 27 Aug 2026 05:12:34 GMT" -> "2026-08-27 05:12:34"
 #
-# ⚠⚠ NOT MMDDhhmmYYYY.ss. That is the coreutils and BSD form; busybox takes
+# NOT MMDDhhmmYYYY.ss. That is the coreutils and BSD form; busybox takes
 #   @seconds / hh:mm[:ss] / [YYYY.]MM.DD-hh:mm[:ss]
 # and REJECTS the other one. Round 385 shipped the coreutils form, the clock
 # stayed at 1970, and the script reported success anyway. The ISO form below is
@@ -67,7 +67,7 @@ WANT="$YYYY-$MM-$DD $HMS"
 echo "Clock: setting '$WANT'"
 date -u -s "$WANT" >/dev/null 2>&1
 
-# ⚠ VERIFY, DO NOT TRUST. 385's script believed date's exit status and announced
+# VERIFY, DO NOT TRUST. 385's script believed date's exit status and announced
 # a time it had not set. Read the year back instead.
 NOW=$(date -u +%Y 2>/dev/null)
 if [ "${NOW:-0}" -ge 2025 ] 2>/dev/null; then

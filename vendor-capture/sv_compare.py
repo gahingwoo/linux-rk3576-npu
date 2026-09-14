@@ -52,7 +52,7 @@ def pair(name, a, b, oca, ocb):
 print("CONTROL first. Two compiles of one identical model:")
 ctl = pair("null", "sv_null_a", "sv_null_b", 128, 128)
 if ctl != (0, 0):
-    print("\n⚠ CONTROL FAILED: the toolkit does not reproduce these chunks "
+    print("\nCONTROL FAILED: the toolkit does not reproduce these chunks "
           "either, so nothing below can be attributed to a model property.")
     sys.exit(1)
 print("\n  control passes: both chunks survive a recompile unchanged, so a "

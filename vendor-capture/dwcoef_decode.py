@@ -16,7 +16,7 @@ per-channel weight sum, and the per-channel-scaled forms, because
 `A = bias - (in_zp - 0x80) * sw` and with per-channel quantisation A is not
 proportional to either term alone.
 
-⚠ sv_rgu is the POSITIVE CONTROL and is checked first. Its A column must come
+sv_rgu is the POSITIVE CONTROL and is checked first. Its A column must come
 back correlating with the weight sum, as it does in the .rknn at +0.9972. If it
 does not, the capture is not what this script thinks it is and nothing sv_dwu
 says can be read.
@@ -119,6 +119,6 @@ rgu, dwu = sys.argv[1], sys.argv[2]
 print("CONTROL FIRST. The regular capture must decode, or nothing below counts.")
 ok = scan(rgu, "rg:", "sv_rgu (control)")
 if not ok:
-    print("\n⚠ CONTROL FAILED: the capture is not what this script expects, so "
+    print("\nCONTROL FAILED: the capture is not what this script expects, so "
           "the depthwise result below cannot be read. Fix this first.")
 scan(dwu, "dw:", "sv_dwu depthwise")

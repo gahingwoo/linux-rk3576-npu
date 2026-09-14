@@ -256,7 +256,7 @@ rather than bytes.
 
 ## The reference is the inaccurate one, measured on the board this time (2026-08-19)
 
-⚠ **This section re-establishes something rounds 99 to 101 had already settled**,
+**This section re-establishes something rounds 99 to 101 had already settled**,
 and `vendor-capture/chainmodel.py` has printed since 13 August. Its own
 docstring says the pervasive one sided off by one is tflite's double rounding
 and not the hardware, and that by operator 8 a perfectly correct accelerator
@@ -290,7 +290,7 @@ reference simply agreed with everything, that row would have moved too.
 **The `85.62%` that sat in this file for weeks was never a driver problem**, and
 the file already said as much elsewhere.
 
-⚠ This makes a whole class of knob a trap. `ROCKET_ABIAS=1` takes that
+This makes a whole class of knob a trap. `ROCKET_ABIAS=1` takes that
 depthwise from 85.62 to 98.88 percent agreement with the interpreter and from
 99.98 down to 84.47 percent against exact arithmetic. It takes `mn_pw24` to
 byte exact against the interpreter and away from exact. Chasing agreement with
@@ -345,7 +345,7 @@ has carried the lift since its own round 163; porting the constant without
 porting the reason cost one board round, because charsiu's output zero point is
 zero and its offset was already -128, so the compensation came free there.
 
-⚠ Every accuracy figure in this file dated before this one, on a model whose
+Every accuracy figure in this file dated before this one, on a model whose
 output zero point is not zero, was scored against `max(cpu, out_zp)`. Of the
 133 models in the regression set, 31 have at least one operator with a nonzero
 output zero point and are in that class.
@@ -443,7 +443,7 @@ forced by the arithmetic and are not corroboration. **20, 50, 60, 90 and 114
 discriminate and nobody has run them on either SoC.** 40 and 72 do not, and an
 earlier version of this file and a mail to the list both said they did.
 
-⚠ Five fields of the value itself are still unexplained. Against `registers.xml`
+Five fields of the value itself are still unexplained. Against `registers.xml`
 this driver's `0x80011111` differs from upstream's `0x124` in `RGP_CNTER` 8,
 `RESERVED_0` 34, `SIZE_E_1` 0, `SIZE_E_0` 4 and `OW_SRC` 1, all of which came
 from vendor captures and none of which has been varied one at a time. Only
@@ -862,7 +862,7 @@ The third run is there so the failure reads as deterministic rather than
 intermittent. Igor Paunovic reported the observation this came from, and on
 RK3588 his resets drop the domain either way, so it may be RK3576 only.
 
-⚠ That paragraph described this tree until 2026-08-24, when the fix stopped
+That paragraph described this tree until 2026-08-24, when the fix stopped
 being optional. `rocket.reset_autosuspend` **no longer exists**: the tree now
 carries v9's 2/13 and 3/13 unconditionally, so a board built from it recovers
 from a timeout with no boot parameter. It is written down because the old text

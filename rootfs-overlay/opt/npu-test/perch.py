@@ -92,7 +92,7 @@ flat_ch = sum(1 for c in range(got.shape[2])
 at_zp = sum(1 for c in range(got.shape[2])
             if len(np.unique(got[:, :, c])) == 1 and got[0, 0, c] == ozp)
 
-# ⚠ A matching channel is not necessarily a computed one.
+# A matching channel is not necessarily a computed one.
 #
 # On mn_dw1 the nine channels reported as matching were exactly the nine with
 # the largest |A|, and a channel whose A is large enough saturates the requant
@@ -122,7 +122,7 @@ print(f"    EXACT vs the same reference: {_ex_px}/{_tot_px} pixels, "
       f"{_ex_ch}/{oc} channels identical, "
       f"{'BYTE EXACT' if _ex_px == _tot_px else 'NOT byte exact'}", flush=True)
 if got.shape[0] * got.shape[1] == 1:
-    # ⚠ A ONE PIXEL SURFACE HAS NO SPATIAL VARIATION TO REPRODUCE, so every
+    # A ONE PIXEL SURFACE HAS NO SPATIAL VARIATION TO REPRODUCE, so every
     # channel is "constant" by definition and COMPUTED is 0 whatever the answer
     # is. MobileNet's classifier is 1x1x1001 and read 0 of 1001 COMPUTED for
     # twenty rounds, which was this criterion failing and not the result. What
@@ -132,7 +132,7 @@ if got.shape[0] * got.shape[1] == 1:
           f"channels, npu has {len(np.unique(got))} distinct values and the "
           f"reference {len(np.unique(ref))}", flush=True)
 
-    # ⚠ CHANNEL AGREEMENT IS NOT THE ANSWER TO THE QUESTION THIS MODEL ASKS.
+    # CHANNEL AGREEMENT IS NOT THE ANSWER TO THE QUESTION THIS MODEL ASKS.
     #
     # 1000 of 1001 channels within one count says the surfaces agree. It does
     # not say the two stacks name the same class, and on a classifier that is
@@ -163,7 +163,7 @@ print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
       f"    npu constant but reference varies: "
       f"{int((npu_flat & ~ref_flat).sum())}", flush=True)
 
-# ⚠ THE REFERENCE IS A CHOICE AND max(cpu, out_zp) IS NOT FREE.
+# THE REFERENCE IS A CHOICE AND max(cpu, out_zp) IS NOT FREE.
 #
 # It was picked because the output min pins at out_zp in every run, as if the
 # accumulator were being ReLU'd. For an operator whose quantised output range
@@ -178,7 +178,7 @@ print(f"    reference channels that are constant: {int(ref_flat.sum())}/{oc}"
 # the regression set only conv2d-cal has out_zp 128. So the clamp is expected
 # to move NOTHING on five of them, and only conv2d-cal can say anything. If a
 # zero point model reports a nonzero footprint below, this reading is wrong.
-# ⚠ THE INTERPRETER IS NOT GROUND TRUTH, and round 257 measured that directly.
+# THE INTERPRETER IS NOT GROUND TRUTH, and round 257 measured that directly.
 #
 # Computed offline against exact arithmetic, tflite's own requant reads HIGH on
 # 14.41 percent of mn_dw1's pixels, 0.86 of mn_pw2's and 0.18 of mn_pw24's,
@@ -229,7 +229,7 @@ else:
     print(f"    UNCLAMPED reference: the clamp rewrites {moved}/{px} pixels "
           f"across {ch_moved}/{oc} channels", flush=True)
     one_px = got.shape[0] * got.shape[1] == 1
-    # ⚠ Both rows must be scored against their OWN reference. Since round 249
+    # Both rows must be scored against their OWN reference. Since round 249
     # the primary is the raw CPU output, so `bad` is already the unclamped
     # score and reusing it here would print the same number twice under two
     # names.
@@ -319,7 +319,7 @@ if bad:
     for c in bad:
         u = got[:, :, c].ravel().astype(float)
         v = ref[:, :, c].ravel().astype(float)
-        # ⚠ Fit only where NEITHER surface is clipped.
+        # Fit only where NEITHER surface is clipped.
         #
         # The reference is max(cpu, out_zp) and both surfaces saturate at 255,
         # so a fit over everything compares two differently clipped shapes and
@@ -473,7 +473,7 @@ if n1:
     # a shift and a rounding constant, and the coordinates are fixed so the
     # accumulator can be recomputed for exactly these pixels.
     wc = int(order[-1])
-    # ⚠ EVERY HARDCODED COORDINATE IN THIS FILE ASSUMES A SURFACE. Rows 1 and 2
+    # EVERY HARDCODED COORDINATE IN THIS FILE ASSUMES A SURFACE. Rows 1 and 2
     # and columns 1 to 16 do not exist on a 1x1x1001 classifier, and this raised
     # IndexError on MobileNet after the useful lines had printed, which is round
     # 206's third crash from the same assumption. The rule that round said out

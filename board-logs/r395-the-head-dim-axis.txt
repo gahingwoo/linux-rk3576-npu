@@ -20,26 +20,26 @@ ratio = NPU attention arm / CPU arm. Below 1.00 the NPU wins.
   at 852 tokens, by head_dim:   64 -> 1.302 (3 models)   96 -> 1.213
                                128 -> 1.021 (2 models)  256 -> 0.877
 
-🏁 1) MONOTONE IN head_dim, ACROSS SEVEN MODELS AND FIVE ARCHITECTURES.
+1) MONOTONE IN head_dim, ACROSS SEVEN MODELS AND FIVE ARCHITECTURES.
 1.302, 1.213, 1.021, 0.877. Nothing out of order.
 
-🏁 2) THE TWO head_dim 128 MODELS ARE A REPLICATE AND THEY AGREE TO 0.5%.
+2) THE TWO head_dim 128 MODELS ARE A REPLICATE AND THEY AGREE TO 0.5%.
 Qwen2.5-1.5B reads 1.023 and Qwen3-0.6B 1.018 at 852 tokens -- different
 architectures, different layer counts, different sizes. That is the strongest
 single piece of evidence on this axis and it was the point of running both.
 
-⛔ 3) AND IT SHOWS THE WITHDRAWN RULE'S THRESHOLD IS TOO LOOSE. "head_dim >=
+3) AND IT SHOWS THE WITHDRAWN RULE'S THRESHOLD IS TOO LOOSE. "head_dim >=
 128" would enable this arm on Qwen2.5 and Qwen3, where it BREAKS EVEN at the
 longest prompt measured and loses at every shorter one. The threshold for a WIN
 is 256, not 128 -- and even there it needs about 230 tokens.
 
-⚠ 4) WHICH IS SUPPORTED BY EXACTLY ONE MODEL. gemma-3-1b is the only clean
-head_dim 256 point on the card. ⛔ So the default still does not move: n=1 for
+4) WHICH IS SUPPORTED BY EXACTLY ONE MODEL. gemma-3-1b is the only clean
+head_dim 256 point on the card. So the default still does not move: n=1 for
 the only case that wins.
 
-⭐ 5) AND THAT IS THE ARGUMENT FOR WIDENING THE MIRROR'S SINGLE head_dim.
+5) AND THAT IS THE ARGUMENT FOR WIDENING THE MIRROR'S SINGLE head_dim.
 
-⚠⚠ WHICH IS A TRADE-OFF AND NOT A BUG, and r394 was written as though it might
+WHICH IS A TRADE-OFF AND NOT A BUG, and r394 was written as though it might
 be one. The tree knows gemma-4 has two head_dims and says so BY NAME:
 attn_block_job carries `hd`, this layer's head, and `hdmax`, the cache's
 stride, because "on gemma4 they differ ... Indexing the cache by the live head
@@ -55,7 +55,7 @@ layers accelerated to 100%, and give this axis its SECOND head_dim 256 point,
 which is the one thing it is short of.
 
 =====================================================================
-⚠ Correctness, at the LONGEST length of each sweep
+Correctness, at the LONGEST length of each sweep
 ---------------------------------------------------------------------
   Qwen2.5-1.5B   worst 0.012 relative   308 layers, 0 fell back, 0 refused
   Phi-3.5-mini   worst 0.016            352 layers, 0 fell back, 0 refused
@@ -67,7 +67,7 @@ r394 say zero on all four, which is the first time this tree could assert that
 rather than compute it from a multiple of eleven.
 
 =====================================================================
-⚠ NOT MEASURED HERE
+NOT MEASURED HERE
    Any head_dim above 256 on a model that can actually use it.
    Decode. This is TTFT only, -n 1.
    Whether the crossover length at head_dim 256 generalises: one model.

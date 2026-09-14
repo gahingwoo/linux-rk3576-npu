@@ -14,7 +14,7 @@ the knob.
   scripts   tests/board_attn_npu.sh (corrected), tests/board_attn_min.sh (new)
 
 =====================================================================
-1. ⛔ THE SCRIPT WOULD HAVE PRINTED 1.000 AND MEANT NOTHING
+1. THE SCRIPT WOULD HAVE PRINTED 1.000 AND MEANT NOTHING
 ---------------------------------------------------------------------
 board_attn_npu.sh compared "the empty environment" against CHARSIU_ATTN_NPU=1,
 and the empty environment WAS the CPU arm for as long as off was the default.
@@ -26,13 +26,13 @@ arm in both columns at 452 and up and reported a ratio of 1.000 -- a null
 result that looks like a measurement. The CPU arm is CHARSIU_ATTN_NPU=0 now
 and the header says which two arms ran.
 
-🔑 1) THE RULE THIS TREE ALREADY HAS: both arms must name the knob. What is new
+1) THE RULE THIS TREE ALREADY HAS: both arms must name the knob. What is new
 is that a script can pass that rule on the day it is written and fail it later,
 because the DEFAULT moved underneath it. Changing a default is an edit to every
 script that took it as an arm.
 
 =====================================================================
-2. ⭐ THE CROSSOVER IS BETWEEN 302 AND 352, NOT AT 448
+2. THE CROSSOVER IS BETWEEN 302 AND 352, NOT AT 448
 ---------------------------------------------------------------------
 Four repeats an arm a length, arms alternating, one warm-up an arm discarded,
 one boot, clock pinned:
@@ -51,23 +51,23 @@ got wrong in prose:
     352   margin +5.7%   spread 1.7%   the NPU arm wins
     452   margin +10.8%  spread 1.6%   the NPU arm wins
 
-⚠ 2) 302 IS THE ROW THAT HAS TO BE LEFT ALONE. It is ahead, it is ahead in
+2) 302 IS THE ROW THAT HAS TO BE LEFT ALONE. It is ahead, it is ahead in
 every one of the four pairs, and its margin is the same size as the noise on
 the arm it is measured against. Calling it a win is the mistake this tree made
 yesterday at 452 tokens with the vendor. It is not evidence of a loss either --
 it is a row that needs more samples than a threshold decision is worth.
 
-🏁 3) SO 448 IS LEAVING 144 ms ON THE FLOOR AT 352 TOKENS and 366 ms at 452,
+3) SO 448 IS LEAVING 144 ms ON THE FLOOR AT 352 TOKENS and 366 ms at 452,
 on this model. The knob is one number for every model, so what it should
 become is section 3's question, not this one's.
 
-⚠ 4) AND THE ARM IS STILL CORRECT AT THE LENGTH IT WINS AT: 96 layers ran, 0
+4) AND THE ARM IS STILL CORRECT AT THE LENGTH IT WINS AT: 96 layers ran, 0
 fell back, 0 refused, and the worst per-layer disagreement against the CPU arm
 on the same rows is 0.0049 relative (layer 15, 0.01621 against a largest
 element of 3.336). That is fp16 rounding, measured, not asserted.
 
 =====================================================================
-3. ⭐⭐ AND SECTION 1 EXPLAINS r411's 452 ROW, WHICH READ THE OTHER WAY
+3. AND SECTION 1 EXPLAINS r411's 452 ROW, WHICH READ THE OTHER WAY
 ---------------------------------------------------------------------
 r411 section 8 measured the same arm on the same boot with the same binary and
 got the opposite answer at 452:
@@ -76,7 +76,7 @@ got the opposite answer at 452:
        302        2274       2202   0.968          2138       2088   0.977
        452        3230       3316   1.027          3402       3036   0.892
 
-⭐ 5) THE 452 ROW IS NOT NOISE, IT IS THE ARM THAT WAS NOT NAMED. r411 ran
+5) THE 452 ROW IS NOT NOISE, IT IS THE ARM THAT WAS NOT NAMED. r411 ran
 board_attn_npu.sh before the correction in section 1, so its "CPU" column was
 the EMPTY environment -- and the empty environment is `auto`, which turns the
 NPU arm ON at 448. 452 is above 448. That row compared the NPU arm against the
@@ -87,7 +87,7 @@ Nothing was wrong with the board and nothing drifted. A null arm is not a null
 result, and this is the second shape of it: not an arm that never ran, but an
 arm that ran and was the OTHER arm.
 
-⚠ 6) THE 302 ROWS DIFFER BY 6.4% ON THE CPU SIDE AND THAT IS NOT EXPLAINED.
+6) THE 302 ROWS DIFFER BY 6.4% ON THE CPU SIDE AND THAT IS NOT EXPLAINED.
 Both are genuinely the CPU arm there (302 is below 448, so auto is off). 2274
 against 2138, same boot, same binary, clock pinned. r411's cell is two repeats
 with no range printed; r412's is four with a 2.2% range. The reading with the
@@ -96,7 +96,7 @@ recorded rather than explained away -- it is larger than the 2.2% cross-boot
 drift this tree measures WITHIN one boot, which is worth knowing.
 
 =====================================================================
-4. ⛔⛔⛔ AND THE THRESHOLD IS WRONG IN THE OTHER DIRECTION TOO
+4. AND THE THRESHOLD IS WRONG IN THE OTHER DIRECTION TOO
 ---------------------------------------------------------------------
 Phi-3.5-mini at 352 tokens, three repeats an arm, arms alternating:
 
@@ -107,7 +107,7 @@ Phi-3.5-mini at 352 tokens, three repeats an arm, arms alternating:
 1390 ms, against a 1.4% spread on the arm it is measured against. That is not
 noise and it is not a tie.
 
-⛔ 7) SO THE SHIPPING DEFAULT IS COSTING PHI RIGHT NOW. attn_npu_min_tokens is
+7) SO THE SHIPPING DEFAULT IS COSTING PHI RIGHT NOW. attn_npu_min_tokens is
 448, so every Phi prompt from 448 tokens up runs its attention on the NPU --
 and at 352 that arm is 1.4 seconds behind. r411's ten model table has Phi at
 -0.3% at 852, so Phi's crossover is somewhere near 852 and the default turns
@@ -116,14 +116,14 @@ the arm on 400 tokens before it.
 One number cannot be both 320 and 850. A length threshold is the wrong SHAPE
 for this decision.
 
-🔑 8) AND THE MECHANISM IS GQA, WHICH IS A PREDICTION AND NOT A FIT. The mirror
+8) AND THE MECHANISM IS GQA, WHICH IS A PREDICTION AND NOT A FIT. The mirror
 costs one pack per position per layer per KV head -- it scales with the KV
 cache. The attention it buys scales with the QUERY heads. So the return on a
 mirror byte is n_head / n_kv_head:
 
     Llama-3.2-1B    32 heads,  8 kv   gqa 4     crossover measured ~320
     Phi-3.5-mini    32 heads, 32 kv   gqa 1     crossover measured near 852
-                                                (⚠ WITH THE ARM AS IT STOOD
+                                                (WITH THE ARM AS IT STOOD
                                                  HERE. §7's in place ladder
                                                  landed later in this same
                                                  round and moved it to 452;
@@ -133,14 +133,14 @@ mirror byte is n_head / n_kv_head:
     gemma-3-1b       4 heads,  1 kv   gqa 4     PREDICTS ~320: wins at 352
     Qwen3-0.6B      16 heads,  8 kv   gqa 2     PREDICTS ~640: loses at 352
 
-⚠ THE TWO PREDICTIONS ABOVE WERE WRITTEN BEFORE THEIR ROWS RAN. Two points
+THE TWO PREDICTIONS ABOVE WERE WRITTEN BEFORE THEIR ROWS RAN. Two points
 always fit a line and this tree has been burned by exactly that three times;
 the only thing that makes gqa more than a story is that it says what the next
 two rows will do before they do it. If gemma-3 and Qwen3 come back the other
 way, gqa is dead and the threshold has to be measured per model.
 
 =====================================================================
-5. ⚠⚠ THE PREDICTION WAS HALF RIGHT, AND THE HALF THAT FAILED IS THE
+5. THE PREDICTION WAS HALF RIGHT, AND THE HALF THAT FAILED IS THE
    HALF THAT WOULD HAVE BEEN A NUMBER
 ---------------------------------------------------------------------
 352 tokens, three repeats an arm, arms alternating, same boot:
@@ -152,12 +152,12 @@ way, gqa is dead and the threshold has to be measured per model.
     gemma-3-1b-it-Q4_0           352      2489        2280    +8.4%    0.5%  wins
     Llama-3.2-1B-Instruct-Q4_0   352      2534        2390    +5.7%    1.7%  wins
 
-⛔ 9) QWEN3 WAS PREDICTED TO LOSE AND IT WINS BY 7.7%. The quantitative form of
+9) QWEN3 WAS PREDICTED TO LOSE AND IT WINS BY 7.7%. The quantitative form of
 the gqa story -- crossover proportional to 1/gqa, so gqa 2 crosses at 640 --
 is dead. It was an invented constant of proportionality with one point behind
 it, which is the same shape as the two-point fits this tree has withdrawn.
 
-🏁 10) THE QUALITATIVE FORM SURVIVES AND IT SEPARATES ALL FIVE:
+10) THE QUALITATIVE FORM SURVIVES AND IT SEPARATES ALL FIVE:
 
     gqa 1    Phi-3.5-mini  32/32      SmolLM2-1.7B  32/32        both LOSE
     gqa 2    Qwen3-0.6B    16/8                                  wins
@@ -171,13 +171,13 @@ The mechanism says why in one line: the mirror costs one pack per position per
 layer per KV head and the attention it buys is done per QUERY head, so a model
 that shares no KV head across queries pays the full mirror for the least work.
 
-⚠ 11) FIVE POINTS ARE STILL FIVE POINTS. What is measured is that the two gqa 1
+11) FIVE POINTS ARE STILL FIVE POINTS. What is measured is that the two gqa 1
 models lose at 352 and the three others win; what is NOT measured is where any
 of them crosses. A rule that says "gqa 1 is different" is the smallest claim
 the data supports and even that has two models behind it.
 
 =====================================================================
-6. ⭐ WHERE PHI'S 1390 ms GOES, READ OFF THE RUNTIME'S OWN COUNTERS
+6. WHERE PHI'S 1390 ms GOES, READ OFF THE RUNTIME'S OWN COUNTERS
 ---------------------------------------------------------------------
 Phi-3.5-mini, 351 tokens, CHARSIU_ATTN_NPU=1, CHARSIU_STAGES=1:
 
@@ -187,7 +187,7 @@ Phi-3.5-mini, 351 tokens, CHARSIU_ATTN_NPU=1, CHARSIU_STAGES=1:
     charsiu:   V surface ladder: 32 64 128 256 352
                (4 repacks, 595 ms: 402 in alloc, 192 in block copy)
 
-⭐ 12) 402 ms OF THE LOSS IS THE ALLOCATOR AND NOTHING ELSE. The growth is
+12) 402 ms OF THE LOSS IS THE ALLOCATOR AND NOTHING ELSE. The growth is
 OUTSIDE the layer clock on purpose, so 804 + 595 = 1399 ms is what the arm
 costs and 1390 ms is what it lost -- the two agree to 9 ms, which means the
 loss is fully accounted and there is no fourth thing to look for.
@@ -196,7 +196,7 @@ Four rungs, and each one frees and allocates n_layer * n_kv buffer objects.
 Llama-3.2-1B has 16 * 8 = 128 of them; Phi has 32 * 32 = 1024. Same ladder,
 eight times the objects.
 
-🔑 13) SO THE ANSWER IS NOT A THRESHOLD, IT IS THE ALLOCATION. A surface
+13) SO THE ANSWER IS NOT A THRESHOLD, IT IS THE ALLOCATION. A surface
 allocated once at the prompt's ceiling can climb the ladder WHERE IT LIES: the
 padded extent appears in one term of the offset, so a rung is a block move, and
 a block move can be done in place if the groups are walked from the top down.
@@ -204,14 +204,14 @@ charsiu_fp16_regrow_vcols does that now, charsiu_fp16_w_set_k records the new
 layout, and tests/fp16_regrow.c holds the in place arm against the same
 reference as the copying one over 1584 shapes.
 
-⛔ 14) AND THE FIRST CUT OF IT WAS WRONG IN A WAY ONLY THE TEST SAW. A block
+14) AND THE FIRST CUT OF IT WAS WRONG IN A WAY ONLY THE TEST SAW. A block
 that moves up leaves its own old copy behind, inside the block above it in the
 new layout. The copying arm never noticed because its destination was a fresh
 calloc; in place, -1.0 sat where the reference had zero, on every shape whose
 live count was under the extent. The bytes looked like a plausible surface.
 
 =====================================================================
-7. 🏁🏁 THE GROWTH LINE IS THE PROOF, AND IT IS NOT A TTFT READING
+7. THE GROWTH LINE IS THE PROOF, AND IT IS NOT A TTFT READING
 ---------------------------------------------------------------------
 Phi-3.5-mini, 351 tokens, CHARSIU_ATTN_NPU=1, the two binaries on one boot:
 
@@ -221,12 +221,12 @@ Phi-3.5-mini, 351 tokens, CHARSIU_ATTN_NPU=1, the two binaries on one boot:
                       0 in alloc, 31 in block copy;
                       4096 of 4096 surfaces moved in place)
 
-🏁 15) 595 ms -> 31 ms, SAME LADDER, SAME FOUR RUNGS. The allocator's 402 goes
+15) 595 ms -> 31 ms, SAME LADDER, SAME FOUR RUNGS. The allocator's 402 goes
 to zero because nothing is allocated, and the block copy's 192 goes to 31
 because it is no longer interleaved with 1024 frees and 1024 allocations per
 rung evicting everything it touched.
 
-⚠ 16) THE TTFT SAYS THE SAME THING AND SAYS IT WORSE, which is why the growth
+16) THE TTFT SAYS THE SAME THING AND SAYS IT WORSE, which is why the growth
 line is the reading quoted:
 
     A (win)   9679 ms   9407..10522     spread 11.5%
@@ -238,14 +238,14 @@ worst reading beats A's best by 366 ms. Three against three with no overlap is
 one arrangement in twenty, which is suggestive and is not the evidence. The
 evidence is 595 -> 31 on a counter that TTFT noise cannot reach.
 
-🔑 17) AND A'S 11.5% SPREAD IS ITS OWN FINDING. Three readings of one binary,
+17) AND A'S 11.5% SPREAD IS ITS OWN FINDING. Three readings of one binary,
 one boot, clock pinned, governor pinned: 9407, 9679, 10522. That is five times
 the 2.2% cross-boot drift this tree quotes as its noise bound, on the arm that
 allocates 1024 buffer objects four times. tests/board_drift.sh exists to say
 whether that is Phi, the allocator, or the board.
 
 =====================================================================
-8. 🏁 AND IT IS NOT ONLY THE MODEL THAT WAS LOSING
+8. AND IT IS NOT ONLY THE MODEL THAT WAS LOSING
 ---------------------------------------------------------------------
 Llama-3.2-1B, 852 tokens, shipping defaults, three repeats alternating:
 
@@ -259,19 +259,19 @@ Llama-3.2-1B, 852 tokens, shipping defaults, three repeats alternating:
                       0 in alloc, 5 in block copy;
                       640 of 640 surfaces moved in place)
 
-🏁 18) 110 ms -> 5 ms on the model this arm was already winning on, and the
+18) 110 ms -> 5 ms on the model this arm was already winning on, and the
 78 ms of TTFT it buys is the first margin in this round that clears its own
 arm's spread without argument. The 77 ms of alloc is the number r411 section 5
 measured and tried to remove with a reservation that cost 478 ms; this removes
 it and costs nothing, because it changes WHERE the surface is laid out rather
 than HOW BIG the buffers the unit syncs are.
 
-⚠ 19) THE TWO MODELS SCALE THE WAY THE MECHANISM SAYS. Llama moves 5 rungs x
+19) THE TWO MODELS SCALE THE WAY THE MECHANISM SAYS. Llama moves 5 rungs x
 128 surfaces and saves 105 ms; Phi moves 4 x 1024 and saves 564. Per surface
 moved that is 0.16 ms against 0.14 -- the same allocator, counted twice.
 
 =====================================================================
-9. ⛔⛔ AND THE RUNTIME WAS ADVERTISING A ROAD IT HAD ALREADY CLOSED
+9. AND THE RUNTIME WAS ADVERTISING A ROAD IT HAD ALREADY CLOSED
 ---------------------------------------------------------------------
 Phi's staged run prints, as every staged run has:
 
@@ -287,7 +287,7 @@ fusing trades s sequential Y round trips for s scattered source streams and
 that loop is already bandwidth bound with a 4x line amplification. The
 refutation is a twenty line comment beside read_rows.
 
-⛔ 20) THE COMMENT IS IN THE SOURCE AND THE SUGGESTION IS ON STDERR, AND
+20) THE COMMENT IS IN THE SOURCE AND THE SUGGESTION IS ON STDERR, AND
 STDERR IS WHAT THE NEXT ROUND READS. This round took it up from that exact
 line and spent twenty minutes on it before grepping for the knob. Same family
 as a comment describing a check that is not there -- the text and the state
@@ -296,7 +296,7 @@ have come apart -- except that what came apart here is whether a road is open.
 The count still prints. The advice now names the knob and says it lost.
 
 =====================================================================
-10. ⛔⛔⛔ AND THE REFUSAL I WROTE AN HOUR EARLIER WAS WRONG
+10. AND THE REFUSAL I WROTE AN HOUR EARLIER WAS WRONG
 ---------------------------------------------------------------------
 Section 4 ended by turning the arm OFF for models with no GQA, and gave a
 reason: "there is no measured length at which those two win". That was true of
@@ -318,12 +318,12 @@ Six rows, both models, monotone in length, every margin clearing its own
 spread. 352 is a loss for both and 452 is a win for both, on the same boot with
 the same binary, so the crossover is bracketed rather than extrapolated.
 
-⛔ 21) A REFUSAL JUSTIFIED BY "NOTHING MEASURED SAYS OTHERWISE" HAS TO BE
+21) A REFUSAL JUSTIFIED BY "NOTHING MEASURED SAYS OTHERWISE" HAS TO BE
 RE-ASKED WHEN THE THING IT REFUSES GETS FASTER. The sentence that justified it
 names its own expiry and I still wrote it as a default. Two hours between the
 refusal and the measurement that overturns it, in one session, on one board.
 
-🏁 22) SO IT IS TWO THRESHOLDS, NOT A REFUSAL. And the second one is 448 -- the
+22) SO IT IS TWO THRESHOLDS, NOT A REFUSAL. And the second one is 448 -- the
 number this round spent its morning removing, arrived at again from a reading
 that is actually of the arm it describes:
 
@@ -339,7 +339,7 @@ Arriving at the same number from a correct reading is a coincidence worth
 writing down precisely so nobody later reads it as "448 was fine all along".
 
 =====================================================================
-11. 🔑 AND THE ROUND STAMPS ITS OWN COMMIT NOW
+11. AND THE ROUND STAMPS ITS OWN COMMIT NOW
 ---------------------------------------------------------------------
 Every board round in this tree has recorded the machine, the NPU clock, the
 boot id and the binary's mtime. None has recorded the COMMIT, because
@@ -361,10 +361,10 @@ day.
   - the installer writes $BIN/COMMIT, so an install can be identified even when
     the binary that ran came from somewhere else.
 
-⚠ -dirty IS PART OF THE ANSWER. A binary built from an edited tree is not the
+-dirty IS PART OF THE ANSWER. A binary built from an edited tree is not the
 commit it names, and stripping that would make the stamp worse than nothing.
 
-⚠ AND A BINARY TOO OLD TO ANSWER SAYS SO. charsiu_build prints "no --version
+AND A BINARY TOO OLD TO ANSWER SAYS SO. charsiu_build prints "no --version
 (binary predates the stamp)" rather than an empty string, because an empty
 string is exactly what an unmounted debugfs looked like in r411 and it cost a
 whole TTFT ladder.

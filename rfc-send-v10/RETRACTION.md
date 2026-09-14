@@ -1,6 +1,6 @@
 # What v10 said about Igor Paunovic's differential: it was RIGHT
 
-⛔⛔ **This file said the opposite on 2026-09-12 and that was wrong. The error
+**This file said the opposite on 2026-09-12 and that was wrong. The error
 was mine, it went out on a public list, and it has been withdrawn.** What
 follows is the corrected record.
 
@@ -41,7 +41,7 @@ Both the count and the 0x80 are his, measured on his RK3588.
 Different sessions, different arms, different days. Neither statement is in
 tension with the other.
 
-## ⛔ What I got wrong, and how
+## What I got wrong, and how
 
 On 2026-09-12 I pulled the 2026-08-19 thread, found only the 45-reset run in
 it, and concluded from that single thread that the 102 had been invented and
@@ -55,7 +55,7 @@ as the earliest hit, six days before our cover) and I did not run it. The tree
 already carries this exact lesson about a truncated `find` being read as an
 exhaustive one; the tool changed and the mistake did not.
 
-⚠ And the rest of the reasoning was built to fit. `FINDINGS.md` does record
+And the rest of the reasoning was built to fit. `FINDINGS.md` does record
 that on RK3576 an unwritten buffer reads back as a uniform 128, which is true
 and is OUR result. That made "he borrowed our signature" feel explanatory. Two
 platforms reading 0x80 for an unwritten buffer is not a coincidence needing an
@@ -86,7 +86,7 @@ it "the silent flavour of the race THESE TWO PATCHES close". 4/14's 45-reset
 paragraph is about the domain dropping, and of it he says "That is what the
 patch text describes, and it is right."
 
-⚠ The differential removed both patches together, so the evidence bounds the
+The differential removed both patches together, so the evidence bounds the
 PAIR and not either one of them.
 
 ## What stands

@@ -32,7 +32,7 @@ near 1 the correct output of channel c IS its input, shifted by that tap:
 Nine tap positions over 32 channels exercises every position three times, so
 one run separates all four.
 
-⚠ Patching bytes rather than rebuilding with the converter, because there is no
+Patching bytes rather than rebuilding with the converter, because there is no
 tensorflow in this environment. Everything structural is inherited from a model
 that already runs: shape, quantisation, operator, buffers. Only the contents of
 the weight and bias buffers change, and the CPU reference is computed from the

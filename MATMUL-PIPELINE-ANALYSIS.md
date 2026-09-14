@@ -22,7 +22,7 @@ the rocket/mesa stack, and the NVDLA architecture.
 
 ---
 
-## ⚠ RESOLVED 2026-07-05 (spread_confirm board test) — the pivotal gate came back NEGATIVE; the DISPATCH BYPASS is CLOSED
+## RESOLVED 2026-07-05 (spread_confirm board test) — the pivotal gate came back NEGATIVE; the DISPATCH BYPASS is CLOSED
 
 The verdict below hinged on one untested assumption: that a genuinely-independent per-op submit re-cold-start-
 arms the CSC (so per-op dispatch would bypass the chained-only wall). **That was tested directly and REFUTED.**

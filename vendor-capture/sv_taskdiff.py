@@ -26,7 +26,7 @@ gives the registers that carry the window, and diffing sv_rgu the same way
 separates "this is what a window changes" from "this is what depthwise
 changes".
 
-⚠ The vendor spreads its six tasks over three subcores, two each, per the
+The vendor spreads its six tasks over three subcores, two each, per the
 capture's meta.txt. Ours run on one core. So the COUNT is not comparable and
 only the per-window register deltas are.
 """

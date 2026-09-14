@@ -4,7 +4,7 @@
 #
 # Send [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN) enablement.
 #
-# ⚠⚠ WHY THERE IS A v13 THREE DAYS AFTER v12. Igor Paunovic re-ran his
+# WHY THERE IS A v13 THREE DAYS AFTER v12. Igor Paunovic re-ran his
 # induced-reset protocol on v12 as posted and found an error in his OWN
 # reports, which v12's 3/14 carries in its commit message. The code is byte
 # for byte what v12 posted; this respin exists because a commit message is the
@@ -15,11 +15,11 @@
 # returns exactly the v8 set, plus the reviewers who are not in it and whose
 # v8 comments this version answers.
 #
-# ⚠ NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
+# NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
 # header on v8 10/12 and is not in the maintainer list for anything the series
 # touches. 11/13 answers him and he should see it.
 #
-# ⚠⚠ --notes IS NOT OPTIONAL. v9's cover letter said 05/13 carried a git note
+# --notes IS NOT OPTIONAL. v9's cover letter said 05/13 carried a git note
 # naming the base and the one prerequisite, and the posted mail had no Notes
 # section: this script's v9 ancestor never passed --notes, so the note in the
 # repository was simply not emitted. Igor caught it on the thread on 25 August
@@ -32,7 +32,7 @@ LOG=/tmp/v13-send.log
 REGEN=${REGEN:-1}
 TREE=${TREE:-$HOME/Desktop/linux-next-v8}
 #
-# ⚠⚠ BOTH OF THESE WERE HARDCODED AND BOTH WENT STALE. BRANCH was `v12-prep`
+# BOTH OF THESE WERE HARDCODED AND BOTH WENT STALE. BRANCH was `v12-prep`
 # and BASE was `master`, which in that clone is pinned at next-20260814 -- so
 # REGEN=1 kept re-emitting a base-commit that was 29 days old and unreachable
 # from any branch, and it would have silently ignored a rewritten series on a
@@ -42,7 +42,7 @@ TREE=${TREE:-$HOME/Desktop/linux-next-v8}
 #
 BRANCH=${BRANCH:-v13-prep}
 #
-# ⚠⚠ AND THE BASE IS v12's. v13 must not go out on a tag three days older than
+# AND THE BASE IS v12's. v13 must not go out on a tag three days older than
 # the day it is sent: the cover says "applies to a plain next-YYYYMMDD" and
 # that has to be true. Refresh it first, which on this SHALLOW clone means
 #
@@ -59,7 +59,7 @@ if [ "$BASE" = next-20260911 ] && [ "${ALLOW_V12_BASE:-0}" != 1 ]; then
 fi
 if [ "$REGEN" = 1 ]; then
 	rm -f v13-0*.patch
-	# ⚠⚠ --base, OR THE NOTE ASSERTS SOMETHING THE MAIL DOES NOT CARRY.
+	# --base, OR THE NOTE ASSERTS SOMETHING THE MAIL DOES NOT CARRY.
 	#
 	# v8 carried BOTH machine readable lines:
 	#   base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
@@ -82,14 +82,14 @@ if [ "$REGEN" = 1 ]; then
 	    --base="$BASE" \
 	    -o "$PWD" "$BASE..$BRANCH" >/dev/null
 	for f in 0*.patch; do [ -e "$f" ] && mv "$f" "v13-$f"; done
-	# ⚠ THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
+	# THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
 	# cover-blurb.txt so that regenerating cannot throw it away.
 	./splice-cover.py v13-0000-cover-letter.patch cover-blurb.txt
-	# ⚠ NOT `! grep -q …`. A command whose status is inverted by `!` is
+	# NOT `! grep -q …`. A command whose status is inverted by `!` is
 	# exempt from errexit, so that line checked nothing at all: it printed
 	# nothing and did not abort. send-email refuses a cover whose SUBJECT is
 	# still the placeholder, but it never looks at the body.
-	# ⚠⚠ ANY *** MARKER, not only format-patch's two. v13's blurb carries
+	# ANY *** MARKER, not only format-patch's two. v13's blurb carries
 	# "*** BASE HERE ***" where the base tag goes, because the base has to
 	# be refreshed before this goes out and the sentence around it claims
 	# the series applies to that tag. A cover with a marker in it is a
@@ -100,7 +100,7 @@ if [ "$REGEN" = 1 ]; then
 		grep -n '\*\*\*' v13-0000-cover-letter.patch >&2; exit 1
 	fi
 
-	# ⚠ AND CHECK THE TRAILER CAME OUT. --base is silent when the revision
+	# AND CHECK THE TRAILER CAME OUT. --base is silent when the revision
 	# it names is not an ancestor: format-patch would simply not emit it, and
 	# this script would go on to send a series whose note cites a base-commit
 	# nobody can see.
@@ -121,7 +121,7 @@ TO=(--to='tomeu@tomeuvizoso.net' --to='heiko@sntech.de' --to='robh@kernel.org'
 
 CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 2,3,4/14, Reviewed-by 5/14
     #
-    # ⚠ EVERYONE WHOSE TAG THE SERIES CARRIES GETS THE MAIL. Three were
+    # EVERYONE WHOSE TAG THE SERIES CARRIES GETS THE MAIL. Three were
     # missing and none of them is on the To list under another address:
     # Abel Vesa reviewed 9/14 and 10/14, and Sebastian Reichel and Sidong
     # Yang gave 1/14 its Reviewed-by and Tested-by. A reviewer who does not
@@ -135,7 +135,7 @@ CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 2,3,4/14, R
     --cc='u.kleine-koenig@baylibre.com'   # Uwe Kleine-Koenig, the header on 11/13
     --cc='chaoyi.chen@rock-chips.com'     # Chaoyi Chen, confirmed the PC_TASK_CON layout
     --cc='diederik@cknow-tech.com'        # Diederik de Haas, the iommu binding
-    # ⚠⚠ flipper.net, AND MAINTAINERS IS THE STALE ONE. Line 3879 still says
+    # flipper.net, AND MAINTAINERS IS THE STALE ONE. Line 3879 still says
     # "Alexey Charkov <alchark@gmail.com>", and an audit of this script read
     # that line and called this address wrong -- "silently failing since v5".
     # It is not. He reviewed THIS SERIES at v2 from alchark@flipper.net on
@@ -149,11 +149,11 @@ CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 2,3,4/14, R
     --cc='devicetree@vger.kernel.org' --cc='linux-arm-kernel@lists.infradead.org'
     --cc='linux-kernel@vger.kernel.org')
 
-# ⚠ READ IT OFF THE COVER, DO NOT SPELL IT. This line was hardcoded from v10
+# READ IT OFF THE COVER, DO NOT SPELL IT. This line was hardcoded from v10
 # and said 00/13 over a series of fourteen, because a version bump renamed the
 # v10 in it and left the count alone. A summary that can disagree with the mail
 # it is summarising is worse than no summary.
-# ⚠ INVISIBLE UNICODE AND NON-ASCII. A mail with a zero-width character or a
+# INVISIBLE UNICODE AND NON-ASCII. A mail with a zero-width character or a
 # bidi mark in it may not go through, and a cover drafted by a tool may carry
 # one without anyone seeing it. Names in trailers are the one legitimate
 # non-ASCII; nothing in this series has any.
@@ -174,17 +174,17 @@ printf '  Cc : %s\n' "${CC[@]#--cc=}"
 echo
 ls v13-00*.patch | sed 's/^/  /'
 echo
-# ⚠⚠ THE NOTES GUARD LIVES HERE NOW, NOT INSIDE the REGEN block. The promise
+# THE NOTES GUARD LIVES HERE NOW, NOT INSIDE the REGEN block. The promise
 # made on-list was "refuses to send unless the number of patches carrying a
 # Notes block is exactly one", and it was only true on the default path:
 # REGEN=0 skipped the regeneration AND the check, and sent whatever was on
 # disk. A guarantee with an env var that turns it off is not a guarantee.
 #
-# ⚠ AND ZERO HAS TO SAY SO. `grep -lc … | wc -l` returning 0 makes the
+# AND ZERO HAS TO SAY SO. `grep -lc … | wc -l` returning 0 makes the
 # pipeline fail under pipefail, so the script died at the assignment before
 # it could print why. It refused, silently, which is the shape of failure
 # this whole version exists to remove.
-# ⚠⚠ THE NOTE GUARD INVERTS AT v11, AND THAT IS A DECISION, NOT AN ACCIDENT.
+# THE NOTE GUARD INVERTS AT v11, AND THAT IS A DECISION, NOT AN ACCIDENT.
 #
 # v10 required exactly one Notes block: Rob Herring's bot had asked for the
 # dependency to be recorded in the patch rather than only in the cover, and the
@@ -201,14 +201,14 @@ n=$(grep -lc '^Notes:' v13-*.patch 2>/dev/null | wc -l || true)
 [ "$n" = 0 ] || { echo "a Notes block is back on $n patch(es); 01/14 is inside the series, so it has nothing left to say" >&2; exit 1; }
 b=$(grep -lc '^base-commit:' v13-*.patch 2>/dev/null | wc -l || true)
 [ "$b" -ge 1 ] || { echo "no base-commit trailer was emitted" >&2; exit 1; }
-# ⚠ AND prerequisite-patch-id MUST BE GONE. It is the line Sashiko cannot
+# AND prerequisite-patch-id MUST BE GONE. It is the line Sashiko cannot
 # follow -- "Sashiko is not reviewing this series because it doesn't not
 # understand yet prerequisite-patch-id" -- and bundling Igor's patch is what
 # removes it. If it is back, the bundling did not take and this is the series
 # Tomeu has already asked us to change.
 q=$(grep -lc '^prerequisite-patch-id:' v13-*.patch 2>/dev/null | wc -l || true)
 [ "$q" = 0 ] || { echo "prerequisite-patch-id is still on $q patch(es) -- the prerequisite did not get bundled" >&2; exit 1; }
-# ⚠ AND IGOR'S PATCH HAS TO BE 01/14 WITH HIS NAME ON IT. The whole point of
+# AND IGOR'S PATCH HAS TO BE 01/14 WITH HIS NAME ON IT. The whole point of
 # this version is that his patch travels inside the series; posting it under
 # the wrong author, or not posting it at all, is the one way to get this wrong
 # that nobody would notice until he did.
@@ -219,7 +219,7 @@ for t in 'Sidong Yang' 'Diederik de Haas' 'Sebastian Reichel'; do
 		echo "01/14 has lost $t's tag" >&2; exit 1; }
 done
 
-# ⚠ A DRY RUN, because there was no way to see the final headers without
+# A DRY RUN, because there was no way to see the final headers without
 # committing to the send. --confirm=never means the Cc list git harvests from
 # the trailers -- Conor at microchip, Krzysztof at oss.qualcomm, Abel Vesa --
 # is never shown to anyone before it goes.

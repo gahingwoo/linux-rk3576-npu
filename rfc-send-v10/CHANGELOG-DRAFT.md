@@ -1,6 +1,6 @@
 # v10 changelog — DRAFT, for the cover letter
 
-⚠ This is the factual delta only. The cover-letter prose is yours; this is
+This is the factual delta only. The cover-letter prose is yours; this is
 here so nothing in it has to be recalled from memory. Every line below was
 checked against the generated patches, not against notes.
 
@@ -17,7 +17,7 @@ v9 05/13 (`dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core`) now
 carries the base/prerequisite note in the patch itself, which is what Rob's
 bot asked for on v8.
 
-⚠ **Igor's diagnosis was right and mine was not.** He wrote on 2026-08-25 that
+**Igor's diagnosis was right and mine was not.** He wrote on 2026-08-25 that
 "perhaps format-patch ran without --notes". `rfc-send-v9/send-v9.sh` never
 passes `--notes`, and `grep -c '^Notes:' rfc-send-v9/v9-0005-*.patch` is 0.
 The note is in the repository and always was; the flag was missing. The
@@ -52,7 +52,7 @@ Igor sent them.
 
 ## What is worth saying in the prose, and what is not
 
-⚠ **A banner here on 2026-09-12 called the paragraph below false. That banner
+**A banner here on 2026-09-12 called the paragraph below false. That banner
 was wrong and is gone; see RETRACTION.md. The paragraph quotes Igor's 25 August
 message (`CAEWPSH5mxTb...`) faithfully, and both the 102 and the 0x80 are his.**
 

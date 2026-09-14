@@ -4,7 +4,7 @@
 #
 # Wait for the PHY to finish autonegotiation before anything tries DHCP.
 #
-# ⚠ MEASURED ON ROUND 382, which is the first log this board ever produced with
+# MEASURED ON ROUND 382, which is the first log this board ever produced with
 # a working ethernet driver:
 #
 #   t=1.834  Starting network:  eth0 registers
@@ -17,7 +17,7 @@
 # negotiated yet. `wait-delay 15` in /etc/network/interfaces does not help: that
 # waits for the INTERFACE TO APPEAR, which it already had.
 #
-# ⚠ /sys/class/net/eth0/carrier returns EINVAL while the interface is
+# /sys/class/net/eth0/carrier returns EINVAL while the interface is
 # administratively down, so the link has to be brought up before it can be
 # asked. Reading it without that gives an error, not a zero.
 case "$1" in start) ;; *) exit 0 ;; esac
@@ -33,7 +33,7 @@ printf 'Waiting for %s carrier: ' "$IF"
 i=0
 while [ "$i" -lt "$MAX" ]; do
 	if [ "$(cat "/sys/class/net/$IF/carrier" 2>/dev/null)" = 1 ]; then
-		# ⚠ Carrier is not the same as ready. The MAC reports it the
+		# Carrier is not the same as ready. The MAC reports it the
 		# instant the PHY does, and a switch may still be learning the
 		# port. One second is cheap against a failed lease.
 		sleep 1

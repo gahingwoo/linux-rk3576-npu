@@ -45,7 +45,7 @@ def vectors(path, min_len=64, max_len=1 << 20):
     padding cuts the candidates from hundreds to a handful without needing the
     schema; the self test is what says the filter did not drop a real one.
 
-    ⚠ This was 64 first, which silently dropped every table whose size is not
+    This was 64 first, which silently dropped every table whose size is not
     64 aligned: with oc=48 the per-channel table is 96 bytes and vanished, and
     the locator reported "not found" rather than "filtered out".
     """

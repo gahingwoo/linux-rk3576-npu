@@ -20,7 +20,7 @@ and BLOCKED layouts, against the bias, the per-channel weight sum, and the
 per-channel-scaled forms, since A = bias - (in_zp - 0x80) * sw and with
 per-channel quantisation A is proportional to neither term alone.
 
-⚠ sv_rgu is the POSITIVE CONTROL and is reported first. Its A column has to come
+sv_rgu is the POSITIVE CONTROL and is reported first. Its A column has to come
 back correlating with the weight sum, as it does in the .rknn at +0.9972. If it
 does not, the capture is not what this expects and the depthwise answer below it
 means nothing.
@@ -54,7 +54,7 @@ def corr(x, y):
 def layouts(n=32):
     """(label, elem, index list) for every per-channel column worth trying.
 
-    ⚠ ORDER MATTERS. The regular capture decodes at block 64, group 8, elem 4,
+    ORDER MATTERS. The regular capture decodes at block 64, group 8, elem 4,
     base 0, which is mesa's own A/B/C layout, so that one goes FIRST: if the
     depthwise buffer holds a table in the same shape, the answer prints within
     seconds instead of after the whole sweep. The first version tried 300

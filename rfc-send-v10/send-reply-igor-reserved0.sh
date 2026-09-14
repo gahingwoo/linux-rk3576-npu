@@ -8,14 +8,14 @@
 #    series rather than the geometry smells like a toolkit setting, and the
 #    table is the way to corner it."
 #
-# ⚠ IT CORNERS OUR OWN CLAIM. The mail leads with the retraction: RESERVED_0
+# IT CORNERS OUR OWN CLAIM. The mail leads with the retraction: RESERVED_0
 # follows neither the model series nor the geometry, all 94 files carry one
 # toolkit build string, one file carries both values, and there is a third
 # value we never mentioned. What it does follow is DPU 0x4044, 364 of 364.
 # Sending a table fitted to the number we already published would have been
 # the worse outcome by a distance.
 #
-# ⚠ DRY=1 prints the headers and sends nothing. There is no other way to see
+# DRY=1 prints the headers and sends nothing. There is no other way to see
 # them: --confirm=never means git asks nobody anything.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,7 +23,7 @@ cd "$(dirname "$0")"
 M=reply-igor-reserved0.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
 
-# ⚠ THE TABLE HAS TO BE IN IT. The mail is the header block plus
+# THE TABLE HAS TO BE IN IT. The mail is the header block plus
 # reserved0-table.md; if the concatenation ever silently produced only the
 # prose, this would post a retraction with no evidence behind it.
 grep -q "^What it does follow" "$M" || {

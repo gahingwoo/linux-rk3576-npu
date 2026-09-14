@@ -8,7 +8,7 @@
 # returns exactly the v8 set, plus the reviewers who are not in it and whose
 # v8 comments this version answers.
 #
-# ⚠ NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
+# NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
 # header on v8 10/12 and is not in the maintainer list for anything the series
 # touches. 11/13 answers him and he should see it.
 set -euo pipefail

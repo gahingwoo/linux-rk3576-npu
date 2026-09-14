@@ -9,7 +9,7 @@
 # it stops at the real corner, and read the position back. This is what
 # xterm's resize(1) does, without pulling in the xterm package.
 #
-# ⚠ ONLY ON A SERIAL TTY, and only when the size still looks like the default,
+# ONLY ON A SERIAL TTY, and only when the size still looks like the default,
 # so a real terminal that already reported its size is left alone.
 case "${TERM:-}" in dumb|"") return 2>/dev/null || exit 0 ;; esac
 
@@ -24,10 +24,10 @@ case "$_ss_size" in
 "24 80"|"0 0"|"")
 	_ss_saved=$(stty -g 2>/dev/null) || _ss_saved=""
 	if [ -n "$_ss_saved" ]; then
-		# ⚠ `min 0 time 10` is the whole safety of this: a terminal that
+		# `min 0 time 10` is the whole safety of this: a terminal that
 		# does not answer costs one second, not a hung login.
 		stty raw -echo min 0 time 10 2>/dev/null
-		# ⚠ STDIN AND STDOUT, NOT THE TTY BY PATH. Reopening /dev/ttySn
+		# STDIN AND STDOUT, NOT THE TTY BY PATH. Reopening /dev/ttySn
 		# gets a different file description, and the reply never arrives
 		# on it -- measured: the escape went out and nothing came back.
 		printf '\0337\033[999;999H\033[6n\0338'

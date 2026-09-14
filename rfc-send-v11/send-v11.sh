@@ -8,11 +8,11 @@
 # returns exactly the v8 set, plus the reviewers who are not in it and whose
 # v8 comments this version answers.
 #
-# ⚠ NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
+# NEW SINCE v8: Uwe Kleine-Koenig, who asked for the narrower device-id
 # header on v8 10/12 and is not in the maintainer list for anything the series
 # touches. 11/13 answers him and he should see it.
 #
-# ⚠⚠ --notes IS NOT OPTIONAL. v9's cover letter said 05/13 carried a git note
+# --notes IS NOT OPTIONAL. v9's cover letter said 05/13 carried a git note
 # naming the base and the one prerequisite, and the posted mail had no Notes
 # section: this script's v9 ancestor never passed --notes, so the note in the
 # repository was simply not emitted. Igor caught it on the thread on 25 August
@@ -26,7 +26,7 @@ REGEN=${REGEN:-1}
 TREE=${TREE:-$HOME/Desktop/linux-next-v8}
 if [ "$REGEN" = 1 ]; then
 	rm -f v11-0*.patch
-	# ⚠⚠ --base, OR THE NOTE ASSERTS SOMETHING THE MAIL DOES NOT CARRY.
+	# --base, OR THE NOTE ASSERTS SOMETHING THE MAIL DOES NOT CARRY.
 	#
 	# v8 carried BOTH machine readable lines:
 	#   base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
@@ -49,10 +49,10 @@ if [ "$REGEN" = 1 ]; then
 	    --base=master \
 	    -o "$PWD" master..v11-prep >/dev/null
 	for f in 0*.patch; do [ -e "$f" ] && mv "$f" "v11-$f"; done
-	# ⚠ THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
+	# THE COVER LETTER COMES BACK AS *** BLURB HERE ***. It is written in
 	# cover-blurb.txt so that regenerating cannot throw it away.
 	./splice-cover.py v11-0000-cover-letter.patch cover-blurb.txt
-	# ⚠ NOT `! grep -q …`. A command whose status is inverted by `!` is
+	# NOT `! grep -q …`. A command whose status is inverted by `!` is
 	# exempt from errexit, so that line checked nothing at all: it printed
 	# nothing and did not abort. send-email refuses a cover whose SUBJECT is
 	# still the placeholder, but it never looks at the body.
@@ -60,7 +60,7 @@ if [ "$REGEN" = 1 ]; then
 		echo "the cover still has a placeholder in it" >&2; exit 1
 	fi
 
-	# ⚠ AND CHECK THE TRAILER CAME OUT. --base is silent when the revision
+	# AND CHECK THE TRAILER CAME OUT. --base is silent when the revision
 	# it names is not an ancestor: format-patch would simply not emit it, and
 	# this script would go on to send a series whose note cites a base-commit
 	# nobody can see.
@@ -83,7 +83,7 @@ CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 1/13, Revie
     --cc='u.kleine-koenig@baylibre.com'   # Uwe Kleine-Koenig, the header on 11/13
     --cc='chaoyi.chen@rock-chips.com'     # Chaoyi Chen, confirmed the PC_TASK_CON layout
     --cc='diederik@cknow-tech.com'        # Diederik de Haas, the iommu binding
-    # ⚠⚠ flipper.net, AND MAINTAINERS IS THE STALE ONE. Line 3879 still says
+    # flipper.net, AND MAINTAINERS IS THE STALE ONE. Line 3879 still says
     # "Alexey Charkov <alchark@gmail.com>", and an audit of this script read
     # that line and called this address wrong -- "silently failing since v5".
     # It is not. He reviewed THIS SERIES at v2 from alchark@flipper.net on
@@ -97,7 +97,7 @@ CC=(--cc='royalnet026@gmail.com'          # Igor Paunovic, Tested-by 1/13, Revie
     --cc='devicetree@vger.kernel.org' --cc='linux-arm-kernel@lists.infradead.org'
     --cc='linux-kernel@vger.kernel.org')
 
-# ⚠ READ IT OFF THE COVER, DO NOT SPELL IT. This line was hardcoded from v10
+# READ IT OFF THE COVER, DO NOT SPELL IT. This line was hardcoded from v10
 # and said 00/13 over a series of fourteen, because a version bump renamed the
 # v10 in it and left the count alone. A summary that can disagree with the mail
 # it is summarising is worse than no summary.
@@ -108,17 +108,17 @@ printf '  Cc : %s\n' "${CC[@]#--cc=}"
 echo
 ls v11-00*.patch | sed 's/^/  /'
 echo
-# ⚠⚠ THE NOTES GUARD LIVES HERE NOW, NOT INSIDE the REGEN block. The promise
+# THE NOTES GUARD LIVES HERE NOW, NOT INSIDE the REGEN block. The promise
 # made on-list was "refuses to send unless the number of patches carrying a
 # Notes block is exactly one", and it was only true on the default path:
 # REGEN=0 skipped the regeneration AND the check, and sent whatever was on
 # disk. A guarantee with an env var that turns it off is not a guarantee.
 #
-# ⚠ AND ZERO HAS TO SAY SO. `grep -lc … | wc -l` returning 0 makes the
+# AND ZERO HAS TO SAY SO. `grep -lc … | wc -l` returning 0 makes the
 # pipeline fail under pipefail, so the script died at the assignment before
 # it could print why. It refused, silently, which is the shape of failure
 # this whole version exists to remove.
-# ⚠⚠ THE NOTE GUARD INVERTS AT v11, AND THAT IS A DECISION, NOT AN ACCIDENT.
+# THE NOTE GUARD INVERTS AT v11, AND THAT IS A DECISION, NOT AN ACCIDENT.
 #
 # v10 required exactly one Notes block: Rob Herring's bot had asked for the
 # dependency to be recorded in the patch rather than only in the cover, and the
@@ -135,14 +135,14 @@ n=$(grep -lc '^Notes:' v11-*.patch 2>/dev/null | wc -l || true)
 [ "$n" = 0 ] || { echo "a Notes block is back on $n patch(es); v11's dependency is 01/14, so it has nothing left to say" >&2; exit 1; }
 b=$(grep -lc '^base-commit:' v11-*.patch 2>/dev/null | wc -l || true)
 [ "$b" -ge 1 ] || { echo "no base-commit trailer was emitted" >&2; exit 1; }
-# ⚠ AND prerequisite-patch-id MUST BE GONE. It is the line Sashiko cannot
+# AND prerequisite-patch-id MUST BE GONE. It is the line Sashiko cannot
 # follow -- "Sashiko is not reviewing this series because it doesn't not
 # understand yet prerequisite-patch-id" -- and bundling Igor's patch is what
 # removes it. If it is back, the bundling did not take and this is the series
 # Tomeu has already asked us to change.
 q=$(grep -lc '^prerequisite-patch-id:' v11-*.patch 2>/dev/null | wc -l || true)
 [ "$q" = 0 ] || { echo "prerequisite-patch-id is still on $q patch(es) -- the prerequisite did not get bundled" >&2; exit 1; }
-# ⚠ AND IGOR'S PATCH HAS TO BE 01/14 WITH HIS NAME ON IT. The whole point of
+# AND IGOR'S PATCH HAS TO BE 01/14 WITH HIS NAME ON IT. The whole point of
 # this version is that his patch travels inside the series; posting it under
 # the wrong author, or not posting it at all, is the one way to get this wrong
 # that nobody would notice until he did.
@@ -153,7 +153,7 @@ for t in 'Sidong Yang' 'Diederik de Haas' 'Sebastian Reichel'; do
 		echo "01/14 has lost $t's tag" >&2; exit 1; }
 done
 
-# ⚠ A DRY RUN, because there was no way to see the final headers without
+# A DRY RUN, because there was no way to see the final headers without
 # committing to the send. --confirm=never means the Cc list git harvests from
 # the trailers -- Conor at microchip, Krzysztof at oss.qualcomm, Abel Vesa --
 # is never shown to anyone before it goes.

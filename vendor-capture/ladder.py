@@ -19,7 +19,7 @@ This reads those registers back out of vendor .rknn files, which the toolkit
 compiles on the host, so the ladder can be checked against real values at
 geometries nobody captured.
 
-⚠ Address registers in a static .rknn are unpatched placeholders and read 0.
+Address registers in a static .rknn are unpatched placeholders and read 0.
 None of the four are addresses.
 
 Usage: ladder.py <file.rknn> [more.rknn ...]

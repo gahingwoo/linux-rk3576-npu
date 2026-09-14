@@ -1,12 +1,12 @@
 # Build a kernel a ROCK 4D can boot with the NPU working, and publish it so
 # charsiu-install.sh has something to offer.
 #
-# ⚠ WHY THIS EXISTS. RK3576 rocket support is not upstream. The commit adding
+# WHY THIS EXISTS. RK3576 rocket support is not upstream. The commit adding
 # `rockchip,rk3576-rknn-core` is ours and is not reachable from any tag, so no
 # distribution kernel anywhere will bind this NPU and the installer would have
 # nothing to do but say no.
 #
-# ⚠ THE BASE IS A MAINLINE RELEASE, NOT linux-next. next moves under you, it is
+# THE BASE IS A MAINLINE RELEASE, NOT linux-next. next moves under you, it is
 # not what anyone means by a kernel, and a board is not the place to find out
 # what landed yesterday. v7.2 is the newest release and it already carries
 # drivers/accel/rocket for RK3588.
@@ -94,7 +94,7 @@ jobs:
               }
             done
           }
-          # ⚠ ORDER MATTERS: upstream fixes, then the series. v11 has no
+          # ORDER MATTERS: upstream fixes, then the series. v11 has no
           # prereq/ directory -- Igor's patch is 1/14 of the series itself --
           # so a step that applied one would fail on a glob matching nothing.
           apply "../kernel/backport-7.2/*.patch"
@@ -106,7 +106,7 @@ jobs:
           cd linux
           cp ../kernel/base.config .config
           make ARCH=arm64 olddefconfig
-          # ⚠ DRM FIRST. DRM_ACCEL_ROCKET selects DRM_SCHED and
+          # DRM FIRST. DRM_ACCEL_ROCKET selects DRM_SCHED and
           # DRM_GEM_SHMEM_HELPER, so it cannot be y while DRM is m. Measured:
           # enabling only ROCKET leaves it at m and the assert below fails.
           scripts/config --enable DRM --enable DRM_ACCEL
@@ -136,14 +136,14 @@ jobs:
           tar -C modroot -czf "out/modules-$KVER.tar.gz" lib/modules
           {
             echo "base        $BASE  (a mainline release, not linux-next)"
-            # ⚠ NOT ../ HERE. The apply step runs inside linux/, this one runs
+            # NOT ../ HERE. The apply step runs inside linux/, this one runs
             # at the workspace root, and the first build reported "backports 0"
             # in a manifest people are meant to trust while having applied all
             # four. A count that can silently read zero is worse than no count.
             nbp=$(ls kernel/backport-7.2/*.patch 2>/dev/null | wc -l)
             [ "$nbp" -gt 0 ] || { echo "::error::the backport count came out 0"; exit 1; }
             echo "backports   $nbp upstream fixes that landed after $BASE"
-            # ⚠ COUNT THE PATCHES, do not type the number. It has been wrong
+            # COUNT THE PATCHES, do not type the number. It has been wrong
             # once already: the series went 13 -> 14 when Igor's patch moved
             # inside, and a manifest that states a stale count is worse than
             # one that states none.

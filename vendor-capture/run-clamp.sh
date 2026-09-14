@@ -29,7 +29,7 @@
 # point its own calibration chose and would not have chosen for a non negative
 # range.
 #
-# ⚠ THE MODELS ADDED IN ENTRIES 4 AND 5 HAVE NO HOST PREDICTION. Their weights
+# THE MODELS ADDED IN ENTRIES 4 AND 5 HAVE NO HOST PREDICTION. Their weights
 # are inside the .rknn rather than in a torch model here, so there is no float
 # reference for them and the only thing their lines can say is WHETHER anything
 # sits below the zero point, not how much. That is enough for the question they
@@ -47,7 +47,7 @@
 #   a_lin2   4096 outputs, float range -211.75 to 260.84, 2375 negative = 58.0%
 #   a_relu   4096 outputs, float range 0 to 181.45, 0 negative = 0%
 #
-# ⚠ THE FIRST RUN OF THIS MEASURED NOTHING, and the control is what said so.
+# THE FIRST RUN OF THIS MEASURED NOTHING, and the control is what said so.
 #
 # The output tensor is INT8, rknn_tensor_type 2, and its zero point is in the
 # same domain: these models report -128, 17 and -14, not 0, 145 and 114. The
@@ -81,7 +81,7 @@
 #             says and the two would have to be reconciled before anything
 #             else.
 #   a_lin reports about 58 percent below out_zp
-#             ⚠ RUN 2 ALREADY SAID THIS, 60.50 percent with a_lin2 at 59.08,
+#             RUN 2 ALREADY SAID THIS, 60.50 percent with a_lin2 at 59.08,
 #             both within two points of the host prediction. What that run
 #             lacked was the interrupt control above, so this one is the same
 #             measurement with the last hole closed rather than a new question.
@@ -101,12 +101,12 @@
 # a_relu is the null control and a_lin2 the reproducibility one, a second
 # linear model with different weights that must land near the same percentage.
 #
-# ⚠ This is the VENDOR image. It needs rock4d-spi-uboot-vendor.img in SPI, and
+# This is the VENDOR image. It needs rock4d-spi-uboot-vendor.img in SPI, and
 # rock4d-spi-uboot.img back afterwards before rocket will run again.
 CAP=/opt/npu-cap
 export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
 
-# ⚠ THE CONTROL THIS ROUND WAS MISSING. Nothing showed the inference reached the
+# THE CONTROL THIS ROUND WAS MISSING. Nothing showed the inference reached the
 # NPU rather than falling back inside librknnrt, which is the same worry Igor
 # raised about a result that looks like the CPU's. He answered it with per core
 # interrupt counters, so answer it the same way: read the NPU interrupt line

@@ -430,7 +430,7 @@ Starting dropbear sshd: OK
 ###############################################################
 ##### round 384: an address, and still no internet         #####
 ###############################################################
-  ⚠ CHARSIU_PLAIN=1 for the whole round. whiptail clears the
+  CHARSIU_PLAIN=1 for the whole round. whiptail clears the
     console this log is written to, and 381 lost two arms to it.
 
 ===== 1) THE NETWORK, which has never worked on this board     =====
@@ -450,7 +450,7 @@ Starting dropbear sshd: OK
   -- route
 default via 192.168.2.1 dev eth0 
 192.168.2.0/24 dev eth0 scope link  src 192.168.2.4 
-  -- ⚠ THE LADDER. Whichever rung fails first is the answer.
+  -- THE LADDER. Whichever rung fails first is the answer.
      1) is there a nameserver at all?
 nameserver 192.168.2.1 # eth0
      2) is the gateway reachable? (link and arp)
@@ -532,7 +532,7 @@ how to fix it, please visit the webpage mentioned above.
         plain http exit 0
 
 ===== 1b) the TUI, which is new                                =====
-  whiptail is 1.8 MB of newt+slang. ⚠ It REFUSES to run without
+  whiptail is 1.8 MB of newt+slang. It REFUSES to run without
   TERM, which a serial console often lacks, so charsiu-tui.sh
   falls back to plain text rather than failing.
      whiptail: /usr/bin/whiptail
@@ -582,7 +582,7 @@ VERDICT 8 passed, 0 warning(s), nothing critical
 
 ===== 4) the zoo, and a real download from Hugging Face        =====
   -- room on the card first.
-     ⚠ 383 refused with 171M free, which was the space check working
+     383 refused with 171M free, which was the space check working
      but left the download itself never tested end to end. The
      q4_0-pure model, which no arm references, is out of the image
      (671 MB; a copy is still in the charsiu tree). This should now
@@ -627,7 +627,7 @@ how to fix it, please visit the webpage mentioned above.
 /usr/bin/charsiu-get: line 188: can't open /opt/charsiu/models/SmolLM2-135M-Instruct-Q4_0.gguf.part: no such file
 [charsiu-get] ERROR: the download stopped after 0 MB of about 92 MB.
 
-  ⚠ IT DOES NOT START OVER. The part that arrived is kept in
+  IT DOES NOT START OVER. The part that arrived is kept in
     /opt/charsiu/models/SmolLM2-135M-Instruct-Q4_0.gguf.part
   and running the SAME command again picks up where it stopped
   (curl -C - / wget -c). On a board's link that is normal, not a fault.

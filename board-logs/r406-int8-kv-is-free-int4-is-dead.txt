@@ -25,16 +25,16 @@ Llama-3.2-1B-Instruct-Q4_0:
 
   desk, CPU path, same corpus:  20.3096 / 20.2706 / 27.9903 (+38%)
 
-🏁 1) int8 COSTS 0.2 TO 0.4 PERCENT. Two arms, two quantiser configurations,
+1) int8 COSTS 0.2 TO 0.4 PERCENT. Two arms, two quantiser configurations,
 the same direction and the same size.
 
-⛔ 2) int4 COSTS 38 TO 53 PERCENT AND IS DEAD. Which also settles the dtype
+2) int4 COSTS 38 TO 53 PERCENT AND IS DEAD. Which also settles the dtype
 question r404 left open: int4 was the FASTER weight at k = 1024 (0.087 against
 int8's 0.071) and it cannot be used. Both surfaces are int8, so the fence
 factors are 2.4x on the scores matmul and 1.45x on the values one, not 1.8.
 
 =====================================================================
-2. ⚠⚠ AND THE SIMULATION IS OPTIMISTIC FOR THE VALUES SURFACE
+2. AND THE SIMULATION IS OPTIMISTIC FOR THE VALUES SURFACE
 ---------------------------------------------------------------------
 This is the part to carry forward rather than the number.
 
@@ -47,13 +47,13 @@ The hardware's coefficient buffer holds one scale per OUTPUT CHANNEL.
                   in the context -- and this simulates one per position shared
                   across head_dim, which is the other axis.
 
-⛔ 3) SO THE VALUES ROW IS A LOWER BOUND ON THE DAMAGE, NOT A MEASUREMENT OF
+3) SO THE VALUES ROW IS A LOWER BOUND ON THE DAMAGE, NOT A MEASUREMENT OF
 IT. A scale shared across a whole context is coarser than one shared across 64
 elements of one position, and V's magnitude varies with position. The honest
 next step is to simulate THAT axis -- a running per-head_dim absmax over the
 whole context -- before anything is built.
 
-🔑 4) THIS IS THE SAME SHAPE AS THE DAY'S OTHER THREE. A number that gates a
+4) THIS IS THE SAME SHAPE AS THE DAY'S OTHER THREE. A number that gates a
 decision gets measured the way the decision will be made, not the way that is
 easy to measure. Quantising along the convenient axis and reading the answer
 as if it were the other one is how "six times" happened.
@@ -70,17 +70,17 @@ as if it were the other one is how "six times" happened.
       pack    200
                                                         TTFT about 6445
 
-⚠ 5) STILL BEHIND 6027 AND THE ARITHMETIC IS A PROJECTION. Every line above
+5) STILL BEHIND 6027 AND THE ARITHMETIC IS A PROJECTION. Every line above
 is a measured stage cost times a measured factor, which is a better class of
 guess than a fitted coefficient, and it is still a guess.
 
-⚠ 6) ONE MEASURED DIFFERENCE REMAINS UNPRICED: r405 found the vendor's
+6) ONE MEASURED DIFFERENCE REMAINS UNPRICED: r405 found the vendor's
 contraction extent steps by 32 where ours doubles, so at 852 tokens we reduce
 over 1024 where 864 would do -- 19% of the values matmul, and it needs a
 finer ladder in attn_npu_fit rather than a new dtype.
 
 =====================================================================
-4. ⛔ SECTION 2 WAS RIGHT TO FLAG IT AND WRONG ABOUT THE DIRECTION
+4. SECTION 2 WAS RIGHT TO FLAG IT AND WRONG ABOUT THE DIRECTION
 ---------------------------------------------------------------------
 CHARSIU_KV_V_AXIS=chan simulates the axis the hardware actually uses for the
 values surface: a running absmax per HEAD_DIM CHANNEL over the whole context,
@@ -94,23 +94,23 @@ values by then.
     per channel     20.1692 / 41.0019     26.6690 / 76.5588
     fp16 baseline   20.3096 / 40.9987
 
-🏁 5) THE REAL AXIS IS BETTER. int8 per channel is +0.008% on the board and
+5) THE REAL AXIS IS BETTER. int8 per channel is +0.008% on the board and
 0.7% BETTER than fp16 on the desk. A per-channel scale adapts to each
 head_dim's own magnitude; a per-position one makes 64 dims of differing size
 share one scale and the small ones lose. Section 2 called the values row a
 lower bound on the damage and it was an upper one.
 
-🏁 6) SO THE GATE IS PASSED ON BOTH SURFACES, ON THE LAYOUT EACH WOULD
+6) SO THE GATE IS PASSED ON BOTH SURFACES, ON THE LAYOUT EACH WOULD
 ACTUALLY BE BUILT WITH -- K per position, which IS the scores matmul's output
 channel, and V per channel, which is the values matmul's. Neither is the
 convenient axis chosen and then read as if it were the other.
 
-⛔ 7) int4 STAYS DEAD: +31% on the desk, +87% on the board. And the two
+7) int4 STAYS DEAD: +31% on the desk, +87% on the board. And the two
 configurations disagree about which int4 axis is worse -- chan is better on
 the desk and worse on the board -- which is a reason not to reason about int4
 at all rather than a reason to choose.
 
-⚠⚠ 8) THE FIRST VERSION OF THIS PATCHED ONLY THE BATCHED PATH, and the desk's
+8) THE FIRST VERSION OF THIS PATCHED ONLY THE BATCHED PATH, and the desk's
 charsiu_ppl runs the token loop without --batch. The per-channel arm came back
 equal to its control TO THE LAST DIGIT, twice -- 20.2706 and 27.9903 -- which
 is what an arm that never ran looks like, and is the only reason the table

@@ -13,7 +13,7 @@ element count matches the tensor exactly and no layout question is in the way.
 Once the regular vector is explained element for element, the same rule is
 applied to the depthwise one, and the factor of two is the thing to explain.
 
-⚠ 576 is also 32 channels x 18 bytes, and 18 is 9 taps of int16. That is a
+576 is also 32 channels x 18 bytes, and 18 is 9 taps of int16. That is a
 hypothesis, not a reading: it is tested below against the known values, and
 the int8 reading is tested alongside it so the comparison can fail.
 """

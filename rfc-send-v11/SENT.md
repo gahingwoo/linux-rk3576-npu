@@ -25,7 +25,7 @@ What it commits us to, and it is short on purpose:
   authored by Igor Paunovic or missing any of Sidong Yang's, Diederik de
   Haas's or Sebastian Reichel's tag.
 
-⚠ Two paragraphs were cut from the draft before it went, both correctly.
+Two paragraphs were cut from the draft before it went, both correctly.
 One offered to drop the patch from the series if he preferred a v3 -- an
 offer nobody asked for, and one that would have had to be honoured. The
 other confessed that our tree's copy carried only our own Reviewed-by and
@@ -40,7 +40,7 @@ failures, visible on lore.
     Cover:  <20260831081956.84871-1-gahing@gahingwoo.com>
     01..14: <20260831081956.84871-2..15-gahing@gahingwoo.com>
 
-⚠ git send-email auto-Cc'd Diederik de Haas off 01/14's Tested-by line,
+git send-email auto-Cc'd Diederik de Haas off 01/14's Tested-by line,
 which is the cheapest possible confirmation that Igor's three recovered
 tags really travelled.
 
@@ -59,14 +59,14 @@ every diff is byte identical to v10 -- `git diff v10-prep v11-prep` is empty.
     base-commit: 4477a78374a57c3809b172ad30cceabda48c47c6
     prerequisite-patch-id: NONE, deliberately
 
-⚠ THE GUARD INVERTED. v10 refused to send unless exactly ONE patch carried a
+THE GUARD INVERTED. v10 refused to send unless exactly ONE patch carried a
 Notes block; v11 refuses if ANY does. The note existed because the dependency
 was outside the series and Rob Herring's bot asked for it to be recorded in
 the patch; it is inside now, and the note's own text named a trailer this
 version does not emit. It did not survive the cherry-pick because git notes
 follow the sha -- the right outcome, reached by accident, now enforced.
 
-⚠ The script also refuses if 01/14 is not authored by Igor Paunovic or has
+The script also refuses if 01/14 is not authored by Igor Paunovic or has
 lost any of the three tags his tree-copy was missing. That is the one way to
 get this version wrong that nobody would notice until he did.
 

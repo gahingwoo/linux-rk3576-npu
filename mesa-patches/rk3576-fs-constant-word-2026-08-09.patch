@@ -69,7 +69,7 @@ index 9a4a42b..50a93a3 100644
 +             * clearing its low byte, worth 0.0005 as a float, destroys every
 +             * output channel. Twenty four words later the requirement is
               *
--             * ⚠ ON THE BOARD (round 28) THIS TABLE ALONE DOES NOT COMPUTE.
+-             * ON THE BOARD (round 28) THIS TABLE ALONE DOES NOT COMPUTE.
 -             * conv2d-cal is 2/2 with the old float surface and 0/2 with this,
 -             * and so is the relative variant. The zeroed-table control did
 -             * fail, so the region IS read; the offline reading of WHICH bytes
@@ -91,7 +91,7 @@ index 9a4a42b..50a93a3 100644
 -             * ROCKET_FS_FLOATS restores the old per-weight float surface,
 -             * ROCKET_FS_REL writes the scale relative to the largest channel
 -             * the way the A/B/C table's C term is written.
-+             * ⚠ This is why the 3x3 kernel never worked. The old code filled
++             * This is why the 3x3 kernel never worked. The old code filled
 +             * that word with a dequantised weight, so whether a model computed
 +             * came down to whether its FIRST WEIGHT happened to carry the right
 +             * bits. conv2d-cal's did and cal_k3's did not, and every attempt to

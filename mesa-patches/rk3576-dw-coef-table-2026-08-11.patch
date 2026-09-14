@@ -178,7 +178,7 @@ index 5453ffd..ea4f690 100644
 +          * has used for A all along. So A needed no change; the record shape,
 +          * the record count and where the fp16 table lands after it did.
 +          *
-+          * ⚠ This corrects the earlier conclusion, in FINDINGS.md and in the
++          * This corrects the earlier conclusion, in FINDINGS.md and in the
 +          * ROCKET_DW_FLOATBIAS comment below, that the vendor emits no
 +          * per-channel table for depthwise. It emits one; it is not in the
 +          * .rknn, librknnrt builds it at load time, and every search that
@@ -219,7 +219,7 @@ index 5453ffd..ea4f690 100644
 -            uint32_t *fs32 = (uint32_t *)(b8 + groups * 64);
 +            uint32_t *fs32 = (uint32_t *)(b8 + table_bytes);
              /*
-              * ⚠ No `goto biases_done` here: that label is EARLIER in the
+              * No `goto biases_done` here: that label is EARLIER in the
               * function, so jumping to it re-executes everything between and
 @@ -894,7 +958,7 @@ biases_done:
               */
@@ -274,7 +274,7 @@ index d670cec..508c8da 100644
 + * the 64 bytes of fp16 that leaves 256 and 384, that is four 64 byte records
 + * and eight 48 byte ones.
 + *
-+ * ⚠ Eight records for 32 channels is twice what a record per eight channels
++ * Eight records for 32 channels is twice what a record per eight channels
 + * would give, and this geometry CANNOT tell the doubling apart from a padding
 + * of the channel count up to 64: both give eight. The doubling is what is
 + * written here because it is the same doubling this driver already applies to

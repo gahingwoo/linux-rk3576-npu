@@ -193,7 +193,7 @@ def compile_grouped(name, w, bias, groups, stride):
     open(ds, "w").write(os.path.abspath(calib) + "\n")
 
     r = RKNN(verbose=False)
-    # ⚠ compress_weight defaults to on, and with it the weight buffer in the
+    # compress_weight defaults to on, and with it the weight buffer in the
     # .rknn does not decode: three readings of the depthwise one, int8 under a
     # fitted scale, fp16, and per-channel 18-byte blocks against a mispaired
     # control, all found nothing. posprobe_planes.py has always passed

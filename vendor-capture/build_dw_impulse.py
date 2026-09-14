@@ -32,7 +32,7 @@ tap's offset, and reading the hardware's output says directly:
 Nine taps and 32 channels means every tap position is exercised three times
 over, so a single run distinguishes all four.
 
-⚠ The bias is zero and the weights are exactly representable, so the reference
+The bias is zero and the weights are exactly representable, so the reference
 is not a quantisation approximation: with an impulse the output IS the input,
 and any disagreement is a layout fact rather than a rounding one.
 """

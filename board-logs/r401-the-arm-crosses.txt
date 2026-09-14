@@ -34,11 +34,11 @@ row whose first word survived is a row that was not written.
       602         5584           636         5404           437        0.968
       852         8688          1130         8422           760        0.969
 
-🏁 1) POISON + READ DOWN 33% at 852 tokens, text identical (md5 8b02145b), and
+1) POISON + READ DOWN 33% at 852 tokens, text identical (md5 8b02145b), and
 `other` went from 668 ms to 2. The point of naming a hole is that it stops
 being one.
 
-🔑 2) AND IT IS STRICTLY MORE INFORMATIVE. The every-cell form could only ever
+2) AND IT IS STRICTLY MORE INFORMATIVE. The every-cell form could only ever
 answer "all of it is poison" or "not all", so a half written output was
 accepted in silence. src/sentinel.h reports how many rows were never written;
 tests/sentinel.c drives all three verdicts on six shapes, because a check that
@@ -46,7 +46,7 @@ has never been seen to fire is not a check and the hardware has never fired
 this one.
 
 =====================================================================
-2. ⭐ THREE PER-OP LOOPS, ALL ON ONE CORE, WITH THE POOL TWO FRAMES UP
+2. THREE PER-OP LOOPS, ALL ON ONE CORE, WITH THE POOL TWO FRAMES UP
 ---------------------------------------------------------------------
 pack, poison and readback each walk nops independent regions. The softmax
 between the two matmuls had just been put on the pool (r400 section 6); these
@@ -57,17 +57,17 @@ three had never asked.
 
    attention   4.09 / 4.12  ->  3.69 / 3.71 ms a row     (CPU arm 4.00)
 
-🏁 3) THE PACK IS 2.2x. Which also corrects r400 section 5: that paragraph
+3) THE PACK IS 2.2x. Which also corrects r400 section 5: that paragraph
 concluded a floor of 375 ms and "no amount of cleverness goes under it", from
 a bandwidth argument that never said how many cores were spending the
 bandwidth.
 
-⛔ 4) THE POISON BARELY MOVED, and that is the answer to what is left in it:
+4) THE POISON BARELY MOVED, and that is the answer to what is left in it:
 the two dma_sync ioctls around it, which are charged on the WHOLE buffer
 object and not on the few words written. Same shape as rounds 318 and 366.
 
 =====================================================================
-3. ⭐⭐ THE ARM CROSSES, AND THE OTHER HALF OF THE RULE IS A LENGTH
+3. THE ARM CROSSES, AND THE OTHER HALF OF THE RULE IS A LENGTH
 ---------------------------------------------------------------------
 Three repeats an arm a length, alternating, one boot:
 
@@ -81,17 +81,17 @@ Three repeats an arm a length, alternating, one boot:
 
    correctness at 852: worst 0.0086 relative, 176 layers, 0 fell back
 
-🏁 5) MONOTONE, AND IT CROSSES AT ABOUT 680 TOKENS. r400's flat ratio is gone
+5) MONOTONE, AND IT CROSSES AT ABOUT 680 TOKENS. r400's flat ratio is gone
 because what made it flat is gone.
 
-🔑 6) THE SHAPE OF THE CORRECTION MATTERS. r400 did not mismeasure anything --
+6) THE SHAPE OF THE CORRECTION MATTERS. r400 did not mismeasure anything --
 its numbers reproduce. It answered "is there a crossover" for a runtime whose
 fp16 path spent 1550 ms of its 2924 on one core doing work proportional to the
 answer. A negative result about a program is a fact about that program, and it
 expires when the program changes.
 
 =====================================================================
-4. ⛔ THE OBVIOUS WAY TO SHIP IT IS WRONG, TWICE
+4. THE OBVIOUS WAY TO SHIP IT IS WRONG, TWICE
 ---------------------------------------------------------------------
 The crossover is a property of the WHOLE prompt, and attn_npu_layer sees one
 chunk. The first implementation therefore tested each chunk's own running
@@ -101,20 +101,20 @@ early chunks, NPU for the late ones, best of both.
    852 tokens        CPU 8302   always on 7782
      MIN=128  7786     MIN=256  7911     MIN=384  7755     MIN=512  7844
 
-⛔ 7) NO THRESHOLD BEATS SIMPLY BEING ON. The early chunks lose little and the
+7) NO THRESHOLD BEATS SIMPLY BEING ON. The early chunks lose little and the
 spread over the four thresholds (7755 to 7911) is wider than the best of them
 is ahead. Per chunk selection buys nothing.
 
    202 tokens        CPU 1474   always on 1669
      MIN=128  1619     MIN=256  1584     MIN=384  1589     MIN=512  1582
 
-⛔⛔ 8) AND AT MIN=512 EVERY LAYER IS REFUSED AND IT STILL COSTS 107 ms. A 202
+8) AND AT MIN=512 EVERY LAYER IS REFUSED AND IT STILL COSTS 107 ms. A 202
 token prompt never reaches 512, so that arm ran the CPU attention for all of
 it -- and paid 1582 against the CPU arm's 1474. The K and V surfaces are
 allocated and fed by attn_npu_append, which builds the mirror itself, whatever
 attn_npu_layer decides.
 
-🔑 9) A REFUSAL THAT LEAVES THE COST BEHIND IS NOT A REFUSAL. The decision has
+9) A REFUSAL THAT LEAVES THE COST BEHIND IS NOT A REFUSAL. The decision has
 to happen in attn_npu_get, before the mirror exists -- and it then needs the
 length of the whole prompt, which nothing inside llama.c can see, because a
 prompt arrives one chunk at a time and every function knows the running
@@ -131,16 +131,16 @@ position and none knows the total. llama_prefill_hint is the caller saying so.
 
    text identical at every length and every arm (md5 d7a70198f5 at 202+)
 
-🏁 10) auto IS THE CPU ARM WHERE THE CPU ARM WINS AND THE NPU ARM WHERE IT
+10) auto IS THE CPU ARM WHERE THE CPU ARM WINS AND THE NPU ARM WHERE IT
 WINS, and the 107 ms is gone because the mirror is not built at all.
 
-⚠ auto AT 852 READS FASTER THAN `on` HERE AND THAT IS NOT A RESULT. The three
+auto AT 852 READS FASTER THAN `on` HERE AND THAT IS NOT A RESULT. The three
 arms ran in a fixed order inside each repeat, so the last one gets the warmest
 board -- the bias gemma-3 caught in the chunk band sweep. The magnitude of the
 NPU arm's win comes from section 3, where the arms alternate; this table is
 evidence about WHICH ARM auto PICKS, and nothing else.
 
-⚠ auto is NOT the default. Threshold 768 against a measured 680, one model,
+auto is NOT the default. Threshold 768 against a measured 680, one model,
 one boot. No head_dim clause: r395 found the NPU arm ahead at head_dim 256
 with the slower code and that inference still holds, but "still ahead" is not
 a crossover length, and this board has 736 MB free and gemma-3 is 722.
@@ -155,7 +155,7 @@ shape and synced that size for both: the scores group needs 393 kB of input
 and paid for 5.2 MB, the values group needs 655 kB of output and paid for
 8.6 MB. Thirteen times each way, four syncs a call.
 
-   ⚠ THIRD TIME IN THIS TREE. Round 318 (the shared output buffer, 14 MB of
+   THIRD TIME IN THIS TREE. Round 318 (the shared output buffer, 14 MB of
    cache maintenance a token becoming 280) and round 366 (per-device sizing,
    13.4 ms a token against 11.6) are the same sentence, and both notes live in
    npudev.c above code that does it right. npufp16.c never got the memo.
@@ -164,7 +164,7 @@ and paid for 5.2 MB, the values group needs 655 kB of output and paid for
    psync 212 -> 133   poison 323 -> 207   read 357 -> 292
    plan  136 ->  93   pack   239 -> 221   fence 925 -> 882
 
-🏁 11) AND THE TWO STAGE TABLES SEPARATE, which is half the value:
+11) AND THE TWO STAGE TABLES SEPARATE, which is half the value:
 
      scores  176 submits, 1086 ms:  fence 496  read 245  poison 174  pack  44
      values  176 submits,  815 ms:  fence 386  pack 177  psync 116  read  47
@@ -179,7 +179,7 @@ problem, and one table could not say that.
     r401 §3  1.202   1.182   1.133   1.043   0.967    crossover ~680
     with §6  1.196   1.174   1.108   1.002   0.916    crossover ~452
 
-🔑 12) CHARSIU_ATTN_NPU_MIN IS 512 NOW AND WAS 768 AN HOUR AGO. A threshold
+12) CHARSIU_ATTN_NPU_MIN IS 512 NOW AND WAS 768 AN HOUR AGO. A threshold
 chosen against a curve is only as current as the curve. The comment in
 attn_npu_min_tokens says to re-measure rather than scale it.
 
@@ -192,16 +192,16 @@ attn_npu_min_tokens says to re-measure rather than scale it.
    Llama-3.2-1B-Instruct-Q8_0     7535/7576   7995/8264    identical
    SmolLM2-135M-Instruct-Q4_0     3391/3380   3648/3646    identical
 
-🏁 13) 7 TO 10% ON EVERY ONE, no refusals, and below the threshold `auto` is
+13) 7 TO 10% ON EVERY ONE, no refusals, and below the threshold `auto` is
 the CPU arm to the millisecond because the mirror is never built.
 
-⛔ 14) auto IS STILL NOT THE DEFAULT AND THE BLOCKER IS NAMED. All three are
+14) auto IS STILL NOT THE DEFAULT AND THE BLOCKER IS NAMED. All three are
 head_dim 64 -- which r395's axis says is the WORST case, so the direction is
 covered -- but none of them is a model whose layers REFUSE. gemma-4 refused
 308 of its 385 layer calls (r395/r396), and such a model under auto would
 build the mirror, feed it, and use it for a fifth of its layers.
 
-⛔⛔ WITHDRAWN IN SECTION 18. Both halves of that paragraph were wrong: gemma-4
+WITHDRAWN IN SECTION 18. Both halves of that paragraph were wrong: gemma-4
 refuses NOTHING any more, and the board it "could not fit on" already had it.
 
 =====================================================================
@@ -213,11 +213,11 @@ pooled softmax callback nothing else here exercises.
 
    gemma-3-1b, 852 tokens     auto 6222/6109   on 6097/6154   off 7577/7466
 
-🏁 15) 18% AT head_dim 256, against 8% at head_dim 64. r395's axis holds with
+15) 18% AT head_dim 256, against 8% at head_dim 64. r395's axis holds with
 this code, and from the right side: the model that gains least is the one the
 threshold was calibrated on.
 
-⚠ 16) AND AT 202 TOKENS THE ALWAYS-ON ARM WRITES DIFFERENT TEXT. md5 3f636ee2
+16) AND AT 202 TOKENS THE ALWAYS-ON ARM WRITES DIFFERENT TEXT. md5 3f636ee2
 against the CPU arm's e75b85b2. That is not a fault and the tree already owns
 the instrument that says so:
 
@@ -228,12 +228,12 @@ Identical error magnitudes, and Llama's text AGREES. The top four logits after
 the prompt agree in rank and to 0.05 in 19.9. gemma-3 simply meets a close
 logit inside eight generated tokens and Llama does not.
 
-🔑 17) SO "THE TEXT DIFFERS" IS NOT A VERDICT ON THIS ARM, and neither is "the
+17) SO "THE TEXT DIFFERS" IS NOT A VERDICT ON THIS ARM, and neither is "the
 text agrees". Same lesson as neon_control.sh this morning, where two of twelve
 models diverged on a 7e-5 gap between two equally good tokens.
 CHARSIU_ATTN_NPU_CHECK is the instrument; the sentences are not.
 
-🏁 18) auto SIDESTEPS IT ANYWAY. At 202 tokens auto refuses, so its text is
+18) auto SIDESTEPS IT ANYWAY. At 202 tokens auto refuses, so its text is
 the CPU arm's to the byte -- which is the other reason a threshold is better
 than an always-on default.
 
@@ -252,13 +252,13 @@ released the buffer. Section 6's two handles made that false.
    scores plan 73 -> 146, because the release's fini on a HELD buffer is real
    work and it lands in that timer -- so the honest figure is 330 -> 156
 
-🔑 19) AND THE PACK CAN ONLY READ IT THERE BECAUSE OF xtri0. The answer's rows
+19) AND THE PACK CAN ONLY READ IT THERE BECAUSE OF xtri0. The answer's rows
 are npad apart, the values matmul contracts over kv, and kv > npad, so a pack
 reading k elements a row would run off the end of every row into the next one.
 It reads xtri0 + r <= pos + 1 <= npad. The causal triangle was worth nothing
 when it was added (section 2 of r400) and is now load bearing twice over.
 
-🏁 20) AND IT DELETES A TRAP. The scratch was [H][mmax][kv] and had to be
+20) AND IT DELETES A TRAP. The scratch was [H][mmax][kv] and had to be
 indexed by mmax and never by m -- a chunk with fewer rows than the last one
 would land a row's tail on the previous chunk's probabilities, and every token
 after it would attend to positions that are not in its prompt. A comment was
@@ -277,11 +277,11 @@ tail.
 
    correctness unchanged throughout: worst 0.0086 relative at 852
 
-🏁 21) 5.48 -> 3.00 ms A ROW over the round, against a CPU arm at 4.00. The
+21) 5.48 -> 3.00 ms A ROW over the round, against a CPU arm at 4.00. The
 arm that had no crossover at any length now wins by 11% at 452 tokens and 25%
 at 852.
 
-⚠ 22) THE THRESHOLD STAYS AT 512 ANYWAY, and that is a decision. It was 13%
+22) THE THRESHOLD STAYS AT 512 ANYWAY, and that is a decision. It was 13%
 above the crossing when chosen and is now 27% above it, leaving 402..512 on
 the CPU arm where the measured gap is 2.3% -- inside one length's spread.
 Against that: one model. gemma-3 crosses far earlier; a model that crossed
@@ -295,17 +295,17 @@ LATER than Llama is the one a tight threshold would hurt.
                           one axis (k=64 or n=64) and that is structural
      softmax  457   21%   pooled already; four passes a row could be three
      pack     202    9%
-     poison   195    9%   ⭐ almost entirely the two dma_syncs
-     plan     166    8%   ⭐ almost entirely the release's fini
+     poison   195    9%   almost entirely the two dma_syncs
+     plan     166    8%   almost entirely the release's fini
      psync    135    6%
      kv        41    2%
      rest     133    6%
 
-⭐ 23) THE NEXT ONE IS THE SYNC COUNT. The scores handle does four dma_syncs
+23) THE NEXT ONE IS THE SYNC COUNT. The scores handle does four dma_syncs
 of its 8.6 MB output buffer per call -- release-fini, poison-prep, poison-fini,
 fence-prep -- and poison + plan is 308 ms of it. Writing the sentinels BEFORE
 the release, while the buffer is still prepped, folds two of the four away.
-⚠ It needs the next call's plan to equal this one's, which is true for 15 of
+It needs the next call's plan to equal this one's, which is true for 15 of
 every 16 calls (same shapes, one per layer) and false when npad grows; f->last
 already exists for exactly that comparison.
 
@@ -320,7 +320,7 @@ max(x) * s and the multiply folds into the exponential pass's existing load.
    softmax    458 / 463  ->  359 / 361 ms     (four passes a row become three)
    attention  3.00 / 2.99 -> 2.87 / 2.89 ms a row     layer 2206 -> 2109
 
-🏁 24) BIT IDENTICAL, NOT MERELY CLOSE. The old form stored x[i] * s and read
+24) BIT IDENTICAL, NOT MERELY CLOSE. The old form stored x[i] * s and read
 it back, and an fp32 product is exactly representable in fp32, so the store
 and reload changed nothing. Text identical to the CPU arm AND to the previous
 build, worst relative error unchanged at 0.0086 -- and the CPU arm is the
@@ -336,12 +336,12 @@ touched.
    fence    880   42%   the hardware
    softmax  360   17%
    pack     202   10%
-   poison   195    9%   ⭐ the two dma_syncs, not the sentinels
-   plan     166    8%   ⭐ the release's fini
+   poison   195    9%   the two dma_syncs, not the sentinels
+   plan     166    8%   the release's fini
    psync    135    6%
    rest     171    8%
 
-⭐ 25) THE NEXT ONE IS STILL THE SYNC COUNT, AND THE OBVIOUS FOLD DOES NOT
+25) THE NEXT ONE IS STILL THE SYNC COUNT, AND THE OBVIOUS FOLD DOES NOT
 WORK. The scores handle does four whole-buffer dma_syncs of its 8.6 MB output
 per call. Writing the sentinels before the release, while the buffer is still
 prepped, would fold two away -- except that the sentinel sits on the first
@@ -351,7 +351,7 @@ have to be written after the values pack has finished reading, which is a
 caller-side entry point (poison_and_release) rather than anything inside
 charsiu_fp16_matmul_group.
 
-⚠ 26) AND THE CURVE IN SECTION 11 IS NOW DATED BY TWO MORE CHANGES. The
+26) AND THE CURVE IN SECTION 11 IS NOW DATED BY TWO MORE CHANGES. The
 threshold stays at 512 regardless, for the reason in section 22 -- but the
 crossover is below 402 and nobody has measured where.
 
@@ -368,11 +368,11 @@ finished reading.
    scores group   907 / 914  ->  710 / 712 ms      poison 162 -> 24
    attention      2.88 / 2.86 -> 2.75 / 2.76 ms a row    layer 2107 -> 1996
 
-🏁 27) PREDICTED 15 OF EVERY 16 AND MEASURED 165 OF 176. One shape per layer,
+27) PREDICTED 15 OF EVERY 16 AND MEASURED 165 OF 176. One shape per layer,
 changing only when the chunk does: 11 chunks of 16 layers with the first of
 each missing. The runtime counts it rather than the comment asserting it.
 
-🔑 28) AND THE PREDICATE IS A TESTED FUNCTION, because it is the piece that
+28) AND THE PREDICATE IS A TESTED FUNCTION, because it is the piece that
 fails SILENTLY. If it says the buffer is still poisoned when it is not, the
 readback finds live data, reports a healthy job, and reports exactly what it
 would report for a healthy job -- the check stops being a check and no log
@@ -380,7 +380,7 @@ says so. charsiu_poison_matches in src/sentinel.h, seven cases in
 tests/sentinel.c, including that offsets alone are not enough: a sentinel sits
 at o[r * n] for r < m.
 
-⚠ The values group reads 800 -> 885 because poison_and_release is called from
+The values group reads 800 -> 885 because poison_and_release is called from
 inside its timer. The honest pair is 1707 -> 1595. The scores handle is now
 72% fence.
 
@@ -400,11 +400,11 @@ inside its timer. The honest pair is 1707 -> 1595. The scores handle is now
    correctness unchanged at every step: worst 0.0086 relative at 852 tokens,
    text identical to the CPU arm (md5 f50208bf) at every build after §10
 
-🏁 29) AN ARM WITH NO CROSSOVER AT ANY LENGTH NOW WINS BY 3.6% AT 452 TOKENS
+29) AN ARM WITH NO CROSSOVER AT ANY LENGTH NOW WINS BY 3.6% AT 452 TOKENS
 AND 16% AT 852. CHARSIU_ATTN_NPU_MIN is 448, re-derived from this curve four
 times in one day, which is why the whole table is in the comment beside it.
 
-⚠ 30) WHAT IS LEFT IS MOSTLY THE HARDWARE. Of 1996 ms in the layer, fence is
+30) WHAT IS LEFT IS MOSTLY THE HARDWARE. Of 1996 ms in the layer, fence is
 880 -- and the scores handle is 72% fence. The fp16 attention matmuls run at
 0.119 TMAC/s against the int4 path's 0.45 to 0.70 on the same silicon, because
 both of them are skinny on one axis (k = 64 for the scores, n = 64 for the
@@ -429,15 +429,15 @@ an arm. `mirror` is whether attn_npu_get built one at all.
 
    text identical between the two arms on every row
 
-🏁 31) 13 TO 20% ON A LONG PROMPT, AND THE CPU ARM TO THE MILLISECOND ON A
+31) 13 TO 20% ON A LONG PROMPT, AND THE CPU ARM TO THE MILLISECOND ON A
 SHORT ONE. The short rows are not "about the same" -- the mirror is not built,
 so auto and off run the identical code path and the difference is the board.
 
-⛔ 32) STILL NOT THE DEFAULT, AND THE BLOCKER IS UNCHANGED: none of these four
+32) STILL NOT THE DEFAULT, AND THE BLOCKER IS UNCHANGED: none of these four
 is a model whose layers REFUSE. -- WITHDRAWN, see section 18.
 
 =====================================================================
-18. ⛔ THE BLOCKER DID NOT EXIST, AND NEITHER DID THE REASON IT COULD NOT
+18. THE BLOCKER DID NOT EXIST, AND NEITHER DID THE REASON IT COULD NOT
     BE TESTED
 ---------------------------------------------------------------------
 Sections 14 and 32 said auto cannot be a default until it is measured on a
@@ -452,18 +452,18 @@ first stood.
      off   19815 / 19832 ms
      text identical on every arm, md5 3e98bb06
 
-🏁 33) 28% -- THE LARGEST OF ANY MODEL -- AND ZERO REFUSALS. 385 is 35 layers
+33) 28% -- THE LARGEST OF ANY MODEL -- AND ZERO REFUSALS. 385 is 35 layers
 times 11 chunks: every layer call of every chunk ran on the hardware. The 308
 refusals were a fact about the tree before r396 gave the mirror a head per
 layer, and I quoted it out of a board log instead of re-running it.
 
-⛔ 34) AND THE MODEL WAS ALREADY ON THE BOARD. `ls /opt/charsiu/models/`
+34) AND THE MODEL WAS ALREADY ON THE BOARD. `ls /opt/charsiu/models/`
 returned three files, from which "this board has three models" was written
 down, a blocker was declared untestable for want of 2.4 GB, and 689 MB of
 gemma-3 was copied over a byte-identical file already sitting in
 /opt/vendor/models -- next to gemma-4 and five others.
 
-🔑 35) "THERE IS NO SPACE" AND "I DID NOT FIND SPACE" ARE DIFFERENT SENTENCES,
+35) "THERE IS NO SPACE" AND "I DID NOT FIND SPACE" ARE DIFFERENT SENTENCES,
 and only the second one was true. `df -h` then `du -sh <mount>/*` is thirty
 seconds and answers what is on a board; one `ls` answers what is in one
 directory. The stale pointer in my own notes -- models live in

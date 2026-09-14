@@ -21,7 +21,7 @@ kv is the values matmul's reduction extent and it climbs a doubling ladder, so
 "19% at 852" and the handoff carried it forward as "size kv from the prompt
 hint instead of doubling, about 135 ms, low risk".
 
-⛔ 1) THAT IS THE WRONG FIX AND ARITHMETIC SAYS SO BEFORE THE BOARD DOES. The
+1) THAT IS THE WRONG FIX AND ARITHMETIC SAYS SO BEFORE THE BOARD DOES. The
 cost of a prompt is the sum of kv over its positions. Starting kv AT the prompt
 total charges the first 512 rows 864 apiece where the ladder charges them 32,
 64, ... 512:
@@ -30,12 +30,12 @@ total charges the first 512 rows 864 apiece where the ladder charges them 32,
     kv = 864 from the start 736128         2.03x
     ladder, ceiling at 864  468864         1.29x
 
-🔑 2) THE HINT IS A CEILING, NOT A FLOOR. Keep the ladder and refuse to climb
+2) THE HINT IS A CEILING, NOT A FLOOR. Keep the ladder and refuse to climb
 past what the prompt will use. That is CHARSIU_ATTN_KV_CAP, and it is worth
 46 ms of layer time, reproduced in two rounds.
 
 =====================================================================
-2. ⭐ A RUNG IS THE NEXT RUNG'S BYTES AT ANOTHER ADDRESS
+2. A RUNG IS THE NEXT RUNG'S BYTES AT ANOTHER ADDRESS
 ---------------------------------------------------------------------
 Every growth re-packed every live position out of the float cache, one call to
 charsiu_fp16_pack_vcol per position per layer per kv head. It does not have to.
@@ -61,17 +61,17 @@ the comparison -- otherwise a regrow that does nothing passes.
     133:1:1         6749     1070    1793    198 ms
     125:1:1         6804     1082    1804    258 ms
 
-🏁 3) THE COPY IS WORTH 81 ms AGAINST ITS OWN CONTROL ON THE IDENTICAL LADDER
+3) THE COPY IS WORTH 81 ms AGAINST ITS OWN CONTROL ON THE IDENTICAL LADDER
 (200:1:0 against 200:1:1), and the growth line says why: 101 ms in the packer
 becomes 33 in the copy.
 
-⛔ 4) AND A FINER LADDER STILL LOSES, because the OTHER half of a growth is 128
+4) AND A FINER LADDER STILL LOSES, because the OTHER half of a growth is 128
 buffer objects freed and re-allocated. 5 rungs allocate 128 of them, 11 rungs
 allocate 282, and past step 150 the extent it buys costs more than it saves.
 All six arms produce the same tokens, 8b02145bf030.
 
 =====================================================================
-3. ⭐⭐⭐ THE ONE THAT MATTERS: THE HEADS IN TWO GROUPS
+3. THE ONE THAT MATTERS: THE HEADS IN TWO GROUPS
 ---------------------------------------------------------------------
 charsiu_fp16_matmul_group is now two functions. submit() queues the job and
 returns; wait() takes the fence and reads the answers back; the old entry point
@@ -89,7 +89,7 @@ sends one job of N tasks in the first place.
        602      4552     961        4332     792   0.952
        852      6594    1724        6320    1402   0.958
 
-🏁 5) 322 ms OF LAYER AT 852 TOKENS, AND THE STAGE TABLE SAYS WHERE FROM:
+5) 322 ms OF LAYER AT 852 TOKENS, AND THE STAGE TABLE SAYS WHERE FROM:
 
     PIPE=1   scores  fence 503   values  pack 476   fence 252
     PIPE=2   scores2 fence  38   values2 pack 241   fence  94
@@ -98,11 +98,11 @@ The waits collapse because the work was already done while the CPU packed. The
 pack did not get faster and the hardware did not get faster; they stopped
 taking turns.
 
-⚠ 6) G = 4 IS NOT BETTER THAN 2: 6311 against 6320, layer 1441 against 1402.
+6) G = 4 IS NOT BETTER THAN 2: 6311 against 6320, layer 1441 against 1402.
 The extra submits cost more than the finer interleave hides, so two groups is
 where this stops.
 
-⚠ 7) AND PIPE=1 IS NOT QUITE TODAY. At 1 the next call's sentinels are written
+7) AND PIPE=1 IS NOT QUITE TODAY. At 1 the next call's sentinels are written
 while the values job runs rather than after it, which is free and real. The arm
 to read in this table is 1 against 2 inside ONE binary, which is what it is.
 
@@ -120,7 +120,7 @@ CHARSIU_ATTN_NPU=1, every model batched against its own token loop:
 Every row says "prompt batched", so the path being compared is the one that
 changed. Llama at 852 tokens is byte identical at all three as well.
 
-⚠ 8) AND THE SCRIPT HAD BEEN LOOKING IN THE WRONG PLACE. Seven of this board's
+8) AND THE SCRIPT HAD BEEN LOOKING IN THE WRONG PLACE. Seven of this board's
 nine models live in /opt/vendor/models, which was not in its search list: it
 was reached only by setting CHARSIU_BOARD_DIR by hand. A round that forgot
 found three, which is under CHARSIU_TEXT_MIN_MODELS and so refused -- the
@@ -128,7 +128,7 @@ guard from r409 worked -- but a floor that fires every time is a floor nobody
 reads. The directory is in the list now.
 
 =====================================================================
-5. ⛔⛔ AND ONE THAT LOST, FOR THE REASON THIS TREE ALREADY KNOWS
+5. AND ONE THAT LOST, FOR THE REASON THIS TREE ALREADY KNOWS
 ---------------------------------------------------------------------
 The scores unit spends 73 ms in `plan` at 852 tokens and the values unit 19.
 That is not planning, it is `want()` reallocating five buffer objects -- the
@@ -142,12 +142,12 @@ It also made every prep and every fini charge the reserved size. Same binary,
     CHARSIU_ATTN_RESERVE=1   PIPE=1 7027  PIPE=2 6794   layer 2089 / 1854
     CHARSIU_ATTN_RESERVE=0   PIPE=1 6661  PIPE=2 6316   layer 1724 / 1399
 
-⛔ 9) 478 ms, AND THE STAGE TABLE NAMES IT: the scores fence 503 -> 738 and the
+9) 478 ms, AND THE STAGE TABLE NAMES IT: the scores fence 503 -> 738 and the
 values psync 67 -> 167. Both are whole-buffer dma_syncs. This is the FOURTH
 time this tree has paid one on a buffer bigger than the work, and the note
 that says so is in the file the change was made in.
 
-⚠ 10) THE SIZE IS THE FAULT AND NOT THE IDEA. The ceiling arithmetic is right
+10) THE SIZE IS THE FAULT AND NOT THE IDEA. The ceiling arithmetic is right
 about the LADDER -- the input surface takes (k/32)*m <= 5120 and the scores
 width cannot exceed the extent, so m * n is the same 160 * 1024 on every rung
 -- and wrong about the CALLER: charsiu_run's prefill chunk is 80 rows, so a
@@ -156,7 +156,7 @@ number in the comment. A version that waits for the first layer call and
 reserves at ITS m would be correctly sized and has not been measured.
 
 =====================================================================
-6. ⚠⚠ AND A MEASUREMENT THAT OUTLIVED ITS OWN CONFIGURATION
+6. AND A MEASUREMENT THAT OUTLIVED ITS OWN CONFIGURATION
 ---------------------------------------------------------------------
 Three runs were queued back to back so the board would not idle: the
 reservation arm, its control, and then the NPU attention arm against the CPU
@@ -171,22 +171,22 @@ arm that section 5 had just shown to be 478 ms slow:
        452      3566        3564     0.999
        852      6786        6738     0.993
 
-⛔ 11) THAT TABLE IS NOT A READING OF WHAT SHIPS and nothing should be decided
+11) THAT TABLE IS NOT A READING OF WHAT SHIPS and nothing should be decided
 from it. The shipping NPU arm at 852 is 6316 against the same 6786 CPU one,
 0.93 rather than 0.993, and the crossover is somewhere below 452 rather than
 at it. attn_npu_min_tokens is 448 and that number was chosen against a slower
 arm; it is re-measured in section 7.
 
-🔑 THE PROCESS LESSON IS THE POINT: a queued chain runs later than it was
+THE PROCESS LESSON IS THE POINT: a queued chain runs later than it was
 written, and the run that invalidates a configuration can be the one queued
 ahead of the run that uses it. Same family as "correct code measured in a
 configuration nobody chose" -- the difference is that here the configuration
 was chosen, by me, twenty minutes earlier.
 
 =====================================================================
-7. ⭐⭐⭐ THE LADDER AFTER THE ATTENTION WORK, SAME BOOT AS r410's
+7. THE LADDER AFTER THE ATTENTION WORK, SAME BOOT AS r410's
 ---------------------------------------------------------------------
-⚠ These were the shipping defaults when this section was written and they are
+These were the shipping defaults when this section was written and they are
 not any more: the deferred gather and the fence poll came later in the same
 round and section 13 is the ladder with those on. This one is the attention
 work alone.
@@ -207,19 +207,19 @@ same input text.
        852    6328  6323..6363     885   6026.8  vendor    1.050   | 6818
 ```
 
-🏁 12) 852 GOES 6818 -> 6328 AND THEIR LEAD 1.131x -> 1.050x. r393 was 1.341x
+12) 852 GOES 6818 -> 6328 AND THEIR LEAD 1.131x -> 1.050x. r393 was 1.341x
 this morning. Every point is inside 1%, on the boot r410's ladder was measured
 on, so this is a within-boot comparison and not a cross-boot one.
 
-🏁 13) 452 IS 31 ms APART. The rows that still go to them are 302 by 120 ms,
+13) 452 IS 31 ms APART. The rows that still go to them are 302 by 120 ms,
 452 by 31, 602 by 187 and 852 by 301.
 
-⚠ 14) AND DECODE DID NOT MOVE: 18.06 tok/s at one group against 18.09 at two,
+14) AND DECODE DID NOT MOVE: 18.06 tok/s at one group against 18.09 at two,
 peak 1449 MB against 1456. The second unit pair is opened and never submitted
 through below two rows.
 
 =====================================================================
-8. ⚠⚠ AND THE ARM ITSELF IS NOW A WASH AGAINST THE CPU AT 852
+8. AND THE ARM ITSELF IS NOW A WASH AGAINST THE CPU AT 852
 ---------------------------------------------------------------------
 Re-run with the shipping binary, two repeats a cell, arms alternating:
 
@@ -231,24 +231,24 @@ Re-run with the shipping binary, two repeats a cell, arms alternating:
        652      4790           4763       0.994
        852      6332           6300       0.995
 
-🔑 15) THE fp16 ATTENTION ARM BUYS 0.5% AT 852. That is not a regression --
+15) THE fp16 ATTENTION ARM BUYS 0.5% AT 852. That is not a regression --
 r409 measured the same arm 18% BEHIND the CPU one at this length -- it is the
 CPU arm having no idea it was in a race and the NPU arm having spent its gains
 on its own per call bookkeeping. Of the NPU arm's 1400 ms layer, about 264 is
 the hardware and the rest is pack, psync, poison, plan and read.
 
-⭐ So the lever on attention is no longer the hardware. It is the 350 ms of
+So the lever on attention is no longer the hardware. It is the 350 ms of
 per call cost the NPU path adds on top of a softmax both arms have to do
 anyway, and `plan` -- 104 ms of it -- is buffer growth that a correctly sized
 reservation removes (section 5).
 
-⚠ 16) AND 302 WINS BY 3.2% WITH AN ARM THAT IS OFF THERE. attn_npu_min_tokens
+16) AND 302 WINS BY 3.2% WITH AN ARM THAT IS OFF THERE. attn_npu_min_tokens
 is 448, chosen against a slower arm, so the 302 row of the ladder runs its
 attention on the CPU and gives back 72 ms. 452 reads the other way at 1.027
 with a 187 ms range on two samples, so the threshold is NOT decided by this
 table; it needs repeats at 252, 302, 352 and 452.
 
-🏁 r412 RAN THEM AND THIS IS CLOSED. 252 and 302 are level, 352 is +5.7% and
+r412 RAN THEM AND THIS IS CLOSED. 252 and 302 are level, 352 is +5.7% and
 452 is +10.8%, so the threshold is 320 for a model that shares KV heads and
 448 for one that does not. The 452 reading in the table above is an arm
 measured against itself: this round's CPU column was the empty environment,
@@ -256,7 +256,7 @@ which stopped being the CPU arm when auto became the default. See r412 §1
 and §3.
 
 =====================================================================
-9. ⭐⭐⭐ THE DEFERRED GATHER: THE FAULT r408 COULD NOT NAME
+9. THE DEFERRED GATHER: THE FAULT r408 COULD NOT NAME
 ---------------------------------------------------------------------
 CHARSIU_NPU_DEFER_READ moves the previous tensor's accumulator gather into the
 window between this call's submit and its fence -- 1.93 ms a row of CPU work
@@ -265,7 +265,7 @@ into 1.82 ms a row of sleeping ioctl. r408 measured it worth about 200 ms at
 nine came back with different text, and a round spent on the cause ended with
 the count itself falsified.
 
-⭐ 17) THE CAUSE IS ONE LINE AND IT IS NOT IN THE GATHER. npu_matmul_inner ends
+17) THE CAUSE IS ONE LINE AND IT IS NOT IN THE GATHER. npu_matmul_inner ends
 with the per channel tail scale -- an ungrouped tensor is scaled once after the
 read, and int8 always is -- and it ran whether or not the read had happened:
 
@@ -276,7 +276,7 @@ With `defer` the read has NOT happened there. The scale multiplied whatever Y
 held from the previous call, and the deferred gather then overwrote Y with
 values that never got scaled at all.
 
-🔑 18) AND IT EXPLAINS WHY THE MODEL EVERY SPEED ROUND USES IS THE ONE IT DOES
+18) AND IT EXPLAINS WHY THE MODEL EVERY SPEED ROUND USES IS THE ONE IT DOES
 NOT TOUCH. Llama-3.2-1B Q4_0 is grouped w4 in every tensor, so the block is
 skipped for it entirely -- its `scale` line reads 0.0 ms -- and both arms
 agreed. The four models r408 named are the ones with a tensor the grouping does
@@ -284,7 +284,7 @@ not cover: Qwen2.5, Qwen3, gemma-3, gemma-4. With the scale moved into
 npu_flush_pending, straight after the gather fills Y, all four are identical.
 
 =====================================================================
-10. ⭐ AND AN ORACLE, SO THE NEXT FAULT DOES NOT NEED A MODEL SUITE
+10. AND AN ORACLE, SO THE NEXT FAULT DOES NOT NEED A MODEL SUITE
 ---------------------------------------------------------------------
 The instrument for this feature has been a pass/fail count over nine models.
 CHARSIU_NPU_DEFER_CHECK=1 gathers the answer twice instead: once at the moment
@@ -296,15 +296,15 @@ both values.
     charsiu: the deferred gather was compared on 80 tensors, 0 differed;
              80 deferred, 80 flushed
 
-🔑 19) ZERO AND NEVER RAN LOOK THE SAME, so the line says how many were
+19) ZERO AND NEVER RAN LOOK THE SAME, so the line says how many were
 compared and how many were flushed as well as how many differed. That is the
 r409 lesson applied to a new instrument before it could mislead anybody.
 
-🏁 20) AND WITH THE FIX, THE BOARD TO ITSELF: 9 models compared, 0 differing,
+20) AND WITH THE FIX, THE BOARD TO ITSELF: 9 models compared, 0 differing,
 CHARSIU_NPU_DEFER_READ=1. The control on the same binary with it off is also
 0 of 9. r408's road is open again.
 
-⛔⛔ 21) THE RUN BEFORE THAT ONE SAID 3 OF 9 AND IT WAS MY OWN FAULT. Three
+21) THE RUN BEFORE THAT ONE SAID 3 OF 9 AND IT WAS MY OWN FAULT. Three
 board jobs were queued back to back so the board would not idle, and one wait
 condition tested "has the output file anything in it" -- which `> file` makes
 true at the moment the job starts, not when it finishes. So the second job ran
@@ -313,33 +313,33 @@ once, which r363 already measured corrupting three of four. Run alone
 afterwards, the three models it named come back Llama 6 of 6, SmolLM2-135M
 1 of 1, Phi-3.5 4 of 4 identical.
 
-🔑 One board job at a time, and a wait condition has to test COMPLETION. A
+One board job at a time, and a wait condition has to test COMPLETION. A
 concurrent job does not look like a confound in the output; it looks exactly
 like the bug being hunted.
 
 =====================================================================
-11. ⭐⭐⭐ WHAT THE THREE UNPRICED KNOBS ARE WORTH
+11. WHAT THE THREE UNPRICED KNOBS ARE WORTH
 ---------------------------------------------------------------------
 852 tokens, one boot, one binary, arms rotated, three repeats a cell, and the
 text of every arm diffed against the base arm at 24 generated tokens:
 
     arm          TTFT ms       range     vs base   text
     base            6355   6352..6361      1.000   8b02145bf030
-    chunk160        6787   6770..6797      1.068   ⛔ DIFFERS
+    chunk160        6787   6770..6797      1.068   DIFFERS
     spin200         6279   6272..6318      0.988   same
     spin1000        6292   6277..6317      0.990   same
     reserve2        6395   6386..6404      1.006   same
     defer1          6029   5999..6375      0.949   same
     all             6055   6029..6120      0.953   same
 
-🏁 22) THE DEFERRED GATHER IS WORTH 326 ms, not the 200 r408 estimated with
+22) THE DEFERRED GATHER IS WORTH 326 ms, not the 200 r408 estimated with
 this same knob before the tail scale was found.
 
-⚠ Its spread is wider than anything around it: 5999..6375 against base's
+Its spread is wider than anything around it: 5999..6375 against base's
 6352..6361. The gather now runs against the hardware for memory rather than
 after it, so a chunk where the fence finishes early pays.
 
-🏁 23) AND CHARSIU_NPU_SPIN_US IS WORTH 76 ms, PRICED FOR THE FIRST TIME.
+23) AND CHARSIU_NPU_SPIN_US IS WORTH 76 ms, PRICED FOR THE FIRST TIME.
 device.c has carried it since phase 20 under "off unless asked, until phase 21
 has priced it against the arm that disables CPU_SLEEP outright", and phase 21
 never did. 200 beats 1000, and the counters say why:
@@ -352,14 +352,14 @@ never did. 200 beats 1000, and the counters say why:
 The waits the poll does not win at 200 have already polled 252 us; at 1000
 they poll four times as long for the same blocking wait at the end.
 
-⛔ 24) THE RESERVATION LOSES AT THE RIGHT SIZE TOO, by 40 ms. Section 5's
+24) THE RESERVATION LOSES AT THE RIGHT SIZE TOO, by 40 ms. Section 5's
 version guessed m and reserved 2.4x the work; this one takes m from the first
 layer call and both extents from the prompt, so it asks for exactly what
 growing would have reached -- and it still loses. The plan time it removes is
 smaller than the whole-buffer syncs it lengthens. CHARSIU_ATTN_RESERVE stays 0
 and the idea is closed at both sizes.
 
-⛔⛔ 25) AND CHARSIU_PREFILL_CHUNK=160 MOVES THE TEXT. charsiu_run.c offers it
+25) AND CHARSIU_PREFILL_CHUNK=160 MOVES THE TEXT. charsiu_run.c offers it
 as "worth about 9% on Qwen3 and a deployment's call until the SmolLM2 case is
 explained" -- and nobody diffed its output. Same binary, same boot, Llama at
 852 tokens: 8b02145bf030 at chunk 80 and d80c57a8bf86 at 160. It is also 6.8%
@@ -379,24 +379,24 @@ loop, the board to itself:
     SmolLM2-1.7B  gemma-3-1b    gemma-4-E2B   tinyllama
     9 models compared, 0 differing.
 
-⚠ AND THE INTERACTION THAT MATTERS WAS ALREADY COVERED. The deferred gather
+AND THE INTERACTION THAT MATTERS WAS ALREADY COVERED. The deferred gather
 and the two-group attention run together only above the attention threshold,
 which these 88 token prompts are under. Section 11's text column is where they
 meet: every arm there is an 852 token prompt with attention on, and defer1 and
 `all` are both byte identical to base.
 
-⛔ A second pass with CHARSIU_ATTN_NPU=1 was started to force them together at
+A second pass with CHARSIU_ATTN_NPU=1 was started to force them together at
 88 tokens and was abandoned: forcing the fp16 unit into a token loop is minutes
 a model and it answers a question no shipping configuration asks.
 
-⛔⛔ AND KILLING IT TOOK TWO GOES. `pkill` is not on this board's busybox, so
+AND KILLING IT TOOK TWO GOES. `pkill` is not on this board's busybox, so
 the first attempt left the Phi-3.5 run alive and the ladder started beside it --
 the same two-processes-on-the-NPU mistake as section 9's, twenty minutes after
 writing that one down. The ladder below was restarted on a board checked empty
 by `ps`.
 
 =====================================================================
-13. 🏁 THE LADDER WITH EVERYTHING ON: A CLEAR LEAD UNDER 250, LEVEL ABOVE
+13. THE LADDER WITH EVERYTHING ON: A CLEAR LEAD UNDER 250, LEVEL ABOVE
 ---------------------------------------------------------------------
 Shipping defaults: two head groups, the ladder's ceiling, the block copy, the
 deferred gather, the fence poll. Board to itself, three repeats a point, one
@@ -414,11 +414,11 @@ warm-up discarded, same boot as every other ladder in this round.
        852    5953  5948..5959     885   6026.8  charsiu   1.012   |  6328
 ```
 
-🏁 26) TWO REGIMES: A CLEAR LEAD BELOW ABOUT 250 TOKENS, LEVEL ABOVE IT. 852
+26) TWO REGIMES: A CLEAR LEAD BELOW ABOUT 250 TOKENS, LEVEL ABOVE IT. 852
 goes 8081 -> 7016 -> 6818 -> 6328 -> 5953 across r393, r408, r410 and this
 round's two halves, so their 1.341x lead at 852 this morning is gone.
 
-⛔⛔ 27) AND THE FIRST VERSION OF THIS SECTION SAID "EVERY ROW IS charsiu,
+27) AND THE FIRST VERSION OF THIS SECTION SAID "EVERY ROW IS charsiu,
 THERE IS NO CROSSOVER LEFT" -- WHICH THE TABLE DOES NOT SUPPORT. Every point
 estimate does favour charsiu. A margin has to clear TWO things:
 
@@ -433,7 +433,7 @@ estimate does favour charsiu. A margin has to clear TWO things:
     clear    27 (+24.5%)  52 (+27.6%)  102 (+22.4%)  202 (+9.2%)
     level   302  452  602  852
 
-🔑 I CHECKED THE MARGIN AGAINST THE DRIFT BOUND AND NOT AGAINST THE ARM'S OWN
+I CHECKED THE MARGIN AGAINST THE DRIFT BOUND AND NOT AGAINST THE ARM'S OWN
 SPREAD, and 452 is the row that separates the two tests: it clears 2.2% and
 does not clear its own 4.6%. The range was printed in the same table I was
 reading. This is the family that already holds best-of-N picking the noisy
@@ -443,7 +443,7 @@ in this tree, and this would have been the fourth.
 So the claim is: clearly ahead below about 250 tokens at 1.09x to 1.28x, level
 from 302 up. Not "ahead everywhere".
 
-⚠ 28) DECODE DID NOT PAY FOR IT: 18.15 tok/s against 18.06 before the round
+28) DECODE DID NOT PAY FOR IT: 18.15 tok/s against 18.06 before the round
 began, peak 1448 MB against 1449. The fence poll runs there too and the
 deferred gather does not -- decode's matmuls are m = 1 and take another path.
 
@@ -469,7 +469,7 @@ NPU 594 MHz read through tests/board_clk.sh.
   vendor artefacts      three md5s re-read off the board; the .rkllm's matches
                         what evidence section 2 recorded for it
 
-⚠ 29) TWO THINGS LOOKED LIKE FAILURES AND BOTH HAVE CONTROLS.
+29) TWO THINGS LOOKED LIKE FAILURES AND BOTH HAVE CONTROLS.
 
   SmolLM2-135M answers "the capital of the United States" in arch_sanity. It
   answers the same on the PURE CPU PATH, so it is the model and not this
@@ -482,11 +482,11 @@ NPU 594 MHz read through tests/board_clk.sh.
   release. neon_control runs with no NPU environment at all, so nothing in this
   round could reach it.
 
-🔑 30) BOTH CONTROLS ARE THE SAME MOVE: run the thing that did not change.
+30) BOTH CONTROLS ARE THE SAME MOVE: run the thing that did not change.
 For the model it is the CPU path; for the release it is the previous build.
 Neither question could be answered from the failing run alone.
 
-⚠ 31) AND TWO OF THIS ROUND'S CHECKS COULD NOT RUN ON THE BOARD AT ALL until
+31) AND TWO OF THIS ROUND'S CHECKS COULD NOT RUN ON THE BOARD AT ALL until
 they were fixed: arch_sanity.sh and neon_control.sh both ran `make` before
 checking anything, and the board has no compiler while the desk has no models.
 A check that cannot run on the only machine with something to check is a check

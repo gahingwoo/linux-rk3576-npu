@@ -122,7 +122,7 @@ an unregistered drm_device holding its minor. Igor's, on his own patch.
 In-Reply-To `<20260831040804.24111-1-gahing@gahingwoo.com>`, the v10 cover.
 To Igor; Cc Tomeu, linux-rockchip, dri-devel.
 
-⚠ It replies to the COVER, not to him. The false sentence is in the archive
+It replies to the COVER, not to him. The false sentence is in the archive
 under that message; a correction that only reached his mailbox would leave
 the cover saying he reproduced something he reported he could not.
 
@@ -131,18 +131,18 @@ written, all 48 channels 0x80" and "across 102 induced resets in nine runs it
 appeared only on the arm without them". Also names the 27 August mail to him,
 `<20260827014924.254513-1-gahing@gahingwoo.com>`, as the other instance.
 
-⛔⛔ **THIS MAIL WAS WRONG AND HAS BEEN WITHDRAWN.** Igor reported the 102
+**THIS MAIL WAS WRONG AND HAS BEEN WITHDRAWN.** Igor reported the 102
 resets and the all-0x80 buffer himself, on 2026-08-25, in
 `CAEWPSH5mxTbUkNouxm6yecMZYvDowquhvYvhaXQ8HoMtHD5U1g@mail.gmail.com`, six days
 before the v10 cover quoted him. The 45-reset run (19 August) and the
 102-reset run (25 August) are different sessions and do not conflict. I read
 only the 19 August thread and treated its silence as an absence.
 
-⚠ **The withdrawal rides in the v12 cover rather than as a third mail on the
+**The withdrawal rides in the v12 cover rather than as a third mail on the
 thread.** Two standalone mails on one misquote is more noise than the misquote;
 the paragraph is in `cover-blurb.txt` before "The tags:", so it goes out when
 v12 does and nothing is sent in the meantime. Corrected record in
 `rfc-send-v10/RETRACTION.md`.
 
-⚠ Nothing it "commits us to" holds. In particular there is no restriction on
+Nothing it "commits us to" holds. In particular there is no restriction on
 which of Igor's results may be cited: both runs are his and both are quotable.

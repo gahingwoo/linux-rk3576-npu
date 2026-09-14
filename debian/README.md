@@ -45,11 +45,11 @@ The build instead shims `chown`, `chgrp` and `dpkg-statoverride`, lets the
 scripts believe it worked, writes down what they asked for, and applies it to
 the finished image with debugfs.
 
-⚠ The shims go in `/usr/sbin`, not `/usr/local/sbin`: dpkg sets
+The shims go in `/usr/sbin`, not `/usr/local/sbin`: dpkg sets
 `PATH=/usr/sbin:/usr/bin:/sbin:/bin` for maintainer scripts, so a shim in
 `/usr/local/sbin` is invisible to exactly the scripts it exists for.
 
-⚠ The ownership table is read out of the `.deb` archives, so apt must be told
+The ownership table is read out of the `.deb` archives, so apt must be told
 to keep them (`Binary::apt::APT::Keep-Downloaded-Packages`). It deletes them
 after installing by default.
 

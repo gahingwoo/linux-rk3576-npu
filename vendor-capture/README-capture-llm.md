@@ -32,11 +32,11 @@ uses, and puts the dump on the console.
 
 Flash `sdcard-cap.img`. It runs at boot and prints to the console.
 
-⚠ It is a SEPARATE image from the normal round image, because the vendor model
+It is a SEPARATE image from the normal round image, because the vendor model
 is 1.3 GB and the gguf models are 2.7, and nobody wants to write 6 GB twice.
 The capture rootfs drops `/opt/charsiu/models` for the same reason.
 
-⚠ `S98mndump` is still in the capture rootfs and will run first. On the vendor
+`S98mndump` is still in the capture rootfs and will run first. On the vendor
 kernel there is no `/dev/accel/accel0`, so it prints "no accel device" and
 exits. Harmless, just noise before the capture.
 

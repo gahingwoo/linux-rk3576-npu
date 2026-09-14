@@ -4,7 +4,7 @@ r392 measured charsiu's TTFT against prompt length and withdrew the "1.23x per
 prompt token" figure that two points a side had produced. This round measures
 the vendor's curve so the gap can be stated as something other than unmeasured.
 
-⚠⚠ ONE SCRIPT, ONE SET OF PROMPTS. tests/board_ttft_curve.sh grew a vendor arm
+ONE SCRIPT, ONE SET OF PROMPTS. tests/board_ttft_curve.sh grew a vendor arm
 rather than a sibling script: it picks the runtime off whichever driver is
 bound, so both halves run the same text through the same ladder. A comparison
 whose two sides were prompted by two different files is not one.
@@ -23,7 +23,7 @@ The first vendor ladder stopped at 485 tokens: 635 came back rc=-1 and the row
 said their runtime refused it. It was `p.max_context_len = 512` in our own
 vendor_bench.cpp. A limit belongs to whoever set it.
 
-⚠ AND IT MADE THE COMPARISON UNFAIR IN A WAY NOBODY WOULD HAVE SEEN. charsiu's
+AND IT MADE THE COMPARISON UNFAIR IN A WAY NOBODY WOULD HAVE SEEN. charsiu's
 ladder runs -c 1024. One side was allocated half the context of the other for
 the whole of the first curve. VENDOR_CTX now defaults to 1024 and matches.
 
@@ -38,8 +38,8 @@ points that already worked:
            335     2141.9      2145.0     +0.14%
            485     3194.0      3194.7     +0.02%
 
-🏁 THE CONTEXT ALLOCATION DOES NOT MOVE THEIR PREFILL TIMING. Six points inside
-0.31%. ⚠ And this is a null that means something rather than a knob that did
+THE CONTEXT ALLOCATION DOES NOT MOVE THEIR PREFILL TIMING. Six points inside
+0.31%. And this is a null that means something rather than a knob that did
 nothing: at 512 the 635 and 885 rows were refusals and at 1024 they run, so the
 setting demonstrably reached the runtime.
 
@@ -56,24 +56,24 @@ setting demonstrably reached the runtime.
              635     4200.5  4199.2..4204.0       6.705
              885     6026.8  6026.4..6028.8       7.305
 
-🏁 1) THEIR MARGINAL IS NON-MONOTONE TOO. 4.656, then 8.044, then 5.967. A
+1) THEIR MARGINAL IS NON-MONOTONE TOO. 4.656, then 8.044, then 5.967. A
 convex function cannot do that, so their prompt length also decides something
 discrete -- their own chunking. r392 found the same shape on our side and
 attributed it to onechunk_on(); this is the independent half, on a runtime
 whose source nobody here has.
 
-🏁 2) THEIR CHAT TEMPLATE COSTS EXACTLY 33 TOKENS, AT EVERY LENGTH. 27->60,
+2) THEIR CHAT TEMPLATE COSTS EXACTLY 33 TOKENS, AT EVERY LENGTH. 27->60,
 52->85, 102->135, 202->235, 302->335, 452->485, 602->635, 852->885. Eight
 lengths over a thirty-fold range, the same constant every time.
-⭐ So the "tokeniser trap" is not two different tokenisers. It is ONE tokenisation
+So the "tokeniser trap" is not two different tokenisers. It is ONE tokenisation
 of the body plus a fixed wrapper, which is why the two ways of lining the
 curves up differ by exactly that constant and nothing else.
 
-⚠ 3) THEIR PREFILL USES THE NPU CLOCK, WHICH THEIR DECODE DOES NOT. At 113
+3) THEIR PREFILL USES THE NPU CLOCK, WHICH THEIR DECODE DOES NOT. At 113
 tokens this curve interpolates to 727.0 ms at 594 MHz; r391 measured 692.6 ms
 at 786 MHz on the same CPU setting. 4.7%, against r390's 6.5% from the same
 clock change in a different round. Same sign, same order, two rounds apart.
-⚠ The two are not the same TEXT at that token count, so this is a
+The two are not the same TEXT at that token count, so this is a
 corroboration and not a measurement.
 
 =====================================================================
@@ -95,7 +95,7 @@ same arm, same binary, one boot apart:
         852    8121    8081   -0.49%
                        mean   -0.64%     worst 2.23%
 
-🏁 4) THE BOOT-TO-BOOT ERROR ON THIS LADDER IS 2.2% AT WORST. Everything below
+4) THE BOOT-TO-BOOT ERROR ON THIS LADDER IS 2.2% AT WORST. Everything below
 is larger than that by a wide margin.
 
 =====================================================================
@@ -117,19 +117,19 @@ Both fit to within 2% beyond 200 tokens. The 5-11% residuals at the short end
 are the chunk steps, which a smooth curve cannot follow and which are the
 reason the marginal column below is not usable point by point.
 
-🏁🏁 5) OUR PER-TOKEN LINEAR RATE IS BETTER THAN THEIRS, BY 12%.
-5.456 against 6.095 ms a token. ⛔ THE WITHDRAWN "the vendor is 1.23x faster
+5) OUR PER-TOKEN LINEAR RATE IS BETTER THAN THEIRS, BY 12%.
+5.456 against 6.095 ms a token. THE WITHDRAWN "the vendor is 1.23x faster
 per prompt token" WAS NOT MERELY UNSUPPORTED, IT HAD THE SIGN BACKWARDS. Two
 points a side, over two different token ranges, on a curve with a large
 quadratic term, produced a number that pointed the wrong way.
 
-🏁🏁 6) THEY WIN ON THE OTHER TWO TERMS, AND BOTH ARE LARGE.
+6) THEY WIN ON THE OTHER TWO TERMS, AND BOTH ARE LARGE.
 Fixed cost 45.8 against our 187.9 ms, a factor of 4.1.
 Quadratic 0.000743 against our 0.004483, a factor of 6.0.
-⭐ The quadratic term is attention. Per prompt token we are ahead; what we lose
+The quadratic term is attention. Per prompt token we are ahead; what we lose
 is how that cost GROWS, and a fixed cost four times theirs on top.
 
-🏁 7) SO THE ANSWER TO "who starts a prompt faster" IS A CROSSOVER, NOT A
+7) SO THE ANSWER TO "who starts a prompt faster" IS A CROSSOVER, NOT A
 RATIO. Solving the two fits with their 33-token template included puts it at
 248 of our tokens, 281 of theirs. Measured, we are ahead at 202 and behind at
 302, which brackets it.
@@ -138,7 +138,7 @@ RATIO. Solving the two fits with their 33-token template included puts it at
 4. THE TWO COMPARISONS, MEASURED
 ---------------------------------------------------------------------
 matched TOKEN COUNT -- what a runtime does with a token
-  ⚠ from 160 tokens up. Below that our curve has only two points and one of
+  from 160 tokens up. Below that our curve has only two points and one of
   them (27) carries a token-loop leftover; dropping it moves the 60-token row
   from 1.160x to 1.225x and leaves everything from 160 unchanged.
 
@@ -163,7 +163,7 @@ matched INPUT TEXT -- what a user waits for
        602  5149.0       635  4200.5    vendor  1.226x
        852  8081.0       885  6026.8    vendor  1.341x
 
-local marginal ms/token -- ⚠ NOT usable point by point, both curves step
+local marginal ms/token -- NOT usable point by point, both curves step
     tokens   charsiu   vendor
        185     5.476    5.967
        385     7.489    6.831
@@ -172,7 +172,7 @@ local marginal ms/token -- ⚠ NOT usable point by point, both curves step
 Ours more than doubles across the range; theirs moves 24%.
 
 =====================================================================
-⚠ NOT MEASURED HERE
+NOT MEASURED HERE
    Any model but Llama-3.2-1B, and their file is their w4a16 export while ours
    is a q4_0 gguf -- both four-bit, not the same bytes.
    Why their quadratic term is six times smaller. That is the next question and

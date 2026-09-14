@@ -48,7 +48,7 @@ for d in $NPUS; do
 	done
 done
 
-# ⚠ THE DELAY IS THE WHOLE ARGUMENT. rocket_core_init() sets 50 ms; if this
+# THE DELAY IS THE WHOLE ARGUMENT. rocket_core_init() sets 50 ms; if this
 # board reports something else the reasoning above has to be redone against
 # whatever it actually says rather than against the source.
 for d in $NPUS; do
@@ -81,7 +81,7 @@ else
 		a1=$(cat "$d/power/runtime_active_time" 2>/dev/null || echo 0)
 		eval "ds=\$((s1 - \$s0_$k)); da=\$((a1 - \$a0_$k))"
 		printf '  %-28s active +%s ms   suspended +%s ms\n' "$b" "$da" "$ds"
-		# ⚠ ZERO SUSPENDED TIME IS THE INTERESTING ANSWER, not an error.
+		# ZERO SUSPENDED TIME IS THE INTERESTING ANSWER, not an error.
 		# It says the gaps between submits never reach the 50 ms delay,
 		# which is exactly the condition under which 04/14's put cannot
 		# take effect after a reset either.
@@ -93,11 +93,11 @@ else
 fi
 
 say "has a timeout ever happened, and did a suspend follow it"
-# ⚠ dmesg ONLY. Nothing here induces a timeout: JOB_TIMEOUT_MS is a #define, so
+# dmesg ONLY. Nothing here induces a timeout: JOB_TIMEOUT_MS is a #define, so
 # forcing one needs a rebuilt kernel and a flash, and this board's NPU has been
 # recorded as not recovering from one -- which is the symptom 04/14 is supposed
 # to remove and therefore not a thing to trigger casually mid round.
-# ⚠ grep -c prints its 0 AND exits 1, so `|| echo 0` printed a second 0 under
+# grep -c prints its 0 AND exits 1, so `|| echo 0` printed a second 0 under
 # it and the test below read "0\n0" as an illegal number. The count is enough.
 n=$(dmesg 2>/dev/null | grep -c "NPU job timed out"); n=${n:-0}
 printf '  "NPU job timed out" in dmesg: %s\n' "$n"

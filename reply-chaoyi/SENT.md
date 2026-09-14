@@ -1,6 +1,6 @@
 # reply to Chaoyi Chen: his Fixes: tag names the wrong commit
 
-⛔ **NOT SENT. Nothing here has gone anywhere.** There is no send script and
+**NOT SENT. Nothing here has gone anywhere.** There is no send script and
 none is to be written. Not committed, not pushed.
 
 File: `reply-chaoyi-fixes-tag.eml`
@@ -19,7 +19,7 @@ File: `reply-chaoyi-fixes-tag.eml`
   its diff adds `rocket_job_handle_irq()` (+584), the leaking
   `iommu_detach_group(NULL, iommu_group_get(core->dev))` (+598) and
   `rocket_reset()`'s `iommu_detach_group(NULL, core->iommu_group)` (+622).
-- 🔑 **`0810d5ad88a1`'s parent is `658ebeac33517bd3169d4b65ed801e9065d0211a`.**
+- **`0810d5ad88a1`'s parent is `658ebeac33517bd3169d4b65ed801e9065d0211a`.**
   Read off the cgit commit page. So the cited commit is the immediate parent
   of the one that introduced the line, which is what the mail says.
 - `cgit /log/drivers/accel/rocket/rocket_job.c` on mainline lists
@@ -44,7 +44,7 @@ in the rocket_job.c log dated 2026-07-04); the 2/2 did not.
 it is 2026-06-12, on 1/2. So "no answer to either so far" is a statement
 about the public archive as of today.
 
-**No Tested-by.** ⚠ The mail claims exactly two things about this board and
+**No Tested-by.** The mail claims exactly two things about this board and
 nothing more: the patch is carried here on `next-20260911` and it builds
 clean.
 
@@ -57,7 +57,7 @@ clean.
   aarch64, the tree's own `.config` (`CONFIG_DRM_ACCEL_ROCKET=y`). The
   worktree was removed afterwards; `linux-next-v8` is back on `v13-prep`
   and clean.
-- ⛔ **Not booted.** No kernel with this patch has run on the board, so no
+- **Not booted.** No kernel with this patch has run on the board, so no
   tag is offered. The mail offers to run it on a respin instead.
 
 **The conflict.** v12 05/14 "accel/rocket: factor the completion tail out of
@@ -68,7 +68,7 @@ The posted v12 cover raises the conflict against **Zhao's** patch only:
 "ZhaoJinming's ... changes the same line, is marked for stable, and carries
 the same Fixes tag as ours. Whichever lands first the other conflicts; say
 which you would rather take." The mail says so and says it should have named
-Chaoyi's too. ⚠ It does **not** claim a reason for the omission; why it was
+Chaoyi's too. It does **not** claim a reason for the omission; why it was
 not named is not checkable from here.
 
 ## Headers
@@ -78,13 +78,13 @@ Scraped from the real message, not invented.
 - `In-Reply-To: <20260814022453.437-4-kernel@airkyi.com>` (his 3/4).
 - `References:` the cover `<20260814022453.437-1-kernel@airkyi.com>` then the
   patch. His 3/4's own `In-Reply-To` is that cover.
-- ⚠ The series went out **twice**; lore shows "multiple messages have this
+- The series went out **twice**; lore shows "multiple messages have this
   Message-ID" for both copies, with identical headers. The Message-ID used
   here is the one both copies carry.
 - To/Cc are taken from his 3/4's own header block: To Tomeu Vizoso, Oded
   Gabbay, Heiko Stuebner, Jeff Hugo; Cc linux-kernel, dri-devel,
   linux-rockchip, linux-arm-kernel. Both of his addresses are in To.
-- ⚠ **Added beyond that thread:** ZhaoJinming and Igor Paunovic. The mail
+- **Added beyond that thread:** ZhaoJinming and Igor Paunovic. The mail
   discusses Zhao's patch and Igor's standing offer, so both should see it.
   sashiko-bot is not Cc'd.
 - No `Date:` or `Message-ID:` header; `git send-email` generates both. It

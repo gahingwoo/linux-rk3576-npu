@@ -537,7 +537,7 @@ index 82258e7..d84d0bd 100644
 +    * vendor. If the output does not move when every weight becomes 0x7f, the
 +    * CMAC is not reading this buffer for k=3 either.
 +    *
-+    * ⚠ The control is the SAME knob on conv2d-cal, which computes correctly, so
++    * The control is the SAME knob on conv2d-cal, which computes correctly, so
 +    * forcing its weights MUST wreck it. A knob that changes nothing anywhere
 +    * proves nothing, which has cost this project two rounds already.
 +    */
@@ -747,7 +747,7 @@ index 82258e7..d84d0bd 100644
 +          * layout's own signature; with the 64 byte record both collapse, to
 +          * -0.15 and a maximum that is not 0x4000.
 +          *
-+          * ⚠ This corrects two earlier conclusions in FINDINGS.md that said the
++          * This corrects two earlier conclusions in FINDINGS.md that said the
 +          * vendor emits no per-channel coefficient table for depthwise. Both
 +          * scans tried 64, 32 and 128 byte blocks and never 48, so they missed
 +          * a table that was there.
@@ -782,7 +782,7 @@ index 82258e7..d84d0bd 100644
 +          * has used for A all along. So A needed no change; the record shape,
 +          * the record count and where the fp16 table lands after it did.
 +          *
-+          * ⚠ This corrects the earlier conclusion, in FINDINGS.md and in the
++          * This corrects the earlier conclusion, in FINDINGS.md and in the
 +          * ROCKET_DW_FLOATBIAS comment below, that the vendor emits no
 +          * per-channel table for depthwise. It emits one; it is not in the
 +          * .rknn, librknnrt builds it at load time, and every search that
@@ -837,7 +837,7 @@ index 82258e7..d84d0bd 100644
 +                * makes the depthwise result comparable with the regular one.
 +                * ROCKET_DW_C14 writes the vendor's Q14 instead.
 +                *
-+                * ⚠ ROCKET_DW_C_VALUE, not ROCKET_C_VALUE. Round 57 swept
++                * ROCKET_DW_C_VALUE, not ROCKET_C_VALUE. Round 57 swept
 +                * ROCKET_C_VALUE on a depthwise model and got results identical
 +                * to the default at 4 and at 64, which looked like C being
 +                * inert. It is not evidence: that variable is only read by the
@@ -1063,7 +1063,7 @@ index 82258e7..d84d0bd 100644
 +             * with T somewhere in (0x21, 0x3f]; bits 14, 15 and everything
 +             * above them are free. 0x1004 satisfies it and is used here.
 +             *
-+             * ⚠ This is why the 3x3 kernel never worked. The old code filled
++             * This is why the 3x3 kernel never worked. The old code filled
 +             * that word with a dequantised weight, so whether a model computed
 +             * came down to whether its FIRST WEIGHT happened to carry the right
 +             * bits. conv2d-cal's did and cal_k3's did not, and every attempt to
@@ -1109,7 +1109,7 @@ index 82258e7..d84d0bd 100644
 +             */
 +            uint32_t *fs32 = (uint32_t *)(b8 + table_bytes);
 +            /*
-+             * ⚠ No `goto biases_done` here: that label is EARLIER in the
++             * No `goto biases_done` here: that label is EARLIER in the
 +             * function, so jumping to it re-executes everything between and
 +             * spins forever. It did, on the board, and looked like a hang.
 +             * Write the table and skip the constant word with a flag instead.
@@ -1213,7 +1213,7 @@ index 82258e7..d84d0bd 100644
 +                */
 +               if (getenv("ROCKET_SCALE_OFF") == NULL) {
 +                  /*
-+                   * ⚠ The operand VALUE stays mesa's, not the vendor's.
++                   * The operand VALUE stays mesa's, not the vendor's.
 +                   *
 +                   * Round 49 wrote the vendor's 0x0E0E into the slot mesa's
 +                   * 0x5024 already points at and got an empty convolution,
@@ -1300,7 +1300,7 @@ index 82258e7..d84d0bd 100644
 +       * past the end of it, giving the buffer the vendor's shape while keeping
 +       * the A/B/C table this driver computes.
 +       *
-+       * ⚠ conv2d-cal is the control and it must survive: it computes today with
++       * conv2d-cal is the control and it must survive: it computes today with
 +       * the float surface and fails when that surface is zeroed, so those floats
 +       * are doing something for it. If it survives this, mesa's 200 KB of floats
 +       * are not needed and the buffer is far simpler than assumed. If it breaks,
@@ -1356,7 +1356,7 @@ index 82258e7..d84d0bd 100644
 +      const char *f0 = getenv("ROCKET_FS_F0");
 +
 +      /*
-+       * ⚠ The surface starts at groups*64, which is 0x400 only because oc=128
++       * The surface starts at groups*64, which is 0x400 only because oc=128
 +       * in every model probed so far. With oc=16 it is 0x80, and the knobs
 +       * below would have written into the A/B/C table instead of the surface,
 +       * making any result on such a model meaningless.
@@ -1478,7 +1478,7 @@ index d670cec..7c0f53f 100644
 + * the 64 bytes of fp16 that leaves 256 and 384, that is four 64 byte records
 + * and eight 48 byte ones.
 + *
-+ * ⚠ Eight records for 32 channels is twice what a record per eight channels
++ * Eight records for 32 channels is twice what a record per eight channels
 + * would give, and this geometry CANNOT tell the doubling apart from a padding
 + * of the channel count up to 64: both give eight. The doubling is what is
 + * written here because it is the same doubling this driver already applies to
@@ -3506,7 +3506,7 @@ index be992fd..ea847c1 100644
 +       * entries, so the pointer has to clear them.
 +       */
 +      /*
-+       * ⚠ ROCKET_SCALE_PTR is SEPARATE from ROCKET_SCALE_TABLE on purpose.
++       * ROCKET_SCALE_PTR is SEPARATE from ROCKET_SCALE_TABLE on purpose.
 +       * Round 46 changed both together, writing the fp16 table AND moving this
 +       * pointer past it, and the shapes that already worked went from 128/128
 +       * to 0/128. Two changes, one result, nothing learned. They are two knobs

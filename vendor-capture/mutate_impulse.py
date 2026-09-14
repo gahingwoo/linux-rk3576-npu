@@ -61,7 +61,7 @@ def main():
     print("  output channel -> live tap (ky, kx):",
           ", ".join(f"{o}->({y},{x})" for o, y, x in used))
 
-    # ⚠ Rescale the output. One live tap carries about 1/(k*k*ic) of the
+    # Rescale the output. One live tap carries about 1/(k*k*ic) of the
     # dynamic range the original kernel had, and leaving the output scale alone
     # makes the result underflow the requant to the zero point: the first
     # version of this probe returned a flat out_zp for BOTH kernel sizes, which

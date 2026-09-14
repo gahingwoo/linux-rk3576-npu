@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     if (ret != 0) return 1;
 
     /*
-     * ⚠ THE OUTPUT IS SIGNED AND THE FIRST VERSION OF THIS READ IT UNSIGNED.
+     * THE OUTPUT IS SIGNED AND THE FIRST VERSION OF THIS READ IT UNSIGNED.
      *
      * rknn_tensor_type 2 is INT8, and the zero point is in the same domain, so
      * these models report -128, 17 and -14 rather than 0, 145 and 114. Reading

@@ -20,11 +20,11 @@ fit did not go.
         32       313       367
         64       546       555
 
-🏁 1) IT EXISTS. A TWO TOKEN PROMPT COSTS 167 ms. The fit over-predicts the
+1) IT EXISTS. A TWO TOKEN PROMPT COSTS 167 ms. The fit over-predicts the
 middle -- 276 against 226 at 16 tokens -- so 187.9 is not the right number, but
 a fixed cost of about 165 ms is real and is not an artefact of extrapolation.
 
-⚠ The short end is not smooth: 167 at 2 tokens, 209 at 3, 171 at 4, 230 at 8,
+The short end is not smooth: 167 at 2 tokens, 209 at 3, 171 at 4, 230 at 8,
 209 at 12. Chunk width effects (r397) at lengths where the width IS the prompt.
 
 =====================================================================
@@ -41,23 +41,23 @@ held constant, only the number of chunks changing:
         20   20x8          2430
         40   40x4          2846
 
-🏁 2) THE COST IS PER CHUNK, AND IT IS LARGE. Identical rows, identical
+2) THE COST IS PER CHUNK, AND IT IS LARGE. Identical rows, identical
 arithmetic, and forty chunks cost 2.4x what two do.
 
-🏁🏁 3) SO THE INTERCEPT IS A DISPATCH COUNT. A chunk issues one NPU dispatch
+3) SO THE INTERCEPT IS A DISPATCH COUNT. A chunk issues one NPU dispatch
 per projection per layer plus the head -- 113 on this 16-layer model -- and
 that count does not depend on how many rows the chunk carries. A 2-token prompt
 is one chunk: 167 ms over 113 dispatches is **about 1.5 ms a dispatch**, which
 is the whole of the fixed term.
 
-⭐ 4) AND THAT IS ELEVEN TIMES THE DECODE FLOOR THIS TREE ALREADY MEASURED.
+4) AND THAT IS ELEVEN TIMES THE DECODE FLOOR THIS TREE ALREADY MEASURED.
 project-charsiu-call-floor records 130 us a call over 150 calls for decode. At
 m = 2 a prefill dispatch does almost exactly what a decode dispatch does, and
-costs 1.5 ms against 130 us. ⛔ That gap is the next question and this round
+costs 1.5 ms against 130 us. That gap is the next question and this round
 does not answer it.
 
 =====================================================================
-3. ⛔ AND ONE CHUNK IS NOT THE OPTIMUM, WHICH r397's FIX ASSUMED
+3. AND ONE CHUNK IS NOT THE OPTIMUM, WHICH r397's FIX ASSUMED
 ---------------------------------------------------------------------
 2x80 beats 1x160 by 5.2% above. Sweeping it properly, widen-to-one against
 keeping the 80 chunk, every length a multiple of 4 so the residue is held:
@@ -74,24 +74,24 @@ keeping the 80 chunk, every length a multiple of 4 so the residue is held:
        152   1125   1095        1.027     72
        160   1186   1114        1.065     80
 
-⚠ THE SURFACE IS BUMPY AND TEN POINTS AT TWO REPEATS CANNOT RANK IT. Against a
+THE SURFACE IS BUMPY AND TEN POINTS AT TWO REPEATS CANNOT RANK IT. Against a
 2% noise floor only 88 (widen wins 10%) and 160 (widen loses 6.5%) are outside
 it; 96 through 152 is mostly noise and 144 runs against whatever trend the ends
 suggest. This is the shape a coarse grid of a non-smooth parameter has, and no
 rule is proposed from it.
 
-⚠ WHAT IT DOES SAY: r397's fix -- decline to widen when the width would be
+WHAT IT DOES SAY: r397's fix -- decline to widen when the width would be
 2 mod 4 -- is INCOMPLETE. At 160 the width is 0 mod 4, so the fix lets it
 widen, and widening there loses 6.5%. The fix is not wrong, and the 6.8 to 7.3%
 it was measured at stands; it does not cover this case.
 
-⭐ A mechanism worth testing later, not established here: the alternative to
+A mechanism worth testing later, not established here: the alternative to
 widening leaves a TAIL, and a tiny tail pays a full 113-dispatch set for very
 few rows. 88 tokens leaves a tail of 8 and widening wins biggest there. 160
 leaves a tail of 80 and widening loses. 144 leaves 64 and does not fit.
 
 =====================================================================
-⚠ NOT MEASURED HERE
+NOT MEASURED HERE
    Why a prefill dispatch costs 1.5 ms where a decode call costs 130 us.
    Whether the vendor pays the same quantum in their linear term. They
    dispatch at M=1 where charsiu batches, so the same hardware cost would land

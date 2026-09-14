@@ -7,7 +7,7 @@
 # the 17th and his SIZE_E question from the 20th, both settled from the 94
 # compiled vendor .rknn already on disk.
 
-# ⚠⚠ ALREADY SENT. 2026-08-27 13:49 +1200, SMTP result 250, recorded in
+# ALREADY SENT. 2026-08-27 13:49 +1200, SMTP result 250, recorded in
 # SENT.md with its Message-ID. Running this again posts a DUPLICATE to Igor,
 # linux-rockchip and dri-devel.
 #

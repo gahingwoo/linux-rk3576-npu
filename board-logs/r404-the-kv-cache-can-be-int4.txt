@@ -9,7 +9,7 @@ charsiu_int4 --cost is that tool.
 
   board     ROCK 4D, boot 2606ab9f, npu 594 MHz, cpu 2016/2208 MHz pinned
   binary    /root/charsiu_int4_cost  c85421c
-  ⚠ --cost IS A TIMING PROBE AND CHECKS NOTHING. The weight buffer holds what
+  --cost IS A TIMING PROBE AND CHECKS NOTHING. The weight buffer holds what
     the setup left in it and the output is never read. The MAC array does not
     branch on data, so a dispatch of the right shape and dtype costs what it
     costs -- but every number below is a COST and never an answer.
@@ -24,15 +24,15 @@ m = 78, fp16 activation throughout, one job a submit:
     k=1024 n=64           0.049     0.071     0.087    <- the values matmul
     k=1024 n=1024         0.203     0.351     0.228
 
-🏁 1) 2.4x ON THE SCORES SHAPE AND 1.8x ON THE VALUES ONE. r403's bound was 2
+1) 2.4x ON THE SCORES SHAPE AND 1.8x ON THE VALUES ONE. r403's bound was 2
 to 3.5 and it is inside it, which is the first thing a bound should do.
 
-🔑 2) AND THE TWO MATMULS WANT DIFFERENT DTYPES. int8 wins at k = 64, where
+2) AND THE TWO MATMULS WANT DIFFERENT DTYPES. int8 wins at k = 64, where
 int4's unpacking has only four atoms to amortise over; int4 wins at k = 1024,
 where the bandwidth saving is what matters. A design that picked one for both
 would leave a quarter of this on the table.
 
-⚠ 3) THESE ARE A LOWER BOUND FOR THE RUNTIME. Every row carries a full
+3) THESE ARE A LOWER BOUND FOR THE RUNTIME. Every row carries a full
 per-submit cost -- 59 to 183 us of it -- and the real path puts 32 jobs in one
 submit. That cost is dtype-independent, so amortising it WIDENS these ratios.
 
@@ -50,19 +50,19 @@ cache syncs, plan and readback.
     the vendor, same text, 885 of their tokens          6027 ms
     their lead      1.193x     -> about 1.10x
 
-⛔ 4) SO THE KV DTYPE ALONE DOES NOT BEAT THEM. It closes about half of what
+4) SO THE KV DTYPE ALONE DOES NOT BEAT THEM. It closes about half of what
 is left. The arithmetic above is a projection from a measured factor onto a
 measured stage table, which is a better class of guess than the one r401 made,
 and it is still a guess.
 
-⭐ 5) WHAT WOULD HAVE TO COME WITH IT, all of it measured and none of it
+5) WHAT WOULD HAVE TO COME WITH IT, all of it measured and none of it
 hardware: the cache syncs are 301 ms (psync 135, plan 166) and they are
 charged on WHOLE buffer objects that int4 surfaces make a quarter the size;
 the softmax is 358 and still makes three passes a row; the pack is 200. Half
 of that 860 is about 430 ms, which would put TTFT near 6200 against their
 6027 -- level, not ahead.
 
-⛔ 6) AND ONE MORE THING IS SITTING IN PLAIN SIGHT. The values matmul
+6) AND ONE MORE THING IS SITTING IN PLAIN SIGHT. The values matmul
 contracts over kv, the V surface's allocated extent, which climbs by DOUBLING:
 at 852 tokens kv is 1024 while the average live position count is 426. **58%
 of that matmul multiplies by zeros.** The surface cannot be run at a smaller k
@@ -74,7 +74,7 @@ between powers of two.
 =====================================================================
 3. THE SHAPE OF THE DAY
 ---------------------------------------------------------------------
-🔑 7) r401 said the arm could not win at any length; it wins above 376 tokens.
+7) r401 said the arm could not win at any length; it wins above 376 tokens.
 r402 said the hardware was the wall; it is 10% dispatch, 6 to 7 times shape,
 and a dtype factor that is now measured at 1.8 to 2.4 and actionable. Both
 were written from arithmetic done on a stage table rather than from an

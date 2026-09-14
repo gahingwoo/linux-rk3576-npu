@@ -12,7 +12,7 @@
 #   sh charsiu-install.sh --uninstall  remove what this installed
 #   CHARSIU_PLAIN=1 ...                no full-screen dialogs
 #
-# ⚠⚠ RK3576 NPU SUPPORT IS NOT UPSTREAM, SO NO STOCK KERNEL CAN RUN THIS.
+# RK3576 NPU SUPPORT IS NOT UPSTREAM, SO NO STOCK KERNEL CAN RUN THIS.
 #
 # The rocket driver is mainline for RK3588. The commit adding
 # `rockchip,rk3576-rknn-core` is ours, from 2026-08-06, and is not reachable
@@ -21,10 +21,10 @@
 # check was a dead end wearing a helpful expression. It now OFFERS A KERNEL:
 # CI builds linux-next plus the v9 series and publishes it, and this fetches it.
 #
-# ⚠ AND IT KEEPS THE ONE ALREADY THERE. The new kernel becomes the default boot
+# AND IT KEEPS THE ONE ALREADY THERE. The new kernel becomes the default boot
 # entry and the previous one stays on the card as a second entry, because a
 # kernel that does not boot is not a thing to discover with no way back.
-# ⚠⚠ THE WHOLE SCRIPT IS ONE BRACE GROUP, ON PURPOSE.
+# THE WHOLE SCRIPT IS ONE BRACE GROUP, ON PURPOSE.
 #
 # `sh` reads a piped script in chunks and runs each one as it arrives. This
 # script reattaches the terminal with `exec < /dev/tty`, which CLOSES the pipe
@@ -43,19 +43,19 @@ set -eu
 # BOOTSTRAP: the `curl ... | sh` case, before anything else can need it.
 # ---------------------------------------------------------------------------
 #
-# ⚠ Read before the terminal check, which branches on it.
+# Read before the terminal check, which branches on it.
 _BOOT_DRY=0; _BOOT_NOTTY=0
 for _a in "$@"; do case "$_a" in --dry-run|-n) _BOOT_DRY=1 ;; esac; done
 
 CHARSIU_SRC_REPO="${CHARSIU_SRC_REPO:-https://github.com/gahingwoo/charsiu}"
 CHARSIU_SELF_URL="https://raw.githubusercontent.com/gahingwoo/charsiu/main/scripts/charsiu-install.sh"
 
-# ⚠⚠ PIPED IN, STDIN IS THE SCRIPT ITSELF. Every `read` would eat the rest of
+# PIPED IN, STDIN IS THE SCRIPT ITSELF. Every `read` would eat the rest of
 # this file, and a wizard that asks questions cannot run that way. Reattach the
 # terminal first, and if there is not one, say so rather than silently
 # consuming ourselves.
 if [ ! -t 0 ]; then
-	# ⚠ A FAILED REDIRECTION ON `exec` KILLS THE SHELL. Testing with
+	# A FAILED REDIRECTION ON `exec` KILLS THE SHELL. Testing with
 	# `exec < /dev/tty` meant that when there was no controlling terminal the
 	# script exited silently instead of saying why. And `[ -r /dev/tty ]`
 	# is not the test either: the device node can be readable while opening
@@ -63,7 +63,7 @@ if [ ! -t 0 ]; then
 	if ( : < /dev/tty ) 2>/dev/null; then
 		exec < /dev/tty
 	elif [ "$_BOOT_DRY" = 1 ]; then
-		# ⚠ A REHEARSAL NEEDS NO CONSENT. It writes nothing, so refusing to
+		# A REHEARSAL NEEDS NO CONSENT. It writes nothing, so refusing to
 		# run for want of a terminal would be refusing the one thing asked
 		# for, and piping this into a container is exactly how it gets
 		# rehearsed. Answer every question with yes and carry on.
@@ -81,7 +81,7 @@ if [ ! -t 0 ]; then
 	fi
 fi
 
-# ⚠ THE TUI LAYER DOES NOT EXIST YET. It lives in the source, which is the very
+# THE TUI LAYER DOES NOT EXIST YET. It lives in the source, which is the very
 # thing this stage is here to fetch, so the bootstrap cannot source it. But
 # whiptail may well be installed already, and a wizard that opens with a bare
 # shell prompt and only becomes a dialog later is worse than one that is a
@@ -101,7 +101,7 @@ _boot_yesno() {
 	fi
 }
 
-# ⚠ Piped in, "$(dirname "$0")" is meaningless: there is no tree beside us.
+# Piped in, "$(dirname "$0")" is meaningless: there is no tree beside us.
 # Anything that needs the source (the build, the scripts, the TUI layer) has to
 # come from somewhere, so fetch it and hand over to the copy that has neighbours.
 _boot_src=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd || echo "")
@@ -133,7 +133,7 @@ Continue?" || { echo "  stopped."; exit 1; }
 		$_sudo git clone --depth 1 --quiet "$CHARSIU_SRC_REPO" "$DIR" \
 			|| { echo "  clone failed: $CHARSIU_SRC_REPO" >&2; exit 1; }
 	else
-		# ⚠ no git is a normal state on a minimal rootfs, and a tarball
+		# no git is a normal state on a minimal rootfs, and a tarball
 		# needs neither git nor a key.
 		printf '  git is not installed; taking a tarball instead\n'
 		$_sudo mkdir -p "$DIR"
@@ -152,7 +152,7 @@ unset _boot_src
 # THE DIALOG ITSELF
 # ---------------------------------------------------------------------------
 #
-# ⚠ WITHOUT whiptail EVERY PAGE SILENTLY BECOMES A SHELL PROMPT. charsiu-tui.sh
+# WITHOUT whiptail EVERY PAGE SILENTLY BECOMES A SHELL PROMPT. charsiu-tui.sh
 # falls back on purpose, because a serial console with no TERM has to work, but
 # a fresh Debian or Ubuntu has no whiptail and falling back there is not a
 # feature, it is the wizard quietly not being one. So ask, once, and install it.
@@ -167,7 +167,7 @@ if ! command -v whiptail >/dev/null 2>&1 && [ -z "${CHARSIU_PLAIN:-}" ]; then
 	elif command -v pacman  >/dev/null 2>&1; then _pm="pacman -S --noconfirm libnewt"
 	fi
 	if [ -n "$_pm" ]; then
-		# ⚠ THE ONE THING A DRY RUN DOES FOR REAL, AND WHY. whiptail is the
+		# THE ONE THING A DRY RUN DOES FOR REAL, AND WHY. whiptail is the
 		# MEDIUM, not the content. Deferring it made the rehearsal run
 		# entirely in text, so it rehearsed everything except the interface
 		# it exists to show. A dry run that cannot draw the wizard is not
@@ -180,7 +180,7 @@ so every page would be a plain shell prompt instead.
 Answering no is fine. Everything still works, in text."
 		[ "$_BOOT_DRY" = 1 ] && _why="$_why
 
-⚠ This is the ONE thing this dry run would actually do. Without it
+This is the ONE thing this dry run would actually do. Without it
 there is no dialog to show you, and the rehearsal would be text."
 		if [ "$_BOOT_NOTTY" = 1 ]; then
 			printf '\n  no terminal, so whiptail is not installed and this runs in text\n'
@@ -218,7 +218,7 @@ while [ $# -gt 0 ]; do
 done
 
 SRC=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd || echo /opt/charsiu)
-# ⚠ The TUI layer has to be findable from every layout this ships in: a source
+# The TUI layer has to be findable from every layout this ships in: a source
 # tree, a real install under /opt/charsiu, and a staged --prefix install where
 # /opt is not at the root. CHARSIU_LIB names it outright; the rest are guesses
 # in the order they are likely to be right.
@@ -232,9 +232,9 @@ done
 command -v ui_msg >/dev/null 2>&1 || { echo "charsiu-tui.sh not found" >&2; exit 1; }
 CTUI_TITLE="charsiu setup"
 
-# ⚠ --prefix / gives //opt/charsiu without this. Harmless to the kernel and
+# --prefix / gives //opt/charsiu without this. Harmless to the kernel and
 # ugly in a dry run's summary, which is the one place people read these paths.
-# ⚠ Two different needs. For BUILDING paths the trailing slash has to go, and
+# Two different needs. For BUILDING paths the trailing slash has to go, and
 # "/" trimmed to "" is exactly right, because "$PREFIX/opt/..." then gives /opt/...
 # rather than //opt/... . For SHOWING it, the empty string reads as a blank.
 PREFIX=$(printf '%s' "$PREFIX" | sed 's|/*$||')
@@ -256,7 +256,7 @@ writable "$BIN" && writable "$SBIN" && writable "$ETC" || NEEDROOT=1
 SUDO=""
 if [ "$NEEDROOT" = 1 ] && [ "$(id -u)" -ne 0 ]; then
 	SUDO=$(command -v sudo || true)
-	# ⚠ A DRY RUN WRITES NOTHING, so it has no business demanding root. This
+	# A DRY RUN WRITES NOTHING, so it has no business demanding root. This
 	# refused to even rehearse as an ordinary user, which is the one case a
 	# rehearsal is most wanted.
 	if [ -z "$SUDO" ] && [ "$DRY" = 0 ]; then
@@ -264,7 +264,7 @@ if [ "$NEEDROOT" = 1 ] && [ "$(id -u)" -ne 0 ]; then
 	fi
 	[ -z "$SUDO" ] && ui_warn "not root and no sudo: a real run would need one"
 fi
-# ⚠ EVERY MUTATION GOES THROUGH THIS. --dry-run prints the command instead of
+# EVERY MUTATION GOES THROUGH THIS. --dry-run prints the command instead of
 # running it, so the difference between a rehearsal and the real thing is one
 # branch in one place rather than a flag threaded through twenty call sites --
 # which is how a dry run ends up writing something anyway.
@@ -350,7 +350,7 @@ fi
 # THE KERNEL
 # ---------------------------------------------------------------------------
 install_kernel() {
-	# ⚠ THE ONE THING NOT TO GUESS. If this board does not boot through
+	# THE ONE THING NOT TO GUESS. If this board does not boot through
 	# extlinux, writing an extlinux.conf achieves nothing at best and
 	# confuses the next person at worst. Say so and leave the board alone.
 	# CHARSIU_BOOTDIR names it outright, for a boot partition mounted
@@ -404,7 +404,7 @@ The kernel now on this board is kept as a SECOND boot entry. The new
 one becomes the default; if it misbehaves, interrupt the boot and
 pick the old one.
 
-⚠ This rewrites $BOOTDIR/extlinux/extlinux.conf. The kernel command
+This rewrites $BOOTDIR/extlinux/extlinux.conf. The kernel command
 line already in it is carried over unchanged. root=, console= and
 the rest are board-specific and are not re-invented here." || return 1
 
@@ -431,7 +431,7 @@ the rest are board-specific and are not re-invented here." || return 1
 		fetch "$u" "$TMP/$(basename "$u")" || { ui_msg "download failed: $u"; return 1; }
 	done
 
-	# ⚠ Verify before touching /boot. A truncated Image that overwrites a
+	# Verify before touching /boot. A truncated Image that overwrites a
 	# working one is the exact failure this whole step is meant to avoid.
 	if [ -n "$SUMS" ] && command -v sha256sum >/dev/null 2>&1; then
 		( cd "$TMP" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ) \
@@ -446,7 +446,7 @@ the rest are board-specific and are not re-invented here." || return 1
 		"$BOOTDIR/extlinux/extlinux.conf")
 	[ -n "$APPEND" ] || { ui_msg "Could not read the current kernel command line. Nothing was written."; return 1; }
 
-	# ⚠ Do not clobber a good backup with a bad one. If .previous already
+	# Do not clobber a good backup with a bad one. If .previous already
 	# exists, the kernel currently in place may itself be one of ours from a
 	# previous run, so keep the ORIGINAL as the fallback.
 	if [ ! -f "$BOOTDIR/Image.previous" ] && [ -f "$BOOTDIR/Image" ]; then
@@ -541,7 +541,7 @@ fi
 # USERSPACE
 # ---------------------------------------------------------------------------
 if [ "$DOBUILD" = 1 ]; then
-	# ⚠ A DRY RUN MUST NOT STOP AT A MISSING TOOL. Finding out what is absent
+	# A DRY RUN MUST NOT STOP AT A MISSING TOOL. Finding out what is absent
 	# is most of the reason to rehearse. Dying on the first gap shows one
 	# problem where the run could have shown all of them.
 	miss=""
@@ -569,7 +569,7 @@ if [ "$DOBUILD" = 1 ]; then
 fi
 RUNBIN="$SRC/build/charsiu_run"; CHKBIN="$SRC/build/charsiu_check"
 if [ ! -x "$RUNBIN" ]; then
-	# ⚠ In a dry run the build did not happen, so the binary legitimately is
+	# In a dry run the build did not happen, so the binary legitimately is
 	# not there yet. Saying so is useful; dying is not.
 	[ "$DRY" = 1 ] && ui_info "$RUNBIN is not built yet (the build was skipped)" \
 		|| die "$RUNBIN does not exist."
@@ -584,15 +584,15 @@ for f in charsiu charsiu-get charsiu-config charsiu-doctor; do
 	as_root chmod 0755 "$SBIN/$f"
 done
 
-# ⚠ THE MODELS DIRECTORY MUST BELONG TO WHOEVER WILL FILL IT. Installed under
+# THE MODELS DIRECTORY MUST BELONG TO WHOEVER WILL FILL IT. Installed under
 # sudo it lands root-owned, and then charsiu-get, which nobody should have to
 # run as root to download a file, fails at the last step, after the download.
 OWNER="${SUDO_USER:-$(id -un)}"
 if [ "$OWNER" != root ] && id "$OWNER" >/dev/null 2>&1; then
-	# ⚠ as_root RETURNS 0 IN A DRY RUN, so a `&& ui_ok "..."` here announced
+	# as_root RETURNS 0 IN A DRY RUN, so a `&& ui_ok "..."` here announced
 	# a chown that never happened. A rehearsal that claims work it did not do
 	# is worse than no rehearsal.
-	# ⚠ `2>/dev/null` on the as_root call SWALLOWS the dry run's own notice,
+	# `2>/dev/null` on the as_root call SWALLOWS the dry run's own notice,
 	# which goes to stderr. The action then appeared in the final summary
 	# but not in the live output. Split the two cases.
 	if [ "$DRY" = 1 ]; then
@@ -622,7 +622,7 @@ fi
 
 ui_hdr "checking"
 if [ "$DRY" = 1 ]; then
-	# ⚠ the doctor is READ-ONLY, so a dry run should still run it. What it
+	# the doctor is READ-ONLY, so a dry run should still run it. What it
 	# reports is the most useful thing this rehearsal produces. It is pointed
 	# at the SOURCE tree's tools, since nothing was installed.
 	CHARSIU_CONFIG="$SRC/etc/config.ini" CHARSIU_LIB="$SRC/scripts" \
@@ -631,7 +631,7 @@ else
 	CHARSIU_CONFIG="$ETC/config.ini" "$SBIN/charsiu-doctor" || true
 fi
 
-# ⚠ A REPORT IS NOT A DEMONSTRATION. Ending on a list of ticks leaves someone
+# A REPORT IS NOT A DEMONSTRATION. Ending on a list of ticks leaves someone
 # who has waited through a build and a download with no evidence the thing
 # talks. One sentence is cheap and it is the whole point of installing it.
 if [ "$DRY" = 1 ]; then

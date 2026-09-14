@@ -27,7 +27,7 @@ of these is upstream, so the only reason they are here is that 7.2 shipped first
 
 ## Verified 2026-08-25
 
-⚠ Verified against v9, which is two revisions old. v11 carries Igor Paunovic's
+Verified against v9, which is two revisions old. v11 carries Igor Paunovic's
 clocks-by-name patch inside the series as 01/14, so there is no separate
 prerequisite step any more and the series is 14 patches, not 13. The four
 backports and their reason are unchanged.
@@ -42,6 +42,6 @@ On a clean `v7.2` checkout, in this order:
 then `drivers/accel/rocket/` and `drivers/pmdomain/rockchip/` compile with no
 errors and no warnings.
 
-⚠ `CONFIG_DRM_ACCEL_ROCKET` cannot be `y` while `CONFIG_DRM` is `m`, because it
+`CONFIG_DRM_ACCEL_ROCKET` cannot be `y` while `CONFIG_DRM` is `m`, because it
 selects `DRM_SCHED` and `DRM_GEM_SHMEM_HELPER`. Enable `DRM` first. On this rootfs a
 module is never loaded (no udev, no mdev), so `m` means the NPU does not work.

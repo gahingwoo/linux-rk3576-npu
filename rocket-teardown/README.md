@@ -3,7 +3,7 @@
 Branch `rocket-teardown` in `~/Desktop/linux-next-v8`, on the series base
 (next-20260911), NOT on `v13-prep`: both stand alone against mainline.
 
-⛔ **NOT SENT. Nothing here has gone anywhere.**
+**NOT SENT. Nothing here has gone anywhere.**
 
 ## 0001 — cancel the timeout worker before dropping the IOMMU group
 
@@ -16,14 +16,14 @@ Real, verified end to end, and **nobody has posted it**. lore searched for
 `drm_sched_fini()`. A worker that reaches `rocket_reset()` after the store
 takes `iommu_detach_group(NULL, NULL)` and `mutex_lock()` on it.
 
-⚠ The failing window is wider than "a timer fires between two statements".
+The failing window is wider than "a timer fires between two statements".
 `drm_sched_stop()` sits in front of the detach doing two `cancel_work_sync()`s
 and an uninterruptible `dma_fence_wait()` on a job still on the hardware, so a
 worker parked there is then waited for by the very
 `cancel_delayed_work_sync()` that was supposed to have stopped it, and takes
 the NULL on the way out. Trigger: sysfs unbind of a core with a job in flight.
 
-⚠ **Two things I had wrong when I briefed this, both corrected by checking:**
+**Two things I had wrong when I briefed this, both corrected by checking:**
 - **It is a NULL dereference, not a use after free.** `iommu_group_add_device()`
   holds its own reference for `dev->iommu_group`, dropped only on device
   removal, so the put takes the count 2->1 and frees nothing.
@@ -50,7 +50,7 @@ The file here is **Chaoyi's patch carried**, with his From: and his SoB, kept
 only so the branch builds and is testable. A third posting of a one line fix
 would be noise.
 
-🔑 **What IS worth sending is a reply to his thread: his `Fixes:` tag is
+**What IS worth sending is a reply to his thread: his `Fixes:` tag is
 wrong.** He cites `658ebeac3351 ("accel/rocket: Add IOCTL for BO creation")`,
 which touches Makefile, rocket_drv.[ch], rocket_gem.[ch] and the uapi header
 and does not touch `rocket_job.c` at all. Both that line and

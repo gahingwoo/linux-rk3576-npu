@@ -26,7 +26,7 @@ reference.
 import numpy as np
 
 #
-# ⚠ THE REASON IS RETURNED, NEVER SWALLOWED. Round 258 shipped this module
+# THE REASON IS RETURNED, NEVER SWALLOWED. Round 258 shipped this module
 # without the tflite flatbuffer package in the rootfs, so the import failed,
 # every call returned a bare None, and the whole round printed nothing at all:
 # no result, no error, no way to tell "not covered" from "not installed". A

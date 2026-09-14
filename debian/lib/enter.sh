@@ -33,7 +33,7 @@ mount --rbind /sys  "$ROOT/sys"
 mount --rbind /dev  "$ROOT/dev"
 mount -t tmpfs tmpfs "$ROOT/tmp"
 mount -t tmpfs tmpfs "$ROOT/run"
-# ⚠ Once the image points /etc/resolv.conf at systemd-resolved stub, a plain
+# Once the image points /etc/resolv.conf at systemd-resolved stub, a plain
 # copy writes THROUGH the symlink into a directory that does not exist in a
 # chroot, and every name lookup then fails with nothing to show for it. Put the
 # host resolver where the link actually points.

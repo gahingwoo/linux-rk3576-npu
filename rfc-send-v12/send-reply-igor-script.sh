@@ -14,13 +14,13 @@
 # directory. Nothing else in it moved, and build-reply-igor-script.sh is what
 # assembles the mail so the copy in it cannot drift from the file.
 #
-# ⚠ DRY=1 prints the headers and sends nothing. There is no other way to see
+# DRY=1 prints the headers and sends nothing. There is no other way to see
 # them: --confirm=never means git asks nobody anything.
 set -euo pipefail
 cd "$(dirname "$0")"
 M=reply-igor-script.eml
 [ -s "$M" ] || { echo "$M is missing or empty" >&2; exit 1; }
-# ⚠ THE SCRIPT HAS TO BE IN IT, whole. The cover promises a runnable file;
+# THE SCRIPT HAS TO BE IN IT, whole. The cover promises a runnable file;
 # a mail with the cover and no script, or a truncated one, posts a promise.
 grep -q '^if __name__ == "__main__":' "$M" || {
 	echo "$M does not end in the script's main guard -- the script is missing or cut" >&2
@@ -32,7 +32,7 @@ grep -q '^#!/usr/bin/env python3' "$M" || {
 cover_end=$(grep -n '^#!/usr/bin/env python3' "$M" | head -1 | cut -d: -f1)
 n=$(awk -v e="$cover_end" 'NR>4 && NR<e && length>78' "$M" | wc -l)
 [ "$n" = 0 ] || { echo "$n cover lines are over 78 columns" >&2; exit 1; }
-# ⚠ NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII: a mail with a zero-width
+# NOTHING INVISIBLE AND NOTHING OUTSIDE ASCII: a mail with a zero-width
 # character in it may not go through, and this one carries a script.
 CLEAN=$HOME/.claude/skills/unicode-format-cleaner/scripts/clean_unicode.py
 if [ -f "$CLEAN" ] && ! python3 "$CLEAN" --detect "$M" >/dev/null 2>&1; then

@@ -18,7 +18,7 @@ runtime, no hardware. Values that mesa computes from the geometry are reported
 separately rather than silently skipped, because "not compared" and "compared
 and equal" are different answers.
 
-⚠ Base addresses in a .rknn are relocation placeholders, usually zero. They are
+Base addresses in a .rknn are relocation placeholders, usually zero. They are
 listed but never counted as a mismatch.
 
 Usage: reg_audit.py [vendor.rknn] [regcmd source]

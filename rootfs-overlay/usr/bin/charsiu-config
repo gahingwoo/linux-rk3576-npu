@@ -4,7 +4,7 @@
 #
 # charsiu-config: a front end to /etc/charsiu/config.ini and the charsiu tools.
 #
-# ⚠ NO CURSES. kiln's equivalent is a whiptail TUI because kiln runs on Armbian,
+# NO CURSES. kiln's equivalent is a whiptail TUI because kiln runs on Armbian,
 # which has one. charsiu's rootfs is a minimal buildroot with no whiptail, no
 # dialog, no newt and no slang, and the board is normally driven over a
 # 1.5 Mbaud serial console where a full-screen redraw is worse than a numbered
@@ -44,7 +44,7 @@ else C_B=; C_G=; C_Y=; C_D=; C_0=; fi
 # INI: read, and write IN PLACE. Present -> replace where it is. Absent -> append
 # to the END OF ITS OWN SECTION, creating the section if there is none.
 #
-# ⚠ A naive `sed -i "s/^key =.*/key = $v/"` silently does NOTHING when the key
+# A naive `sed -i "s/^key =.*/key = $v/"` silently does NOTHING when the key
 # is missing, and corrupts the file when the value contains / or &. The value is
 # passed to awk as a VARIABLE, never interpolated into a pattern.
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ ini_set() {
 	}' "$CONF" > "$t" && mv "$t" "$CONF"
 }
 
-# ⚠ A cancelled ui_input must not silently write an empty value into the
+# A cancelled ui_input must not silently write an empty value into the
 # config. ask keeps the old value when the user backs out.
 ask() {   # ask PROMPT DEFAULT -> the answer, or DEFAULT if cancelled
 	v=$(ui_input "$1" "$2") || v="$2"
@@ -128,7 +128,7 @@ now: ${cur:-(unset)}" "$@") || return
 			[ -n "$CK" ] && "$CK" "$f"; pause ;;
 		*)
 			sel="$MODELS_DIR/$sel"
-			# ⚠ never point the config at a file the runtime cannot load
+			# never point the config at a file the runtime cannot load
 			CK=$(tool charsiu_check)
 			if [ -n "$CK" ] && ! out=$("$CK" -q "$sel" 2>&1); then
 				ui_msg "Not selected.
@@ -218,7 +218,7 @@ case "${1:-}" in
 --setup)      setup_walk; exit $? ;;
 --setup-once) [ -e "$STAMP" ] && exit 0; setup_walk; exit $? ;;
 -h|--help)
-	# ⚠ THIS WAS NOT HANDLED, so `charsiu-config --help` fell through to the
+	# THIS WAS NOT HANDLED, so `charsiu-config --help` fell through to the
 	# menu and opened a full-screen dialog. On a board whose test harness
 	# logs to the same console that is not a small thing: whiptail clears the
 	# screen, and round 381 lost its first two arms to it.
