@@ -1,0 +1,72 @@
+round 413, 2026-09-15 — the threshold I corrected was measured against the
+                        arm my own next section made faster
+
+r412 found that 448 came from a sweep whose CPU column was not the CPU arm,
+corrected it to 320, and then, 200 lines later in the same round, landed an in
+place KV ladder that made the NPU arm faster at every length the arm is on.
+Nobody re-asked the threshold. r412 §10 is a whole section about a refusal that
+had to be re-asked "the moment the thing it refuses gets faster", and the fix
+written beside it has the same defect.
+
+  board     ROCK 4D, boot 0c9923fe (the board was off overnight and came back
+            on a fresh boot; /opt/vendor and debugfs re-mounted by hand)
+  npu clk   594 MHz, governor performance
+  binary    /opt/charsiu/charsiu_run = 58d2d360d971, md5 d4b3b3d660e2, a CLEAN
+            commit. Its --version answers, which is how this round knows.
+  model     four, on the vendor's protocol: 128 token prompt, 64 new tokens
+
+=====================================================================
+1. ⛔⛔⛔ 320 HAS THE DEFECT 448 HAD, AND I SHIPPED IT KNOWING THE RULE
+---------------------------------------------------------------------
+r412's header says it in as many words:
+
+    binary  /root/charsiu_run_win, md5 28c64b1a6a27 (= /opt/charsiu/charsiu_run,
+            the r411 shipping binary; nothing was rebuilt for this section)
+
+§2's table -- 252, 302, 352, 452, the table that produced 320 -- ran on that
+binary. `charsiu_run_room`, the in place build, first appears in §7, 200 lines
+later. So 320 was derived against the ALLOCATING arm.
+
+The in place ladder only makes the NPU arm faster, and only where the arm is
+on, so the crossover moves DOWN. 320 is too high by however much the ladder
+buys at those lengths, and the arithmetic in §8/§19 of that round puts the
+saving at 302 tokens near 62 ms, which would take that row from +2.3% against
+a 2.2% spread -- level -- to roughly +5%, which clears.
+
+⛔ 1) THE RULE WAS WRITTEN DOWN IN THE SAME FILE, TWICE. `src/llama.c` says
+"If this arm gets faster again, re-measure. Do not scale this number." r412 §10
+says a justification of the form "nothing measured says otherwise" names its
+own expiry. Both were written before the ladder landed, and neither fired.
+
+🔑 2) WHAT MAKES IT INVISIBLE IS THAT THE TWO HALVES WERE RIGHT SEPARATELY.
+§2 correctly re-measured a threshold against a correctly named arm. §7
+correctly made the arm faster. Nothing in either is wrong. The defect is
+only in the ORDER, and a round that lands a speedup after a threshold has to
+re-run the threshold or say it did not.
+
+=====================================================================
+2. ⚠⚠ AND THE TASK TERM IS NOT SMALL, IT IS NOT THERE
+---------------------------------------------------------------------
+The runtime fits `us a call = A + B a task + C a MB` on every staged run and
+prints it. Two models, one boot, one binary, this round:
+
+    Qwen3-0.6B      us a call = 68 + -0.1 a task + 118.4 a MB
+    (second model)  us a call = 32 + 22.6 a task + 114.7 a MB
+
+⚠ 3) B READS -0.1 AND 22.6. That is not a noisy estimate of one quantity, it
+is a coefficient the data cannot determine: tasks and megabytes move together
+across the shapes a real model presents, so the fit splits their sum almost
+arbitrarily between them. The C term, which IS determined, reads 118.4 and
+114.7 against a shipped 110.0 and is fine.
+
+⛔ 4) SO `DEAL_US_TASK 36.8` IS WORSE THAN "FIVE TO TWELVE TIMES TOO LARGE",
+which is how it was described last night. It is a number taken from a fit that
+never determined it, and it is still steering which core every slice lands on.
+The board list already has it. What this round adds is that re-deriving it from
+the same kind of fit will not work either: the instrument that would price it
+is the one that cannot see it.
+
+⚠ 5) AND THE RUNTIME SAYS SO ITSELF, on the Qwen3 run: "that remainder is
+NEGATIVE, so the hardware path and the wall clock are counting different calls
+-- the rate above is not a fact about the hardware". The guard fired. Nobody
+had read it against the fit on the line below.
