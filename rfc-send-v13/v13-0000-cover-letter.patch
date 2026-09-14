@@ -199,6 +199,18 @@ clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to
 a dts and not to a binding, and CHECK_DTBS is clean on all 13 rk3576
 dtbs with it.
 
+Applying order, because this series lands in three trees and 14/14 is not
+safe on its own. 09 and 10 go through pmdomain, 01 to 05 and 11 and 12
+through accel, 13 and 14 through rockchip. 14/14 sets status = "okay" on
+both cores and both MMUs, so a kernel that has the DTS half and the driver
+half but not the pmdomain half powers the domain on with neither 10/14's
+reset pulse nor 09/14's settle delay and reads PC_VERSION into the async
+SError that 07 and 09 describe. That is an unbootable rock-4d, not a
+degraded feature. 14/14 depends on 09, 10, 12 and 13; the other
+intermediates are safe, since 13/14 alone leaves every node disabled, 11
+and 12 alone add no DT nodes, and 09 and 10 alone touch nothing that runs.
+Holding 14/14 a cycle is fine by me if that is easier than coordinating.
+
 Link to v12: https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/
 
 The tags:
