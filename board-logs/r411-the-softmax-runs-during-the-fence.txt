@@ -304,3 +304,54 @@ afterwards, the three models it named come back Llama 6 of 6, SmolLM2-135M
 🔑 One board job at a time, and a wait condition has to test COMPLETION. A
 concurrent job does not look like a confound in the output; it looks exactly
 like the bug being hunted.
+
+=====================================================================
+11. ⭐⭐⭐ WHAT THE THREE UNPRICED KNOBS ARE WORTH
+---------------------------------------------------------------------
+852 tokens, one boot, one binary, arms rotated, three repeats a cell, and the
+text of every arm diffed against the base arm at 24 generated tokens:
+
+    arm          TTFT ms       range     vs base   text
+    base            6355   6352..6361      1.000   8b02145bf030
+    chunk160        6787   6770..6797      1.068   ⛔ DIFFERS
+    spin200         6279   6272..6318      0.988   same
+    spin1000        6292   6277..6317      0.990   same
+    reserve2        6395   6386..6404      1.006   same
+    defer1          6029   5999..6375      0.949   same
+    all             6055   6029..6120      0.953   same
+
+🏁 22) THE DEFERRED GATHER IS WORTH 326 ms, not the 200 r408 estimated with
+this same knob before the tail scale was found.
+
+⚠ Its spread is wider than anything around it: 5999..6375 against base's
+6352..6361. The gather now runs against the hardware for memory rather than
+after it, so a chunk where the fence finishes early pays.
+
+🏁 23) AND CHARSIU_NPU_SPIN_US IS WORTH 76 ms, PRICED FOR THE FIRST TIME.
+device.c has carried it since phase 20 under "off unless asked, until phase 21
+has priced it against the arm that disables CPU_SLEEP outright", and phase 21
+never did. 200 beats 1000, and the counters say why:
+
+    200 us    6476 polls, 5258 won without blocking (81%, mean 73 us),
+              1218 fell back (mean 252 us of polling before they did)
+    1000 us   6476 polls, 5843 won (90%, mean 113 us),
+              633 fell back (mean 1145 us first)
+
+The waits the poll does not win at 200 have already polled 252 us; at 1000
+they poll four times as long for the same blocking wait at the end.
+
+⛔ 24) THE RESERVATION LOSES AT THE RIGHT SIZE TOO, by 40 ms. Section 5's
+version guessed m and reserved 2.4x the work; this one takes m from the first
+layer call and both extents from the prompt, so it asks for exactly what
+growing would have reached -- and it still loses. The plan time it removes is
+smaller than the whole-buffer syncs it lengthens. CHARSIU_ATTN_RESERVE stays 0
+and the idea is closed at both sizes.
+
+⛔⛔ 25) AND CHARSIU_PREFILL_CHUNK=160 MOVES THE TEXT. charsiu_run.c offers it
+as "worth about 9% on Qwen3 and a deployment's call until the SmolLM2 case is
+explained" -- and nobody diffed its output. Same binary, same boot, Llama at
+852 tokens: 8b02145bf030 at chunk 80 and d80c57a8bf86 at 160. It is also 6.8%
+slower here. A different chunk is a different set of matmul shapes and so a
+different summation order, which can move a token on its own; what it is not
+is a knob anybody can turn without re-checking the output. The note says so
+now.
