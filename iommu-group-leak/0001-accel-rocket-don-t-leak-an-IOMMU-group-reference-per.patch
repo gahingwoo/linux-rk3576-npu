@@ -1,0 +1,47 @@
+From 7bc76b0b14bcbf00e5a16a18231507d93c55be82 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 15 Sep 2026 08:40:56 +1200
+Subject: [PATCH] accel/rocket: don't leak an IOMMU group reference per retired
+ job
+
+rocket_job_handle_irq() detaches the core's IOMMU group when a job retires,
+and takes a fresh reference to that group in order to name it:
+
+	iommu_detach_group(NULL, iommu_group_get(core->dev));
+
+iommu_detach_group() does not consume a reference. It takes the group's mutex
+and calls __iommu_group_set_core_domain(), and that is all. So the reference
+iommu_group_get() took is never put, and one is leaked for every job that
+retires. The group's kobject then cannot reach zero, and rocket_core_fini()'s
+own iommu_group_put() no longer releases it.
+
+The group is already held for the lifetime of the core. rocket_core_init()
+takes it into core->iommu_group and rocket_core_fini() puts it. The other two
+call sites in this file use that member already -- the attach in
+rocket_job_run() and the detach in rocket_reset() -- so this one is the odd
+one out rather than a second reference somebody wanted.
+
+Use core->iommu_group here as well.
+
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_job.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index f40435505..1b4c0f38f 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -355,7 +355,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 				return;
+ 			}
+ 
+-			iommu_detach_group(NULL, iommu_group_get(core->dev));
++			iommu_detach_group(NULL, core->iommu_group);
+ 			dma_fence_signal(core->in_flight_job->done_fence);
+ 			pm_runtime_put_autosuspend(core->dev);
+ 			core->in_flight_job = NULL;
+-- 
+2.43.0
+
