@@ -6,15 +6,15 @@ Subject: [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
 only. The RK3576 carries two cores of the same RKNN block, wired up
 differently. Two extra convolution buffer clocks, two power domains per
-core, one reset rather than two, no NPU SRAM rail, and a PC_TASK_CON
-that packs the task number into sixteen bits rather than twelve.
+core, one reset where the RK3588 has two, no NPU SRAM rail, and a
+PC_TASK_CON that packs the task number into sixteen bits, not twelve.
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
 by name", carried in the series since v11 so it applies to a plain
 *** BASE HERE *** with nothing outside it to follow. It keeps his authorship
 and its four tags. Tested on a Radxa ROCK 4D.
 
-One thing changed since v12, and it is a correction rather than a fix.
+One thing changed since v12. It is a correction, not a fix.
 
 Igor Paunovic re-ran his induced-reset protocol on v12 as posted and
 found an error in his own reports, which v12's 3/14 carried. His script
@@ -33,8 +33,8 @@ to 2 ms against a 280 ms round period.
 
 What falls from 3/14: its claim that 19 August showed no manifestation on
 either arm with the oracle 48/48 throughout, and "one event in 53
-differential resets against zero in 49" as a bound. What stands: the provenance, and the
-caveat that the protocol bounds and does not prove.
+differential resets against zero in 49" as a bound. What stands: the
+provenance, and the caveat that the protocol bounds and does not prove.
 
   3/14   loses those two paragraphs. His own summary replaces them,
          quoted as he wrote it, and the caveat is the last sentence of
@@ -52,11 +52,20 @@ caveat that the protocol bounds and does not prove.
          bound but idle in his single client protocol. Nothing else in
          that patch changes.
 
-The code is byte for byte what v12 posted. No other patch changed.
+The code is byte for byte what v12 posted: all fourteen diffs hash the
+same. Two other commit messages moved, and neither changes a line of code.
+9/14 gained the answer below to Sashiko's [High], and corrected its own
+sentence about the twelve rk3576 boards that declare no domain-supply: they
+never reach a first power-on, so the dummy regulator and the dev_warn it
+described do not happen there. 13/14 corrected two numbers of its own,
+both derived from its own table: the rate is the cheaper trade by six to
+nine times and not seven to nine, and the sentence claiming boot-to-boot
+drift under 1% is gone, because twenty readings of one arm inside one boot
+span 2.5% and a two-boot comparison cannot bound drift below that.
 
-This is worth a respin rather than a note in the thread because a commit
-message is the permanent record, and v12's states something its own
-witness has retracted.
+This is worth a respin, not a note in the thread: a commit message is the
+permanent record, and v12's states something its own witness has
+retracted.
 
 Sashiko reviewed v12 on 12 September, ten mails, and nothing in v13
 answers any of it. Three findings are new:
@@ -78,8 +87,8 @@ answers any of it. Three findings are new:
         rockchip,rk3576-npu-iommu, because a driver older than the July
         2026 devm_clk_bulk_get_all change binds the fallback and enables
         two of the five clocks. That is against a binding this cover
-        calls unchanged since v9 and Acked, so it is worth saying out
-        loud rather than leaving in the thread.
+        calls unchanged since v9 and Acked, so it belongs here and not
+        only in the thread.
 
 Two of those have an answer here, neither of which needs a code change.
 
@@ -87,9 +96,11 @@ Two of those have an answer here, neither of which needs a code change.
 was added, with req_mask 0 exactly as RK3576_PD_NPU has, so
 rockchip_pd_power(pd, false) has been running at probe on every rk3588
 board and rockchip_pmu_set_idle_request() has been returning immediately
-because there is no request to make. Thirteen of the forty-nine in-tree
-rk3588 board files give that domain a domain-supply and the other
-thirty-six take the dummy regulator and the warn. If the -EINVAL half held,
+because there is no request to make. Of the forty-nine in-tree rk3588 board
+files, twenty-one enable an NPU core and declare the supply, two enable one
+with no supply and take the dummy and the warn today (quartzpro64 and
+youyeetoo-yy3588), and twenty-six enable no core at all, so ->power_on never
+runs there and nothing warns. If the -EINVAL half held,
 rockchip_pm_domain_probe() would fail on all forty-nine. The idle handshake
 lives in the child domains and both SoCs keep it.
 
@@ -107,7 +118,7 @@ completes the detached jobs with -ECANCELED rather than re-running them, so
 with an empty entity queue nothing takes a new reference and the timer
 fires cleanly, which is what the measurement above shows. The gap opens
 only when a client has a second job queued or resubmits inside 50 ms. That
-is incomplete coverage rather than a regression: the patch is still
+is incomplete coverage, not a regression: the patch is still
 strictly better than the pm_runtime_put_noidle() it replaces, which
 requested nothing at all. pm_runtime_put_sync_suspend() would close it, but
 it would run a genpd power-off and a regulator disable under job_lock;
@@ -127,8 +138,9 @@ reset, 10/14's power-on pulse never fires, and rocket_core_reset()'s own
 resets are all that run. Measured on the domain rather than on the
 device, over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D, genpd's npu
 domain took 46.8 s active and 14.2 s idle, which account for the 60.8 s
-of wall clock to within 0.2 s, and its idle-state usage count rose by 202. The domain cycles about two
-hundred times a minute under a real decode, and the pulse fires. Whether
+of wall clock to within 0.2 s, and its idle-state usage count rose by
+202. The domain cycles about two hundred times a minute under a real
+decode, and the pulse fires. Whether
 it cycles after a timed-out job is the half Sashiko is asking about, and
 that depends on the gap to the next submit. Inducing one needs a kernel
 with JOB_TIMEOUT_MS lowered and a flash, so that half is still an
@@ -151,7 +163,7 @@ Critical on 12/14.
 
   - the job completion path takes iommu_group_get(core->dev) and never
     puts it, one group reference a job, flagged on seven of the nine.
-    5/14 moves this call rather than adding or removing it, so the leak
+    5/14 moves this call without adding or removing it, so the leak
     is pre-existing but not untouched;
   - the shared IRQ handler touches registers without checking the PM
     state;
@@ -170,7 +182,7 @@ dereference, or a use after free if it read the pointer just before the
 store. It needs an unbind or a module unload with a job in flight. Moving
 the cancellation ahead of the put fixes it, and 3/14 adds a
 synchronize_irq() into that same window, so say if it should come into this
-series rather than go separately.
+series or go on its own.
 
 Still open from v9, no reply since. 9/14 does three things: it adds the
 settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
@@ -184,7 +196,7 @@ domain per core, 6/14's minItems has to change with it.
 The bindings are unchanged since v9, where dt_binding_check was clean on
 all three with dtschema 2026.6 and yamllint 1.38.0, and CHECK_DTBS was
 clean on all 13 rk3576 and all 48 rk3588 dtbs. 13/14 adds a property to
-a dts rather than to a binding, and CHECK_DTBS is clean on all 13 rk3576
+a dts and not to a binding, and CHECK_DTBS is clean on all 13 rk3576
 dtbs with it.
 
 Link to v12: https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/

@@ -49,10 +49,13 @@ steps, both of which ask 725 mV at every leakage bin, so it is inside the
 voltage a board that describes no NPU rail already provides.
 
 The trade it buys is a core against a clock, and both halves are measured.
-The rate lives in the device tree, so the two clocks cannot share a boot;
-boot-to-boot drift was measured first, by booting 594 twice, and is under
-1%. Five runs an arm, the arms alternating inside a boot, one warm-up a
-model discarded, medians of five:
+The rate lives in the device tree, so the two clocks cannot share a boot,
+which means this comparison is across boots and has to clear the noise of
+one. Twenty readings of a single arm inside one boot, nothing changed
+between them, span 2.5%; across boots it can only be worse. So the 4.0 to
+4.2% below clears that floor by under a factor of two, and the 26 to 37%
+clears it by ten. Five runs an arm, the arms alternating inside a boot,
+one warm-up a model discarded, medians of five:
 
   decode tok/s      594 MHz   786 MHz
   Llama-3.2-1B        17.85     18.60   two cores
@@ -62,7 +65,7 @@ model discarded, medians of five:
 
 Losing 192 MHz costs 4.0 to 4.2% of decode with both cores running. Losing
 a core costs 26 to 37% on the 1B model, at either clock. The rate is the
-cheaper of the two by seven to nine times.
+cheaper of the two by six to nine times.
 
 The two arms cross-check each other: the clock is worth 23% on ONE core
 against 4% on two. With both cores running the bottleneck is no longer the

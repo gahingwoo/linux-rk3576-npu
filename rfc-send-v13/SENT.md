@@ -204,9 +204,15 @@ carries need_regulator with req_mask 0, exactly as RK3576_PD_NPU does, so
 rockchip_pd_power(pd, false) has been running at probe on every rk3588 board
 since that domain was added, with the idle request skipped because there is
 none to make. Verified in tree: the macro's trailing argument is `regulator`
-and the row passes `false, true`. 13 of the 49 rk3588 board files attach a
-domain-supply; 36 take the dummy and the warn. If the -EINVAL half held,
-rockchip_pm_domain_probe() would fail on all 49.
+and the row passes `false, true`. ⛔ **The count that stood here was the
+retracted one** -- "13 of the 49 attach a domain-supply; 36 take the dummy and
+the warn" -- and it survived the withdrawal that the section near the end of
+this file records, because that sweep fixed the paragraph where the number was
+being corrected and not the one where it was being USED. Resolved through the
+includes: **21 enable a core and declare the supply, 2 enable one with no
+supply and warn today (quartzpro64, youyeetoo-yy3588), 26 enable no core at
+all.** If the -EINVAL half held, rockchip_pm_domain_probe() would fail on all
+49 regardless.
 
 ⚠ **4/14's [High] is right in its outcome and wrong in its mechanism**, and
 the cover now says both. rpm_resume() does NOT cancel a running autosuspend

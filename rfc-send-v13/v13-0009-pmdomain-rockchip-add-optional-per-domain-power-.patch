@@ -13,7 +13,7 @@ power-on.
 Give rockchip_domain_info an optional delay_us and wait for it between
 releasing idle and restoring QoS. Rename DOMAIN_M_O_R_G to
 DOMAIN_M_O_R_G_W, since the suffixes name the fields the macro sets and
-this one now also carries a wakeup delay; RK3576 is its only user, so the
+this one now also carries a settle delay; RK3576 is its only user, so the
 old spelling is not kept around.
 
 While the macro is being rewritten, give it the regulator argument that
@@ -31,7 +31,8 @@ RK3576_PD_NPU also gets need_regulator here, which makes
 rockchip_pm_add_one_domain() call rockchip_pd_power(pd, false) at probe on
 all thirteen in-tree rk3576 boards. Only rock-4d enables an NPU core, and
 it is the one that declares the supply, so on the other twelve ->power_on
-never runs and the regulator is never looked up at all. It is deliberate, and it is what the delay is for:
+never runs and the regulator is never looked up at all. It is deliberate,
+and it is what the delay is for:
 without the domain being forced off at probe, a bootloader that leaves the
 NPU powered means ->power_on is never called and neither the delay nor
 10/14's reset pulse ever runs.
@@ -44,9 +45,9 @@ because there is no request to make. Of the forty-nine in-tree rk3588 board
 files, twenty-one enable an NPU core and declare the supply, twenty-six do
 not enable one at all so ->power_on never runs for them, and two enable it
 with no supply: quartzpro64 and youyeetoo-yy3588 take the dummy regulator
-and the one line dev_warn from the regulator core today. The idle handshake lives in the child
-domains and on both SoCs they keep it: NPUTOP, NPU0 and NPU1 carry req and
-idle masks of their own.
+and the one line dev_warn from the regulator core today. The idle
+handshake lives in the child domains and on both SoCs they keep it:
+NPUTOP, NPU0 and NPU1 carry req and idle masks of their own.
 
 If that is too much for one patch, say so and it splits.
 
