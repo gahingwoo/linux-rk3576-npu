@@ -439,3 +439,48 @@ from 302 up. Not "ahead everywhere".
 ⚠ 28) DECODE DID NOT PAY FOR IT: 18.15 tok/s against 18.06 before the round
 began, peak 1448 MB against 1449. The fence poll runs there too and the
 deferred gather does not -- decode's matmuls are m = 1 and take another path.
+
+=====================================================================
+14. THE REGRESSION, BEFORE THE MERGE TO stable
+---------------------------------------------------------------------
+One board, one binary installed as /opt/charsiu/charsiu_run, md5 28c64b1a6a27,
+NPU 594 MHz read through tests/board_clk.sh.
+
+  desk suite            green: int4 packer 4096 placements, charsiu_w8_offset,
+                        patch_waddr, softmax_half to the last bit, fp16_regrow
+                        over 1584 shapes, pack_f16run over 2^32 bit patterns,
+                        pack_groups, axpy8, the corpus hashes, the probe list,
+                        and the evidence pack's own consistency checker
+  nine models           batched prompt against its own token loop: 0 differing
+  seven architectures   7/7 know the capital of France
+  gelu identity         Llama and gemma-3, CHARSIU_EXACT_GELU moves no token
+  decode                18.17 tok/s, peak 1449 MB
+  perplexity            Qwen3 0.6B on tests/corpus/long.txt, md5 checked equal
+                        on both machines: int4 87.7503, int8 44.1828, and the
+                        same file through charsiu's CPU path with no NPU
+                        requantisation 43.3981
+  vendor artefacts      three md5s re-read off the board; the .rkllm's matches
+                        what evidence section 2 recorded for it
+
+⚠ 29) TWO THINGS LOOKED LIKE FAILURES AND BOTH HAVE CONTROLS.
+
+  SmolLM2-135M answers "the capital of the United States" in arch_sanity. It
+  answers the same on the PURE CPU PATH, so it is the model and not this
+  release. It is also not one of the seven architectures; those are 7/7.
+
+  neon_control flags 2 of 7, Qwen2.5-1.5B and Qwen3-0.6B. The STABLE binaries
+  from before this round's work flag the SAME TWO with BYTE IDENTICAL text, so
+  it is the pre-existing float reordering the script's own header describes --
+  its example is Brazil 17.747465 against Germany 17.747393 -- and not this
+  release. neon_control runs with no NPU environment at all, so nothing in this
+  round could reach it.
+
+🔑 30) BOTH CONTROLS ARE THE SAME MOVE: run the thing that did not change.
+For the model it is the CPU path; for the release it is the previous build.
+Neither question could be answered from the failing run alone.
+
+⚠ 31) AND TWO OF THIS ROUND'S CHECKS COULD NOT RUN ON THE BOARD AT ALL until
+they were fixed: arch_sanity.sh and neon_control.sh both ran `make` before
+checking anything, and the board has no compiler while the desk has no models.
+A check that cannot run on the only machine with something to check is a check
+that has never run. Both now take CHARSIU_RUN and CHARSIU_RUN_SCALAR instead.
