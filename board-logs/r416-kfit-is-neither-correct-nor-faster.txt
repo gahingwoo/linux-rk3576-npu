@@ -1,0 +1,74 @@
+round 416, 2026-09-15 - KFIT was waiting for a round that says it is correct
+                        and faster, and it is neither
+
+  board     ROCK 4D, boot afe55e04 throughout, 594 MHz, boot entry 1,
+            performance governor, three readings an arm, medians.
+  desk      quality, over 511 scored positions of tests/corpus/long.txt.
+
+=====================================================================
+1. THE ARGUMENT KFIT RESTS ON IS AN int8 ARGUMENT ON AN int4 PATH
+---------------------------------------------------------------------
+npudev's paragraph over kmax_wide has said since KFIT was written:
+
+    Ungrouped ones are scaled once at the end and their K split is free:
+    acc_out sums int32 across the slices, so any split of the same K
+    gives the same accumulator.
+    Off until a board round says it is both correct and faster.
+
+Three hundred lines below it, the accumulate is commented "int4 writes
+float32, int8 the raw int32 accumulator", and the ungrouped int4 branch is
+
+    for (j...) af[s->n0 + j] += fo[j];        fo is a const float *
+
+while only the int8 branch takes const int32_t *out. Float addition is not
+associative, so a different number of slices is a different rounding. int4 is
+what ships.
+
+=====================================================================
+2. AND THE BOARD SAYS THE TEXT MOVES, WITH A SIGNATURE
+---------------------------------------------------------------------
+gemma-3-1b, three passes each way, same binary, same boot:
+
+    (KMAX 2048, KFIT 0) and (KMAX 1024, KFIT 1)  ->  "...Eiffel-tapered
+                                                      arch.  It's a
+                                                      large-scale event..."
+    (KMAX 2048, KFIT 1) and (KMAX 1024, KFIT 0)  ->  "...Eiffel-tapered
+                                                      architecture?  **The
+                                                      Eiffel-tapered..."
+
+TWO ANSWERS, AND THEY SWAP. That is a split-dependent sum, not a fault in one
+arm: KFIT and a wider KMAX move the slice count in opposite directions and
+land on each other's geometry. None of the other nine models moved, which is
+the shape of one model sitting near a token boundary rather than of gemma3
+being special.
+
+=====================================================================
+3. NOT FASTER EITHER: NINE OF TEN ARE SLOWER
+---------------------------------------------------------------------
+    gemma-4-E2B    +1.3%      the only gain
+    Qwen2.5        -0.1%      Qwen3      -0.1%
+    Phi-3.5        -0.3%      Llama Q4_0 -0.3%
+    SmolLM2-1.7B   -0.6%      Llama Q8_0 -0.7%
+    SmolLM2-135M   -0.9%
+    tinyllama      -2.9%      gemma-3-1b -3.1%
+
+So the round the paragraph was waiting for has run, and the answer is no on
+both counts. KFIT stays off and now says on stderr, when the device is int4,
+that the split can move the answer.
+
+=====================================================================
+4. AND I REPORTED +7.3% FOR IT AN HOUR EARLIER, FROM A DIFFERENT BASELINE
+---------------------------------------------------------------------
+An earlier arm of the same round read gemma-3-1b at 21.57 with KFIT on against
+20.10 with it off, and I wrote that up as a free seven percent. Both readings
+are real. They are not the same comparison: that arm pinned CHARSIU_NPU_KMAX to
+1024 by hand, and llama_auto_kmax gives gemma-3-1b 2048 -- it widens precisely
+because none of that model's K values is grouped at any candidate width, which
+is section 1 of r415. At the width the runtime actually chooses, KFIT is 3.1%
+SLOWER on that model.
+
+TWO BINARIES IS NOT THE ONLY WAY TO COMPARE TWO THINGS BY ACCIDENT. This tree
+already refuses a paired arm built from two binaries, and this was one binary
+and one boot with a pinned environment variable that the default path does not
+set. The rule that catches it is the same one: an arm has to name every knob it
+moves, including the ones it moves by pinning.
