@@ -230,3 +230,58 @@ The script now writes each binary's name to $DIR/version_all.last and syncs
 before starting it, and writes "finished cleanly" at the end so a stale line
 cannot be read as the killer. Both directions watched on the desk. The next
 time the board goes down under it, the file names the binary.
+
+=====================================================================
+9. A DISPATCH AT m=1 IS A WEIGHT READ, AND int4 IS EXACTLY HALF OF int8
+---------------------------------------------------------------------
+npu_fence_scan takes k, m and a dtype, so the surface can be walked rather
+than fitted at one point. Least squares on all eight n of each row, m=1,
+20 repeats a point, buffers allocated once.
+
+    k      int8 us/n    int4 us/n    ratio    int8 GB/s    int4 GB/s
+    1024     0.1167       0.0595     0.51        8.83         8.32
+    2048     0.2300       0.1168     0.51        8.94         8.84
+    4096     0.4370       0.2224     0.51        9.40         9.24
+
+THE SLOPE DOUBLES WHEN k DOUBLES, over a 16x range of k: int8 goes 0.0328,
+0.0618, 0.1167, 0.2300, 0.4370 for k of 256 to 4096, which is x1.89, x1.89,
+x1.97, x1.90. So the cost is the weight BYTES, k * n of them for int8 and half
+that for int4, and the rate is 8.3 to 9.4 GB/s either way.
+
+AND THE HALVING WAS AN INFERENCE UNTIL NOW. The tool's own header says every
+earlier sweep dispatched int8 and the cost model was "carried to a w4a16
+prefill by halving the weight bytes on paper". Measured, the ratio is 0.51,
+0.51, 0.51. The paper halving was right and it is no longer an assumption.
+
+WHAT THAT RATE IS. charsiu_membw on the same boot gives one CPU core 8.63
+GB/s of DRAM. A single NPU dispatch at m=1 reads its weights at 8.3 to 9.4.
+The two agree to within the spread, so a decode dispatch is at the
+single-stream memory roof for its weights, and what is left to win at m=1 is
+BYTES rather than calls.
+
+THE INTERCEPT IS NOT DETERMINED AND IS NOT QUOTED. The fits put it between 13
+and 104 us and the same k measured twice in this round gave 71.4 and 52.0. The
+line describes the wide end to 6.5% at k=4096 and 31% at k=256, which is a fit
+that describes without determining its constant. Two points always fit a line
+and eight points fit this one only where n is large.
+
+=====================================================================
+10. AND WHY PREFILL BATCHES, IN ONE SURFACE
+---------------------------------------------------------------------
+The same scan at k=1024 int8 with m moving:
+
+    m       us per n at the wide end
+     1        0.111
+     8        0.118
+    20        0.122
+    40        0.131
+    80        0.202
+
+EIGHTY TIMES THE ROWS FOR 1.8 TIMES THE COST. The weights are read once for
+the whole batch, so everything above m=1 is nearly free per row: 0.0025 us a
+channel a row at m=80 against 0.111 at m=1, a factor of 44.
+
+That is the same fact as "prefill batches and decode cannot", measured as one
+surface instead of inferred from two separate rounds. It also says where the
+batched path stops paying: the slope is flat from m=1 to m=40 and then jumps
+by half at m=80, so the widest chunk is not free.
