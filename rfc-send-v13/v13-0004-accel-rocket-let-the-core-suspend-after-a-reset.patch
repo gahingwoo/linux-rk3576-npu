@@ -1,4 +1,4 @@
-From 86207c317efe465b457bf36bc16d71a90751c9af Mon Sep 17 00:00:00 2001
+From 3057ed9b84e8d79946224b1fc8032433f5f26b26 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v13 04/14] accel/rocket: let the core suspend after a reset
@@ -46,10 +46,10 @@ Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced 
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 0be8db391..b588049aa 100644
+index dfe9135d8..2a0b8af6f 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -421,12 +421,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -437,12 +437,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  
  	/*
  	 * No handler is running now, but we might still have stuck jobs. Let's

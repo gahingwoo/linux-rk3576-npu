@@ -40,7 +40,9 @@ TREE=${TREE:-$HOME/Desktop/linux-next-v8}
 # `git fetch --depth 1 origin tag next-YYYYMMDD` first; bumping BASE alone
 # gets you "fatal: bad revision".
 #
-BRANCH=${BRANCH:-v13-prep}
+# v13-prep-914 is v13-prep rebased onto next-20260914 with 3/14 amended: the
+# mask and clear moved under job_lock. It is the branch the board ran.
+BRANCH=${BRANCH:-v13-prep-914}
 #
 # AND THE BASE IS v12's. v13 must not go out on a tag three days older than
 # the day it is sent: the cover says "applies to a plain next-YYYYMMDD" and
@@ -51,7 +53,7 @@ BRANCH=${BRANCH:-v13-prep}
 #
 # and then set BASE. The check below refuses while BASE is still v12's.
 #
-BASE=${BASE:-next-20260911}
+BASE=${BASE:-next-20260914}
 if [ "$BASE" = next-20260911 ] && [ "${ALLOW_V12_BASE:-0}" != 1 ]; then
 	echo "BASE is still v12's next-20260911. Refresh the base (see above)" >&2
 	echo "or set ALLOW_V12_BASE=1 if sending on it is deliberate." >&2

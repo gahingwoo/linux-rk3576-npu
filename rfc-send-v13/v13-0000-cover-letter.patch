@@ -1,6 +1,6 @@
-From ac777044db3b484712990cec727d28eee1a38b64 Mon Sep 17 00:00:00 2001
+From da87f6cd48e3a12c69a6abb12ea2491c1f41ae12 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Mon, 14 Sep 2026 23:36:55 +1200
+Date: Tue, 15 Sep 2026 22:43:28 +1200
 Subject: [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -11,10 +11,13 @@ PC_TASK_CON that packs the task number into sixteen bits, not twelve.
 
 1/14 is Igor Paunovic's "[PATCH v2] accel/rocket: request the core clocks
 by name", carried in the series since v11 so it applies to a plain
-*** BASE HERE *** with nothing outside it to follow. It keeps his authorship
-and its four tags. Tested on a Radxa ROCK 4D.
+next-20260914 with nothing outside it to follow. It keeps his authorship
+and its four tags, which name RK3588 boards. Everything else here was
+tested on a Radxa ROCK 4D.
 
-One thing changed since v12. It is a correction, not a fix.
+Two things changed since v12: a correction to what 3/14 CLAIMS, and a fix to
+what 3/14 DOES. The first is why this respin exists; the second is a review
+finding on the version I was about to send.
 
 Igor Paunovic re-ran his induced-reset protocol on v12 as posted and
 found an error in his own reports, which v12's 3/14 carried. His script
@@ -23,24 +26,18 @@ it, and his summaries scored only the one inference after the forced
 autosuspend. Aggregated, the constant-0x80 result is in the rounds of
 nearly every run, on every arm, on all three dates.
 
-So the all-0x80 buffer is not a differential signal. rocket_reset()
-calls drm_sched_stop(), drm_sched_start() then completes the detached
-jobs with -ECANCELED, and PREP_BO drops the fence error, so that buffer
-is what a job cancelled by the reset looks like from userspace whatever
-made it miss its deadline. His kprobe on drm_sched_fence_finished() is
-the direct witness: two cancellations, two all-0x80 inferences, matched
-to 2 ms against a 280 ms round period.
+So the all-0x80 buffer is not a differential signal: it is what a job
+cancelled by the reset looks like from userspace, whatever made it miss its
+deadline. 3/14 says why, from the code, and his kprobe on
+drm_sched_fence_finished() is the direct witness.
 
-What falls from 3/14: its claim that 19 August showed no manifestation on
-either arm with the oracle 48/48 throughout, and "one event in 53
-differential resets against zero in 49" as a bound. What stands: the
-provenance, and the caveat that the protocol bounds and does not prove.
-
-  3/14   loses those two paragraphs. His own summary replaces them,
-         quoted as he wrote it, and the caveat is the last sentence of
-         the quote so that "it" has its referent. One paragraph after
-         it says what the all-0x80 buffer is, from the code. His
-         2026-09-12 message is a third Link.
+  3/14   loses the claim that 19 August showed no manifestation on either
+         arm with the oracle 48/48 throughout, and "one event in 53
+         differential resets against zero in 49" as a bound. His own
+         summary replaces them, quoted as he wrote it, with the caveat
+         that the protocol bounds and does not prove as the last sentence
+         of the quote so that "it" has its referent. His 2026-09-12
+         message is a third Link.
 
   3/14   drops "differential base" from its Tested-by comment, and 2/14
          gains "induced reset, JOB_TIMEOUT_MS=2". 4/14 already read
@@ -52,23 +49,48 @@ provenance, and the caveat that the protocol bounds and does not prove.
          bound but idle in his single client protocol. Nothing else in
          that patch changes.
 
-The code is byte for byte what v12 posted: all fourteen diffs hash the
-same. Two other commit messages moved, and neither changes a line of code.
+Thirteen of the fourteen diffs are byte for byte what v12 posted. 3/14's is
+not: it is the one code change, four lines of lock scope, described below.
+Two further commit messages moved and neither changes a line of code.
 9/14 gained the answer below to Sashiko's [High], and corrected its own
 sentence about the twelve rk3576 boards that declare no domain-supply: they
 never reach a first power-on, so the dummy regulator and the dev_warn it
-described do not happen there. 13/14 corrected two numbers of its own,
-both derived from its own table: the rate is the cheaper trade by six to
-nine times and not seven to nine, and the sentence claiming boot-to-boot
-drift under 1% is gone, because twenty readings of one arm inside one boot
-span 2.5% and a two-boot comparison cannot bound drift below that.
+described do not happen there. 13/14 corrected one number of its own,
+derived from its own table, and dropped a claim about boot-to-boot drift
+that one boot's own spread cannot support.
 
 This is worth a respin, not a note in the thread: a commit message is the
 permanent record, and v12's states something its own witness has
 retracted.
 
-Sashiko reviewed v12 on 12 September, ten mails, and nothing in v13
-answers any of it. Three findings are new:
+And the code change, which is 3/14's own doing. That patch adds two PC
+register writes to rocket_reset() -- masking INTERRUPT_MASK and clearing the
+raw status before synchronize_irq() -- and in v12 they sat outside job_lock.
+rocket_job_hw_submit() arms the same register and always runs under that
+lock; reset.pending is set in rocket_job_timedout() without it and read in
+hw_submit() with it, and both are plain atomics. So a submit that has
+already passed its reset.pending check can re-arm the mask after the reset
+clears it, leaving the block running a task with its interrupt live while
+synchronize_irq() fences a handler that has already finished. The next
+completion then stops a task that has only just started, which is the
+failure 2/14 exists to prevent -- on the other register. In v13 the mask and
+the clear are inside a scoped_guard(mutex, &core->job_lock); the
+synchronize_irq() stays outside it, where it has to be.
+
+It needs a multi-task job, so hw_submit() is running from the IRQ thread
+rather than the scheduler thread and drm_sched_stop() does not fence it.
+
+THIS CHANGE POSTDATES IGOR PAUNOVIC'S Tested-by ON 3/14. His runs were
+against the v12 form, outside the lock. The tag is kept because the path and
+the protocol are the same and the change only narrows when the two writes
+may happen, but say if you would rather it were dropped until he has run the
+new one.
+
+Sashiko reviewed v12 on 12 September, ten mails. No code in v13 answers any
+of it. Three findings are new; the fourth below, on 8/14, is not, and is here
+because it lands on a binding this cover calls Acked and unchanged. The
+answers to all four are arguments rather than changes. The one code change
+in this version came from a different review, and is the next section:
 
   4/14  [High] the runtime PM put is asynchronous, and drm_sched_start()
         at the end of rocket_reset() lets the next job's
@@ -90,7 +112,10 @@ answers any of it. Three findings are new:
         calls unchanged since v9 and Acked, so it belongs here and not
         only in the thread.
 
-Two of those have an answer here, neither of which needs a code change.
+All four have an answer below. Three of them are reasons the finding does
+not stand, one of those being a reason not to make the change suggested.
+The fourth, on 4/14, is incomplete coverage rather than a regression, and
+the change that would close it is offered there for you to choose.
 
 9/14's is in the patch. RK3588_PD_NPU has carried need_regulator since it
 was added, with req_mask 0 exactly as RK3576_PD_NPU has, so
@@ -126,25 +151,40 @@ latching in_flight_job inside the guard and doing the synchronous put after
 it would be cleaner. Say which you would rather have and it goes in the
 next version.
 
-8/14 and the Medium on 9/14 are not answered here.
+8/14's [High] does not stand, and acting on it would take the series with
+it. rk_iommu_dt_ids[] has two entries, rockchip,iommu and
+rockchip,rk3568-iommu, and rockchip,rk3576-iommu and rockchip,rk3588-iommu
+already bind only through that fallback: dropping it leaves the NPU with no
+IOMMU and 12/14 to 14/14 dead. The premise is right, in that before
+841363ebb508 the driver took only aclk and iface by name. The conclusion is
+not. Every MMIO site in rockchip-iommu.c sits behind
+pm_runtime_get_if_in_use() except rk_iommu_suspend() and rk_iommu_resume(),
+which are the runtime PM callbacks themselves and run only on a resume. On
+such a kernel the device never resumes,
+because the only thing that could wake it is the device link from its master
+and the master compatible rockchip,rk3576-rknn-core is added by 12/14 of this
+series. 841363ebb508's own message says writes to DTE_ADDR are silently
+dropped until the extra clocks run, and reads work: not the hang described.
+121 in-tree bindings have this shape, a fallback plus a compatible-gated
+clock count, arm,mali-bifrost being the closest.
 
-Still open from v11, and the measurement below is the half of it that
-could be measured.
+9/14's [Medium] does not stand either. need_regulator exists only in
+pm-domains.c and has two documented meanings there, both pre-existing, and
+the dev_warn it names is a one-line warning from the regulator core in
+->power_on, not at the probe-time power-off.
 
-Sashiko raised one thing on 4/14 that an argument does not settle.
-pm_runtime_put_autosuspend() is asynchronous with a 50 ms delay, so on a
-workload whose submit gap is shorter the domain does not cycle after a
-reset, 10/14's power-on pulse never fires, and rocket_core_reset()'s own
-resets are all that run. Measured on the domain rather than on the
-device, over one 60.8 s decode of Phi-3.5-mini on a ROCK 4D, genpd's npu
-domain took 46.8 s active and 14.2 s idle, which account for the 60.8 s
-of wall clock to within 0.2 s, and its idle-state usage count rose by
-202. The domain cycles about two hundred times a minute under a real
-decode, and the pulse fires. Whether
-it cycles after a timed-out job is the half Sashiko is asking about, and
-that depends on the gap to the next submit. Inducing one needs a kernel
-with JOB_TIMEOUT_MS lowered and a flash, so that half is still an
-argument rather than a measurement.
+Still open from v11, and the measurement below is the half of it that could
+be measured. pm_runtime_put_autosuspend() is asynchronous with a 50 ms
+delay, so on a workload whose submit gap is shorter the domain does not
+cycle after a reset, 10/14's power-on pulse never fires, and
+rocket_core_reset()'s own resets are all that run. Measured on the domain
+rather than on the device, over one 60.8 s decode of Phi-3.5-mini on a ROCK
+4D, genpd's npu domain took 46.8 s active and 14.2 s idle, accounting for
+the wall clock to within 0.2 s, and its idle-state usage count rose by 202.
+The domain cycles about two hundred times a minute under a real decode, and
+the pulse fires. Whether it cycles after a timed-out job depends on the gap
+to the next submit, and inducing one needs a kernel with JOB_TIMEOUT_MS
+lowered and a flash, so that half is still an argument.
 
 5/14 moves the iommu_detach_group(NULL, iommu_group_get(core->dev)) line
 out of the IRQ handler and into rocket_job_next_locked().
@@ -154,15 +194,14 @@ carries Fixes: 0810d5ad88a1, which is the tag on our 2/14 and 4/14; our
 5/14 carries no Fixes tag at all. Whichever lands first the other
 conflicts; say which you would rather take.
 
-Findings Sashiko labelled pre-existing, for Tomeu. These five recur. The
-count is from the v11 round, nine mails and thirteen distinct findings,
-and the one not listed worth naming is a 64-bit DMA address truncated to
-32 bits, which faults the IOMMU above 4 GB. The v12 round drew ten mails,
-in which the iommu_group leak appears in four and num_cores was raised to
-Critical on 12/14.
+Findings Sashiko labelled pre-existing, for Tomeu. These five recur across
+both rounds, and num_cores was raised to Critical on 12/14 in the v12 one.
+One not in the list is worth naming on its own: a 64-bit DMA address
+truncated to 32 bits, which faults the IOMMU above 4 GB.
 
   - the job completion path takes iommu_group_get(core->dev) and never
-    puts it, one group reference a job, flagged on seven of the nine.
+    puts it, one group reference a job, flagged on seven of the nine
+    mails the v11 round drew.
     5/14 moves this call without adding or removing it, so the leak
     is pre-existing but not untouched;
   - the shared IRQ handler touches registers without checking the PM
@@ -172,17 +211,14 @@ Critical on 12/14.
   - rdev is leaked through devres on probe deferral.
 
 One more, not from Sashiko and not touched by this series, found while
-checking 3/14's reasoning about rocket_core_fini() racing rocket_reset().
-rocket_core_fini() does iommu_group_put(core->iommu_group) and sets the
-pointer to NULL BEFORE rocket_job_fini(), and rocket_job_fini() is what
-cancels the timeout worker, through drm_sched_fini(). A timeout firing in
-that window reaches rocket_reset(), which does
-iommu_detach_group(NULL, core->iommu_group) on the stored pointer: a NULL
-dereference, or a use after free if it read the pointer just before the
-store. It needs an unbind or a module unload with a job in flight. Moving
-the cancellation ahead of the put fixes it, and 3/14 adds a
-synchronize_irq() into that same window, so say if it should come into this
-series or go on its own.
+checking 3/14's reasoning. rocket_core_fini() puts core->iommu_group and
+NULLs it BEFORE rocket_job_fini(), which is what cancels the timeout worker
+through drm_sched_fini(). A timeout in that window reaches
+rocket_reset()'s iommu_detach_group(NULL, core->iommu_group) on the stored
+pointer: a NULL dereference, or a use after free if it read the pointer
+just before the store. It needs an unbind or a module unload with a job in
+flight. Moving the cancellation ahead of the put fixes it, and 3/14 adds a
+synchronize_irq() into that same window.
 
 Still open from v9, no reply since. 9/14 does three things: it adds the
 settle delay, renames a macro, and gives RK3576_PD_NPU a regulator,
@@ -196,24 +232,39 @@ domain per core, 6/14's minItems has to change with it.
 The bindings are unchanged since v9 and both checks were re-run for v13
 rather than quoted from then. dt-doc-validate and yamllint are clean on
 all three, with dtschema 2026.6 and yamllint 1.38.0. CHECK_DTBS was run
-from scratch over every rk3576 and rk3588 target the Makefile lists, 14
-and 58, and the only complaint is on rk3588-rock-5b-pcie-ep: a
+from scratch over every rk3576 and rk3588 device tree the Makefile lists, 15
+and 59, and the only complaint is on rk3588-rock-5b-pcie-ep: a
 vpcie3v3-supply that rockchip,rk3588-pcie-ep does not allow. That one is
 present at the base commit with none of this series applied, and nothing
 here touches an rk3588 dts. 13/14 adds a property to a dts and not to a
-binding, and it is inside the 14.
+binding, and rock-4d is among those targets.
 
 Applying order, because this series lands in three trees and 14/14 is not
 safe on its own. 09 and 10 go through pmdomain, 01 to 05 and 11 and 12
-through accel, 13 and 14 through rockchip. 14/14 sets status = "okay" on
+through accel, 13 and 14 through rockchip, and 06, 07 and 08 are bindings
+that can go with whichever tree takes the code they describe. 14/14 sets status = "okay" on
 both cores and both MMUs, so a kernel that has the DTS half and the driver
 half but not the pmdomain half powers the domain on with neither 10/14's
 reset pulse nor 09/14's settle delay and reads PC_VERSION into the async
 SError that 07 and 09 describe. That is an unbootable rock-4d, not a
 degraded feature. 14/14 depends on 09, 10, 12 and 13; the other
 intermediates are safe, since 13/14 alone leaves every node disabled, 11
-and 12 alone add no DT nodes, and 09 and 10 alone touch nothing that runs.
+and 12 alone add no DT nodes, and 10 alone is inert because no in-tree
+power-domain node carries resets until 13/14. 09 alone is the one that does
+something: giving RK3576_PD_NPU need_regulator makes
+rockchip_pm_add_one_domain() power that domain off at probe on all thirteen
+in-tree rk3576 boards, with or without the rest of the series. 09/14 argues
+that is deliberate and why; it is not a state nothing reaches.
 Holding 14/14 a cycle is fine by me if that is easier than coordinating.
+
+An index of what this series needs decided, each argued where it is raised:
+
+  4/14   the shape of the fix, if you want one
+  5/14   ours or ZhaoJinming's; whichever lands first the other conflicts
+  9/14   whether it splits, and the macro suffix scheme it asks about
+  13/14  both NPU domains per core, as tested, or one
+  --     the rocket_core_fini() ordering bug: here or on its own
+  14/14  hold it a cycle, or coordinate the three trees
 
 Link to v12: https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/
 
@@ -253,20 +304,20 @@ Jiaxing Hu (13):
 
  .../bindings/iommu/rockchip,iommu.yaml        |  28 ++++
  .../npu/rockchip,rk3588-rknn-core.yaml        |  47 +++++-
- .../power/rockchip,power-controller.yaml      |   8 ++
+ .../power/rockchip,power-controller.yaml      |   8 +
  .../boot/dts/rockchip/rk3576-rock-4d.dts      |  22 +++
- arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 ++++++++++-
- drivers/accel/rocket/rocket_core.c            |  32 ++++-
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 +++++++++-
+ drivers/accel/rocket/rocket_core.c            |  32 +++-
  drivers/accel/rocket/rocket_core.h            |  11 +-
  drivers/accel/rocket/rocket_device.c          |   7 +-
- drivers/accel/rocket/rocket_drv.c             |  42 +++++-
+ drivers/accel/rocket/rocket_drv.c             |  42 ++++-
  drivers/accel/rocket/rocket_drv.h             |   2 +
- drivers/accel/rocket/rocket_job.c             | 135 +++++++++++++++---
- drivers/pmdomain/rockchip/pm-domains.c        |  83 ++++++++---
- 12 files changed, 440 insertions(+), 63 deletions(-)
+ drivers/accel/rocket/rocket_job.c             | 151 +++++++++++++++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  83 +++++++---
+ 12 files changed, 456 insertions(+), 63 deletions(-)
 
 
-base-commit: 68142f986ff04b2b70b31db00f719bf690f64a9a
+base-commit: 1a1de54f7369cd2b5bac0f265910e60ad3a6b4c3
 -- 
 2.43.0
 

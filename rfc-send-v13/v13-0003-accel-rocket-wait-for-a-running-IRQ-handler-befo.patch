@@ -1,4 +1,4 @@
-From b8f7dc4fced96368d9b46f2daa363ffe5a505ce4 Mon Sep 17 00:00:00 2001
+From a91bef341af739d33f5ceeb9f96b2f746a7bc00b Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 22:53:32 +1200
 Subject: [PATCH v13 03/14] accel/rocket: wait for a running IRQ handler before
@@ -30,6 +30,18 @@ hw_submit() on every submit and cleared only by the hardirq, so on an
 ordinary timeout it is still live and a completion can arrive after
 synchronize_irq() returns. Nothing is lost by clearing it, since the next
 submit arms it again.
+
+That mask write goes UNDER job_lock, though the sync does not.
+rocket_job_hw_submit() arms the same register and always runs under that
+lock, while reset.pending is set here without it and read there with it, so
+a submit that has already passed its check can re-arm the mask after this
+clears it. The block is then left running a task with its interrupt live
+while synchronize_irq() fences a handler that has already finished, which
+is the same shape of race the previous patch closes for OPERATION_ENABLE.
+pm_runtime_get_if_active() takes a reference on an already-active device
+without invoking a callback, and pm_runtime_put_autosuspend() is
+asynchronous, so holding job_lock across them cannot re-enter this driver's
+runtime PM callbacks.
 
 That write is the first register access this function has ever made, and it
 is guarded, because the function holds no runtime PM reference of its own.
@@ -94,14 +106,14 @@ Suggested-by: Igor Paunovic <royalnet026@gmail.com>
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
 ---
- drivers/accel/rocket/rocket_job.c | 49 +++++++++++++++++++++++++++++--
- 1 file changed, 46 insertions(+), 3 deletions(-)
+ drivers/accel/rocket/rocket_job.c | 65 +++++++++++++++++++++++++++++--
+ 1 file changed, 62 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 575945015..0be8db391 100644
+index 575945015..dfe9135d8 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -377,9 +377,52 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+@@ -377,9 +377,68 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
  	drm_sched_stop(&core->sched, bad);
  
  	/*
@@ -135,11 +147,27 @@ index 575945015..0be8db391 100644
 +	 * rocket_core_reset(), and the hardirq decides on raw status alone, so a
 +	 * fault from the IOMMU that shares this line would wake the thread again
 +	 * and what the comment below asserts would stop being true.
++	 *
++	 * UNDER job_lock, because rocket_job_hw_submit() arms this same
++	 * register and always runs under that lock. reset.pending is set here
++	 * without the lock and read there with it, so a submit that has already
++	 * passed its check can re-arm the mask after this clears it, and then
++	 * the synchronize_irq() below fences a handler that is no longer the
++	 * one that matters: the block is left running a task with its
++	 * interrupt live. That is the same race the previous patch took the
++	 * completion writes under this lock to close, on the other register.
++	 *
++	 * pm_runtime_get_if_active() does not invoke a callback -- it only
++	 * takes a reference on an already-active device -- and
++	 * pm_runtime_put_autosuspend() is asynchronous, so neither can re-enter
++	 * this driver's runtime PM callbacks while the lock is held.
 +	 */
-+	if (pm_runtime_get_if_active(core->dev) > 0) {
-+		rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
-+		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
-+		pm_runtime_put_autosuspend(core->dev);
++	scoped_guard(mutex, &core->job_lock) {
++		if (pm_runtime_get_if_active(core->dev) > 0) {
++			rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
++			rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
++			pm_runtime_put_autosuspend(core->dev);
++		}
 +	}
 +
 +	/*

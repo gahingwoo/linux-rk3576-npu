@@ -65,7 +65,43 @@ and this mail does not reopen it. The 0x80 mechanism is offered as
 corroboration from RK3576, one paragraph, because he wrote "exactly as you
 described for RK3576".
 
-## v13 itself — PREPARED, **NOT SENT** (2026-09-14)
+## v13 -- SENT 2026-09-15, 15 messages, all 250
+
+Message-ID `20260915104328.45901-1-gahing@gahingwoo.com`,
+<https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/>
+`base-commit: 1a1de54f7369cd2b5bac0f265910e60ad3a6b4c3` (next-20260914),
+branch `v13-prep-914`. These .patch files are a record now and must not be
+edited.
+
+**IT WENT OUT WITH ONE CODE CHANGE, WHICH v12 DID NOT HAVE.** A review of the
+prepared series found 3/14's two new PC register writes -- masking
+INTERRUPT_MASK and clearing the raw status before synchronize_irq() -- sitting
+OUTSIDE job_lock, while rocket_job_hw_submit() arms the same register and
+always runs under it. reset.pending is set in rocket_job_timedout() without
+the lock and read in hw_submit() with it, both plain atomics, so a submit that
+has already passed its check can re-arm the mask after the reset clears it.
+They are inside a scoped_guard(mutex, &core->job_lock) now; synchronize_irq()
+stays outside, where it has to be. Four lines of scope, verified as the only
+content difference from the reviewed series.
+
+**The base moved to next-20260914 and the baseline was re-run** through
+rfc-send-v13/baseline.sh, which is that baseline as a script rather than as
+somebody's shell history: 14 commits each build both touched subsystems, W=1
+warning free, dt_binding_check clean on all three bindings, 74 rk3576/rk3588
+device trees checked with one complaint -- the pre-existing
+rk3588-rock-5b-pcie-ep vpcie3v3-supply.
+
+**What the board says and does not say.** Built and run on the ROCK 4D: both
+NPU cores bind, decode runs, nothing complains. It does NOT verify the race
+the fix closes -- that needs rocket_reset() to run at high frequency, and
+under JOB_TIMEOUT_MS=2 this board takes the PMIC's I2C down
+(`rk3x-i2c 2ac40000.i2c: irq in STATE_IDLE`), which fails a big-core voltage
+transition with -ETIMEDOUT and leaves two CPUs not answering an NMI. That was
+bisected against a clean next-20260914 and against the rail change alone, and
+it is NOT in the cover. The cover says the fix is an argument, and that the
+change postdates Igor Paunovic's Tested-by.
+
+## v13 as prepared -- the earlier record (2026-09-14)
 
 `v13-0000..0014`, regenerated from `v13-prep` in `~/Desktop/linux-next-v8`.
 `send-v13.sh` refuses twice over, on purpose:
