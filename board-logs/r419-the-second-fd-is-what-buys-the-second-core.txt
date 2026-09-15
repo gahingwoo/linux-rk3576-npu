@@ -285,3 +285,56 @@ That is the same fact as "prefill batches and decode cannot", measured as one
 surface instead of inferred from two separate rounds. It also says where the
 batched path stops paying: the slope is flat from m=1 to m=40 and then jumps
 by half at m=80, so the widest chunk is not free.
+
+=====================================================================
+11. A VARIABLE SPELT WITH A CYRILLIC LETTER, AND A CLEANUP THAT ATE A TEST
+---------------------------------------------------------------------
+Sweeping the tree for glyphs turned up two things that are not decoration.
+
+src/npuquant.c's w4clip search declared `double beste = -1.0` with a CYRILLIC
+SMALL LETTER IE where the final e should be, and used the same spelling in all
+three uses. It built, it ran, and it was correct. What it was not was
+findable: `grep beste` returns nothing, `grep best` shows a name that looks
+ASCII, and retyping it gives a different identifier. It sits beside `bestd`.
+
+tools/check_ascii.py is the rule made to run. A non-ASCII character inside a
+comment or a string is usually DATA that has to stay -- tokenizer.c explains
+SentencePiece's U+2581 and cannot do it in ASCII, npuquant.c quotes a model's
+own garbled output -- so the rule is not "no non-ASCII in the file", it is
+"none in the CODE", which needs the comments and strings parsed rather than
+grepped around. Eight self-test cases including an escaped quote followed by
+code and a comment opener inside a string. In `make test`, 72 files clean.
+
+AND THE SECOND ONE IS MINE. Commit 5051745, "strip every emoji from the tree",
+took a U+2713 and a U+1F642 out of tokenizer_roundtrip's unicode case. Those
+were not decoration: they were the three and four byte UTF-8 the round trip
+existed to cover. What was left said "unicode: <CJK> <accented> emoji " -- a
+test input naming a case it had stopped testing, which is this project's
+oldest fault wearing a new hat and I wrote it while enforcing a rule.
+
+Restored as hex escapes so the source stays ASCII and the bytes are unchanged:
+11 tokens to 14, round trips.
+
+THE REST OF THAT COMMIT IS CLEAN AND THAT WAS CHECKED RATHER THAN ASSUMED. All
+257 other non-ASCII removals in its code files are warning prefixes on messages
+whose text did not change. It touched no md5, no corpus bytes, and
+corpus_fixed.sh still reports 0 of 4 files changed.
+
+=====================================================================
+12. THE RUNTIME'S OWN COUNTERS AGREE WITH SECTION 9
+---------------------------------------------------------------------
+A decode with CHARSIU_STAGES on Llama-3.2-1B, same boot, prints its own fit:
+
+    us a call = 24 + 22.2 a task + 116.1 a MB (both on the busier core), so of
+    2652 ms in the hardware path 98 ms is per call, 251 ms is per task and
+    2303 ms is the weights at 17.44 GB/s across 2 cores
+    13% of the DECODE hardware path is dispatch rather than bytes
+
+116.1 us a MB is 8.6 GB/s on one core. Section 9's controlled sweep, with the
+buffers held still and only n moving, gives 8.3 to 9.4 GB/s. Two instruments
+that share no code path agree, so the rate is the board's and not either
+tool's.
+
+THE STAGE TABLE IS ON STDERR. It is not in the summary line, and a round that
+drops stderr gets a decode with no accounting and no indication that there was
+any to have.
