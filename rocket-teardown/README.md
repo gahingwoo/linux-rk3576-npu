@@ -1,15 +1,20 @@
 # rocket teardown: one patch to send, one that is already on the list twice
 
-Branch `rocket-teardown` in `~/Desktop/linux-next-v8`, on the series base
-(next-20260911), NOT on `v13-prep`: both stand alone against mainline.
+Branch `rocket-teardown` in `~/Desktop/linux-next-v8`, on next-20260911, which
+was the series base when this was written; v13 went out on next-20260914. It is
+NOT on `v13-prep`: both patches stand alone against mainline.
 
-**NOT SENT. Nothing here has gone anywhere.**
+**NOT SENT. Neither patch has gone anywhere.** What HAS gone out is a
+description: 0001's bug is in v13's cover (2026-09-15) as a pre-existing finding
+for Tomeu Vizoso, named with the reasoning and without a patch, because 3/14 adds
+a `synchronize_irq()` into the same window.
 
 ## 0001 — cancel the timeout worker before dropping the IOMMU group
 
-Real, verified end to end, and **nobody has posted it**. lore searched for
-`b:"rocket_core_fini"`, `b:"rocket_job_fini"` since June and every
-`s:"accel/rocket"` subject this year.
+Real, verified end to end, and **nobody has posted a patch for it**. lore
+searched for `b:"rocket_core_fini"`, `b:"rocket_job_fini"` since June and every
+`s:"accel/rocket"` subject this year. v13's cover describes the bug but carries
+no fix for it.
 
 `rocket_core_fini()` clears `core->iommu_group` and only then calls
 `rocket_job_fini()`, which is what cancels the timeout worker through
@@ -38,13 +43,14 @@ the NULL on the way out. Trigger: sysfs unbind of a core with a job in flight.
 The one line fix is correct and it is **already on the list twice**:
 
 - Chaoyi Chen, `[PATCH 3/4] accel/rocket: Fix the extra iommu_group_get call
-  in rocket_job_handle_irq`, 2026-08-14, standalone, still unapplied
+  in rocket_job_handle_irq`, 2026-08-14, standalone, still unapplied as of
+  2026-09-16 (linux-next carries no accel/rocket commit newer than 2026-08-11)
   https://lore.kernel.org/all/20260814022453.437-4-kernel@airkyi.com/
 - ZhaoJinming, `[PATCH v3..v6 2/2]`, 2026-06, bundled with runtime-PM guards
   around the IRQ handler, which is what stalled it
 
-Igor Paunovic offered on 2026-09-09, five days ago and still unanswered, to
-test a standalone respin or post it himself with Zhao as author.
+Igor Paunovic offered on 2026-09-09 to test a standalone respin or post it
+himself with Zhao as author. Still unanswered on 2026-09-16.
 
 The file here is **Chaoyi's patch carried**, with his From: and his SoB, kept
 only so the branch builds and is testable. A third posting of a one line fix
@@ -56,7 +62,7 @@ which touches Makefile, rocket_drv.[ch], rocket_gem.[ch] and the uapi header
 and does not touch `rocket_job.c` at all. Both that line and
 `rocket_job_handle_irq()` came from `0810d5ad88a1`. A corrected tag plus a
 Tested-by from this board is worth more than another copy, and it also settles
-the conflict v13's cover already raises with Tomeu.
+the conflict v13's cover raises with Tomeu, which is now on the list.
 
 ## A window neither patch closes
 
