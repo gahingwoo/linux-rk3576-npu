@@ -1,0 +1,232 @@
+round 419, 2026-09-15 - the second fd is what buys the second core, and four
+                        probes that had never been run
+
+r418 found that sixteen of the eighteen probe tools the installer claims to
+ship were not on the board, and deployed them. None had ever been run. Four of
+them ran in this round and three of the four answer a question that was open
+in the tree. The fourth corrected a number that was already recorded.
+
+  board     ROCK 4D, boot 8934c5ee, 594 MHz, boot entry 1, performance
+            governor, /opt/vendor and debugfs remounted after the boot.
+            binary aaa2f26efc61 for the installed probes, 9e2fa00efeb2-dirty
+            for the one rebuilt mid-round.
+  desk      the checker work in sections 6 and 7.
+
+=====================================================================
+1. FOUR WAYS TO PUT TWO JOBS ON THE HARDWARE, AND THE ONE THAT SHIPS IS RIGHT
+---------------------------------------------------------------------
+npu_job_cost has carried this since it was written:
+
+    charsiu opens the accel node twice and submits one job per fd in a `for`
+    loop, so the second core starts a whole syscall after the first. But
+    charsiu_submit_jobs already takes a LIST [...] If B beats D, the second
+    core has been starting late for the life of this runtime.
+
+  A  one job, one ioctl
+  B  two jobs, ONE ioctl, one fd      the arm nobody had run
+  C  two jobs, two ioctls, one fd
+  D  two jobs, two ioctls, two fds    what charsiu does
+
+All four submit everything before waiting on anything, so all four measure the
+wall time for two dispatches to finish. 200 repetitions an arm, the four arms
+back to back in one process so any drift is common to all of them.
+
+    k      n        A        B        C        D
+    1024   256   49.77    95.05    94.74    52.43
+    1024   1024 133.64   263.05   263.30   135.66
+    2048   2048 489.63   943.00   937.84   471.88
+
+B IS NEVER FASTER. B and C are both twice A and D is equal to it, at every
+shape where the arms separate. One fd serialises two jobs whatever the ioctl
+count; two fds run them side by side and the pair costs what one job costs.
+
+So the hypothesis is refuted and the runtime is already doing the thing the
+comment suspected it of getting wrong. The second fd is not overhead that a
+job list would remove. It is the only thing that reaches the second core.
+
+This tree already knew half of it -- "two jobs on the same fd serialise" is
+recorded in the narrow-output note from 09-08 -- and the probe's own header was
+written without it.
+
+=====================================================================
+2. AND THE FIRST READING OF THOSE ARMS SAID THE OPPOSITE
+---------------------------------------------------------------------
+The arms ship at k=64 n=32, where "the arithmetic is nothing and this is
+dispatch". The first run of the round read:
+
+    A  20.83    B  44.98    C  74.58    D  112.44 us
+
+which is B beating D by 2.5x -- the answer the header was hoping for, and the
+one I was about to write down. It is noise. Three more passes of the same
+binary on the same boot:
+
+    k=64 n=32     A       B       C       D
+    pass 1     84.21   85.37  131.90   34.02
+    pass 2     17.30   26.10   27.09   25.81
+    pass 3     71.41  138.77  125.70   42.03
+
+A alone covers 17.30 to 84.21, a factor of 4.9, which is larger than any
+difference between arms. THE ARMS ARE NOT ORDERABLE AT THAT SHAPE. The first
+run's D was 112.44 and pass 2's was 25.81, from one binary on one boot.
+
+A margin has to clear the arm's own spread, and at 64 x 32 there is no margin
+that can. What separates them is a shape whose compute is measurable, and
+section 1 is that shape.
+
+=====================================================================
+3. WHAT CACHE MAINTENANCE COSTS, WITH NO JOB IN THE WAY
+---------------------------------------------------------------------
+npu_prep_cost preps a buffer that was never submitted, so there is no fence to
+wait on and the number is the invalidate alone. 2000 repetitions a row.
+
+       bytes     prep us     fini us     prep GB/s     fini GB/s
+        4096        1.41        1.15          2.91          3.56
+       32768        3.35        3.11          9.80         10.54
+      262144       19.55       19.33         13.41         13.56
+     1048576       75.89       75.55         13.82         13.88
+     4194304      303.92      303.57         13.80         13.82
+
+AN IOCTL WITH NO WORK COSTS 1.4 US, and the slope saturates at 13.8 GB/s in
+both directions. The old decode decomposition put "about 5 us of syscalls" in
+the per-call floor; a prep and a fini together at the smallest size are 2.6.
+
+WHAT IT SAYS ABOUT THE OUTPUT BUFFER. charsiu's decode output is
+`(slots + 1) * out_stride + 4096` per device and out_stride is
+CHARSIU_NPU_NMAX * 4, which is 32 KB whatever the tensor's own n is. The tool
+was written to ask whether sizing that to the tensor is worth doing, with its
+own criterion: worth it if the invalidate is a meaningful part of the 114 us a
+call, not worth it if it is 2 us.
+
+It is neither. One slot is 68 KB and costs about 5.6 us of prep and 5.5 of
+fini; four slots are 164 KB and cost about 13 and 13. So it is 10 to 26 us a
+call depending on how many slices the deal gave that device -- 9 to 23% of the
+call. THE ANSWER DEPENDS ON THE SLICE COUNT AND THE TOOL COULD NOT HAVE KNOWN
+THAT, because the buffer is charged whole and the tool priced bytes.
+
+That is a lead and not a result. Nothing here measured a decode with a
+narrower stride, and out_stride is read by the job's output address and by the
+readback, so making it per tensor is a change to the read path. It is written
+down rather than done.
+
+=====================================================================
+4. WHAT ONE DISPATCH COSTS BY OUTPUT WIDTH, CONTROLLED
+---------------------------------------------------------------------
+npu_fence_scan holds k, m and the buffers still and moves only n. Buffers are
+allocated once at the widest point, so no row pays for an allocation -- this
+tree has measured an allocation and called it a matmul before. k=1024, m=80,
+int8, 20 repeats a point.
+
+       n   submit us    fence us   fence us per n
+     256         6.3       376.5         1.4709
+     512         5.6       367.7         0.7181
+    1024         5.9       551.3         0.5384
+    2048         7.4       664.2         0.3243
+    4096         8.5      1094.0         0.2671
+    8192         9.2      1917.2         0.2340
+
+THE LAST COLUMN FALLS, SO THERE IS A FIXED COST. Two points at the wide end
+give fence = 246 us + 0.204 us per output channel, and that line predicts
+n=4096 to within 1%. The submit is 6 to 9 us and does not grow with n.
+
+AND IT CORRECTS A NUMBER ALREADY IN THE TREE. Bucketing the fence by tensor
+width inside a real forward pass gave "about 1.3e-4 ms per output channel",
+which is 0.13 us, with no fixed term. That fit had nowhere to put the 246 us,
+so it spread it across the slope and came out 36% low. The bucketed version
+mixes tensors with different slice counts and charges a device a whole fence
+even on calls where the deal gave it no slot; this one does not.
+
+Two points still only fit a line. What is quotable here is the two raw
+readings and the fact that the per-channel column falls, not the coefficients.
+
+=====================================================================
+5. CHAINING TASKS INSIDE ONE JOB BUYS NOTHING, AT A REAL SHAPE
+---------------------------------------------------------------------
+The same probe prices tasks chained in one job. At the shipped 64 x 32:
+
+        tasks     us a job      us a task
+            1        70.06          70.06
+            4        67.49          16.87
+           16       222.76          13.92
+
+which reads as a 4x amortisation and would make packing several tensors into
+one job the lever. At k=1024 n=1024, two passes:
+
+        tasks   pass 1 us a task   pass 2 us a task
+            1            142.59            137.51
+            4            155.57            131.39
+           16            161.32            124.01
+
+FLAT, AND THE TWO PASSES DISAGREE ABOUT THE SIGN. There is nothing to
+amortise: at m=1 a dispatch costs what its weights cost to read. The byte
+sweep in the same tool gives 128.9 us for the 1.05 MB this shape reads, and
+the one-task row is 137. Chaining sixteen tasks reads the weights sixteen
+times, and that is the whole bill.
+
+The 64 x 32 table is the fixed cost with no work to hide it, measured in the
+region section 2 shows cannot order anything.
+
+=====================================================================
+6. THREE CHECKERS THAT NOTHING RAN
+---------------------------------------------------------------------
+A census of every assertion-carrying checker in the tree against what any
+target actually invokes:
+
+  tools/acc_index_check.c   calls itself "the check that should have existed
+                            before the first board round". Built by `all`,
+                            invoked by nothing.
+  tests/verify_selftest.sh  guards a mistake that has already shipped a wrong
+                            answer -- a round reporting nine of nine models
+                            correct in a configuration that had stopped being
+                            the one that ships. Installed to the board,
+                            invoked by nothing.
+  tests/version_all.sh      says in its own header that it runs on the desk
+                            against build/. Round 418 wrote it and wired it
+                            nowhere.
+
+All three are in `make test` now, each watched failing first. And the rule
+runs as well: tests/host_checks.sh asks of every non-board script in tests/
+whether the Makefile runs it or this file says why it cannot, in both
+directions, and found itself and version_all.sh on its first run.
+
+version_all.sh also went from 28.2 s to 1.55 s. Its bounded wait polled with
+`sleep 1` for an answer that takes five milliseconds, so every passing binary
+cost a whole tick. A fractional sleep is not POSIX so the script asks the
+shell for one and falls back; the bound stays in seconds.
+
+=====================================================================
+7. ONE WIDTH LAW INSTEAD OF FOUR
+---------------------------------------------------------------------
+The accumulator surface can only name an even batch width, because P = m / 2
+in charsiu_acc_index covers 64 * P slots per group where the group needs
+32 * m. That rule was written out four times -- the gate in npudev.c as
+`(m % 2) == 0`, the chunker in charsiu_run.c as `w &= ~1`, acc_index_check as
+`m % 2 == 0` again, and the map itself -- and the sweep compared the map
+against its own copy. The two decisions that reach the hardware were watched
+by nothing.
+
+charsiu_acc_width_ok now lives beside the map and all three call it. The
+chunker's rounding is unchanged on all of 0..100000 and the host perplexity is
+identical before and after.
+
+=====================================================================
+8. THE BOARD WENT DOWN TWICE, BOTH TIMES UNDER version_all.sh
+---------------------------------------------------------------------
+r418's silence and one in this round both happened while that script was
+asking the installed binaries for their commits. It is not established as a
+cause: a mains cut took the board out once this week as well, and nothing
+survives the death to say which binary was running, because the script prints
+only AFTER a binary returns and the output goes down an ssh pipe that dies
+with it.
+
+There is a mechanism on the shelf. npu_job_cost's own source records that a
+job submitted past the device's limits "timed out, and took the IOMMU with it
+-- MMU_DTE_ADDR is not functioning [...] and the board was dead for five
+hours". version_all's header records that a tool which does not recognise
+--version sends argv[1] through atoi, "and an unrecognised --version becomes a
+dimension of ZERO submitted to the hardware". Seven of the binaries did
+exactly that in r418.
+
+The script now writes each binary's name to $DIR/version_all.last and syncs
+before starting it, and writes "finished cleanly" at the end so a stale line
+cannot be read as the killer. Both directions watched on the desk. The next
+time the board goes down under it, the file names the binary.
