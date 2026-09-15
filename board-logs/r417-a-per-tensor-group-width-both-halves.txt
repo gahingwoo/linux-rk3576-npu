@@ -1,0 +1,96 @@
+round 417, 2026-09-15 - a per tensor group width, both halves, and a finer
+                        quantisation that makes two models worse
+
+r415 counted that five of eight models in the zoo carry tensors quantised one
+scale a row, because llama_auto_kmax pins the group at 1024 and npuquant falls
+back to a per-row scale whenever that does not divide a tensor's K.
+CHARSIU_NPU_W4_GROUP_FIT, default off, gives each tensor the widest PROPER
+divisor of its own K that is no wider than the width asked for, and slices it
+at that. This is what it buys and what it costs.
+
+  board     ROCK 4D, boot afe55e04, 594 MHz, boot entry 1, performance
+            governor, three readings an arm, medians. binary 95e72869ba97.
+  desk      quality, 511 scored positions of tests/corpus/long.txt.
+
+=====================================================================
+1. BOTH HALVES, EIGHT MODELS
+---------------------------------------------------------------------
+    model            ppl FIT=0  FIT=1     ppl      decode 0  1       decode
+    Qwen2.5-1.5B      37.6358  27.1185  -27.9%      14.96  15.29    +2.2%
+    gemma-3-1b       108.7063  82.4102  -24.2%      21.61  21.71    +0.5%
+    tinyllama-1.1b    29.9309  28.2998   -5.4%      22.87  22.80    -0.3%
+    Llama-3.2-1B      41.2763  41.2763    0.0%      21.52  21.43    -0.4%
+    Phi-3.5-mini      17.8023  17.8023    0.0%       7.25   7.22    -0.4%
+    SmolLM2-1.7B      31.1293  31.1293    0.0%      15.30  15.24    -0.4%
+    Qwen3-0.6B        87.8019  89.2738   +1.7%      30.64  29.22    -4.6%
+    gemma-4-E2B       89.0370  99.8674  +12.2%       9.51   9.88    +3.9%
+
+TWO ARE STRICTLY BETTER ON BOTH AXES. Qwen2.5-1.5B gains 27.9% of perplexity
+AND 2.2% of decode; gemma-3-1b gains 24.2% and 0.5%. tinyllama gains 5.4% of
+quality for 0.3% of decode, which is as near free as this tree measures.
+
+THREE ARE UNCHANGED TO THE DIGIT, WHICH IS THE PROPERTY WORTH HAVING. Llama,
+Phi-3.5 and SmolLM2-1.7B read the same perplexity with the flag on as off,
+because their K values already have a proper divisor at the requested width and
+the fit picks the same number. The flag is a no-op where it is not needed, ON as
+well as off.
+
+THEIR -0.4% OF DECODE IS THE FLAG'S OWN COST AND IT IS NOT NOTHING. Nothing
+about those three models' weights changes, so that is the doubled slot capacity
+the flag allocates, measured. It is the price of having it on at all.
+
+=====================================================================
+2. AND TWO GET WORSE FROM A STRICTLY FINER QUANTISATION
+---------------------------------------------------------------------
+Qwen3-0.6B's only change is its 1024 wide tensors going from one scale a row to
+two groups of 512 -- strictly finer, nothing else moves, its n_ff of 3072 was
+already three groups at 1024. Perplexity gets WORSE by 1.7%.
+
+gemma-4-E2B's changes are 1536 from one scale a row to three groups of 512 and
+256 to two of 128. Also strictly finer. Worse by 12.2%.
+
+THIS IS NOT FLOAT ROUNDING FROM A DIFFERENT SLICE COUNT, which is what r416
+found behind KFIT. These numbers are the DESK, where CHARSIU_NPU=0 and there
+are no slices: npu_matvec loops the groups and accumulates in double. The
+difference is the quantisation itself.
+
+BOTH SIGNS HOLD ON THE SECOND CORPUS, which is what this tree does with a
+result it does not like. tests/corpus/long2.txt, same arms:
+
+    Qwen3-0.6B     long  87.8019 -> 89.2738   +1.7%
+                   long2 120.4219 -> 124.7481  +3.6%
+    Qwen2.5-1.5B   long  37.6358 -> 27.1185  -27.9%
+                   long2 51.3478 -> 37.4671  -27.0%
+
+Qwen2.5's gain reproduces to within a point of its own size. Qwen3's loss
+reproduces in sign and grows. Neither is one text.
+
+AND IT IS THE THIRD INSTANCE. r415 §6 has gemma-4-E2B at group 512 reading
+112.4869 against 89.0370 ungrouped, on two corpora, and could not explain it
+either. Four models go the other way and go a long way -- Qwen2.5 by 27.9%,
+gemma-3-1b by 24.2%, tinyllama by 5.4%, and r415's whole gemma-3-1b ladder is
+monotone from 108.7063 down to 47.0269 -- so a finer group is usually better
+and sometimes is not, and nothing here says which.
+
+WHAT IT IS NOT: not the group COUNT (gemma-3-1b's odd rungs are its best), not
+AWQ (default 0.0 and no arm set it), not the weight cache (off unless
+CHARSIU_NPU_CACHE is set), not the K slicing (the desk has none), and not one
+corpus (r415 §6 checked the second one).
+
+=====================================================================
+3. WHAT THE FLAG DOES NOT DO
+---------------------------------------------------------------------
+It does not make a narrow group free. One dispatch cannot cover K wider than
+one group -- the hardware sums a whole slice into one accumulator per output
+channel and the CPU applies that slice's single scale afterwards -- so a
+narrower group is more slices, always. The board column above is that cost
+already paid.
+
+It does not group everything. gemma-3-1b's o_proj K of 1024 gets 512, its 1152
+gets 576 and its 6912 gets 864, which are three different widths on one model
+and exactly what a per tensor rule is for; but a tensor whose K is prime, or
+whose only proper divisors are tiny, still gets one scale a row.
+
+And it is off. Two of eight models get worse, and picking per model is a
+decision about output that belongs to whoever ships the thing, not to a
+default that changes under them.
