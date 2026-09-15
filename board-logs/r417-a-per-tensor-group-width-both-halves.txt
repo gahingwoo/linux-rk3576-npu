@@ -77,6 +77,35 @@ AWQ (default 0.0 and no arm set it), not the weight cache (off unless
 CHARSIU_NPU_CACHE is set), not the K slicing (the desk has none), and not one
 corpus (r415 §6 checked the second one).
 
+WHAT IT IS: WEIGHT ERROR IS NOT FUNCTIONAL ERROR, AGAIN, AND THIS TIME FROM
+THE OTHER DIRECTION. CHARSIU_NPU_RMS=1 makes the quantiser report each tensor's
+reconstruction error, and with the flag on it falls on every model:
+
+    model          mean rms FIT=0  FIT=1           ppl
+    gemma-3-1b        14.2882%   12.4938%  -12.6%   -24.2%   better
+    gemma-4-E2B       14.2980%   13.1508%   -8.0%   +12.2%   worse
+    Qwen3-0.6B        13.6892%   12.0744%  -11.8%    +1.7%   worse
+
+Qwen3's row is its k=1024 tensors, the only ones the flag touches; its 2048 and
+3072 tensors read 14.0054% and 14.2735% either way, which is the flag doing
+exactly what it says and nothing else.
+
+EVERY MODEL'S WEIGHT ERROR GOES DOWN AND THE PERPLEXITY GOES BOTH WAYS. It has
+to go down: a finer partition of the same row cannot have a worse absmax. The
+reductions are all the same size, 8 to 12.6%, while the quality outcome differs
+in SIGN. So the Frobenius error cannot predict the direction, let alone the
+size.
+
+This tree already has that lesson from the other side -- a reconstruction with
+18.3% weight error scored ppl 1701 where Gaussian noise of the same magnitude
+scored 32.10, because what matters is the STRUCTURE of the error and Frobenius
+barely charges for it. Round 417 is the same statement read backwards: a
+genuine reduction in weight error, and two models of eight pay for it.
+
+So this is a known class rather than an unexplained result, and what that rules
+out is an implementation fault. It still supplies no rule for which models are
+on which side, and nothing here has one.
+
 =====================================================================
 3. WHAT THE FLAG DOES NOT DO
 ---------------------------------------------------------------------
