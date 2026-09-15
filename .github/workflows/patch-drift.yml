@@ -1,13 +1,16 @@
 # Two questions a pinned build cannot answer.
 #
-# 1. Does the v11 series still apply to TODAY's linux-next? That is what a
+# 1. Does the v13 series still apply to TODAY's linux-next? That is what a
 #    maintainer will do, and for a patchset under review "it stopped applying
 #    three weeks ago" should not first arrive as a request to rebase.
 #
-# 2. Has mainline released anything newer than the tag kernel.yml pins? When it
-#    has, the four cherry-picks in kernel/backport-7.2/ may already be in it and
-#    the directory can go. They are other people's upstream commits and the only
-#    reason they are carried here is that 7.2 shipped before they did.
+#    kernel.yml builds a PINNED next tag, on purpose, so it cannot answer this.
+#
+# 2. Has mainline released anything newer than v7.2? When it has, the four
+#    cherry-picks in kernel/backport-7.2/ are in it and the directory can go.
+#    They are other people's upstream commits and the only reason they are
+#    carried at all is that 7.2 shipped before they did. Nothing builds on
+#    them any more: kernel.yml moved to a linux-next tag, which has them.
 #
 # A failure here is INFORMATION, not a broken build.
 name: patch drift
@@ -21,22 +24,23 @@ permissions:
   contents: read
 
 env:
-  PINNED: v7.2
+  # the release kernel/backport-7.2/ exists to patch up, not a build base
+  BACKPORT_BASE: v7.2
 
 jobs:
   newer-release:
     runs-on: ubuntu-24.04
     steps:
-      - name: is there a mainline release newer than the pinned one
+      - name: is there a mainline release newer than the one the backports patch
         run: |
           git ls-remote --tags --refs \
             https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git 'v[0-9]*' \
             | sed 's|.*refs/tags/||' | grep -vE 'rc|tree' | sort -V | tail -3 > /tmp/tags
           echo "newest mainline tags:"; sed 's/^/  /' /tmp/tags
           NEWEST=$(tail -1 /tmp/tags)
-          echo "pinned: $PINNED   newest: $NEWEST"
-          if [ "$NEWEST" != "$PINNED" ]; then
-            echo "::warning::mainline $NEWEST is out and kernel.yml still pins $PINNED. Check whether kernel/backport-7.2/ is still needed"
+          echo "backports target: $BACKPORT_BASE   newest: $NEWEST"
+          if [ "$NEWEST" != "$BACKPORT_BASE" ]; then
+            echo "::warning::mainline $NEWEST is out, so kernel/backport-7.2/ has probably served its purpose and can go"
           fi
 
   applies-to-next:
@@ -64,13 +68,14 @@ jobs:
           #
           # 1/14 IS NOT ALLOWED TO HARD FAIL. It is Igor Paunovic's
           # clocks-by-name patch, which v9 and v10 named from outside with a
-          # `prerequisite-patch-id:` trailer and v11 carries inside the series.
+          # `prerequisite-patch-id:` trailer and v11 and later carry inside the
+          # series.
           # When it lands upstream it will stop applying to linux-next, and that
           # is the patch being MERGED, not the series drifting. The old shape of
           # this job tolerated exactly that because the patch was a separate
           # step; folding it in must not quietly turn a merge into a red run.
           fail=""
-          for p in ../rfc-send-v11/v11-00[0-9][0-9]-*.patch; do
+          for p in ../rfc-send-v13/v13-00[0-9][0-9]-*.patch; do
             case "$p" in *-0000-*) continue ;; esac
             n=$(basename "$p")
             if git am --keep-cr "$p" >/tmp/am.log 2>&1; then
@@ -90,7 +95,7 @@ jobs:
             fi
           done
           if [ -n "$fail" ]; then
-            echo "::warning::the v11 series stops applying at $fail on linux-next $TIP"
+            echo "::warning::the v13 series stops applying at $fail on linux-next $TIP"
             echo "failed=$fail" >> "$GITHUB_OUTPUT"
             exit 1
           fi

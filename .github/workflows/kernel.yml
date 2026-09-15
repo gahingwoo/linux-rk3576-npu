@@ -6,41 +6,41 @@
 # distribution kernel anywhere will bind this NPU and the installer would have
 # nothing to do but say no.
 #
-# THE BASE IS A MAINLINE RELEASE, NOT linux-next. next moves under you, it is
-# not what anyone means by a kernel, and a board is not the place to find out
-# what landed yesterday. v7.2 is the newest release and it already carries
-# drivers/accel/rocket for RK3588.
+# THE BASE IS A linux-next TAG, AND IT USED TO BE A MAINLINE RELEASE. The
+# argument for v7.2 was that next moves under you and a board is not the place
+# to find out what landed yesterday. That is still true of next as a BRANCH.
+# It is not true of a next TAG, which is immutable, and the reason to move is
+# that the thing being shipped is the series:
 #
-# It does NOT carry four fixes that went in after it, and the series was
-# written on a tree that has them. Measured: without them the patch touching
-# rocket_job.c fails, and so does the one touching pm-domains.c. Those are
-# named rather than numbered because renumbering moves the numbers: v11 folded
-# Igor's patch in at the front and shifted everything after it by one. They are
-# cherry-picked into
-# kernel/backport-7.2/, they are other people's upstream commits, and that
-# directory goes away when 7.3 ships. See its README.
+#   - what applies to v7.2 is v11, and v11's code is two revisions old. v13
+#     took the two PC register writes in 3/14 under job_lock, and a kernel
+#     built from v11 does not have that;
+#   - v13 is written against next-20260914 and was sent against it. Building
+#     it on a release means carrying backports of whatever the release lacks,
+#     and that set grows every revision. It was four for v7.2 and nobody has
+#     checked what it is now;
+#   - the tag is pinned here and the run asserts that the tree it cloned is
+#     the commit the patches name as their base. A base that drifts silently
+#     is the failure this replaces.
 #
-# The full stack, verified to apply and compile on a clean v7.2 on 2026-08-25:
-#   4 upstream backports + the 14 of v11. There is no separate prerequisite
-# step any more: v9 and v10 named Igor Paunovic's clocks-by-name patch with a
-# `prerequisite-patch-id:` trailer and kept it in prereq/, and v11 carries it
-# INSIDE the series as 1/14, because the Sashiko CI cannot follow that trailer.
+# kernel/backport-7.2/ is not applied any more. Those four are other people's
+# upstream commits and next-20260914 has them. The directory stays for anyone
+# building on the release by hand; see its README.
 name: kernel
 
 on:
   workflow_dispatch:
     inputs:
       base:
-        description: "mainline tag to build on"
-        default: "v7.2"
+        description: "linux-next tag to build on"
+        default: "next-20260914"
       release:
         description: "publish a release"
         type: boolean
         default: false
   push:
     paths:
-      - 'rfc-send-v11/**'
-      - 'kernel/backport-7.2/**'
+      - 'rfc-send-v13/**'
       - 'kernel/base.config'
       - '.github/workflows/kernel.yml'
 
@@ -67,39 +67,47 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ inputs.base || 'v7.2' }}-${{ github.sha }}
-          restore-keys: ccache-${{ inputs.base || 'v7.2' }}-
+          key: ccache-${{ inputs.base || 'next-20260914' }}-${{ github.sha }}
+          restore-keys: ccache-${{ inputs.base || 'next-20260914' }}-
 
-      - name: fetch mainline at the pinned release
+      - name: fetch linux-next at the pinned tag
         run: |
-          BASE="${{ inputs.base || 'v7.2' }}"
+          BASE="${{ inputs.base || 'next-20260914' }}"
           echo "BASE=$BASE" >> "$GITHUB_ENV"
           git clone --depth 1 --branch "$BASE" \
-            https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux
+            https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
           git -C linux log --oneline -1
 
-      - name: apply the stack
+      - name: the tree is the commit the patches name
+        run: |
+          # next-20260914 is an ANNOTATED tag, so `git rev-parse <tag>` is the
+          # tag object and not the commit. The clone above checks out the
+          # commit, so HEAD is the right thing to compare.
+          want=$(sed -n 's/^base-commit: //p' rfc-send-v13/v13-0000-cover-letter.patch)
+          [ -n "$want" ] || { echo "::error::no base-commit in the v13 cover"; exit 1; }
+          have=$(git -C linux rev-parse HEAD)
+          echo "cover says  $want"
+          echo "tree is     $have"
+          [ "$want" = "$have" ] || {
+            echo "::error::$BASE is not the base the v13 patches were generated on"
+            exit 1
+          }
+
+      - name: apply the series
         run: |
           cd linux
           git config user.email ci@example.invalid
           git config user.name "charsiu CI"
-          apply() {
-            for p in $1; do
-              case "$p" in *-0000-*) continue ;; esac   # the cover letter
-              echo "== $(basename "$p")"
-              git am --keep-cr "$p" || {
-                echo "::error::$(basename "$p") did not apply to $BASE"
-                git am --abort || true
-                exit 1
-              }
-            done
-          }
-          # ORDER MATTERS: upstream fixes, then the series. v11 has no
-          # prereq/ directory -- Igor's patch is 1/14 of the series itself --
-          # so a step that applied one would fail on a glob matching nothing.
-          apply "../kernel/backport-7.2/*.patch"
-          apply "../rfc-send-v11/v11-00[0-9][0-9]-*.patch"
-          git log --oneline -19
+          for p in ../rfc-send-v13/v13-00[0-9][0-9]-*.patch; do
+            case "$p" in *-0000-*) continue ;; esac   # the cover letter
+            echo "== $(basename "$p")"
+            git am --keep-cr "$p" || {
+              echo "::error::$(basename "$p") did not apply to $BASE"
+              git am --abort || true
+              exit 1
+            }
+          done
+          git log --oneline -14
 
       - name: build
         run: |
@@ -116,7 +124,23 @@ jobs:
           scripts/config --enable STMMAC_ETH --enable STMMAC_PLATFORM
           scripts/config --enable DWMAC_ROCKCHIP --enable REALTEK_PHY
           scripts/config --enable RTC_DRV_HYM8563
+          grep '=y$' .config | sort > /tmp/y.before
           make ARCH=arm64 olddefconfig
+          # WHAT THIS CATCHES: olddefconfig turns =y into =m on its own when a
+          # symbol's dependencies have moved under it, and a module in this
+          # rootfs is a driver that never loads. It cost a board session: the
+          # ethernet and the RTC came out =m across a base change and only
+          # Image was built. The four below are fatal; the rest is printed,
+          # because a new base demoting something unrelated is news and not
+          # necessarily a fault.
+          comm -23 /tmp/y.before <(grep '=y$' .config | sort) \
+            | sed 's/=y$//' > /tmp/demoted || true
+          if [ -s /tmp/demoted ]; then
+            echo "no longer =y after olddefconfig:"
+            while read -r s; do echo "  $s is now $(scripts/config --state "${s#CONFIG_}")"; done < /tmp/demoted
+          else
+            echo "olddefconfig demoted nothing"
+          fi
           bad=0
           for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563; do
             v=$(scripts/config --state $s)
@@ -135,21 +159,15 @@ jobs:
           KVER=$(cat linux/include/config/kernel.release)
           tar -C modroot -czf "out/modules-$KVER.tar.gz" lib/modules
           {
-            echo "base        $BASE  (a mainline release, not linux-next)"
-            # NOT ../ HERE. The apply step runs inside linux/, this one runs
-            # at the workspace root, and the first build reported "backports 0"
-            # in a manifest people are meant to trust while having applied all
-            # four. A count that can silently read zero is worse than no count.
-            nbp=$(ls kernel/backport-7.2/*.patch 2>/dev/null | wc -l)
-            [ "$nbp" -gt 0 ] || { echo "::error::the backport count came out 0"; exit 1; }
-            echo "backports   $nbp upstream fixes that landed after $BASE"
+            echo "base        $BASE  (an immutable linux-next tag)"
             # COUNT THE PATCHES, do not type the number. It has been wrong
             # once already: the series went 13 -> 14 when Igor's patch moved
             # inside, and a manifest that states a stale count is worse than
             # one that states none.
-            nsp=$(ls rfc-send-v11/v11-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
+            nsp=$(ls rfc-send-v13/v13-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
             [ "$nsp" -gt 0 ] || { echo "::error::the series count came out 0"; exit 1; }
-            echo "series      v11, $nsp patches (Igor Paunovic's clocks-by-name is 1/14)"
+            echo "series      v13, $nsp patches (Igor Paunovic's clocks-by-name is 1/14)"
+            echo "backports   none: the four in kernel/backport-7.2 are in this base"
             echo "kernel      $KVER"
             echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "repo        ${{ github.repository }}@${{ github.sha }}"
@@ -170,9 +188,10 @@ jobs:
         run: |
           TAG="kernel-$KVER-$(date -u +%Y%m%d)"
           gh release create "$TAG" out/* --title "$TAG" --notes \
-          "RK3576 NPU kernel: mainline $BASE, four upstream fixes that landed
-          after it, and the v11 rocket series, which carries Igor Paunovic's
-          clocks-by-name patch as its own 1/14.
+          "RK3576 NPU kernel: linux-next $BASE plus the v13 rocket series, which
+          carries Igor Paunovic's clocks-by-name patch as its own 1/14. The run
+          asserts that the tree it built is the commit those patches name as
+          their base.
 
           charsiu-install.sh fetches this. It keeps the kernel already on the
           card as a second extlinux entry, so if this one misbehaves the old
