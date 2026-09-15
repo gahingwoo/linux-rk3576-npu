@@ -402,3 +402,63 @@ by default since round 367, because the device only reads it. Its FINI is not
 optional -- the CPU wrote those bytes and the clean is what makes them visible
 -- and DRM_ROCKET_FINI_BO has no range either, so a counter prints what it is
 charged on rather than leaving it to be inferred.
+
+=====================================================================
+14. THE REGRESSION, AND WHAT IT CAUGHT ON THE WAY
+---------------------------------------------------------------------
+  board     ROCK 4D, boot 1b50bcda, 594 MHz, boot entry 1, performance
+            governor. binary /opt/charsiu/charsiu_run_8297edc,
+            md5 4781e183774b, version 8297edc8e455.
+
+    1. 7/7 files and 6/6 architectures know the capital of France. The one
+       that does not is SmolLM2-135M and its own CPU path agrees, so it is
+       the model and not the runtime.
+    2. nine models, the batched prompt against their own token loop:
+       0 differing.
+    3. the vector kernels against the scalar ones, both arms 8297edc8e455,
+       exact-arm knobs named on the line: 0 mismatches over seven models.
+    4. the gelu identity holds on both models that take it.
+    5. ppl 41.2777 over 511 scored positions, model md5 c82c0340d974,
+       corpus long.txt md5 4237c8fc3163. THE SAME DIGIT FOR DIGIT AS r414'S,
+       which is the point of a deterministic instrument.
+    6. decode 21.83 tok/s.
+
+Merged to stable as 673b969.
+
+THE FIRST ATTEMPT DIED AND THE SECOND ONE CAUGHT A LIVE HOLE. Two things,
+both worth keeping.
+
+A LOCAL `nohup ssh board '...' &` DOES NOT DETACH THE REMOTE JOB. The local
+wrapper was reaped, the ssh went with it, the board-side sh took SIGHUP, and
+the board came back at load 0.00 with no process. The half-written file looked
+exactly like a run still going, because section 2's grep was block-buffered and
+had printed only its heading. `pgrep -fa ssh` then matched its own command line
+and said it was still running. The fix is to detach ON THE BOARD --
+`setsid nohup sh -c "... > /root/out 2>&1" </dev/null &` -- and poll that file
+over separate short ssh calls.
+
+AND THE PIPE THAT MADE HOLE ONE INVISIBLE WAS STILL THERE. r414 wrote
+board_regress.sh because the board copy called arch_sanity with no argument and
+printed a usage line under a green heading. That fix supplied the argument and
+left `| tail -16` in place -- and the pipe is what made the bug invisible, not
+the missing argument: a pipeline's status is its last command's, tail always
+succeeds, and `set -e` sees nothing.
+
+Every section goes through a `run` helper now that checks the real status. On
+its first board run it stopped at section 2 with
+"FAILED: ... board_text_all.sh: No such file or directory". That script IS in
+the installer's PROBE_SCRIPTS list and probe_list.sh passes: the list was right
+and the board was older than the list, which is r418's finding for the probe
+binaries repeated for the scripts. Under the old harness that failure would
+have gone through `| grep -E "gguf|models compared"`, printed nothing, and the
+run would have continued with section 2 green over a check that never ran.
+
+The harness now preflights every script, binary and model before section 1. One
+second, against twenty minutes to find it last.
+
+AND "COMMENT ONLY" NEEDED PROVING. dev had one commit touching src/ after the
+regressed binary, nine lines of comment. Pinning the stamp through CFLAGS does
+not pin it -- the Makefile's `override CFLAGS +=` appends its git describe value
+AFTER the caller's, the two builds differed by a dirty-tree suffix in .rodata,
+every address after it shifted, and .text differed too. Pinned properly with
+`make CHARSIU_BUILD=fixed` the two builds are the same md5.
