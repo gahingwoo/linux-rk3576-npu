@@ -1,0 +1,107 @@
+round 418, 2026-09-15 - the installer ships eighteen probe tools and the board
+                        had two, and "all eighteen answer --version" was eleven
+
+  board     ROCK 4D, boot afe55e04, 594 MHz, boot entry 1. The board went
+            silent during this round and section 4 says what is known about
+            that and what is not.
+  desk      everything else.
+
+=====================================================================
+1. SIXTEEN TOOLS THE INSTALLER CLAIMS TO SHIP WERE NOT THERE
+---------------------------------------------------------------------
+charsiu-install.sh has a PROBE_BINS list of eighteen, and a paragraph beside
+PROBE_SCRIPTS saying that a probe reachable only by a path nobody types is a
+board round that does not happen. Asked directly, /opt/charsiu held two of the
+eighteen: charsiu_matmul and charsiu_membw, both from 23 August.
+
+The other sixteen build clean from this tree and are useful on this hardware.
+They had never existed on it.
+
+AND THE ONE THAT WAS THERE COULD NOT SAY ITS COMMIT. charsiu_matmul answered
+--version by starting a matmul at K=64 N=32, which is the exact hazard the
+paragraph beside the build stamp describes, on the binary that had been sitting
+on the board since before the stamp was written.
+
+=====================================================================
+2. ELEVEN OF EIGHTEEN, NOT EIGHTEEN
+---------------------------------------------------------------------
+Round 413 added the build stamp, found nine of eighteen probe tools eating
+--version as a dimension, fixed those, and recorded that all eighteen answered.
+Built fresh from the tree and asked one at a time, eleven answer. The other
+seven run instead:
+
+    charsiu_matmul    starts a matmul at K=64 N=32
+    out16_bound       tries to open "--version" as a gguf
+    npu_qpack_test    compares 56000 rows
+    charsiu_membw     reads memory for five seconds
+    vattn_bench       starts a vision attention bench
+    acc_index_check   prints its own table
+    fp16_plan         prints an fp16 group plan
+    bench_gather      starts the gather bench
+
+FIVE OF THE SEVEN HAVE NO VERSION HANDLING IN THEIR SOURCE AT ALL. The two that
+grep as though they might -- npu_qpack_test and out16_bound -- contain only the
+English word in a comment. An eighth, emit_dump, answers with a register dump.
+
+WHY THIS IS NOT HOUSEKEEPING: round 415's regression refused the installed
+charsiu_run_scalar for not answering --version, correctly, because that binary
+predated the stamp -- and until that refusal existed, section 3 of the
+regression had been comparing two COMMITS and reporting the difference as a
+fault in the vector kernels. A binary that cannot say its commit cannot be an
+arm.
+
+All eight now answer before any argument parsing, because the failure is argv[1]
+reaching atoi or fopen. Three took main(void) and now take argc and argv;
+npu_qpack_test has one main per NEON arm and both got it.
+
+=====================================================================
+3. AND THE CHECK THAT KEEPS IT HONEST, WHICH FOUND THE EIGHTH
+---------------------------------------------------------------------
+tests/version_all.sh asks every binary the installer ships, against build/ on
+the desk or /opt/charsiu on a board, so a deployment can be ASKED rather than
+assumed to match the tree. It refuses a --version that prints a sentence as
+well as one that prints nothing, because that is what seven of these were
+doing. emit_dump was found by running it.
+
+Desk: 28 answered, 0 did not, 4 not built.
+
+=====================================================================
+4. THE BOARD WENT SILENT, AND WHAT I CAN AND CANNOT SAY ABOUT IT
+---------------------------------------------------------------------
+The first run of that check on the board executed all thirty-two installed
+binaries, sixteen of which had been deployed minutes earlier and had never run
+on this hardware. During it the board stopped answering ssh, stopped answering
+ping, and its serial console went silent -- including to a newline sent down
+the line, which is different from the U-Boot prompt this project saw earlier
+tonight, because that prompt prints.
+
+The USB adapter and /dev/ttyACM0 are both still present, so it is not the
+adapter. Power is the user's and was not touched.
+
+WHAT I CANNOT SAY is which binary did it, or whether any of them did. Nothing
+here attributes it.
+
+WHAT I CAN SAY IS THAT THE CHECK HAD NO BOUND, AND ITS OWN COMMENT SAID IT
+SHOULD. The comment I wrote for it reads, in as many words, that the failure
+mode IS running, that several of these take minutes or drive the NPU, and that
+without a bound the check hangs on exactly the binaries it exists to find. Then
+the code ran the binary straight.
+
+That is the oldest fault in this tree -- a comment describing a check that is
+not there -- and it was twenty minutes old. It now forks the child, waits a
+bounded number of seconds, sends TERM then KILL, and reports "did not return
+within Ns -- it is RUNNING" as a failure of the same kind as printing a
+sentence. `timeout` is not on the board's busybox, so it is a background child
+and a polling wait rather than a command that might not be there. Watched
+firing on a stub that sleeps 300 seconds: caught in 4.
+
+=====================================================================
+WHAT IS OPEN
+---------------------------------------------------------------------
+The sixteen tools are deployed and none of them has been RUN. That was this
+round's whole purpose and it is still owed: npu_job_cost prices a call
+directly, charsiu_membw is the bandwidth roof that several arguments in this
+tree lean on, npu_prep_cost, npu_fence_scan and out16_bound each answer a
+question some comment currently answers from a fit.
+
+They wait for the board, and the board waits for the user.
