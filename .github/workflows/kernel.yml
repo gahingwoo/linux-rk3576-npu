@@ -146,6 +146,16 @@ jobs:
           # tethering") and no interface appears.  A module is enough -- this
           # one is for a distro with udev, not the charsiu rootfs.
           scripts/config --module USB_NET_RNDIS_HOST
+          # A distro on a 4 GB board needs its compressed swap.  Without ZRAM
+          # Fedora's zram-generator logs `modprobe "zram" failed` and the board
+          # runs with no swap at all: measured on CM5-IO 2026-09-17, 3.3 of
+          # 3.5 GiB in use with 288 MiB available and the desktop stuttering
+          # while panfrost_gem_shrinker_scan ran continuously, the kernel
+          # evicting GPU buffers because there was nowhere else to reclaim from.
+          scripts/config --module ZRAM
+          scripts/config --enable ZSMALLOC
+          scripts/config --enable ZRAM_BACKEND_ZSTD
+          scripts/config --enable ZRAM_DEF_COMP_ZSTD
           grep '=y$' .config | sort > /tmp/y.before
           make ARCH=arm64 olddefconfig
           # WHAT THIS CATCHES: olddefconfig turns =y into =m on its own when a
@@ -164,7 +174,7 @@ jobs:
             echo "olddefconfig demoted nothing"
           fi
           bad=0
-          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY; do
+          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY ZSMALLOC; do
             v=$(scripts/config --state $s)
             echo "  $s = $v"
             [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; bad=1; }
