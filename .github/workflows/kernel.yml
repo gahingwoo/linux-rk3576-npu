@@ -124,6 +124,18 @@ jobs:
           scripts/config --enable STMMAC_ETH --enable STMMAC_PLATFORM
           scripts/config --enable DWMAC_ROCKCHIP --enable REALTEK_PHY
           scripts/config --enable RTC_DRV_HYM8563
+          # CM5-IO's GMAC0 PHY is a YT8531C, not the RTL8211F its DT claims, so
+          # REALTEK_PHY above does not cover it.  Without MOTORCOMM_PHY the
+          # kernel falls back to the Generic PHY driver, which cannot do the
+          # YT8531 clock and delay setup: measured on CM5-IO 2026-09-17 with
+          # 7.3.0-rc3-next-20260914, "PHY [stmmac-0:01] driver [Generic PHY]"
+          # and the link never came up with a cable plugged in.
+          scripts/config --enable MOTORCOMM_PHY
+          # Android USB tethering is RNDIS.  v7.2 had this and the port to
+          # next-20260914 lost it, so a phone enumerates (04e8:6864, "network
+          # tethering") and no interface appears.  A module is enough -- this
+          # one is for a distro with udev, not the charsiu rootfs.
+          scripts/config --module USB_NET_RNDIS_HOST
           grep '=y$' .config | sort > /tmp/y.before
           make ARCH=arm64 olddefconfig
           # WHAT THIS CATCHES: olddefconfig turns =y into =m on its own when a
@@ -142,7 +154,7 @@ jobs:
             echo "olddefconfig demoted nothing"
           fi
           bad=0
-          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563; do
+          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY; do
             v=$(scripts/config --state $s)
             echo "  $s = $v"
             [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; bad=1; }
