@@ -153,7 +153,7 @@ jobs:
           # while panfrost_gem_shrinker_scan ran continuously, the kernel
           # evicting GPU buffers because there was nowhere else to reclaim from.
           scripts/config --module ZRAM
-          scripts/config --enable ZSMALLOC
+          scripts/config --module ZSMALLOC
           scripts/config --enable ZRAM_BACKEND_ZSTD
           scripts/config --enable ZRAM_DEF_COMP_ZSTD
           grep '=y$' .config | sort > /tmp/y.before
@@ -174,10 +174,19 @@ jobs:
             echo "olddefconfig demoted nothing"
           fi
           bad=0
-          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY ZSMALLOC; do
+          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY; do
             v=$(scripts/config --state $s)
             echo "  $s = $v"
             [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; bad=1; }
+          done
+          # ZRAM and the allocator under it are loaded by name, so a module
+          # is what they should be.  olddefconfig demotes ZSMALLOC to m on its
+          # own once ZRAM is m, which is correct and not a demotion to fail on;
+          # what matters is that neither is unset.
+          for s in ZRAM ZSMALLOC; do
+            v=$(scripts/config --state $s)
+            echo "  $s = $v"
+            case "$v" in y|m) ;; *) echo "::error::$s is $v, expected y or m"; bad=1 ;; esac
           done
           [ "$bad" = 0 ]
           make ARCH=arm64 -j"$(nproc)" CC="ccache gcc" Image dtbs modules
