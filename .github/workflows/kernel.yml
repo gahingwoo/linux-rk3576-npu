@@ -156,6 +156,14 @@ jobs:
           scripts/config --module ZSMALLOC
           scripts/config --enable ZRAM_BACKEND_ZSTD
           scripts/config --enable ZRAM_DEF_COMP_ZSTD
+          # Pressure Stall Information is how you tell "the desktop feels slow"
+          # from a number.  Without it /proc/pressure does not exist, and on
+          # 2026-09-18 that left the zram before/after with no direct measure
+          # of stall time -- the comparison had to be made from MemAvailable
+          # and page-cache eviction instead.  It is on in every distro kernel
+          # and costs a few instructions per scheduler event.
+          scripts/config --enable PSI
+          scripts/config --disable PSI_DEFAULT_DISABLED
           grep '=y$' .config | sort > /tmp/y.before
           make ARCH=arm64 olddefconfig
           # WHAT THIS CATCHES: olddefconfig turns =y into =m on its own when a
@@ -174,7 +182,7 @@ jobs:
             echo "olddefconfig demoted nothing"
           fi
           bad=0
-          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY; do
+          for s in DRM_ACCEL_ROCKET STMMAC_ETH DWMAC_ROCKCHIP RTC_DRV_HYM8563 MOTORCOMM_PHY PSI; do
             v=$(scripts/config --state $s)
             echo "  $s = $v"
             [ "$v" = "y" ] || { echo "::error::$s is $v, not y"; bad=1; }
@@ -213,7 +221,11 @@ jobs:
             echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "repo        ${{ github.repository }}@${{ github.sha }}"
           } > out/MANIFEST
-          ( cd out && sha256sum Image rk3576-rock-4d.dtb modules-*.tar.gz > SHA256SUMS )
+          # Ship the config.  The board has no /proc/config.gz and the
+          # release had no .config either, so answering "is FOO enabled in
+          # what is running?" meant rebuilding or guessing.
+          cp linux/.config "out/config-$KVER"
+          ( cd out && sha256sum Image rk3576-rock-4d.dtb modules-*.tar.gz config-* > SHA256SUMS )
           echo "KVER=$KVER" >> "$GITHUB_ENV"
           cat out/MANIFEST
 
