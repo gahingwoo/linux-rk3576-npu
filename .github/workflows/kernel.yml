@@ -107,6 +107,15 @@ jobs:
               exit 1
             }
           done
+          for p in ../patches-extra/[0-9][0-9][0-9][0-9]-*.patch; do
+            [ -e "$p" ] || break
+            echo "== $(basename "$p")"
+            git am --keep-cr "$p" || {
+              echo "::error::$(basename "$p") did not apply to $BASE"
+              git am --abort || true
+              exit 1
+            }
+          done
           git log --oneline -14
 
       - name: build
