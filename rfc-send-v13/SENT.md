@@ -1,5 +1,62 @@
 # v13, what has gone out
 
+## 2026-09-19 two replies under v13 -- SENT, 250 each
+
+`reply-sidong-runtime.eml`, Message-ID
+`20260919091711.8910-1-gahing@gahingwoo.com`, In-Reply-To Sidong Yang's
+`aq41BAp-6P0HMFBB@rock-5b-plus`, under the COVER because he replied there.
+
+He asked whether the userspace runtime is private, saying he knew of no open
+one running an LLM on rocket. **His premise is wrong and the first draft
+agreed with it.** gregordinary's `rocket-userspace` and `ggml-rocket` drive an
+RK3588 through mainline rocket, with the measurements in
+`rockchip-npu-notes`, and charsiu's own README has said so since it was
+written. The draft that nearly went out cited `opennpu_rk3588` instead, which
+runs on the vendor `drivers/rknpu/` and so does not answer the question he
+asked. Agreeing with a reader's "as far as I know" is how a project ends up
+claiming a first it does not have.
+
+What went: charsiu is open, GPL-2.0-or-later, what it is in three lines, the
+17.85 against 12.85 with the condition, then ggml-rocket named first and their
+finding quoted in their own words ("Decode (M=1 GEMV) is forced to the CPU,
+~82x slower on the NPU"), then where charsiu disagrees, with the RK3576 fact
+under it: 3752 of the convolution dispatches in the vendor's own Llama-3.2-1B
+file are M=1. Ends on the caveat that his From: is an RK3588 and charsiu has
+never run on one.
+
+`reply-igor-v13-retest.eml`, In-Reply-To
+`20260916132824.13527-1-royalnet026@gmail.com`, under **03/14**.
+
+He re-ran the induced-reset protocol on the v13 form of 3/14 -- the one with
+the register writes inside `job_lock` -- 73 resets, 126 scored inferences,
+lockdep armed throughout, and his Tested-by stands.
+
+**And he stated a limit we had not.** His model is a single 1x1 convolution,
+which Mesa submits as a one-task job, so `hw_submit()` never runs from the IRQ
+thread and `drm_sched_stop()` always fences it. That is the path the race
+needs. So the runs show the lock scope adds no lockdep report and no hang on
+the path they reach, not that it closes anything. **v14's cover carries his
+sentence rather than ours.**
+
+The reply also says what would reach the other path (a job with more than one
+task: a graph whose weights do not fit the CBUF, which is 34 tasks for
+MobileNet here, where a 1x1 convolution is always one), restates his tally
+back at him for correction (8 of 126 across three runs, 5 of those inside the
+two he traced, sitting on the 5 -ECANCELED completions), and tells him what
+this end cannot do: `JOB_TIMEOUT_MS=2` does not survive on this RK3576, so
+the RK3576 side of 2/14, 3/14 and 4/14 has no induced-reset evidence at all.
+**That PMIC finding is now on the list**, in-thread, where it was deliberately
+kept out of the cover.
+
+## What v14 owes, from this round
+
+1. 03/14's cover text takes Igor's limit, in his words.
+2. 04/14 has a [High] from Sashiko again on the asynchronous put. If it
+   changes shape, Igor has offered to re-run that arm.
+3. 03/14 has a NEW [High] from Sashiko on v13: the masking is skipped
+   entirely when `pm_runtime_get_if_active()` returns zero, and
+   `synchronize_irq()` then runs with nothing masked. Not answered yet.
+
 ## 2026-09-13 reply to Igor's correction of his own reports — SENT, 250
 
 `reply-igor-0x80.eml`, Message-ID `20260912224844.1614558-1-gahing@gahingwoo.com`,

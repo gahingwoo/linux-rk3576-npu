@@ -1,0 +1,59 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v13 03/14] accel/rocket: wait for a running IRQ
+ handler before resetting a core
+In-Reply-To: <20260916132824.13527-1-royalnet026@gmail.com>
+References: <20260915104328.45901-1-gahing@gahingwoo.com>
+ <20260915104328.45901-4-gahing@gahingwoo.com>
+ <20260916132824.13527-1-royalnet026@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Igor,
+
+Thank you for re-running it on the changed form. The tag carries to v14
+with your comment unchanged.
+
+The limit you put on it is sharper than the one the cover put on it, and
+v14 will say yours instead of mine. A single 1x1 convolution is a
+one-task job, so hw_submit() never runs from the IRQ thread and
+drm_sched_stop() always fences it. That is the path the race needs. So
+what your runs establish is that the lock scope adds no lockdep report,
+no MMU fault and no hang on the path they do reach, and not that it
+closes anything. The cover said the fix was an argument from the code;
+your sentence says which part of the code the test never visited, which
+is the useful half.
+
+So that I am quoting you correctly: I read the tally as 8 of the 126
+scored inferences missing on all 48 channels across the three runs, and
+5 of those, in the two runs you traced, sitting on the 5 -ECANCELED
+completions. Correct me if the 8 and the 5 are not nested that way.
+
+If you ever want to reach the other path, it needs a job with more than
+one task. On the Mesa side that is a graph whose weights do not fit the
+CBUF: rkt_ml_subgraph_invoke() then submits one job per task rather than
+one per operation, and MobileNet comes out as 34 tasks here. A 1x1
+convolution will be one task whatever else changes.
+
+And the mirror of that, from this end, since it is the reason your runs
+are the only ones there are. JOB_TIMEOUT_MS=2 does not survive on this
+RK3576. Running rocket_reset() at that rate takes the board's PMIC down
+through its I2C:
+
+  rk3x-i2c 2ac40000.i2c: irq in STATE_IDLE
+
+a big-core voltage transition then fails with -ETIMEDOUT and two CPUs
+stop answering an NMI. I bisected it across four boots against a clean
+next-20260914 and against the rail change on its own: it is the timeout
+constant, not this series and not the fourteen patches. Whether that is
+an RK3576 property or this board's PMIC I cannot say from one board. It
+is why the RK3576 side of 2/14, 3/14 and 4/14 has no induced-reset
+evidence at all.
+
+4/14 may well change shape in v14, since the asynchronous put has a
+[High] on it again and the fix would move the put out from under
+job_lock. I will say so in the cover if it does, and take you up on the
+re-run.
+
+Regards,
+Jiaxing

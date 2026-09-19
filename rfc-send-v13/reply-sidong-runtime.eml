@@ -1,0 +1,41 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN)
+ enablement
+In-Reply-To: <aq41BAp-6P0HMFBB@rock-5b-plus>
+References: <20260915104328.45901-1-gahing@gahingwoo.com>
+ <aq41BAp-6P0HMFBB@rock-5b-plus>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Sidong,
+
+It is not private: https://github.com/gahingwoo/charsiu,
+GPL-2.0-or-later. It reads a GGUF, quantises the weights to the NPU's
+int4 or int8 itself, and submits the matmuls through this driver's uAPI,
+with no Mesa and no Rockchip userspace in the path. On a ROCK 4D with
+this series applied, Llama-3.2-1B at four bits decodes 17.85 tok/s at
+594 MHz, against librkllmrt's 12.85 on the same board and clock. Both
+were run here.
+
+It is not the first, though, and the one before it is on your SoC.
+gregordinary's rocket-userspace and ggml-rocket drive an RK3588 through
+mainline rocket, and rockchip-npu-notes collects the measurements. Worth
+reading before anything of mine. Their finding is that the NPU is a
+prefill engine and decode belongs on the CPU: "Decode (M=1 GEMV) is
+forced to the CPU, ~82x slower on the NPU".
+
+charsiu is not a port of that work, and it runs decode on the NPU, which
+is the thing that finding says not to do. On RK3576 the vendor does it
+too: 3752 of the convolution dispatches in its own Llama-3.2-1B file are
+M=1, and they are the model's projections.
+
+Which is the caveat for you. Your From: says rock-5b-plus, and charsiu
+has never run on RK3588. CBUF is 1 MiB there against 384 KiB here, three
+cores rather than two, twelve task-number bits rather than sixteen, and
+a different weight tile stride. The register encoding and the weight
+layout would have to be rewritten. The quantiser and the model frontend
+would not.
+
+Regards,
+Jiaxing
