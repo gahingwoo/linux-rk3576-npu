@@ -1,8 +1,10 @@
 # Extra patches
 
-Applied by the kernel CI after the `rfc-send-v13/` series, in filename order.
+Applied by the kernel CI after the NPU series, in filename order. The series
+is the `rfc-send-<SERIES>/` directory named by `SERIES` in
+`.github/workflows/kernel.yml`, v14 today.
 
-`rfc-send-v13/` is the NPU series as it goes upstream and nothing unrelated
+That directory is the series as it goes upstream, and nothing unrelated
 belongs in it. Anything else this board needs goes here instead.
 
 | Patch | What it does | Verified on hardware |
