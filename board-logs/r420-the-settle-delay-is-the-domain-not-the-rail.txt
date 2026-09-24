@@ -61,12 +61,15 @@ WHAT IT SAYS
    power-on faults. This was the question worth asking before Ulf Hansson
    picks the patch up, and it could have gone the other way.
 
-2) It is not the rail. Both settle-0 arms faulted at ~1.44 s, the first
-   power-on after boot, when vdd_npu_s0 had been up since the PMIC came out
-   of reset: it is regulator-boot-on at 750 mV, and the regulator core finds
-   it enabled, so need_regulator's first regulator_enable() is not a ramp.
-   The always-on arm removes even the possibility. The fault needs only the
-   domain, and 15 us of settle removes it. That is what Chaoyi said.
+2) It is not the rail. The discriminating arm is settle0railon: with
+   regulator-always-on the regulator core enables vdd_npu_s0 when it
+   registers, before any consumer, so nothing is ramping when the QoS
+   registers are written at the first power-on, and it faults the same way.
+   In settle0 the rail is regulator-boot-on at 750 mV and very likely up
+   too, but that is inferred from the regulator core, not read: the boot
+   log shows the voltage, not the enable state at 1.4 s. The fault needs
+   only the domain, and 15 us of settle removes it. That is what Chaoyi
+   said.
 
 WHAT IT DOES NOT SAY
 
