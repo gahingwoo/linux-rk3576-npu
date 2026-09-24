@@ -40,8 +40,21 @@ power the domains on and off hundreds of times without a fault. The removal
 path, the other half of 10/15's change, only runs when pmdomain probe fails
 and is not exercised here.
 
-OPEN, for the user: the modules. Two directories under /lib/modules belong
-to kernels this board no longer boots (7.1.0-rc5 and 7.2.0-rc5, 175 MB
-together). Removing them and installing only zram.ko and zsmalloc.ko, or
-putting /lib/modules on the model partition once it is in fstab, would both
-work. Neither was done without asking.
+ZRAM, resolved the same day. The user left the board to me. Installed only
+what zram needs from the v14 modules tarball: zram.ko, zsmalloc.ko,
+zstd_compress.ko (modules.dep lists nothing further) and the modules.*
+index files, 7.1 MB under /lib/modules/7.3.0-rc3-next-20260914-00016-
+g8be156261ad4/, copied file by file rather than untarred over /. Nothing was
+deleted; the 7.1 and 7.2 module directories are still there, unused.
+
+/etc/init.d/S05zram loads the module and sets up half of RAM as zstd swap:
+5952 MB on /dev/zram0. On a kernel without the modules it prints that and
+does nothing, so the other extlinux entries still boot as before. busybox
+swapon takes no priority and busybox tar takes no -z, both found on the
+way. Verified from a cold reboot: zram0 added at 2.33 s, SwapTotal
+6095312 kB, and a second start is a no-op.
+
+A REBOOT CHECK THAT READ THE OLD BOOT. The first verification waited for
+the boot marker and a login in the serial log, found the PREVIOUS boot's,
+returned at once, and printed that boot's dmesg as the new one. wait_login
+now takes the byte offset the reboot started from.
