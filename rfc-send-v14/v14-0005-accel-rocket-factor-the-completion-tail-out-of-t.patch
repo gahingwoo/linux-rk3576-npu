@@ -1,4 +1,4 @@
-From 98a4936d42851b8bb210341db87a7b58b680cfdc Mon Sep 17 00:00:00 2001
+From fb983430ed7c50ef28dfd253d83af01e27f8e961 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:47:52 +1200
 Subject: [PATCH v14 05/15] accel/rocket: factor the completion tail out of the
@@ -14,7 +14,7 @@ Reviewed-by: Igor Paunovic <royalnet026@gmail.com>
  1 file changed, 20 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 4c13c3eb7..b70a39e83 100644
+index 996890025..e6e41d517 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -341,6 +341,25 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)

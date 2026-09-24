@@ -1,6 +1,6 @@
-From e928dd3975ba38dd15331a2008602538a68b4dfc Mon Sep 17 00:00:00 2001
+From 218e0ac4d89270ad1628316dd6763f966901518a Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Thu, 24 Sep 2026 22:07:38 +1200
+Date: Thu, 24 Sep 2026 22:20:11 +1200
 Subject: [PATCH v14 00/15] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket. The RK3576 has two cores of
@@ -23,29 +23,33 @@ Changes since v13:
   10/15  One reset, not an array (Philipp), and the pointer is cleared
          under pmu->mutex before it is put (Sashiko). Abel, the code
          under your Reviewed-by changed; say if the tag should go.
-  12/15  Drops a claim that its test was byte exact. It was within one
-         count.
+  12/15  Drops a claim that its test was byte exact; it was within one
+         count. Its comment on PC_TASK_CON now says the count clear
+         lands inside the task number and inflates it, which is what
+         happens.
   13/15, 14/15
          v13's 13/14, split as Heiko asked. 14/15 gives 786 MHz at 750
          mV as 11 to 25 wrong words a pass; v12 and v13 said 13 to 20
          wrong rows, which no record supports.
 
-The other messages are shorter.
+The other messages, apart from 1/15, are shorter.
 
 On Heiko's question, 9/15's delay at 0 makes the first power-on of the
 NPU domain take an async SError, also with vdd_npu_s0 always-on; at 15
-us, 536 cold power-ons were clean. Details are in the 9/15 thread.
+us, 536 cold power-ons were clean. Details are in the v13 9/14 thread:
+https://lore.kernel.org/all/20260924090824.38493-1-gahing@gahingwoo.com/
 
 Routing: Ulf offered to take 7, 9 and 10. 1 to 5, 11 and 12 go through
-accel, 13 to 15 through rockchip, and 6 and 8 with the code they
-describe. 15/15 needs 9, 10 and 12 to 14 first, or the board takes an
-SError at boot.
+accel, 13 to 15 through rockchip, 6 with accel and 8 with the DT patches
+that use it. 15/15 needs 9, 10 and 12 to 14 first; without 9 and 10 the
+board takes an SError at boot.
 
 Still open:
 
   4/15   whether you want a fix for the asynchronous put, and which
-  5/15   ours or ZhaoJinming's; whichever lands first, the other
-         conflicts
+  5/15   moves the same line as ZhaoJinming's "accel/rocket: Fix
+         iommu_group leak and unsafe IRQ register access"; whichever
+         lands first, the other conflicts
   14/15  both NPU domains per core, as tested, or one
   --     rocket_core_fini() puts the IOMMU group before it cancels the
          timeout worker: fix it here or on its own

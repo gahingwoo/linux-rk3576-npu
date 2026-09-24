@@ -1,4 +1,4 @@
-From d87d31cbf92af3b81fc35b137fe5c68eadd0fe82 Mon Sep 17 00:00:00 2001
+From 8ad0c8697990f5e214d7a16e30b8d3387466d165 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:29 +1200
 Subject: [PATCH v14 10/15] pmdomain: rockchip: cycle an optional power-domain
@@ -20,7 +20,7 @@ Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
-index 39988efd8..9313731ab 100644
+index 39988efd8..7278c9bbe 100644
 --- a/drivers/pmdomain/rockchip/pm-domains.c
 +++ b/drivers/pmdomain/rockchip/pm-domains.c
 @@ -19,6 +19,7 @@
@@ -95,7 +95,7 @@ index 39988efd8..9313731ab 100644
  	clk_bulk_put(pd->num_clks, pd->clks);
  
 -	/* protect the zeroing of pm->num_clks */
-+	/* protect the zeroing of pm->num_clks and pd->reset */
++	/* protect the zeroing of pd->num_clks and pd->reset */
  	mutex_lock(&pd->pmu->mutex);
  	pd->num_clks = 0;
 +	reset = pd->reset;

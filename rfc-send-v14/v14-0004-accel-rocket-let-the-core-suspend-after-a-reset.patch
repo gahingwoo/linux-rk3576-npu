@@ -1,13 +1,13 @@
-From 6fdefe22b8512a674d2d9dd7a0ecef737c4708be Mon Sep 17 00:00:00 2001
+From 5896cc203bddc00eaff65e3a16561fd759e7cfe1 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v14 04/15] accel/rocket: let the core suspend after a reset
 
 rocket_reset() drops the in-flight job's runtime PM reference with
-pm_runtime_put_noidle(), which requests nothing, so the core never suspends
-and its power domain never cycles. On RK3576 the domain's power-on resets
-the NPU bus interface; without it the IOMMU stops answering and the job
-after a timeout fails.
+pm_runtime_put_noidle(), which requests nothing, so the core does not
+suspend until something else asks and its power domain does not cycle. On
+RK3576 the domain's power-on resets the NPU bus interface; without it the
+IOMMU stops answering and the job after a timeout fails.
 
 Use pm_runtime_put_autosuspend(), as the completion path does. On a ROCK 4D
 the job after a timeout goes from 0 to 128 of 128 channels correct.
@@ -21,7 +21,7 @@ Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced 
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 6fb75a558..4c13c3eb7 100644
+index bcafa89ba..996890025 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -443,12 +443,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)

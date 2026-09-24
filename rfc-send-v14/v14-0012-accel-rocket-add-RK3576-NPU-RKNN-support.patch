@@ -1,4 +1,4 @@
-From 13a2ef797a7a645f2d4f8ba331487193872fdcb9 Mon Sep 17 00:00:00 2001
+From 7ecd88cda888b378ef804f579269be2aa628cd6a Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v14 12/15] accel/rocket: add RK3576 NPU (RKNN) support
@@ -183,7 +183,7 @@ index 2c673bb99..0cd692a66 100644
  struct rocket_iommu_domain {
  	struct iommu_domain *domain;
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index b70a39e83..90fdc55a5 100644
+index e6e41d517..c5491994f 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -21,6 +21,30 @@
@@ -204,10 +204,10 @@ index b70a39e83..90fdc55a5 100644
 + * https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
 + *
 + * Writing the RK3588 layout to an RK3576 therefore asks for task_number
-+ * 0x7001, that is 28673 tasks, and lands the count clear on a bit that does
-+ * nothing. The task counter is then only ever cleared by a reset, which is
-+ * exactly the "one task per reset" behaviour this series has been reporting
-+ * since v3.
++ * 0x7001, that is 28673 tasks: the count clear at BIT(13) lands inside the
++ * sixteen-bit task number and inflates the count instead of clearing it.
++ * The task counter is then only ever cleared by a reset, so the block runs
++ * one task per reset.
 + */
 +#define RK3576_PC_TASK_CON_TASK_NUMBER(n)	((n) & 0xffff)
 +#define RK3576_PC_TASK_CON_PP_EN		BIT(16)
