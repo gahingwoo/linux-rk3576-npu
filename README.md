@@ -98,9 +98,10 @@ PMIC boots with, two jobs running at once make the second core write single
 words wrong, about one row in three thousand, where either core alone is exact.
 Four device trees on the same board and kernel, four passes of 5400 rows each:
 786 MHz at 750 mV is wrong 11 to 25 words a pass, and 594 at 750, 786 at 800 and
-786 at 850 are each clean. 13/14 therefore assigns 594 MHz, under the lowest
-step of that table, so the description is right on a board that says nothing
-about an NPU rail.
+786 at 850 are each clean. 13/14 therefore assigns 594 MHz, which sits between
+that table's 500 and 600 MHz steps, both of which ask 725 mV at every leakage
+bin, so the description is right on a board that says nothing about an NPU
+rail.
 
 Sashiko reviewed v12 on 12 September, ten mails, with three findings that were
 new and one that was not. No code in v13 answers any of them: all four have an
