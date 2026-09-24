@@ -48,79 +48,51 @@ the RK3576 side of 2/14, 3/14 and 4/14 has no induced-reset evidence at all.
 **That PMIC finding is now on the list**, in-thread, where it was deliberately
 kept out of the cover.
 
-## What v14 owes, from this round
+## What v14 owes (updated 2026-09-24, after the maintainers answered)
 
-1. 03/14's cover text takes Igor's limit, in his words.
-2. 04/14 has a [High] from Sashiko again on the asynchronous put. If it
-   changes shape, Igor has offered to re-run that arm.
-3. 03/14 has a NEW [High] from Sashiko on v13: the masking is skipped
-   entirely when `pm_runtime_get_if_active()` returns zero, and
-   `synchronize_irq()` then runs with nothing masked. Not answered yet.
+**Ulf Hansson offered to take 7, 9 and 10 through pmdomain** (21 Sep, cover).
+That is the first maintainer to offer to apply anything from this series. The
+reply asks him to take them from v14, because 10/14 changes code.
 
-## 2026-09-13 reply to Igor's correction of his own reports — SENT, 250
+Code:
+1. **10/14: one reset, not an array** (Philipp Zabel). The binding in 07/14
+   says `resets: maxItems: 1` and each NPU domain node carries exactly one
+   (SRST_A_RKNN0_BIU / SRST_A_RKNN1_BIU), so
+   `of_reset_control_get_optional_exclusive()` and `pd->reset`, not
+   `of_reset_control_array_get_optional_exclusive()` and `pd->resets`.
+   This path runs on every NPU power-on, so v14 is board tested before it goes.
 
-`reply-igor-0x80.eml`, Message-ID `20260912224844.1614558-1-gahing@gahingwoo.com`,
-under **v12 03/14** (`...1519165-4-`), In-Reply-To his
-`20260912113717.6819-1-royalnet026@gmail.com`. To Igor, Cc Tomeu,
-linux-rockchip, dri-devel.
+Structure:
+2. **13/14 splits in two** (Heiko): resets added to the power-domain nodes;
+   then the NPU core nodes, with the `pd_npu` label there. The series becomes
+   15 patches.
 
-**It went under the PATCH, not the cover.** He replied to 03/14 and the
-changes he asks for are that patch's commit message and tag. I had drafted it
-against the cover from a guessed Message-ID; both were wrong and both were
-caught by fetching the real thread. Same misplacement the v11 Tested-by had.
+Commit messages:
+3. **09/14 keeps its first two paragraphs** (Ulf), plus ONE sentence on
+   need_regulator forcing the domain off at probe, and the reply to Ulf says
+   so and offers to drop it.
+4. **10/14 keeps its first paragraph** (Ulf).
+5. **13/14, both halves, trimmed "A LOT"** (Heiko).
+6. **03/14 carries Igor's limit in his words**, including his 19 Sep follow-up:
+   he reached the multi-task path with a 2-task job (input overflowing the
+   CBUF) and still says it bounds and does not prove.
+7. **03/14's comment gains the other half of the -EINVAL ambiguity**
+   (Sashiko's v13 [High]): up-but-disabled is left unmasked, which is what
+   every path did before the patch. No code change, so Igor's tag still
+   describes the code.
 
-## What he corrected, and what it costs v12
+Tags: Heiko's Reviewed-by on 07/14.
 
-He re-ran the 19 August protocol on v12 and found an error in **his own**
-reports. His script kept the scorer output of every inference per round and
-never aggregated it; his summaries scored only the one inference after the
-forced autosuspend. Aggregated, the constant-0x80 result is in nearly every
-run, on every arm, on all three dates.
+Cover:
+8. The r420 result under 9/14: with the delay removed, the first cold power-on
+   takes the SError, with vdd_npu_s0 always-on as well. It is the domain.
+9. Sashiko's v13 findings answered: 03/14 (above), 04/14 (the asynchronous
+   put again, same answer as v13), 10/14.
+10. **Igor's DVFS series** (v2, 22 Sep, 11 patches) carries our 01/14 as its
+    05/11 and edits the same rknn-core binding in its 06/11. Say which lands
+    first decides who drops 01/14, as he already did in his cover.
 
-**So the all-0x80 buffer is not a differential signal.** It is what a job
-cancelled by the reset looks like from userspace: `rocket_reset()` calls
-`drm_sched_stop()`, `drm_sched_start(sched, 0)` completes the detached jobs
-with `-ECANCELED`, and `PREP_BO` drops the fence error. His kprobe on
-`drm_sched_fence_finished()` is the direct witness: two cancellations, two
-all-0x80 inferences, matched to 2 ms against a 280 ms round period.
-
-**What he withdraws:** the 53-versus-49 bound, "19 August showed no
-manifestation on either arm", and the suggestion that both statements could
-stand in the commit message.
-**What stands:** the provenance, 45 resets on 19 August and 102 on 25 August,
-and the caveat that the protocol bounds and does not prove.
-
-**v12 03/14 therefore states things its own witness has retracted** — "no
-manifestation, oracle 48/48 throughout" and "one event in 53 differential
-resets against zero in 49". That is what v13 fixes.
-
-## What v13 owes, and this mail commits to
-
-1. 03/14 loses the paragraph beginning "Igor also ran a differential on
-   RK3588" and the one beginning "His own bound on it is the right one".
-   His summary replaces them, quoted verbatim (checked character for
-   character against the list copy before sending).
-2. One sentence of the removed text is kept: that the protocol bounds and
-   does not prove. He lists that caveat among what stands; the mail says so
-   and offers to drop it.
-3. `differential base` comes out of 03/14's Tested-by comment.
-4. 02/14's comment becomes 04/14's. All three then read the same.
-5. His 2026-09-12 message is added as a third `Link:`.
-6. Nothing else changes in 02/14, 03/14 or 04/14.
-
-**Raised back at him:** "74 today" has no referent in a commit message. A
-date, or his own wording.
-
-**Not answered, and deliberately:** his uAPI question is Tomeu's. The mail
-says only what is checkable from here, that the blind spot is not his alone —
-`PREP_BO` cannot tell a cancelled job from one that ran, so his protocol, ours
-and the mesa one all read the same buffer.
-
-**No credit claimed.** The 11 September mail was wrong that the numbers were
-invented and that he had not measured them; it was withdrawn in the v12 cover
-and this mail does not reopen it. The 0x80 mechanism is offered as
-corroboration from RK3576, one paragraph, because he wrote "exactly as you
-described for RK3576".
+Base: stays next-20260914 unless the patches stop applying; patch-drift says.
 
 ## v13 -- SENT 2026-09-15, 15 messages, all 250
 
