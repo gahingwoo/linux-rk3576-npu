@@ -1,0 +1,130 @@
+From 3856d74f0eb12e3b1e258f7833a330de7ea6d975 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 21:29:20 +1200
+Subject: [PATCH v14 00/15] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This adds the RK3576 NPU to accel/rocket, which today supports RK3588
+only. The RK3576 carries two cores of the same RKNN block, wired up
+differently: two extra convolution buffer clocks, two power domains per
+core, one reset where the RK3588 has two, no NPU SRAM rail, and a
+PC_TASK_CON that packs the task number into sixteen bits, not twelve.
+
+1/15 is Igor Paunovic's "accel/rocket: request the core clocks by name",
+carried unchanged under his name. It is also 05/11 of his DVFS series;
+whichever lands first, the other drops it. His 06/11 edits the same
+rknn-core binding as 6/15, so the second of the two to land rebases.
+
+Changes since v13, all from review:
+
+  3/15   The comment and the message take the other half of the -EINVAL
+         case Sashiko raised: a core still up with runtime PM disabled
+         is left unmasked, which is where every path was before this
+         patch. Comment only, no code change. The message now quotes
+         Igor's re-runs on v13, including a two-task job that puts
+         hw_submit() on the IRQ thread, and his own statement that they
+         do not show the race closed.
+  7/15   Heiko's Reviewed-by.
+  9/15   Message trimmed to its first two paragraphs (Ulf), plus one
+         sentence on need_regulator forcing the domain off at probe,
+         since that is a change in behaviour the subject does not name.
+  10/15  One reset, not an array: the binding allows one (Philipp). The
+         reset pointer is now cleared under pmu->mutex before it is put,
+         so a domain that pm_genpd_remove() leaves registered cannot
+         pulse a freed reset (Sashiko). Message trimmed (Ulf). Abel, the
+         code under your Reviewed-by changed; say if the tag should go.
+  13/15, 14/15
+         v13's 13/14, split as Heiko asked: the core domains' clocks and
+         reset, then the NPU nodes with the pd_npu label. Both messages
+         trimmed. 14/15 also corrects a number: v12 and v13 said "13 to
+         20 wrong rows a pass" for 786 MHz at 750 mV, and every record
+         of that measurement says 11 to 25 wrong words. Nothing supports
+         the figure they carried.
+
+Heiko asked whether 9/15's settle delay covers the domain or the rail.
+On v13 as posted, with the delay at 0, the first power-on of the NPU
+domain takes an async SError in rockchip_pd_power(), and it still does
+with vdd_npu_s0 forced always-on; with the delay at 15 us, 536 cold
+power-ons were clean. The numbers and their limits are in that thread.
+
+Sashiko's v13 finding on 4/15, the asynchronous put, is the one v13
+already answered: incomplete coverage rather than a regression, with the
+fix offered for you to choose. Igor measured the effect on RK3588 since:
+with this patch the core suspended after every cancelled job and the
+next job waited for resume inside the same 2 ms timeout, which is the
+timeout feeding itself rather than a defect.
+
+Routing. Ulf offered to take 7, 9 and 10 through pmdomain. 1 to 5, 11
+and 12 go through accel, 13 to 15 through rockchip, and 6 and 8 with
+whichever tree takes the code they describe. 15/15 enables both cores on
+rock-4d and depends on 9, 10, 12, 13 and 14: without 9 and 10 the domain
+powers on with no settle and no reset pulse and the first register read
+takes the SError. Every earlier patch is safe on its own; 9 alone does
+something, powering the NPU domain off at probe, which its message now
+says. Holding 15/15 a cycle is fine by me if that is easier than
+coordinating.
+
+Still open, each argued where it is raised:
+
+  4/15   the shape of the fix, if you want one
+  5/15   ours or ZhaoJinming's; whichever lands first the other
+         conflicts
+  14/15  both NPU domains per core, as tested, or one
+  --     rocket_core_fini() puts the IOMMU group before it cancels the
+         timeout worker: fix it here or on its own
+  15/15  hold it a cycle, or coordinate the three trees
+
+Link to v13: https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/
+
+The tags:
+
+  2/15   Tested-by: Igor Paunovic   # RK3588, three cores, induced
+                                    # reset, JOB_TIMEOUT_MS=2
+  3/15   Tested-by: Igor Paunovic   # same
+  4/15   Tested-by: Igor Paunovic   # same
+  5/15   Reviewed-by: Igor Paunovic
+  6/15   Reviewed-by: Krzysztof Kozlowski
+  7/15   Acked-by: Conor Dooley
+         Reviewed-by: Heiko Stuebner
+  8/15   Acked-by: Conor Dooley
+  9/15   Reviewed-by: Abel Vesa
+  10/15  Reviewed-by: Abel Vesa
+
+Igor Paunovic (1):
+  accel/rocket: request the core clocks by name
+
+Jiaxing Hu (14):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: let the core suspend after a reset
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain: rockchip: add optional per-domain power-on settle delay
+  pmdomain: rockchip: cycle an optional power-domain reset on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: add NPU core domain clocks and resets to rk3576
+  arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+  arm64: dts: rockchip: enable the NPU on rk3576-rock-4d
+
+ .../bindings/iommu/rockchip,iommu.yaml        |  28 ++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 +++++-
+ .../power/rockchip,power-controller.yaml      |   8 +
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  22 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 +++++++++-
+ drivers/accel/rocket/rocket_core.c            |  32 +++-
+ drivers/accel/rocket/rocket_core.h            |  11 +-
+ drivers/accel/rocket/rocket_device.c          |   7 +-
+ drivers/accel/rocket/rocket_drv.c             |  42 ++++-
+ drivers/accel/rocket/rocket_drv.h             |   2 +
+ drivers/accel/rocket/rocket_job.c             | 157 +++++++++++++++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  89 +++++++---
+ 12 files changed, 467 insertions(+), 64 deletions(-)
+
+
+base-commit: 1a1de54f7369cd2b5bac0f265910e60ad3a6b4c3
+-- 
+2.43.0
+
