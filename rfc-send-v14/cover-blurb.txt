@@ -36,15 +36,16 @@ https://lore.kernel.org/all/20260924090824.38493-1-gahing@gahingwoo.com/
 
 Routing: Ulf offered to take 7, 9 and 10. 1 to 5, 11 and 12 go through
 accel, 13 to 15 through rockchip, 6 with accel and 8 with the DT patches
-that use it. 15/15 needs 9, 10 and 12 to 14 first; without 9 and 10 the
+that use it. 15/15 needs 9, 10 and 12 to 14 first; without 9, 10 and 13
+the NPU domain comes up with no settle delay or reset pulse and the
 board takes an SError at boot.
 
 Still open:
 
   4/15   whether you want a fix for the asynchronous put, and which
-  5/15   moves the same line as ZhaoJinming's "accel/rocket: Fix
-         iommu_group leak and unsafe IRQ register access"; whichever
-         lands first, the other conflicts
+  5/15   moves the line that ZhaoJinming's "accel/rocket: Fix
+         iommu_group leak and unsafe IRQ register access" changes;
+         whichever lands first, the other conflicts
   14/15  both NPU domains per core, as tested, or one
   --     rocket_core_fini() puts the IOMMU group before it cancels the
          timeout worker: fix it here or on its own
