@@ -1,28 +1,19 @@
-From 9789cd1405bf1b0adba57f886abbd2fc0620534b Mon Sep 17 00:00:00 2001
+From eb16c45c825611c9f869734eec567d431b05ba9b Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:38 +1200
 Subject: [PATCH v14 11/15] accel/rocket: select the per-core clock and reset
  counts from match data
 
 The RK3576 carries the same RKNN block with a different set of clocks and
-resets, so the counts cannot stay compile-time constants. Add a soc_data
-struct to the of_device_id match data and take the bulk counts from it.
-RK3588 keeps four clocks and two resets, so nothing changes for it, and the
-arrays keep their present sizes: the SoC that needs a longer one grows it
-in the patch that adds the names.
+resets, so the counts cannot stay compile-time constants. Take them from a
+soc_data struct in the match data; RK3588 keeps four clocks and two resets.
+rocket_core_reset() uses the count too, since walking the array with
+ARRAY_SIZE() would touch entries that a SoC with fewer never acquired.
 
-rocket_core_reset() is switched over as well. It is the same array, and
-leaving it on ARRAY_SIZE() would walk entries that were never acquired once
-a SoC asks for fewer.
-
-soc is checked at the top of rocket_probe(), before anything is allocated
-and before the per-core fields are stored. of_device_get_match_data()
-returns NULL for a device that bound by name rather than by compatible, and
-such a device has no of_node, so it was never counted by the walk of
-matching nodes that sizes rdev->cores[]. Storing into that array first and
-checking afterwards would be writing past the end under the check's own
-premise, and returning from there is the one error path in this function
-that would skip the unwind the path below it does.
+soc is checked at the top of rocket_probe(), before anything is allocated.
+A device bound by name has no match data and no of_node, so it was never
+counted when rdev->cores[] was sized, and storing into that array before
+the check would write past its end.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

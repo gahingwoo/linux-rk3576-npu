@@ -1,21 +1,14 @@
-From eef314fd63741f77f5e56502a9ffbb36fd9a61b9 Mon Sep 17 00:00:00 2001
+From 87c47e5647b4bcd90ae7de0ea4863c501e73403d Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:47:52 +1200
 Subject: [PATCH v14 05/15] accel/rocket: factor the completion tail out of the
  IRQ handler
 
 rocket_job_handle_irq() stops the block and then either starts the job's
-next task or retires the job. The second half is a step of its own and
-reads better with a name, now that taking the register writes under
-job_lock has moved it a level deeper inside the scoped guard.
-
-Move it to rocket_job_next_locked(). The early return that used to leave
-the handler now leaves the helper, which is the same thing here: the scoped
-guard drops job_lock either way and nothing follows it.
-
-Doing it as its own patch keeps the locking fix at the head of the series
-minimal, so a bisect that stops before this one gets that fix and nothing
-else. There is one caller, and no functional change.
+next task or retires the job. Move the second half to
+rocket_job_next_locked(), now that it sits inside the job_lock guard. The
+early return that left the handler now leaves the helper, which is the same
+thing here: the guard drops job_lock either way. No functional change.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Reviewed-by: Igor Paunovic <royalnet026@gmail.com>

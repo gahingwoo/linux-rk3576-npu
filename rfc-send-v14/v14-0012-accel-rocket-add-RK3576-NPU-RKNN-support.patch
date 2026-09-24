@@ -1,4 +1,4 @@
-From 606f35171025e8efd4bdd6f4b6e3a862a8d198be Mon Sep 17 00:00:00 2001
+From f6fb043377fd96da5ed9da3cab2964cc1ca517bb Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v14 12/15] accel/rocket: add RK3576 NPU (RKNN) support
@@ -6,51 +6,31 @@ Subject: [PATCH v14 12/15] accel/rocket: add RK3576 NPU (RKNN) support
 The RK3576 has two cores of the same RKNN block and a few platform
 differences:
 
- - the CBUF (convolution buffer) has its own clock domain, so the core
-   needs six clocks rather than four;
- - there is no per-core hclk reset. The CRU has SRST_A_RKNN0 and
-   SRST_A_RKNN1 but no SRST_H_RKNN0 or SRST_H_RKNN1, so a core takes one
-   reset where RK3588 takes two;
- - the NPU spans two power domains, and a device with more than one is
-   skipped by the driver-core single-domain auto-attach, so the list has
-   to be attached explicitly;
- - PC_TASK_CON packs the task number with sixteen bits rather than
-   twelve, moving the two controls above it up by four and adding a third.
+  - the CBUF has its own clock domain, so a core takes six clocks;
+  - there is no per-core hclk reset, so a core takes one reset, not two;
+  - the NPU spans two power domains, which the driver core does not
+    attach on its own, so the list is attached explicitly;
+  - PC_TASK_CON packs the task number into sixteen bits, not twelve,
+    moving the two controls above it up by four and adding a third.
 
-That last one is the reason this series has been reporting, since v3, that
-the block accepts exactly one task per reset. rocket_registers.h is
-generated from the RK3588 description, so writing it unchanged to an RK3576
-asks for task_number 0x7001, which is 28673 tasks, and puts
-TASK_COUNT_CLEAR inside the sixteen-bit task number, where it inflates the
-count rather than clearing it. The counter is then only ever cleared by a
-reset.
-
-The layout was confirmed by Chaoyi Chen of Rockchip, including the third
-control at BIT(18), task_last_layer_clear, which belongs on every submit
-alongside the count clear:
+The last is why the block ran one task per reset. Written with the RK3588
+layout, PC_TASK_CON asks for 28673 tasks and TASK_COUNT_CLEAR lands inside
+the task number, so only a reset ever clears the counter. Chaoyi Chen of
+Rockchip confirmed the layout, including task_last_layer_clear at BIT(18):
 
   https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
 
-With that written correctly a job of several tasks runs to completion, the
-completion interrupt arrives, and /proc/interrupts counts up. A convolution
-submitted three times with three different inputs is byte exact against the
-CPU reference each time, with no reset in between and with nothing retiring
-the job but the interrupt.
+With it written correctly a job of several tasks runs to completion on its
+interrupt, and a convolution submitted three times with three different
+inputs matches the CPU reference within one count on every channel each
+time, with no reset in between.
 
-Counting the cores now walks the driver's own match table instead of a
-second, hand-kept list of compatibles. The array sized from that count is
-indexed by every core that goes on to probe, so the two lists cannot be
-allowed to disagree.
-
-All of it hangs off the soc_data added earlier, so the RK3588 path keeps
-its existing counts and behaviour.
-
-The match table moves to rocket_drv.h so rocket_device.c can walk it with
-for_each_matching_node() rather than repeating a for_each_compatible_node()
-loop per SoC, which also keeps num_cores in step with the table that sizes
-the array it counts into. The declaration needs struct of_device_id, taken
-from <linux/device-id/of.h> rather than <linux/mod_devicetable.h>, which
-carries every subsystem's tables with it.
+The match table moves to rocket_drv.h, so that rocket_device.c counts the
+cores with for_each_matching_node() over the table the driver matches on
+rather than a second, hand-kept list; every core that probes indexes the
+array sized from that count. struct of_device_id comes from
+<linux/device-id/of.h> rather than <linux/mod_devicetable.h>. RK3588 keeps
+its counts and behaviour through the soc_data added in the previous patch.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

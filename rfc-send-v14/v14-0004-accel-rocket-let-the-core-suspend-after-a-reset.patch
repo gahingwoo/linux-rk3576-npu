@@ -1,41 +1,24 @@
-From 9b7f1afd265d80199531f420500fd2f151588d18 Mon Sep 17 00:00:00 2001
+From 5e2bb0c246f4d257c2747a2d39b506067d050f0b Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v14 04/15] accel/rocket: let the core suspend after a reset
 
 rocket_reset() drops the in-flight job's runtime PM reference with
-pm_runtime_put_noidle(), a bare decrement that requests nothing. The core
-is left at usage_count 0 but still runtime-active with no idle request
-pending, so it does not suspend until something else asks, and on a
-platform whose power domain does work on power-on that work never happens.
+pm_runtime_put_noidle(), which requests nothing, so the core stays
+runtime-active and its power domain does not cycle. On RK3576 the domain
+cycles a bus interface reset when it powers on, and without it the NPU's
+IOMMU stops answering: the job after a timeout returns the output zero
+point and rk_iommu reports that MMU_DTE_ADDR is not functioning.
 
-On RK3576 that work is a bus interface reset the domain cycles when it
-comes up. Without it the NPU's IOMMU stops answering, and the job after a
-timeout returns a surface of the output zero point with rk_iommu reporting
-that MMU_DTE_ADDR is not functioning.
+Put the reference back through pm_runtime_put_autosuspend(), as the
+completion path does. On a ROCK 4D, three runs in one boot with only the
+put changed: with the bare put the rail stays up and the next inference
+returns 0 of 128 channels, and with the autosuspend put the core suspends
+and it returns 128 of 128.
 
-Measured on a ROCK 4D in one boot, three runs, one variable between them.
-With the bare put the core reads runtime-active with its rail still up
-after the reset, the IOMMU reports the failure on the next attach and the
-inference returns 0 of 128 channels. With the reference put back through
-pm_runtime_put_autosuspend() the core reads suspended with the rail down,
-there is no IOMMU message, and the same inference returns 128 of 128. A
-third run repeating the first failed the same way.
-
-It also matches the put in the completion path a few lines away, so the
-reset path no longer leaves the device in a state the rest of the driver
-never produces. The remaining put, on the error path in rocket_job_run(),
-is a plain pm_runtime_put() and is left alone here: it unwinds a
-pm_runtime_resume_and_get() that never reached the hardware, and changing
-it belongs in its own patch.
-
-Igor Paunovic ran the differential on RK3588: 45 induced resets, all of
-them on core 0 with the other two cores bound but idle in his single
-client protocol, with and without the two preceding patches, and the
-domain dropped every single time with no MMU message on either kernel. So
-this is not rocket-wide. His conditions cross a healthy block with a lowered
-timeout rather than a hung one, which he was careful to say his protocol
-cannot settle, but it is what scopes the change to RK3576.
+On RK3588 the domain dropped after every one of Igor Paunovic's induced
+resets, all on core 0, with or without this patch, so the change matters
+where the domain's power-on does work.
 
 Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
 Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")

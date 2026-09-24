@@ -1,6 +1,6 @@
-From 3856d74f0eb12e3b1e258f7833a330de7ea6d975 Mon Sep 17 00:00:00 2001
+From 077499efc37b3036aeeef7601f6dc025f18966e3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Thu, 24 Sep 2026 21:29:20 +1200
+Date: Thu, 24 Sep 2026 22:02:28 +1200
 Subject: [PATCH v14 00/15] accel/rocket: RK3576 NPU (RKNN) enablement
 
 This adds the RK3576 NPU to accel/rocket, which today supports RK3588
@@ -14,15 +14,18 @@ carried unchanged under his name. It is also 05/11 of his DVFS series;
 whichever lands first, the other drops it. His 06/11 edits the same
 rknn-core binding as 6/15, so the second of the two to land rebases.
 
-Changes since v13, all from review:
+Changes since v13, all from review. Every commit message except 1/15,
+which is Igor's, is shorter: Ulf and Heiko asked for it on theirs and
+the rest had the same problem.
 
   3/15   The comment and the message take the other half of the -EINVAL
          case Sashiko raised: a core still up with runtime PM disabled
          is left unmasked, which is where every path was before this
          patch. Comment only, no code change. The message now quotes
-         Igor's re-runs on v13, including a two-task job that puts
-         hw_submit() on the IRQ thread, and his own statement that they
-         do not show the race closed.
+         Igor's statement on his v13 re-runs, including a two-task job
+         that puts hw_submit() on the IRQ thread. His summary of the
+         earlier sessions, which v13 quoted in full, is in the linked
+         mails; Igor, say if you want it back in.
   7/15   Heiko's Reviewed-by.
   9/15   Message trimmed to its first two paragraphs (Ulf), plus one
          sentence on need_regulator forcing the domain off at probe,
@@ -32,6 +35,10 @@ Changes since v13, all from review:
          so a domain that pm_genpd_remove() leaves registered cannot
          pulse a freed reset (Sashiko). Message trimmed (Ulf). Abel, the
          code under your Reviewed-by changed; say if the tag should go.
+  12/15  Corrects a claim. v13 said a convolution submitted three times
+         with three inputs is byte exact against the CPU reference. It
+         matches within one count on every channel, which is what was
+         measured.
   13/15, 14/15
          v13's 13/14, split as Heiko asked: the core domains' clocks and
          reset, then the NPU nodes with the pd_npu label. Both messages
