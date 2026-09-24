@@ -37,82 +37,43 @@ oven it is roasted in.
 
 The driver support is on the list. Current series:
 
-**[PATCH v13 0/14: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/)**
-(2026-09-15, applies to a plain next-20260914)
+**[PATCH v14 0/15: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20260924102135.92217-1-gahing@gahingwoo.com/)**
+(2026-09-24, applies to a plain next-20260914)
 
-1/14 is Igor Paunovic's clocks-by-name patch, unchanged and under his name,
-carried inside the series rather than named outside it. v9 and v10 declared it
-with a `prerequisite-patch-id:` trailer; Tomeu Vizoso asked for it bundled
-because the Sashiko CI cannot follow that trailer, so v11 and everything since
-carry a `base-commit:` and nothing else.
+Nothing is applied yet. Ulf Hansson has offered to take the three pmdomain
+patches, 7, 9 and 10, through his tree; the rest goes through accel and
+rockchip. Fourteen review tags are on it: Igor Paunovic's Tested-by on 2, 3 and
+4 and Reviewed-by on 5, Krzysztof Kozlowski's Reviewed-by on the npu binding,
+Conor Dooley's Acked-by on 7 and 8, Heiko Stuebner's Reviewed-by on 7, Abel
+Vesa's on 9 and 10, and four on 1/15, which is Igor's clocks-by-name patch
+carried in the series: three from his posting and ours.
 
-No patch of the fourteen has been applied anywhere. Thirteen review tags are on
-it, unchanged since v11: Igor Paunovic's Tested-by on 2/14, 3/14 and 4/14 and
-his Reviewed-by on 5/14, Krzysztof Kozlowski's Reviewed-by on the binding, Conor
-Dooley's Acked-by on 7/14 and 8/14, Abel Vesa's Reviewed-by on 9/14 and 10/14,
-and four on 1/14 -- Sidong Yang's and Diederik de Haas's Tested-by and Sebastian
-Reichel's Reviewed-by, all three carried from Igor's own posting, plus ours.
+v14 answers the v13 review: one reset instead of an array in 10 (Philipp Zabel),
+the reset pointer cleared under the lock on removal (Sashiko), v13's 13/14 split
+in two (Heiko), and shorter messages throughout (Ulf and Heiko). It also
+corrects two numbers v12 and v13 carried: the rail test is 11 to 25 wrong words
+a pass, not 13 to 20 wrong rows, and the three-input convolution test was within
+one count, not byte exact.
 
-**Two things changed between v12 and v13, and only one of them is text.** Igor
-Paunovic re-ran his induced-reset protocol on v12 as posted and found an error
-in his own reports, which v12's 3/14 carried. His script kept the scorer output
-of every inference per round and never aggregated it, so his summaries scored
-only the one inference after the forced autosuspend. Aggregated, the constant
-0x80 buffer is in nearly every run, on every arm, on all three dates, which
-makes it not a differential signal but what a job cancelled by the reset looks
-like from userspace. 3/14 loses the two claims that rested on it and carries his
-own summary instead, quoted as he wrote it; 4/14 loses "45 induced resets across
-three cores", which he corrected in the same mail, since all 45 landed on core
-0. A commit message is the permanent record, which is why this was a respin
-rather than a note in the thread.
+Heiko asked whether 9's settle delay is for the domain or the rail. Measured on
+v13 as posted: with the delay at 0 the first power-on of the NPU domain takes an
+async SError, also with the rail forced always-on; with 15 us, 536 cold
+power-ons are clean (board-logs/r420). Chaoyi Chen of Rockchip gave the same
+answer from the design: about 15 us of internal preparation, during which the
+QoS registers must not be touched.
 
-The other change is code, and it is the only code change in the series since
-v12. A review of the prepared v13 found 3/14's two new PC register writes --
-masking `INTERRUPT_MASK` and clearing the raw status before `synchronize_irq()`
--- sitting outside `job_lock`, while `rocket_job_hw_submit()` arms the same
-register and always runs under it. `reset.pending` is set in
-`rocket_job_timedout()` without the lock and read in `hw_submit()` with it, both
-plain atomics, so a submit that has already passed its check can re-arm the mask
-after the reset clears it. They are inside a `scoped_guard(mutex,
-&core->job_lock)` now, and the `synchronize_irq()` stays outside where it has to
-be. Four lines of scope, and the other thirteen diffs are byte identical to
-v12's.
+Why 594 MHz: CLK_RKNN_DSU0 clocks both cores and nothing in mainline sets its
+rate or the NPU rail, so the block comes up at 786 MHz on the 750 mV this
+board's PMIC boots with, and two cores running together then write wrong words,
+11 to 25 in each pass of 5400 rows. 14/15 assigns 594 MHz, which is clean and
+sits between the 500 and 600 MHz steps of Rockchip's OPP table, both of which
+ask 725 mV.
 
-**The board does not verify that race, and the cover says so.** Reaching it
-needs `rocket_reset()` to run at high frequency, and under `JOB_TIMEOUT_MS=2`
-this ROCK 4D takes its own PMIC's I2C down (`rk3x-i2c 2ac40000.i2c: irq in
-STATE_IDLE`), which fails a big core voltage transition with `-ETIMEDOUT` and
-leaves two CPUs not answering an NMI. That was bisected across four boots
-against a clean next-20260914 and against the rail change alone: it is the
-timeout constant, not this series and not the fourteen patches. So the fix is an
-argument from the code. The cover also says the change postdates Igor Paunovic's
-Tested-by on 3/14, and offers to drop the tag until he has run the new form.
-
-v12 went out on 2026-09-12 against next-20260911, after v11 had gone twelve days
-with no human reply. It carried the three fixes Sashiko's v11 review earned and
-one the board found. The board one stands on its own: `CLK_RKNN_DSU0` clocks
-both NPU cores and the buffer they share, nothing in mainline sets its rate, and
-the block comes up at 786 MHz, while Rockchip's own OPP table asks 800 mV of its
-800 MHz step and nothing sets the rail either. On this ROCK 4D at the 750 mV its
-PMIC boots with, two jobs running at once make the second core write single
-words wrong, about one row in three thousand, where either core alone is exact.
-Four device trees on the same board and kernel, four passes of 5400 rows each:
-786 MHz at 750 mV is wrong 11 to 25 words a pass, and 594 at 750, 786 at 800 and
-786 at 850 are each clean. 13/14 therefore assigns 594 MHz, which sits between
-that table's 500 and 600 MHz steps, both of which ask 725 mV at every leakage
-bin, so the description is right on a board that says nothing about an NPU
-rail.
-
-Sashiko reviewed v12 on 12 September, ten mails, with three findings that were
-new and one that was not. No code in v13 answers any of them: all four have an
-argument in the cover instead, three of them reasons the finding does not stand
-and one, on 4/14, incomplete coverage rather than a regression with the change
-that would close it offered for the maintainer to choose.
-
-Two questions in the cover have gone unanswered from v9 through v13: whether
-9/14 wants splitting, since it adds the settle delay, renames a macro and gives
-`RK3576_PD_NPU` a regulator in one patch, and whether 13/14's power domain
-topology is right. The second has had no reply at all.
+The race 3/15's lock scope closes has no hardware proof. Igor reached the path
+on RK3588 with a two-task job and saw no fault, and says that does not show the
+race closed. On this RK3576 the protocol that would reach it, JOB_TIMEOUT_MS=2,
+takes the PMIC's I2C down and leaves two CPUs not answering an NMI, so it cannot
+be run here.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -126,7 +87,8 @@ Earlier revisions:
 [v9](https://lore.kernel.org/all/cover.1787568658.git.gahing@gahingwoo.com/) |
 [v10](https://lore.kernel.org/all/20260831040804.24111-1-gahing@gahingwoo.com/) |
 [v11](https://lore.kernel.org/all/20260831081956.84871-1-gahing@gahingwoo.com/) |
-[v12](https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/)
+[v12](https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/) |
+[v13](https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/)
 
 v7 is the first revision sent as PATCH rather than RFC, because the thing every
 earlier cover letter described as unsolved is solved and Rockchip has confirmed
@@ -172,9 +134,10 @@ and scoring every inference rather than only the one after the forced
 autosuspend removes the no-manifestation reading taken off it. Carrying that
 correction into the commit messages is what v13 exists for.
 
-Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Alexey Charkov, Heiko
-Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Diederik de Haas and Igor
-Paunovic, who provides the RK3588 coverage this project cannot produce.
+Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Conor Dooley, Alexey
+Charkov, Heiko Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Ulf Hansson,
+Abel Vesa, Diederik de Haas and Igor Paunovic, who provides the RK3588 coverage
+this project cannot produce.
 
 Two iommu patches from the same work are already merged, in linux-next since
 next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
@@ -872,17 +835,18 @@ retractions, of which there have been several.
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Board | Radxa ROCK 4D |
-| Kernel | linux-next, v13 is based on next-20260914 |
+| Kernel | linux-next, v14 is based on next-20260914 |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
 ## Status
 
-The board runs the v13 tree, read off it on 2026-09-16:
-`7.3.0-rc3-next-20260914-00014-gda87f6cd48e3`,
-both NPU cores binding, `/dev/accel/accel0` present, decode running, and nothing
-in dmesg complaining. What that run does NOT do is exercise the race 3/14's lock
-scope closes; the Upstream section above says why, and why the board cannot be
-asked to.
+The board runs v14, built by the kernel CI with the same config as the charsiu
+release, read off it on 2026-09-24:
+`7.3.0-rc3-next-20260914-00016-g8be156261ad4`. Both NPU cores probe, the full
+regression is green with perplexity identical to the last digit
+(board-logs/r421), and zram gives it 6 GB of zstd swap. What that run does NOT
+do is exercise the race 3/15's lock scope closes; the Upstream section above
+says why.
 
 The detailed verification below is older and is kept because it is the one that
 was done with nothing else applied. The v8 series was run on a ROCK 4D that way
@@ -996,7 +960,7 @@ build.sh                     full pipeline (extract → mesa → model → build
 kernel-only.sh               fast kernel iteration
 kernel/
   00[0-2][0-9]-*.patch       29 patches: the working out-of-tree series. The
-                             upstream material is what v13 posts; the rest are
+                             upstream material is what v14 posts; the rest are
                              DEBUG and FIX-ATTEMPT probes that are not for the
                              list, and build.sh applies all of them.
   npu.fragment               CONFIG_DRM_ACCEL + ROCKET + CRC32C
