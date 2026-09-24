@@ -1,0 +1,87 @@
+round 420, 2026-09-24 -- is v13 09/14's settle delay the domain or the rail?
+
+Heiko Stuebner asked on v13 09/14 whether the async SError the settle delay
+prevents is the power domain at all, or the NPU rail needing longer to come
+up. He had seen the rail version of it on RK3588 (8acfb165a492) and asked for
+the regulator to be made always-on and the SError reproduced. Chaoyi Chen
+answered from Rockchip the same day: the delay is the domain's own design,
+about 15 us of internal preparation during which the QoS registers must not
+be touched.
+
+This round asks the question on the configuration v13 actually posts. The
+SError that justified 09/14 was observed in June under a different one: the
+rail held up by a local regulator-always-on hack, no need_regulator, no
+domain-supply. Nobody had removed the delay since the rail began following
+the domain.
+
+KERNEL  7.3.0-rc3-next-20260914-00016-g466bddc34e10, built by the kernel CI
+        with the release config (the same config the charsiu installer
+        ships): v13, the patches-extra HDMI patch, and ONE test-only patch,
+        rk_pd_settle_us=, which overrides the table delay for every domain
+        that has one and logs the value in force at probe. Branch
+        test/settle-knob, deleted after the round.
+DTB     the one v13 posts (rk3576-rock-4d.dtb from the same CI run), and a
+        copy with regulator-always-on added to vdd_npu_s0 and NOTHING else --
+        dtc -I dtb round trip, diff is that one line.
+ARMS    chosen at the extlinux menu over serial, one digit, each boot's
+        kernel, DTB and TEST line read back from the serial capture:
+
+  arm             settle   vdd_npu_s0             result
+  settle15          15 us  follows the domain     536 cold power-ons, clean
+  settle0            0 us  follows the domain     SError at 1.437 s
+  settle0railon      0 us  regulator-always-on    SError at 1.460 s
+
+  settle15: the boot-time probe round gave 236 cold power-ons of npu, nputop
+  and npu0, then 300 more from a charsiu_matmul loop with 0.3 s between runs
+  so genpd powers the domains off each time. genpd idle-state usage went
+  236 -> 536 on npu and nputop, 235 -> 535 on npu0. 0 of 300 matmul runs
+  exited non-zero. No SError, no rocket timeout. vdd_npu_s0 read disabled at
+  750000 uV with the NPU idle, before and after: the rail follows the domain.
+
+  Both settle-0 arms died at the FIRST power-on of the NPU domain, during
+  deferred probe, with the same trace to the same instruction:
+
+    Kernel panic - not syncing: Asynchronous SError Interrupt
+      regmap_write+0x58/0x78
+      rockchip_pd_power+0x4b4/0x63c
+      rockchip_pd_power_on+0x7c/0xd4
+      _genpd_power_on+0x98/0x158
+      genpd_power_on+0xd4/0x238
+      genpd_power_on+0x9c/0x238
+      __genpd_dev_pm_attach+0x1c0/0x2a4
+      platform_probe+0x48/0x9c
+
+  That is the June signature, rockchip_pd_power -> regmap_write, the QoS
+  restore. panic=10 on the test entries brought each one back to the default
+  entry with nobody touching power.
+
+WHAT IT SAYS
+
+1) 09/14 IS needed on what v13 posts. Take the 15 us out and the first cold
+   power-on faults. This was the question worth asking before Ulf Hansson
+   picks the patch up, and it could have gone the other way.
+
+2) It is not the rail. Both settle-0 arms faulted at ~1.44 s, the first
+   power-on after boot, when vdd_npu_s0 had been up since the PMIC came out
+   of reset: it is regulator-boot-on at 750 mV, and the regulator core finds
+   it enabled, so need_regulator's first regulator_enable() is not a ramp.
+   The always-on arm removes even the possibility. The fault needs only the
+   domain, and 15 us of settle removes it. That is what Chaoyi said.
+
+WHAT IT DOES NOT SAY
+
+- n is one boot per settle-0 arm. Both died at the same point with the same
+  PC, and the control survived 536 power-ons, but two boots are two boots.
+- Nothing about later power-ons with and without rail cycling: neither
+  settle-0 arm lived past the first one, so the rail-cycling half of Heiko's
+  hypothesis was never exercised. It did not need to be for this fault.
+- Nothing about a delay shorter than 15 us. 15 is the vendor table's value
+  and the one Chaoyi gives; 0 fails. The margin between them was not swept.
+
+TWO RIG FAILURES ON THE WAY, both mine, both already written down
+- The Debug Probe's CDC wedged: a quick read at 20:05 closed the port, a
+  logger reopened it at 20:15, and it passed zero bytes from then on. One
+  boot was lost to it before a physical replug. reference-driving-the-board
+  now says ONE reader for the whole session.
+- `pgrep -f` matched the shell that contained the pattern, and a dead shell's
+  pid was read as "the logger died". Scan /proc/*/fd instead.
