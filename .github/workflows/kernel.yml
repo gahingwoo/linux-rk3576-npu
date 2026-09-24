@@ -216,6 +216,18 @@ jobs:
             nsp=$(ls rfc-send-v13/v13-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
             [ "$nsp" -gt 0 ] || { echo "::error::the series count came out 0"; exit 1; }
             echo "series      v13, $nsp patches (Igor Paunovic's clocks-by-name is 1/14)"
+            # AND WHAT GOES ON TOP OF IT. The kernel release string counts
+            # every commit past the base, so a manifest that names only the
+            # series reads "14 patches" over a kernel that says -00015. Name
+            # them, because the one thing a reader cannot tell from the
+            # version string is WHICH extra patch they are running.
+            nxp=0
+            for p in patches-extra/[0-9][0-9][0-9][0-9]-*.patch; do
+              [ -e "$p" ] || continue
+              nxp=$((nxp + 1))
+              echo "extra       $(basename "$p")"
+            done
+            echo "extras      $nxp on top of the series, applied in this order"
             echo "backports   none: the four in kernel/backport-7.2 are in this base"
             echo "kernel      $KVER"
             echo "built       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
