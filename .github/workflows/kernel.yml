@@ -40,13 +40,19 @@ on:
         default: false
   push:
     paths:
-      - 'rfc-send-v13/**'
+      - 'rfc-send-v*/**'
       - 'patches-extra/**'
       - 'kernel/base.config'
       - '.github/workflows/kernel.yml'
 
 permissions:
   contents: write
+
+# THE SERIES IS ONE NAME. It was spelled out in seven places, and moving to
+# the next revision meant finding all seven. rfc-send-<SERIES>/ holds the
+# patches, <SERIES>-0000-cover-letter.patch names the base-commit.
+env:
+  SERIES: v13
 
 jobs:
   build:
@@ -84,13 +90,13 @@ jobs:
           # next-20260914 is an ANNOTATED tag, so `git rev-parse <tag>` is the
           # tag object and not the commit. The clone above checks out the
           # commit, so HEAD is the right thing to compare.
-          want=$(sed -n 's/^base-commit: //p' rfc-send-v13/v13-0000-cover-letter.patch)
-          [ -n "$want" ] || { echo "::error::no base-commit in the v13 cover"; exit 1; }
+          want=$(sed -n 's/^base-commit: //p' rfc-send-$SERIES/$SERIES-0000-cover-letter.patch)
+          [ -n "$want" ] || { echo "::error::no base-commit in the $SERIES cover"; exit 1; }
           have=$(git -C linux rev-parse HEAD)
           echo "cover says  $want"
           echo "tree is     $have"
           [ "$want" = "$have" ] || {
-            echo "::error::$BASE is not the base the v13 patches were generated on"
+            echo "::error::$BASE is not the base the $SERIES patches were generated on"
             exit 1
           }
 
@@ -99,7 +105,7 @@ jobs:
           cd linux
           git config user.email ci@example.invalid
           git config user.name "charsiu CI"
-          for p in ../rfc-send-v13/v13-00[0-9][0-9]-*.patch; do
+          for p in ../rfc-send-$SERIES/$SERIES-00[0-9][0-9]-*.patch; do
             case "$p" in *-0000-*) continue ;; esac   # the cover letter
             echo "== $(basename "$p")"
             git am --keep-cr "$p" || {
@@ -213,9 +219,9 @@ jobs:
             # once already: the series went 13 -> 14 when Igor's patch moved
             # inside, and a manifest that states a stale count is worse than
             # one that states none.
-            nsp=$(ls rfc-send-v13/v13-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
+            nsp=$(ls rfc-send-$SERIES/$SERIES-00[0-9][0-9]-*.patch 2>/dev/null | grep -vc -- -0000- )
             [ "$nsp" -gt 0 ] || { echo "::error::the series count came out 0"; exit 1; }
-            echo "series      v13, $nsp patches (Igor Paunovic's clocks-by-name is 1/14)"
+            echo "series      $SERIES, $nsp patches (Igor Paunovic's clocks-by-name is 1/$nsp)"
             # AND WHAT GOES ON TOP OF IT. The kernel release string counts
             # every commit past the base, so a manifest that names only the
             # series reads "14 patches" over a kernel that says -00015. Name
@@ -253,7 +259,7 @@ jobs:
         run: |
           TAG="kernel-$KVER-$(date -u +%Y%m%d)"
           gh release create "$TAG" out/* --title "$TAG" --notes \
-          "RK3576 NPU kernel: linux-next $BASE plus the v13 rocket series, which
+          "RK3576 NPU kernel: linux-next $BASE plus the $SERIES rocket series, which
           carries Igor Paunovic's clocks-by-name patch as its own 1/14. The run
           asserts that the tree it built is the commit those patches name as
           their base.
