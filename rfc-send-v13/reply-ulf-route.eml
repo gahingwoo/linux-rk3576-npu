@@ -1,0 +1,26 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v13 00/14] accel/rocket: RK3576 NPU (RKNN)
+ enablement
+In-Reply-To: <CAPx+jO8EixqfXmrD8zkMkJe_B+2AATo=YNFJraAdE_O9X4KM-w@mail.gmail.com>
+References: <20260915104328.45901-1-gahing@gahingwoo.com>
+ <CAPx+jO8EixqfXmrD8zkMkJe_B+2AATo=YNFJraAdE_O9X4KM-w@mail.gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Ulf,
+
+Yes please. Could you take them from v14 rather than this version?
+Philipp pointed out that the binding allows one reset, so 10/14 should
+use of_reset_control_get_optional_exclusive() rather than the array
+form. v14 has that, your two commit message trims, and Heiko's split of
+13/14.
+
+In 9/14, v14 keeps one sentence beyond the two paragraphs you kept:
+RK3576_PD_NPU also gets need_regulator, which makes
+rockchip_pm_add_one_domain() power that domain off at probe on every
+rk3576 board. The subject does not describe that. Say if you want it
+gone too.
+
+Regards,
+Jiaxing

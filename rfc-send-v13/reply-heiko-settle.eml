@@ -1,0 +1,45 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v13 09/14] pmdomain: rockchip: add optional per-domain
+ power-on settle delay
+In-Reply-To: <15844283.tv2OnDr8pf@phil>
+References: <20260915104328.45901-1-gahing@gahingwoo.com>
+ <20260915104328.45901-10-gahing@gahingwoo.com>
+ <15844283.tv2OnDr8pf@phil>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Heiko,
+
+Chaoyi has given the mechanism, and I ran your experiment on v13 as
+posted, since the SError behind this patch was first seen in June on a
+board that held vdd_npu_s0 up with a local regulator-always-on and had
+no domain-supply.
+
+Same kernel in every arm (this series, an unrelated dw-hdmi-qp patch,
+and a test-only override of the table delay), v13's rock-4d dtb, and for
+the last arm that dtb with only regulator-always-on added to vdd_npu_s0:
+
+  delay 15 us, rail follows the domain   536 cold power-ons, clean
+  delay 0,     rail follows the domain   SError at the first power-on
+  delay 0,     regulator-always-on       SError at the first power-on
+
+Both failures are the same:
+
+  Kernel panic - not syncing: Asynchronous SError Interrupt
+   regmap_write+0x58/0x78
+   rockchip_pd_power+0x4b4/0x63c
+   rockchip_pd_power_on+0x7c/0xd4
+
+In the always-on arm the rail has been enabled since the regulator
+registered, so nothing is ramping at that first power-on (1.4 s,
+deferred probe), and it still faults. The fault needs only the domain,
+as Chaoyi says, and the delay removes it. The enable time is already
+described: rk3576-rock-4d.dts gives vdd_npu_s0
+regulator-enable-ramp-delay = <400>.
+
+Limits: one boot per failing arm, nothing tried between 0 and 15 us, and
+neither failing arm got past its first power-on.
+
+Regards,
+Jiaxing

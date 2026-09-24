@@ -1,5 +1,28 @@
 # v13, what has gone out
 
+## 2026-09-24 replies to Ulf and Heiko -- SENT, 250 each
+
+`reply-ulf-route.eml`, Message-ID `20260924090816.38457-1-gahing@gahingwoo.com`,
+under the COVER, In-Reply-To Ulf Hansson's 21 Sep offer to take 7, 9 and 10
+through pmdomain. Asks him to take them from v14, because 10/14 changes code
+(Philipp Zabel's single-reset API), and says v14 carries his two trims and
+Heiko's split of 13/14. **Commits us to:** 9/14 keeping ONE sentence on
+need_regulator beyond the two paragraphs he kept, dropped if he asks.
+
+`reply-heiko-settle.eml`, Message-ID `20260924090824.38493-1-gahing@gahingwoo.com`,
+under **09/14**, In-Reply-To Heiko's question. The r420 result: with the delay
+at 0 the first power-on of the NPU domain takes the SError, with
+regulator-always-on on vdd_npu_s0 as well; 15 us survives 536 cold power-ons.
+The claim rests on the always-on arm alone; the boot-on inference for the
+other arm was cut from the mail. Also points out rk3576-rock-4d.dts already
+has regulator-enable-ramp-delay = <400> on the rail. States its limits: one
+boot per failing arm, nothing between 0 and 15 us, nothing past the first
+power-on.
+
+Both were trimmed hard before sending (184 and 301 words down to 90 and 202):
+the paragraph to Ulf that repeated the Heiko mail went, since he is copied on
+it.
+
 ## 2026-09-19 two replies under v13 -- SENT, 250 each
 
 `reply-sidong-runtime.eml`, Message-ID
