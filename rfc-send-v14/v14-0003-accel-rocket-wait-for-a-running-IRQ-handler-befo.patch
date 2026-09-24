@@ -1,48 +1,29 @@
-From 4bbc2e574bc3375b9098a00019b4e79a1e2d7fb8 Mon Sep 17 00:00:00 2001
+From 78baa392e406c6e88773ac179fa026b633d25bb3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 22:53:32 +1200
 Subject: [PATCH v14 03/15] accel/rocket: wait for a running IRQ handler before
  resetting a core
 
-rocket_reset() calls drm_sched_stop(), which does not wait for a threaded
-handler that is already running, so the comment after it, "Remaining
-interrupts have been handled", was an assumption. Call synchronize_irq()
-after it. The call stays outside job_lock: the handler takes that lock, so
-waiting for it with the lock held would deadlock, and silently, since the
-wait is on desc->wait_for_threads and not on anything lockdep models. The
-only caller, rocket_job_timedout(), runs in process context with nothing
-held.
+drm_sched_stop() does not wait for a threaded handler that is already
+running. Call synchronize_irq() after it, outside job_lock, which the
+handler takes.
 
-Before the sync, mask the block's interrupt and clear its raw status, so
-that a completion cannot arrive after synchronize_irq() returns; the next
-submit arms the mask again. Those two writes go under job_lock, because
-rocket_job_hw_submit() arms the same register under it and could otherwise
-re-arm the mask after the reset has cleared it.
+Before the sync, mask the block's interrupt and clear its raw status, so no
+completion arrives after it. Do that under job_lock, since
+rocket_job_hw_submit() arms the same mask under that lock, and only when
+pm_runtime_get_if_active() returns a positive count: the reset holds no
+runtime PM reference, and with the domain down a register access takes an
+async SError.
 
-The function holds no runtime PM reference. By the time it runs, the
-completion path may have dropped the last one and the domain may be down,
-where a register access takes an async SError on RK3576. So the writes
-happen only when pm_runtime_get_if_active() returns a positive count.
--EINVAL cannot be trusted either way: pm_runtime_force_suspend() and
-rocket_core_fini() both disable runtime PM with the domain down, so it is
-not taken as active, and a core still up with runtime PM disabled is left
-unmasked, which is where every path was before this change.
+Igor Paunovic's induced-reset runs on RK3588, including a two-task job on
+v13 that puts hw_submit() on the IRQ thread, found no fault; as he put it,
+"this does not show the race is closed".
 
-A handler that has already read in_flight_job is dealt with by the previous
-patch, which takes the completion writes under the same lock.
-
-Igor Paunovic ran an induced-reset protocol on RK3588 (JOB_TIMEOUT_MS=2,
-all resets on core 0, one client) on 19 and 25 August, on 12 September and
-on v13. The all-0x80 buffers it reports are cancelled jobs, not a signal of
-the race: drm_sched_start() completes the detached jobs with -ECANCELED and
-PREP_BO drops the fence error. On v13 he also ran a two-task job, which
-puts hw_submit() on the IRQ thread. In his words:
-
-  So the lock scope ran with the IRQ thread submitting tasks, but this
-  does not show the race is closed: the window in hw_submit() is
-  microseconds, one reset began while the IRQ thread was in it (in the
-  32-output run), and waiting on job_lock itself was not instrumented.
-
+Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/CAEWPSH5mxTbUkNouxm6yecMZYvDowquhvYvhaXQ8HoMtHD5U1g@mail.gmail.com/
+Link: https://lore.kernel.org/all/20260912113717.6819-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/20260916132824.13527-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/20260919103422.148834-1-royalnet026@gmail.com/
 Suggested-by: Igor Paunovic <royalnet026@gmail.com>
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2

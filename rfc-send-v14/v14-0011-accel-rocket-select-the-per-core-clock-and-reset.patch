@@ -1,19 +1,13 @@
-From eb16c45c825611c9f869734eec567d431b05ba9b Mon Sep 17 00:00:00 2001
+From 8b7e7b151ef0b56d1dbaefbf47571bd126d18234 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:38 +1200
 Subject: [PATCH v14 11/15] accel/rocket: select the per-core clock and reset
  counts from match data
 
-The RK3576 carries the same RKNN block with a different set of clocks and
-resets, so the counts cannot stay compile-time constants. Take them from a
-soc_data struct in the match data; RK3588 keeps four clocks and two resets.
-rocket_core_reset() uses the count too, since walking the array with
-ARRAY_SIZE() would touch entries that a SoC with fewer never acquired.
-
-soc is checked at the top of rocket_probe(), before anything is allocated.
-A device bound by name has no match data and no of_node, so it was never
-counted when rdev->cores[] was sized, and storing into that array before
-the check would write past its end.
+The RK3576 has the same RKNN block with a different number of clocks and
+resets. Take the counts from soc_data in the match data; RK3588 keeps four
+and two. Check soc before anything is allocated, since a device bound by
+name has no match data.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

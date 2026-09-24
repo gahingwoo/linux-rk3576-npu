@@ -1,23 +1,18 @@
-From e8f94afeb25b66630647403e8bf086f8c4ec1cf8 Mon Sep 17 00:00:00 2001
+From e2faacfdeb4a3b867a18ad68dad8e5f122ef533c Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 24 Sep 2026 21:13:48 +1200
 Subject: [PATCH v14 14/15] arm64: dts: rockchip: add NPU (RKNN) nodes to
  rk3576
 
-Add the two RKNN cores and their IOMMUs, disabled by default, and label the
-PD_NPU node so a board can attach the NPU rail to it.
+Add the two RKNN cores and their IOMMUs, disabled, and label PD_NPU so a
+board can give it the NPU rail. Each core lists both core domains, its own
+first, as tested.
 
-Each core lists both core domains, its own first, which is the description
-tested here. Each IOMMU lists its own core's domain.
-
-CLK_RKNN_DSU0 clocks both cores, and nothing in mainline sets its rate or
-the NPU rail, so the block comes up at 786.432 MHz on whatever voltage the
-board boots with. On a ROCK 4D at the 750 mV its PMIC starts with, two
-cores running together then write single words wrong, 11 to 25 in each pass
-of 5400 rows, where 594 MHz is clean. 594 MHz sits between the 500 and 600
-MHz steps of Rockchip's OPP table for this NPU, both of which ask 725 mV at
-every leakage bin, so assign it. An OPP table with the rail attached is the
-proper answer, and it needs driver support this series does not have.
+Assign CLK_RKNN_DSU0 594 MHz. Nothing in mainline sets its rate or the NPU
+rail, and at the 786 MHz it comes up at, on the 750 mV a ROCK 4D boots
+with, two cores running together write wrong words, 11 to 25 in each pass
+of 5400 rows. 594 MHz is clean, and Rockchip's OPP table asks only 725 mV
+of its 500 and 600 MHz steps.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

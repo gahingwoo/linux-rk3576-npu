@@ -1,4 +1,4 @@
-From 8a8b63825ef2f286ec8fa315b53e2a5d7a595656 Mon Sep 17 00:00:00 2001
+From 44d84ed7b810252ff837f8c57eb27133b5af80fa Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 12 Aug 2026 21:14:24 +1200
 Subject: [PATCH v14 02/15] accel/rocket: take the completion register writes
@@ -6,14 +6,9 @@ Subject: [PATCH v14 02/15] accel/rocket: take the completion register writes
 
 rocket_job_handle_irq() writes OPERATION_ENABLE and INTERRUPT_CLEAR before
 taking job_lock, while rocket_job_hw_submit() writes OPERATION_ENABLE under
-it. A completion on one core can then write its zero after a submit on the
-same core has written its one, and stop a task that has only just started.
-
-Move both writes inside the existing scoped_guard(), so that stopping the
-block and deciding what to start next are one step. The lock gives
-exclusion rather than ordering; what keeps the ordinary path safe is that
-the handler signals the job's done fence before the scheduler can issue the
-next one.
+it, so a completion can write its zero after a submit has written its one
+and stop a task that has just started. Move both writes inside the existing
+scoped_guard().
 
 Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>

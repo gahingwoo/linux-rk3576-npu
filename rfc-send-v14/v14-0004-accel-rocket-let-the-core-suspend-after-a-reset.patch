@@ -1,24 +1,16 @@
-From 5e2bb0c246f4d257c2747a2d39b506067d050f0b Mon Sep 17 00:00:00 2001
+From 6fdefe22b8512a674d2d9dd7a0ecef737c4708be Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Wed, 19 Aug 2026 19:11:26 +1200
 Subject: [PATCH v14 04/15] accel/rocket: let the core suspend after a reset
 
 rocket_reset() drops the in-flight job's runtime PM reference with
-pm_runtime_put_noidle(), which requests nothing, so the core stays
-runtime-active and its power domain does not cycle. On RK3576 the domain
-cycles a bus interface reset when it powers on, and without it the NPU's
-IOMMU stops answering: the job after a timeout returns the output zero
-point and rk_iommu reports that MMU_DTE_ADDR is not functioning.
+pm_runtime_put_noidle(), which requests nothing, so the core never suspends
+and its power domain never cycles. On RK3576 the domain's power-on resets
+the NPU bus interface; without it the IOMMU stops answering and the job
+after a timeout fails.
 
-Put the reference back through pm_runtime_put_autosuspend(), as the
-completion path does. On a ROCK 4D, three runs in one boot with only the
-put changed: with the bare put the rail stays up and the next inference
-returns 0 of 128 channels, and with the autosuspend put the core suspends
-and it returns 128 of 128.
-
-On RK3588 the domain dropped after every one of Igor Paunovic's induced
-resets, all on core 0, with or without this patch, so the change matters
-where the domain's power-on does work.
+Use pm_runtime_put_autosuspend(), as the completion path does. On a ROCK 4D
+the job after a timeout goes from 0 to 128 of 128 channels correct.
 
 Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
 Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")

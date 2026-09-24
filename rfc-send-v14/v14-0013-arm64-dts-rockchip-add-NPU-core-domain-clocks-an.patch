@@ -1,15 +1,12 @@
-From 32b6d65b4a9842d833556a5f1a25f3c72608a86c Mon Sep 17 00:00:00 2001
+From 952f887ee7c0534c156f93af6ced4603db2e3ede Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 24 Sep 2026 21:13:48 +1200
 Subject: [PATCH v14 13/15] arm64: dts: rockchip: add NPU core domain clocks
  and resets to rk3576
 
-PD_NPU0 and PD_NPU1 hold one NPU core each, but the convolution buffer and
-the DSU above them are shared: ACLK_RKNN_CBUF, HCLK_RKNN_CBUF and
-CLK_RKNN_DSU0 belong to the block, and PD_NPUTOP already lists all three.
-Add them to both core domains as well, so a core domain switching state
-has the shared path clocked, and give each the BIU reset that the pmdomain
-driver cycles on power-on.
+Both NPU cores share the convolution buffer and the DSU, so give PD_NPU0
+and PD_NPU1 the three clocks PD_NPUTOP already lists, and give each the BIU
+reset the pmdomain driver cycles on power-on.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

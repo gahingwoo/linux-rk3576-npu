@@ -1,19 +1,11 @@
-From 077499efc37b3036aeeef7601f6dc025f18966e3 Mon Sep 17 00:00:00 2001
+From e928dd3975ba38dd15331a2008602538a68b4dfc Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v14 15/15] arm64: dts: rockchip: enable the NPU on
  rk3576-rock-4d
 
-Enable both RKNN cores and their IOMMUs on the Radxa ROCK 4D, and give
-vdd_npu_s0 to the NPU power domain as its domain-supply, so the rail
-follows the domain that gates the block. Both cores keep npu-supply on the
-same rail, which the binding requires.
-
-On a ROCK 4D with this in place the rail reports use_count 1 during an
-inference and 0 with the rail disabled at rest, and inferences either side
-are 128 of 128 channels against the CPU reference. Both cores probe with
-their IOMMUs, and a runtime that splits its submits across them returns the
-same text as a one-core run on nine language models.
+Enable both NPU cores and their IOMMUs on the ROCK 4D, and make vdd_npu_s0
+the NPU domain's supply so the rail is switched with the domain.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

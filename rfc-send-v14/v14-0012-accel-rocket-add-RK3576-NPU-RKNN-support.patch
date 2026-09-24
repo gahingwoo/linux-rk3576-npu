@@ -1,36 +1,17 @@
-From f6fb043377fd96da5ed9da3cab2964cc1ca517bb Mon Sep 17 00:00:00 2001
+From 13a2ef797a7a645f2d4f8ba331487193872fdcb9 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v14 12/15] accel/rocket: add RK3576 NPU (RKNN) support
 
-The RK3576 has two cores of the same RKNN block and a few platform
-differences:
-
-  - the CBUF has its own clock domain, so a core takes six clocks;
-  - there is no per-core hclk reset, so a core takes one reset, not two;
-  - the NPU spans two power domains, which the driver core does not
-    attach on its own, so the list is attached explicitly;
-  - PC_TASK_CON packs the task number into sixteen bits, not twelve,
-    moving the two controls above it up by four and adding a third.
-
-The last is why the block ran one task per reset. Written with the RK3588
-layout, PC_TASK_CON asks for 28673 tasks and TASK_COUNT_CLEAR lands inside
-the task number, so only a reset ever clears the counter. Chaoyi Chen of
-Rockchip confirmed the layout, including task_last_layer_clear at BIT(18):
+The RK3576 has two cores of the RKNN block, with six clocks per core (the
+CBUF has its own), one reset instead of two, two power domains attached
+explicitly, and a PC_TASK_CON that packs the task number into sixteen bits
+instead of twelve. Chaoyi Chen of Rockchip confirmed that layout:
 
   https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
 
-With it written correctly a job of several tasks runs to completion on its
-interrupt, and a convolution submitted three times with three different
-inputs matches the CPU reference within one count on every channel each
-time, with no reset in between.
-
-The match table moves to rocket_drv.h, so that rocket_device.c counts the
-cores with for_each_matching_node() over the table the driver matches on
-rather than a second, hand-kept list; every core that probes indexes the
-array sized from that count. struct of_device_id comes from
-<linux/device-id/of.h> rather than <linux/mod_devicetable.h>. RK3588 keeps
-its counts and behaviour through the soc_data added in the previous patch.
+Count the cores from the driver's own match table, now in rocket_drv.h, so
+the count and the array it sizes cannot disagree.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

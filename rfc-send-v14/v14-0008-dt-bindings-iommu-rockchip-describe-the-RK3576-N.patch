@@ -1,16 +1,12 @@
-From 42154786508646a0d8993acc491cdf4041f79457 Mon Sep 17 00:00:00 2001
+From 1e98c6dd2a5f53e6fd6a686c9216bdede29b1009 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:48:34 +1200
 Subject: [PATCH v14 08/15] dt-bindings: iommu: rockchip: describe the RK3576
  NPU MMU
 
-The RK3576 NPU MMUs are rk3568-iommu compatible but take five clocks where
-every other Rockchip MMU takes two, the extra three being the compute clock
-and the two convolution buffer clocks.
-
-Give them a compatible of their own and pin both sides with an allOf, so
-that an rk3568-iommu cannot carry five clocks and an NPU MMU cannot carry
-two.
+The RK3576 NPU MMUs are rk3568-iommu compatible but take five clocks
+instead of two. Give them their own compatible and pin both clock counts in
+allOf.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Acked-by: Conor Dooley <conor.dooley@microchip.com>
