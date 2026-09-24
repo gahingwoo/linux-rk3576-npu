@@ -1,0 +1,47 @@
+round 421, 2026-09-24 -- the unsent v14 series, as the board's default kernel
+
+KERNEL  7.3.0-rc3-next-20260914-00016-g8be156261ad4, built by the kernel CI
+        from rfc-send-v14/ with the release config (ZRAM and ZSMALLOC as
+        modules, PSI, YT8531, the patches-extra dw-hdmi-qp patch), branch
+        test/v14-board, deleted after. Verified before install: the
+        pm-domains format string is v14's "%pOFn: failed to get reset", the
+        TEST settle knob of r420 is absent, and the dtb is byte for byte
+        the one v13's CI built (md5 0a4a202d), since no DTS changed.
+BOOT    new extlinux entry v14, made the default; the four earlier entries
+        are kept and selectable. Came up with both NPU cores probed, no
+        SError, and the boot-time probe round finished, login at 137 s.
+MODULES not installed. The tarball unpacks to 370 MB and the root
+        filesystem has 183 MB free, so ZRAM is built but cannot be loaded on
+        this board yet. See the end.
+
+REGRESSION  tests/board_regress.sh, charsiu 524e10a7bdc8 (the same static
+            binaries as the afternoon run on the old kernel), models on
+            /opt/vendor, NPU 594 MHz:
+
+                                            v14 kernel     old kernel (-00014)
+  1 architectures that know a fact          6/6, 7/7       6/6, 7/7
+  2 batched against the token loop          9, 0 differ    9, 0 differ
+  3 vector against scalar                   0 mismatches   0 mismatches
+  4 gelu identity                           2 identical    2 identical
+  5 perplexity, Llama-3.2-1B Q4_0           41.2777        41.2777
+  6 decode, 64 tokens                       16.24 tok/s    16.70 tok/s
+
+Everything that measures numerics is identical to the last digit.
+
+The decode line is 2.8% lower and is NOT read as a regression or as nothing.
+The two kernels cannot share a boot, this board drifts about 3% between
+boots, section 6 does not pin the CPU governor, and each side is one
+reading. Settling it needs the two entries alternated over several boots
+with the governor pinned.
+
+What this round verifies about v14 in particular: 10/15's single-reset
+change runs on every NPU power-on, and the boot round plus this regression
+power the domains on and off hundreds of times without a fault. The removal
+path, the other half of 10/15's change, only runs when pmdomain probe fails
+and is not exercised here.
+
+OPEN, for the user: the modules. Two directories under /lib/modules belong
+to kernels this board no longer boots (7.1.0-rc5 and 7.2.0-rc5, 175 MB
+together). Removing them and installing only zram.ko and zsmalloc.ko, or
+putting /lib/modules on the model partition once it is in fstab, would both
+work. Neither was done without asking.
