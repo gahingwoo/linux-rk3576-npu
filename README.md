@@ -76,6 +76,14 @@ race closed. On this RK3576 the protocol that would reach it, JOB_TIMEOUT_MS=2,
 takes the PMIC's I2C down and leaves two CPUs not answering an NMI, so it cannot
 be run here.
 
+Since v14 went out (checked 2026-09-29): Ulf replied on the v13 thread on
+2026-09-24 that he will look at v14. The only replies on the v14 thread are
+two from sashiko-bot, both unanswered: on 4/15, that a job queued behind a
+timed-out one can cancel the asynchronous autosuspend before the domain
+cycles, so the reset pulse in 10/15 never fires; and on 9/15, that powering
+off the NPU parent domain at probe leaves its subdomains' saved QoS registers
+at zero and may disagree with their status bits.
+
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
 [v2](https://lore.kernel.org/all/20260718031146.3368811-1-gahing@gahingwoo.com/) |
