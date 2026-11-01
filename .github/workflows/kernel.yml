@@ -33,7 +33,7 @@ on:
     inputs:
       base:
         description: "linux-next tag to build on"
-        default: "next-20260914"
+        default: "next-20261030"
       release:
         description: "publish a release"
         type: boolean
@@ -52,7 +52,7 @@ permissions:
 # the next revision meant finding all seven. rfc-send-<SERIES>/ holds the
 # patches, <SERIES>-0000-cover-letter.patch names the base-commit.
 env:
-  SERIES: v14
+  SERIES: v15
 
 jobs:
   build:
@@ -74,12 +74,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ inputs.base || 'next-20260914' }}-${{ github.sha }}
-          restore-keys: ccache-${{ inputs.base || 'next-20260914' }}-
+          key: ccache-${{ inputs.base || 'next-20261030' }}-${{ github.sha }}
+          restore-keys: ccache-${{ inputs.base || 'next-20261030' }}-
 
       - name: fetch linux-next at the pinned tag
         run: |
-          BASE="${{ inputs.base || 'next-20260914' }}"
+          BASE="${{ inputs.base || 'next-20261030' }}"
           echo "BASE=$BASE" >> "$GITHUB_ENV"
           git clone --depth 1 --branch "$BASE" \
             https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git linux
