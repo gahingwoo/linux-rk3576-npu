@@ -1,0 +1,69 @@
+r424: v14 inside an Armbian edge image, on the ROCK 4D
+2026-11-01
+
+What ran
+  The radxa-rock-4d image from the same fork CI run as r422 (gahingwoo/build
+  run 41257131442, branch rk3576-npu-ci): Armbian trunk 26.11, trixie
+  minimal, 7.3.1-edge-rockchip64, Armbian's rockchip64-7.3 patches plus all
+  15 patches of v14. The patch directory is identical to the branch of
+  armbian/build pull request #11163. Image sha256 97651dbba4ebf227...
+  Written to an SD card with dd, read back identical over 2462056448
+  bytes. The card previously held an Armbian 26.8.2 desktop; its home
+  directory was backed up first. 11 GB board.
+
+The NPU
+  /dev/accel/accel0, rocket probes both cores, genpd npu/nputop/npu0/npu1
+  registered and off at idle, NPU clock 594000000 Hz. The same single new
+  boot line as on the CM5-IO (r422): device link with supplier 1-0023 for
+  power-domain@0. No SError, no IOMMU fault.
+
+charsiu
+  A fresh install found the kernel drives the NPU and did not offer one. It
+  also found a fourth installer bug: the image has no git, the bootstrap
+  took a tarball, and every version stamp said "unknown"; the first
+  regression then passed section 3 with "both arms unknown". Fixed in
+  charsiu 3358698 (the tarball's commit is resolved and recorded, and an
+  unknown arm is refused). The regression below is on that build, installed
+  as a tarball on this board with no git present.
+
+board_regress.sh at charsiu 3358698c8de4, CHARSIU_TEXT_MIN_MODELS=1:
+  ================ 0. what is being regressed
+     boot    bf29fb63-ffce-4c71-a64b-300a1d88435f
+     binary  /opt/charsiu/charsiu_run  md5 5a0ac47650c7
+     version 3358698c8de4
+     npu clk 594000000 Hz
+     models  /opt/charsiu/models
+  ================ 1. every architecture still knows a fact
+  ok   llama            Llama-3.2-1B-Instruct-Q4_0.gguf
+  1/1 FILES knew the capital of France
+  1/1 ARCHITECTURES knew it: llama 
+     and the ones in /opt/charsiu/models
+  ok   llama            Llama-3.2-1B-Instruct-Q4_0.gguf
+  1/1 FILES knew the capital of France
+  1/1 ARCHITECTURES knew it: llama 
+  ================ 2. nine models, batched against their own token loop
+    /opt/charsiu/models                      1 gguf
+  Llama-3.2-1B-Instruct-Q4_0.gguf        prompt batched text identical  (64 tok)
+  1 models compared, 0 differing.
+  ================ 3. the vector kernels against the scalar ones
+     both arms 3358698c8de4  (exact-arm knobs: CHARSIU_EXACT_ATTN=1 CHARSIU_EXACT_SILU=1 CHARSIU_EXACT_SOFTMAX=1)
+  charsiu: Llama-3.2-1B-Instruct-Q4_0.gguf (llama, 16 layers)
+  charsiu: Llama-3.2-1B-Instruct-Q4_0.gguf (llama, 16 layers)
+  ok    Llama-3.2-1B-Instruct-Q4_0.gguf
+  0 mismatches
+  ================ 4. the gelu identity: an exact arm must not move a token
+     Llama-3.2-1B-Instruct-Q4_0.gguf  gelu identical
+     gemma-3-1b-it-Q4_0.gguf  NOT HERE -- not checked
+  ================ 5. perplexity, the deterministic instrument
+     model  Llama-3.2-1B-Instruct-Q4_0.gguf  md5 48ff02439786
+     corpus long.txt  md5 4237c8fc3163
+  charsiu NPU: the output invalidate was charged on 1645.1 MB over 33726 preps; the slots actually written are 1194.1 MB, so 451.1 MB is out_stride being nmax*4 rather than the tensor's n (about 33 ms at npu_prep_cost's 13.8 GB/s, an upper bound)
+  charsiu NPU: us a call = 119 + 12.4 a task + 123.5 a MB (both on the busier core), so of 24567 ms in the hardware path 3957 ms is per call, 1111 ms is per task and 19498 ms is the weights at 16.19 GB/s across 2 cores
+  charsiu NPU: 21% of the 24567 ms DECODE hardware path is dispatch rather than bytes (the batched entry is not in this ratio), and a typical call sits 89 us off that line, 12.0% of the 740 us it takes
+  ppl 41.1009  over 511 scored positions of 512 tokens  (/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0.gguf)
+  ================ 6. decode
+  [load 180 ms | staging 9362 ms | prompt 6 tok in 204 ms, 29.46 tok/s | gen 64 tok in 3760 ms, 17.02 tok/s | peak 1393 MB]
+     boot bf29fb63-ffce-4c71-a64b-300a1d88435f
+
+  Same model file as r422 (md5 48ff02439786) and the same corpus: ppl
+  41.1009 on both boards, to the last digit.
