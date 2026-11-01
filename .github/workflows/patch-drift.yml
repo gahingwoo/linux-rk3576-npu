@@ -1,6 +1,6 @@
 # Two questions a pinned build cannot answer.
 #
-# 1. Does the v13 series still apply to TODAY's linux-next? That is what a
+# 1. Does the current series still apply to TODAY's linux-next? That is what a
 #    maintainer will do, and for a patchset under review "it stopped applying
 #    three weeks ago" should not first arrive as a request to rebase.
 #
@@ -74,14 +74,21 @@ jobs:
           # is the patch being MERGED, not the series drifting. The old shape of
           # this job tolerated exactly that because the patch was a separate
           # step; folding it in must not quietly turn a merge into a red run.
+          # THE SERIES IS THE ONE kernel.yml BUILDS. This loop named v13 by
+          # hand and kept testing it for five weeks after v14 went out, which
+          # is a check of a series nobody will apply. Read it from there.
+          SERIES=$(sed -n 's/^  SERIES: *//p' ../.github/workflows/kernel.yml)
+          [ -n "$SERIES" ] && ls ../rfc-send-$SERIES/$SERIES-00*.patch >/dev/null 2>&1 \
+            || { echo "::error::no SERIES in kernel.yml, or no rfc-send-$SERIES/"; exit 1; }
+          echo "series $SERIES"
           fail=""
-          for p in ../rfc-send-v13/v13-00[0-9][0-9]-*.patch; do
+          for p in ../rfc-send-$SERIES/$SERIES-00[0-9][0-9]-*.patch; do
             case "$p" in *-0000-*) continue ;; esac
             n=$(basename "$p")
             if git am --keep-cr "$p" >/tmp/am.log 2>&1; then
               echo "  ok    $n"
             elif case "$p" in *-0001-*) true ;; *) false ;; esac; then
-              echo "::warning::1/14 no longer applies, so it may have been merged"
+              echo "::warning::the first patch of $SERIES no longer applies, so it may have been merged"
               sed 's/^/  /' /tmp/am.log | head -5
               git am --abort || true
             else
@@ -95,7 +102,7 @@ jobs:
             fi
           done
           if [ -n "$fail" ]; then
-            echo "::warning::the v13 series stops applying at $fail on linux-next $TIP"
+            echo "::warning::the $SERIES series stops applying at $fail on linux-next $TIP"
             echo "failed=$fail" >> "$GITHUB_OUTPUT"
             exit 1
           fi
