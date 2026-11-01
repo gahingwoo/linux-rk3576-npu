@@ -1,0 +1,61 @@
+r423: the QoS zeros are the GPU's, not the NPU's
+2026-11-01, ArmSoM CM5-IO, Armbian edge 7.3.1 with v14 (the r422 image)
+
+The question
+  sashiko, on v14 9/15: powering the NPU parent domain off at probe takes
+  its children down before their QoS is saved, so the first power-on
+  restores the zeroed save array. r422 agreed from the code. This measures it.
+
+How
+  Two kernels from the fork CI, same Armbian tree, swapped in as
+  /boot/vmlinuz plus /usr/lib/modules only (pm-domains is built in):
+    A  qosA-ci  v14 + a debug print after rockchip_pmu_restore_qos()
+    B  qosB-ci  v14 + "pmdomain: rockchip: do not restore QoS that was
+                never saved" (a qos_saved flag) + the same print, with
+                the flag in it
+  The print reads the five QoS registers back inside rockchip_pd_power(),
+  with the domain's clocks on, which is the only safe place to read them
+  (r422: from userspace they panic or hang the SoC). Each kernel booted,
+  then charsiu ran Llama-3.2-1B on the NPU. The original kernel is back.
+
+  QoS registers: priority, mode, bandwidth, saturation, extcontrol.
+
+A, v14 without the fix, first power-on of each domain:
+    nputop qos0  00000303 00000000 00000000 00000000 00000000
+    nputop qos1  00000101 00000003 00000080 00000008 00000001
+    nputop qos2  00000101 00000003 00000080 00000008 00000001
+    nputop qos3  00000101 00000003 00000080 00000008 00000000
+    nputop qos4  00000101 00000003 00000080 00000008 00000000
+    gpu qos0     00000000 00000000 00000000 00000000 00000000
+    npu0 qos0    00000101 00000003 00000080 00000008 00000000
+    npu1 qos0    00000101 00000003 00000080 00000008 00000000
+    vo0 qos0     00000303 00000003 000000e3 00000008 00000000
+    vdec qos0    00000202 00000003 00000092 00000008 00000000
+
+B, v14 with the fix, first power-on of each domain:
+    nputop qos0  saved=1 00000303 00000000 00000000 00000000 00000000
+    nputop qos1  saved=1 00000101 00000003 00000080 00000008 00000001
+    nputop qos2  saved=1 00000101 00000003 00000080 00000008 00000001
+    nputop qos3  saved=1 00000101 00000003 00000080 00000008 00000000
+    nputop qos4  saved=1 00000101 00000003 00000080 00000008 00000000
+    npu0 qos0    saved=1 00000101 00000003 00000080 00000008 00000000
+    gpu qos0     saved=0 00000101 00000003 00000080 00000008 00000000
+    npu1 qos0    saved=1 00000101 00000003 00000080 00000008 00000000
+    vdec qos0    saved=1 00000202 00000003 00000092 00000008 00000000
+    vo0 qos0     saved=1 00000303 00000003 000000e3 00000008 00000000
+
+What it says
+  The NPU domains (nputop, npu0, npu1) were saved before their first
+  power-on (saved=1) and come back with the values U-Boot showed in r422.
+  9/15 does not zero the NPU's QoS on this board, and sashiko's QoS point
+  does not happen here. r422 said otherwise and is corrected.
+
+  The GPU is the domain that was never saved (saved=0). Without the fix
+  its first power-on writes zeros (A); with it the registers keep
+  0x101/3/0x80/8 (B). That is mainline behaviour, not v14's: the GPU domain
+  is off at registration and restore_qos has nothing saved to write.
+
+  The fix is right and is a fix for the GPU, so it belongs in a patch of
+  its own to the pmdomain tree rather than in the NPU series.
+
+  Decode in both kernels: 20.42 tok/s, 32 tokens, the same file as r422.

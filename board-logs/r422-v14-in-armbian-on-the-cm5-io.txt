@@ -99,10 +99,8 @@ only one model is on the board:
   Reading them again from Linux failed twice, both my doing: once on a
   powered-off domain (async SError, panic), once with the domain on but its
   clocks gated (the read hung the SoC). Both needed a power cycle.
-  From the code instead: without v14 genpd powers the children off and
-  save_qos stores these values first; with v14 the parent's forced power-off
-  at probe takes the children down before any save, so qos_save_regs stay
-  zero and the first power-on writes zeros over them. The QoS finding is
-  real on RK3576 and introduced by 9/15 (RK3588 mainline has the same
-  shape). Its effect is not measured: the NPU runs and the regression above
-  is green with those registers rewritten.
+  This log first concluded, from reading the code, that 9/15 makes the first
+  NPU power-on write zeros over these values. THAT WAS WRONG, and r423
+  measured it: the NPU domains have their QoS saved before their first
+  power-on, and read back 0x101/3/0x80/8 after it. The domain that does get
+  zeros is the GPU, on mainline without v14; see r423.
