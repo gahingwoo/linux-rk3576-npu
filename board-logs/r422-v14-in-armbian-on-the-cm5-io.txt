@@ -1,0 +1,108 @@
+r422: v14 inside an Armbian edge image, on the ArmSoM CM5-IO
+2026-11-01
+
+What ran
+  Armbian trunk 26.11, trixie minimal, edge 7.3.1-edge-rockchip64, built by
+  GitHub Actions on gahingwoo/build branch rk3576-npu-ci (run 41257131442)
+  from rk3576-npu-edge: Armbian's 269 rockchip64-7.3 patches plus v14 as
+  rk3576-npu-01..15 and board-armsom-cm5-io-02-npu.patch (NPU in the CM5
+  module dtsi). The build log shows all 17 of ours applied (006, 007,
+  257..271 of 323). Image sha256 6cd2107b78bb0b9b...
+  Written to the CM5-IO eMMC over maskrom with rkdeveloptool. The loader
+  only reads back below LBA 65536, so the readback covers the first 32 MB
+  (identical); the rest was checked by booting it.
+  U-Boot 2026.10 from the same image. NPU clock 594000000 Hz.
+
+The NPU
+  /dev/accel/accel0, rocket probes both cores, genpd npu/nputop/npu0/npu1
+  registered. One new boot line, from the domain-supply in the CM5 patch:
+    Failed to create device link (0x180) with supplier 1-0023 for
+    /soc/power-management@27380000/power-controller/power-domain@0
+  The other 16 device-link lines (supplier soc) were already there on the
+  ROCK 4D in August.
+
+charsiu, installed with the board's own kernel
+  charsiu-install found /dev/accel/accel0 and did not offer a kernel.
+  Three installer bugs found and fixed on the way (charsiu dc9b80f, 9efb532,
+  c10e06b): --auto did not reach the bootstrap prompts; the dev channel did
+  not install what board_regress.sh calls; an in-place update left binaries
+  stamped with the previous commit.
+
+board_regress.sh at charsiu c10e06b6741d, CHARSIU_TEXT_MIN_MODELS=1 because
+only one model is on the board:
+  ================ 0. what is being regressed
+     boot    48b0b9be-2499-40e8-9316-a241b9f977b8
+     binary  /opt/charsiu/charsiu_run  md5 cbaad3647a37
+     version c10e06b6741d
+     npu clk 594000000 Hz
+     models  /opt/charsiu/models
+  ================ 1. every architecture still knows a fact
+  ok   llama            Llama-3.2-1B-Instruct-Q4_0.gguf
+  1/1 FILES knew the capital of France
+  1/1 ARCHITECTURES knew it: llama 
+     and the ones in /opt/charsiu/models
+  ok   llama            Llama-3.2-1B-Instruct-Q4_0.gguf
+  1/1 FILES knew the capital of France
+  1/1 ARCHITECTURES knew it: llama 
+  ================ 2. nine models, batched against their own token loop
+    /opt/charsiu/models                      1 gguf
+  Llama-3.2-1B-Instruct-Q4_0.gguf        prompt batched text identical  (64 tok)
+  1 models compared, 0 differing.
+  ================ 3. the vector kernels against the scalar ones
+     both arms c10e06b6741d  (exact-arm knobs: CHARSIU_EXACT_ATTN=1 CHARSIU_EXACT_SILU=1 CHARSIU_EXACT_SOFTMAX=1)
+  charsiu: Llama-3.2-1B-Instruct-Q4_0.gguf (llama, 16 layers)
+  charsiu: Llama-3.2-1B-Instruct-Q4_0.gguf (llama, 16 layers)
+  ok    Llama-3.2-1B-Instruct-Q4_0.gguf
+  0 mismatches
+  ================ 4. the gelu identity: an exact arm must not move a token
+     Llama-3.2-1B-Instruct-Q4_0.gguf  gelu identical
+     gemma-3-1b-it-Q4_0.gguf  NOT HERE -- not checked
+  ================ 5. perplexity, the deterministic instrument
+     model  Llama-3.2-1B-Instruct-Q4_0.gguf  md5 48ff02439786
+     corpus long.txt  md5 4237c8fc3163
+  charsiu NPU: the output invalidate was charged on 1645.1 MB over 33726 preps; the slots actually written are 1194.1 MB, so 451.1 MB is out_stride being nmax*4 rather than the tensor's n (about 33 ms at npu_prep_cost's 13.8 GB/s, an upper bound)
+  charsiu NPU: us a call = 116 + 14.4 a task + 120.1 a MB (both on the busier core), so of 24115 ms in the hardware path 3855 ms is per call, 1295 ms is per task and 18966 ms is the weights at 16.65 GB/s across 2 cores
+  charsiu NPU: 21% of the 24115 ms DECODE hardware path is dispatch rather than bytes (the batched entry is not in this ratio), and a typical call sits 90 us off that line, 12.5% of the 726 us it takes
+  ppl 41.1009  over 511 scored positions of 512 tokens  (/opt/charsiu/models/Llama-3.2-1B-Instruct-Q4_0.gguf)
+  ================ 6. decode
+  [load 131 ms | staging 10043 ms | prompt 6 tok in 207 ms, 28.99 tok/s | gen 64 tok in 3620 ms, 17.68 tok/s | peak 1393 MB]
+     boot 48b0b9be-2499-40e8-9316-a241b9f977b8
+
+  The model file is NOT r421's: md5 48ff02439786 here, c82c0340d974 there,
+  same name. ppl 41.1009 belongs to this file and is not comparable with
+  r421's 41.2777.
+
+9/15 and the two sashiko findings on it
+  U-Boot 2026.10 hands over with the NPU domains ON:
+    0x27380214 = 0x00000200   (group-1 power bits: only bit 9, gpu, off)
+    0x27380570 = 0x85ffffff   (repair status: bits 22..24, nputop/npu0/npu1, on)
+  That is the state sashiko says makes pm_genpd_add_subdomain() fail with
+  -EINVAL. It does not: every boot of this image registered all four
+  domains and the NPU ran. Refuted on this board.
+
+  NPU QoS registers at U-Boot, domains on (offsets 0x00..0x1c):
+    27f08000: 139b4b04 e1179000 00000303 00000000  .K..............
+    27f08010: 00000000 00000000 00000000 00000000  ................
+    27f08080: 15f4c304 e1179000 00000101 00000003  ................
+    27f08090: 00000080 00000008 00000001 00000000  ................
+    27f08100: 5c4cca04 e1179000 00000101 00000003  ..L\............
+    27f08110: 00000080 00000008 00000001 00000000  ................
+    27f20000: 1e8c4804 e1179000 00000101 00000003  .H..............
+    27f20010: 00000080 00000008 00000000 00000000  ................
+    27f21000: 1e8c4804 e1179000 00000101 00000003  .H..............
+    27f21010: 00000080 00000008 00000000 00000000  ................
+    27f22080: 43e55604 e1179000 00000101 00000003  .V.C............
+    27f22090: 00000080 00000008 00000000 00000000  ................
+    27f22100: 96b25a04 e1179000 00000101 00000003  .Z..............
+    27f22110: 00000080 00000008 00000000 00000000  ................
+  priority 0x101 (0x303 on mcu), mode 3, bandwidth 0x80, saturation 8.
+  Reading them again from Linux failed twice, both my doing: once on a
+  powered-off domain (async SError, panic), once with the domain on but its
+  clocks gated (the read hung the SoC). Both needed a power cycle.
+  From the code instead: without v14 genpd powers the children off and
+  save_qos stores these values first; with v14 the parent's forced power-off
+  at probe takes the children down before any save, so qos_save_regs stay
+  zero and the first power-on writes zeros over them. The QoS finding is
+  real on RK3576 and introduced by 9/15 (RK3588 mainline has the same
+  shape). Its effect is not measured: the NPU runs and the regression above
+  is green with those registers rewritten.
