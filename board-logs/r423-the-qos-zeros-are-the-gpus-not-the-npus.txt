@@ -55,7 +55,19 @@ What it says
   0x101/3/0x80/8 (B). That is mainline behaviour, not v14's: the GPU domain
   is off at registration and restore_qos has nothing saved to write.
 
+  C settles that last point by measurement rather than by reading the code.
+  Kernel C (fork CI branch qosC-ci) is Armbian edge 7.3.1 with NONE of the
+  NPU series, only the same debug print. First power-on of each domain:
+    gpu qos0     00000000 00000000 00000000 00000000 00000000
+    vdec qos0    00000202 00000003 00000092 00000008 00000000
+    vo0 qos0     00000303 00000003 000000e3 00000008 00000000
+  The GPU is zeroed on plain mainline too. (The DTB on the board stayed the
+  r422 one; plain rocket does not bind the RK3576 NPU, so the NPU did not
+  come up in C, which is expected and does not touch the GPU.)
+
   The fix is right and is a fix for the GPU, so it belongs in a patch of
-  its own to the pmdomain tree rather than in the NPU series.
+  its own to the pmdomain tree rather than in the NPU series. Rockchip's BSP
+  driver already has the same flag, is_qos_saved, and restores only after
+  a save. lore has no such patch for mainline (searched 2026-11-01).
 
   Decode in both kernels: 20.42 tok/s, 32 tokens, the same file as r422.
