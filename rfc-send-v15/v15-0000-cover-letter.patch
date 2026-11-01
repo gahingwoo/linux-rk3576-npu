@@ -1,0 +1,72 @@
+From 9a2e5e7f9c9a4590fede9a12c250decc969a1e0c Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 1 Nov 2026 21:22:56 +1300
+Subject: [PATCH v15 00/15] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This adds the RK3576 NPU to accel/rocket.
+
+v15 is v14 rebased onto next-20261030. v14's 12/15 no longer applied
+there, because Sidong Yang's regcmd validation added two defines in the
+spot where 12/15 adds its own. Nothing else changed, and the tags carry
+over.
+
+Leonard Lausen has the series running on a NanoPi M5 and posted a board
+patch on top of it:
+https://lore.kernel.org/all/20261019090348.378183-2-leonard@lausen.nl/
+
+On Sashiko's two points about v14 9/15, I measured a CM5-IO. U-Boot
+hands over with the NPU domains on, and the power domain driver still
+probes. The NPU QoS is saved before its first power-on, so it is not
+zeroed. The domain whose QoS does get zeroed is the GPU, on mainline
+without this series, and that fix went out on its own:
+https://lore.kernel.org/all/20261101055633.101309-1-gahing@gahingwoo.com/
+
+1/15 is the patch that carries Igor Paunovic's name. It is also part
+of his DVFS series, so whichever lands first, the other drops it.
+
+Ulf offered to take 7, 9 and 10. 1 to 5, 11 and 12 go through accel,
+and 13 to 15 through rockchip. 15/15 needs 9, 10 and 12 to 14 first.
+Without 9, 10 and 13, the ROCK 4D takes an SError at boot when the NPU
+domain powers on.
+
+Link to v14: https://lore.kernel.org/all/20260924102135.92217-1-gahing@gahingwoo.com/
+
+Igor Paunovic (1):
+  accel/rocket: request the core clocks by name
+
+Jiaxing Hu (14):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: let the core suspend after a reset
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain: rockchip: add optional per-domain power-on settle delay
+  pmdomain: rockchip: cycle an optional power-domain reset on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: add NPU core domain clocks and resets to rk3576
+  arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+  arm64: dts: rockchip: enable the NPU on rk3576-rock-4d
+
+ .../bindings/iommu/rockchip,iommu.yaml        |  28 ++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        |  47 +++++-
+ .../power/rockchip,power-controller.yaml      |   8 +
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      |  22 +++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      |  86 +++++++++-
+ drivers/accel/rocket/rocket_core.c            |  32 +++-
+ drivers/accel/rocket/rocket_core.h            |  11 +-
+ drivers/accel/rocket/rocket_device.c          |   7 +-
+ drivers/accel/rocket/rocket_drv.c             |  42 ++++-
+ drivers/accel/rocket/rocket_drv.h             |   2 +
+ drivers/accel/rocket/rocket_job.c             | 157 +++++++++++++++---
+ drivers/pmdomain/rockchip/pm-domains.c        |  89 +++++++---
+ 12 files changed, 467 insertions(+), 64 deletions(-)
+
+
+base-commit: 7649ba73f9e7e1e04d0b46213e39c79ae09dd55c
+-- 
+2.43.0
+
