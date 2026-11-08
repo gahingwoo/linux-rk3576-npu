@@ -1,0 +1,50 @@
+From c2a6faa061af44ee3d800d81f09a10f982163e48 Mon Sep 17 00:00:00 2001
+From: Igor Paunovic <royalnet026@gmail.com>
+Date: Mon, 31 Aug 2026 19:33:16 +1200
+Subject: [PATCH v16 01/16] accel/rocket: request the core clocks by name
+
+rocket_core_init() never sets the .id of the clocks, so all four are
+requested with a NULL name and each one resolves to the first clock in the
+DT, aclk.
+
+As a result aclk is taken and enabled four times, while hclk, pclk and the
+NPU compute clock are never enabled by the driver. It only works today
+because the power-domain driver enables those clocks for it.
+
+Give the four clocks their names, in the order the binding defines: aclk,
+hclk, npu and pclk.
+
+With that, a DT that lacks any of these clock-names fails probe with
+-ENOENT instead of running on the wrong clock.
+
+Fixes: ed98261b4168 ("accel/rocket: Add a new driver for Rockchip's NPU")
+Signed-off-by: Igor Paunovic <royalnet026@gmail.com>
+Tested-by: Sidong Yang <sidong.yang@furiosa.ai>
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # NanoPC-T6 LTS, NanoPC-T6 Plus
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
+[Jiaxing: shortened the commit message]
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+---
+ drivers/accel/rocket/rocket_core.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b3b2fa9ba645..5dd260bacbff 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -28,6 +28,10 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+ 
++	core->clks[0].id = "aclk";
++	core->clks[1].id = "hclk";
++	core->clks[2].id = "npu";
++	core->clks[3].id = "pclk";
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+-- 
+2.43.0
+

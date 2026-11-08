@@ -1,0 +1,30 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v15 03/15] accel/rocket: wait for a running IRQ handler before resetting a core
+In-Reply-To: <3654048.cLl3JjQhRp@diego>
+References: <20261101082307.151957-4-gahing@gahingwoo.com>
+ <3654048.cLl3JjQhRp@diego>
+
+Hi Heiko,
+
+On 3/15 you're right. With synchronize_irq() added, the original comment
+already describes what happens, so v16 no longer changes it.
+
+In 4/15 the code no longer uses pm_runtime_put_noidle(), so only the last
+part of that comment changes to match.
+
+I've shortened the commit messages of 3/15 and 1/15 in v16. 1/15 is
+Igor's patch, so the change is marked in its tag block; Igor, say if you'd
+rather keep your text.
+
+On the power domains in 14/15: I tested each core with only its own power
+domain. With both cores running the results are correct, so v16 uses one
+power domain per core and drops the driver code that handled more than
+one.
+
+On the IOMMU clocks in 8/15: I tested different combinations. With only
+aclk and iface the IOMMU reset fails, and without either one of the CBUF
+clocks it does not work either. With all four clocks it works, and the
+npu clock is not needed, so v16 lists four.
+
+Thanks,
+Jiaxing

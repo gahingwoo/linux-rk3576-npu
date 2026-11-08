@@ -1,0 +1,59 @@
+From dfa2ba5f7a0eafcf45f42cfaa11603c96c40eee6 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 6 Aug 2026 18:30:48 +1200
+Subject: [PATCH v16 16/16] arm64: dts: rockchip: enable the NPU on
+ rk3576-rock-4d
+
+Enable both NPU cores and their IOMMUs in the ROCK 4D device tree.
+
+Make vdd_npu_s0 the supply of the NPU power domain, so the NPU rail is
+switched on and off with the domain.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+index f068794e48d4..72b251d396fe 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
+@@ -722,6 +722,10 @@ &pcie0 {
+ 	status = "okay";
+ };
+ 
++&pd_npu {
++	domain-supply = <&vdd_npu_s0>;
++};
++
+ &pinctrl {
+ 	hdmi {
+ 		hdmi_tx_on_h: hdmi-tx-on-h {
+@@ -779,6 +783,24 @@ wifi_en_h: wifi-en-h {
+ 	};
+ };
+ 
++&rknn_core_0 {
++	npu-supply = <&vdd_npu_s0>;
++	status = "okay";
++};
++
++&rknn_mmu_0 {
++	status = "okay";
++};
++
++&rknn_core_1 {
++	npu-supply = <&vdd_npu_s0>;
++	status = "okay";
++};
++
++&rknn_mmu_1 {
++	status = "okay";
++};
++
+ &sai6 {
+ 	status = "okay";
+ };
+-- 
+2.43.0
+

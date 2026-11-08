@@ -1,0 +1,112 @@
+From dfa2ba5f7a0eafcf45f42cfaa11603c96c40eee6 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 8 Nov 2026 18:52:42 +1300
+Subject: [PATCH v16 00/16] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This series adds RK3576 NPU (RKNN) support to the mainline DRM rocket
+driver.
+
+Based on: next-20261105
+
+Changes in v16:
+
+- Tomeu: rewrote the descriptions and code comments of the accel/rocket
+  patches; I write them in Chinese first and translate them into English
+  with an LLM. Added a GET_PARAM ioctl that gives userspace the NPU
+  hardware version (13/16). Please check whether the proposed enum values
+  are fine (RK3588 = 1, RK3576 = 2).
+- Heiko: shortened the commit messages of 1/16 and 3/16 and kept the
+  original comment in 3/16; moved to one power domain per core, and cut
+  the IOMMU clocks from five to four. The measurements are in 8/16 and
+  15/16.
+- Chaoyi: removed the unneeded comment in 11/16.
+- Sashiko: 4/16 now drops the runtime PM reference after
+  rocket_core_reset(), with an A/B test showing that the old order hangs
+  the board.
+
+Testing, on a ROCK 4D and an ArmSoM CM5-IO, both running Armbian edge 7.3
+with the v16 changes:
+
+- Tested with charsiu (https://github.com/gahingwoo/charsiu), an open
+  source LLM inference runtime. It drives the NPU directly through the
+  rocket UAPI (/dev/accel), without Mesa or the vendor runtime.
+- Llama-3.2-1B (Q4_0), with both NPU cores running together, gives
+  correct results.
+- Perplexity on the same model and the same text is 41.1009, identical to
+  the previous version.
+- On the ROCK 4D, tested IOMMU clock combinations; four clocks are needed.
+- On the ROCK 4D, repeated resets with a 2 ms job timeout, to compare the
+  two orders of dropping the runtime PM reference.
+
+Armbian has merged support based on v14, in armbian/build#11162
+and armbian/build#11163.
+
+Known issue: after repeated resets with a 2 ms job timeout, the IOMMU
+does not recover ("MMU_DTE_ADDR is not functioning"). I have not looked
+into it further.
+
+Tool use:
+
+An LLM helped me read code and technical material and write part of the
+implementation. Some of the code in the series was first drafted by an
+LLM, and the commit messages and cover letters of earlier versions were
+mostly written by an LLM.
+
+I reviewed the generated code and tested the changes on real hardware.
+I also used an LLM to write test scripts and to compare register write
+traces.
+
+For v16 I rewrote the cover letter, commit messages and code comments
+myself in Chinese first and translated them into English with an LLM.
+
+Tag changes:
+
+- Picked up Heiko's Reviewed-by tags from v15.
+- 4/16 changed after Heiko's Reviewed-by. Heiko, please confirm whether
+  it still applies.
+- Igor's Tested-by on 4/16 was given on the earlier code, so I've dropped
+  it until it is retested.
+- 8/16 has Conor's Acked-by. The clock count changed from five to four;
+  Conor, please confirm whether it still applies.
+
+Igor Paunovic (1):
+  accel/rocket: request the core clocks by name
+
+Jiaxing Hu (15):
+  accel/rocket: take the completion register writes under job_lock
+  accel/rocket: wait for a running IRQ handler before resetting a core
+  accel/rocket: let the core suspend after a reset
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: power: rockchip: allow resets in a power domain node
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  pmdomain: rockchip: add optional per-domain power-on settle delay
+  pmdomain: rockchip: cycle an optional power-domain reset on power-on
+  accel/rocket: select the per-core clock and reset counts from match
+    data
+  accel/rocket: add RK3576 NPU (RKNN) support
+  accel/rocket: add a GET_PARAM ioctl for the hardware version
+  arm64: dts: rockchip: add NPU core domain clocks and resets to rk3576
+  arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+  arm64: dts: rockchip: enable the NPU on rk3576-rock-4d
+
+ .../bindings/iommu/rockchip,iommu.yaml        | 26 ++++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 40 ++++++++-
+ .../power/rockchip,power-controller.yaml      |  8 ++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 22 +++++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 82 ++++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 14 ++-
+ drivers/accel/rocket/rocket_core.h            | 10 ++-
+ drivers/accel/rocket/rocket_device.c          |  3 +-
+ drivers/accel/rocket/rocket_drv.c             | 61 +++++++++++--
+ drivers/accel/rocket/rocket_drv.h             |  2 +
+ drivers/accel/rocket/rocket_job.c             | 84 ++++++++++++-----
+ drivers/pmdomain/rockchip/pm-domains.c        | 89 ++++++++++++++-----
+ include/uapi/drm/rocket_accel.h               | 40 +++++++++
+ 13 files changed, 419 insertions(+), 62 deletions(-)
+
+
+base-commit: ddfe51b0a0f5dc9e415cc2c8ad8db17532dd426b
+-- 
+2.43.0
+
