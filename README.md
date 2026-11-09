@@ -38,20 +38,31 @@ oven it is roasted in.
 
 The driver support is on the list. Current series:
 
-**[PATCH v15 0/15: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20261101082307.151957-1-gahing@gahingwoo.com/)**
-(2026-11-01, applies to a plain next-20261030)
+**[PATCH v16 00/16: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20261108065917.135194-1-gahing@gahingwoo.com/)**
+(2026-11-08, applies to a plain next-20261105)
 
-v15 is v14 rebased: v14's 12/15 stopped applying to linux-next when Sidong
-Yang's regcmd validation put two defines where 12/15 adds its own. The other
-fourteen patches, and every message and tag, are v14's.
+v16 answers the v15 review. For Tomeu Vizoso, the descriptions and code
+comments of the accel/rocket patches are rewritten, and a GET_PARAM ioctl (13/16)
+gives userspace the NPU hardware version (RK3588 = 1, RK3576 = 2). For Heiko,
+the messages of 1/16 and 3/16 are shorter, each NPU core sits on one power
+domain, and the NPU IOMMUs take four clocks instead of five. For Chaoyi Chen, a
+comment in 11/16 is gone. For Sashiko, 4/16 drops the runtime PM reference
+after rocket_core_reset() instead of before it; with a 2 ms job timeout on the
+ROCK 4D the old order hung the board twice in two runs and the new one did not
+hang in four.
 
-Nothing is applied yet. Ulf Hansson has offered to take the three pmdomain
-patches, 7, 9 and 10, through his tree; the rest goes through accel and
-rockchip. Fourteen review tags are on it: Igor Paunovic's Tested-by on 2, 3 and
-4 and Reviewed-by on 5, Krzysztof Kozlowski's Reviewed-by on the npu binding,
-Conor Dooley's Acked-by on 7 and 8, Heiko Stuebner's Reviewed-by on 7, Abel
-Vesa's on 9 and 10, and four on 1/15, which is Igor's clocks-by-name patch
-carried in the series: three from his posting and ours.
+Nothing is applied yet. Ulf Hansson has offered to take the pmdomain patches
+through his tree; the rest goes through accel and rockchip. The v15 tags are
+carried, Heiko's Reviewed-by tags from v15 are picked up, and where the code
+changed under a tag the cover asks again: Heiko on 4/16, Conor Dooley on his
+Acked-by for 8/16 (the clock count changed), and Igor Paunovic's Tested-by on
+4/16 is dropped until he retests it.
+
+Known issue: after repeated resets with a 2 ms job timeout, the IOMMU does not
+recover ("MMU_DTE_ADDR is not functioning").
+
+v15 was v14 rebased: v14's 12/15 stopped applying to linux-next when Sidong
+Yang's regcmd validation put two defines where 12/15 adds its own.
 
 v14 answered the v13 review: one reset instead of an array in 10 (Philipp Zabel),
 the reset pointer cleared under the lock on removal (Sashiko), v13's 13/14 split
@@ -78,7 +89,9 @@ The race 3/15's lock scope closes has no hardware proof. Igor reached the path
 on RK3588 with a two-task job and saw no fault, and says that does not show the
 race closed. On this RK3576 the protocol that would reach it, JOB_TIMEOUT_MS=2,
 takes the PMIC's I2C down and leaves two CPUs not answering an NMI, so it cannot
-be run here.
+be run here. That was with the v15 order in 4/15; with v16's 4/16 the 2 ms
+timeout no longer hangs the board, but the IOMMU does not recover after the
+resets, so it still says nothing about the race.
 
 Between v14 and v15 no human reviewed the series. Heiko Stuebner became a
 reviewer for the rocket driver (2026-10-13), and Leonard Lausen ran v14 on a
@@ -90,7 +103,7 @@ that does get its QoS zeroed is the GPU, on mainline without the series; that
 fix went out on its own
 ([pmdomain: rockchip: do not restore QoS that was never saved](https://lore.kernel.org/all/20261101055633.101309-1-gahing@gahingwoo.com/)).
 Sashiko's point on 4/15, the asynchronous put after a timed-out job, is
-unanswered.
+answered by v16's 4/16.
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -106,7 +119,8 @@ Earlier revisions:
 [v11](https://lore.kernel.org/all/20260831081956.84871-1-gahing@gahingwoo.com/) |
 [v12](https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/) |
 [v13](https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/) |
-[v14](https://lore.kernel.org/all/20260924102135.92217-1-gahing@gahingwoo.com/)
+[v14](https://lore.kernel.org/all/20260924102135.92217-1-gahing@gahingwoo.com/) |
+[v15](https://lore.kernel.org/all/20261101082307.151957-1-gahing@gahingwoo.com/)
 
 Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Conor Dooley, Alexey
 Charkov, Heiko Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Ulf Hansson,
@@ -124,34 +138,54 @@ stall").
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Boards | Radxa ROCK 4D, ArmSoM CM5 on the CM5-IO carrier |
-| Kernel | Armbian edge 7.3.1 with v14 (the boards); next-20261030 with v15 (the CI) |
+| Kernel | Armbian edge 7.3.3 with v14 (ROCK 4D, Armbian's own build); Armbian edge 7.3 with v16 (CM5-IO); next-20261105 with v16 (the CI) |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
-Both boards run Armbian edge images that carry v14, built on GitHub Actions
-from the branches of armbian/build#11162 (CM5-IO) and #11163 (ROCK 4D). On
-both, both NPU cores probe and charsiu's regression is green, with perplexity
-identical between the two boards to the last digit (board-logs/r422, r424).
+Armbian has merged v14 for both boards (armbian/build#11162 CM5-IO and
+#11163 ROCK 4D, 2026-11-02), and its edge kernel enables the NPU on both. v16
+was tested on both boards on Armbian edge 7.3 kernels built from those branches
+with the v16 changes: both NPU cores run together and charsiu's perplexity is
+41.1009 on each, the same as before. The ROCK 4D has since gone back to
+Armbian's own 7.3.3 build from beta.armbian.com, installed by the charsiu
+installer, where perplexity is again 41.1009.
 The ROCK 4D ran this project's own buildroot image with v14 until 2026-11-01
 (board-logs/r421). None of these runs exercises the race 3/15's lock scope
 closes; the Upstream section above says why.
 
+## Using it on Armbian
+
+On a ROCK 4D or an ArmSoM CM5-IO running Armbian with the edge kernel, the NPU
+works out of the box, and charsiu is in the Armbian repository:
+
+```bash
+sudo apt install charsiu
+```
+
+`ls /dev/accel/` shows `accel0` when the kernel drives the NPU. The edge kernel
+in apt.armbian.com still predated the merge on 2026-11-09; the one in
+beta.armbian.com carries it.
+
 ## Getting a kernel
 
-The [latest release](https://github.com/gahingwoo/linux-rk3576-npu/releases/latest)
-is the kernel the charsiu installer offers: next-20260914, the v14 series, the
-one patch in `patches-extra/`, and the config the CI builds. The CI now builds
-next-20261030 with v15; a release of that has not been cut. It carries `Image`,
-`rk3576-rock-4d.dtb`, the modules, the `.config`, and a `MANIFEST` naming every
-patch that went in.
+Armbian's edge kernel for rockchip64 carries the series, and that is the kernel
+the charsiu installer offers on a system whose kernel cannot drive the NPU: it
+takes `linux-image-edge-rockchip64` and `linux-dtb-edge-rockchip64` from
+beta.armbian.com and unpacks them into place.
+
+The [releases](https://github.com/gahingwoo/linux-rk3576-npu/releases) here are
+kernels with patches under test, built by the CI from linux-next. The latest
+one is next-20260914 with v14; the CI now builds next-20261105 with v16, and a
+release of that has not been cut. Each carries `Image`, `rk3576-rock-4d.dtb`,
+the modules, the `.config`, and a `MANIFEST` naming every patch that went in.
 
 To build what the CI builds now, follow `.github/workflows/kernel.yml`, which
 is what the releases come from. In short:
 
 ```bash
-git clone --depth 1 --branch next-20261030 \
+git clone --depth 1 --branch next-20261105 \
     https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git
 cd linux-next
-for p in ../linux-rk3576-npu/rfc-send-v15/v15-00*.patch \
+for p in ../linux-rk3576-npu/rfc-send-v16/v16-00*.patch \
          ../linux-rk3576-npu/patches-extra/[0-9]*.patch; do
     case "$p" in *-0000-*) continue ;; esac   # the cover letter
     git am "$p"
@@ -203,7 +237,7 @@ development tree rather than from it. The rest lives in `mesa-patches/`.
 
 ```
 rfc-send-vNN/          every posting of the series as it was sent, with its
-                       cover, and a SENT.md from v10 on; v15 is current
+                       cover, and a SENT.md from v10 on; v16 is current
 patches-extra/         built into the release kernel but not part of the
                        series (one dw-hdmi-qp fix); see its README
 .github/workflows/     kernel.yml builds and releases the kernel;
