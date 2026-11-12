@@ -1,0 +1,35 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v16 10/16] pmdomain: rockchip: cycle an optional power-domain reset on power-on
+In-Reply-To: <ca90a994-70cc-410a-902d-5c4c0aacc9b7@rock-chips.com>
+References: <20261108065917.135194-1-gahing@gahingwoo.com>
+ <20261108065917.135194-11-gahing@gahingwoo.com>
+ <ca90a994-70cc-410a-902d-5c4c0aacc9b7@rock-chips.com>
+
+Hi Finley,
+
+Thanks for the feedback. I agree with all three points.
+
+Some background on where the reset came from: we added it in June while
+debugging the IOMMU, but found the same day that it did not actually help.
+The real problem turned out to be that the IOMMU was missing the CBUF
+clocks, which is what later went into mainline as 841363ebb508.
+
+We had in fact already removed the reset in a debug patch at the time, but
+when the series was put together later that step was missed and did not
+go out with it.
+
+I went back over the commit message, and both claims in it, that the first
+access hangs and that the vendor kernel also cycles this reset, are not
+accurate. There was no actual test showing a hang on the first access, and
+I have checked that the vendor kernel has no such reset at all.
+
+I also retested on the current code: without the reset, with the power
+domain clocks back to two, and with no delay on NPU0/NPU1, both a warm
+reboot and a cold power-on are fine, 30 runs each.
+
+The VOP delay makes no visible difference on this board, so I will add it
+as you suggest.
+
+Thanks again, these were worth sorting out properly.
+
+Jiaxing
