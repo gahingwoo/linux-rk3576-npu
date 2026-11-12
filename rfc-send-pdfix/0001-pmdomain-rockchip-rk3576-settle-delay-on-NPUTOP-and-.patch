@@ -1,0 +1,66 @@
+From ef8c91daf7936bf62f1587d89d2305fb867a0857 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 12 Nov 2026 20:55:06 +1300
+Subject: [PATCH] pmdomain: rockchip: rk3576: settle delay on NPUTOP and VOP
+ only
+
+In his review of v16, Finley Xiao (Rockchip) pointed out that the 15 us
+settle time is only needed on the top-level power domain, NPUTOP.
+
+genpd powers on NPUTOP, the parent domain, before NPU0 and NPU1. By the
+time NPU0/NPU1 are powered on, the settle time NPUTOP needs has already
+passed, so no further wait is needed.
+
+He also pointed out that VOP needs the same 15 us wait.
+
+This matches the delay table in the vendor kernel:
+
+  NPUTOP: 15 us
+  NPU0:    0 us
+  NPU1:    0 us
+  VOP:    15 us
+
+Tested on a Radxa ROCK 4D: with the delay removed from NPU0 and NPU1, 30
+NPU power-ons each after a warm reboot and after a cold power-on. All of
+them completed normally, with no SError.
+
+The VOP delay made no visible difference on this board, but it is added
+as Rockchip recommends.
+
+Fixes: d97a124b7153 ("pmdomain: rockchip: add optional per-domain power-on settle delay")
+Suggested-by: Finley Xiao <finley.xiao@rock-chips.com>
+Link: https://lore.kernel.org/all/4043eb42-ce62-41ff-9a7d-d840bb90364d@rock-chips.com/
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index a4e050feaaaf..f6cf53ee9b52 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -1357,7 +1357,7 @@ static const struct rockchip_domain_info rk3576_pm_domains[] = {
+ 	[RK3576_PD_AUDIO]	= DOMAIN_RK3576("audio",  0x0, BIT(8),  0,      BIT(8),  0x4, BIT(0),  BIT(16), BIT(0),  0,    false),
+ 	[RK3576_PD_PHP]		= DOMAIN_RK3576("php",    0x0, BIT(9),  0,      BIT(9),  0x0, BIT(15), BIT(15), BIT(15), 0,    false),
+ 	[RK3576_PD_SUBPHP]	= DOMAIN_RK3576("subphp", 0x0, BIT(10), 0,      BIT(10), 0x0, 0,       0,       0,       0,    false),
+-	[RK3576_PD_VOP]		= DOMAIN_RK3576("vop",    0x0, BIT(11), 0,      BIT(11), 0x0, 0x6000,  0x6000,  0x6000,  0,    false),
++	[RK3576_PD_VOP]		= DOMAIN_RK3576("vop",    0x0, BIT(11), 0,      BIT(11), 0x0, 0x6000,  0x6000,  0x6000,  15,   false),
+ 	[RK3576_PD_VO1]		= DOMAIN_RK3576("vo1",    0x0, BIT(14), 0,      BIT(14), 0x0, BIT(12), BIT(12), 0x7000,  0,    false),
+ 	[RK3576_PD_VO0]		= DOMAIN_RK3576("vo0",    0x0, BIT(15), 0,      BIT(15), 0x0, BIT(11), BIT(11), 0x6800,  0,    false),
+ 	[RK3576_PD_USB]		= DOMAIN_RK3576("usb",    0x4, BIT(0),  0,      BIT(16), 0x0, BIT(10), BIT(10), 0x6400,  0,    true),
+@@ -1367,8 +1367,8 @@ static const struct rockchip_domain_info rk3576_pm_domains[] = {
+ 	[RK3576_PD_VDEC]	= DOMAIN_RK3576("vdec",   0x4, BIT(4),  0,      BIT(20), 0x0, BIT(6),  BIT(6),  BIT(6),  0,    false),
+ 	[RK3576_PD_VPU]		= DOMAIN_RK3576("vpu",    0x4, BIT(5),  0,      BIT(21), 0x0, BIT(5),  BIT(5),  BIT(5),  0,    false),
+ 	[RK3576_PD_NPUTOP]	= DOMAIN_RK3576("nputop", 0x4, BIT(6),  0,      BIT(22), 0x0, 0x18,    0x18,    0x18,    15,   false),
+-	[RK3576_PD_NPU0]	= DOMAIN_RK3576("npu0",   0x4, BIT(7),  0,      BIT(23), 0x0, BIT(1),  BIT(1),  0x1a,    15,   false),
+-	[RK3576_PD_NPU1]	= DOMAIN_RK3576("npu1",   0x4, BIT(8),  0,      BIT(24), 0x0, BIT(2),  BIT(2),  0x1c,    15,   false),
++	[RK3576_PD_NPU0]	= DOMAIN_RK3576("npu0",   0x4, BIT(7),  0,      BIT(23), 0x0, BIT(1),  BIT(1),  0x1a,    0,    false),
++	[RK3576_PD_NPU1]	= DOMAIN_RK3576("npu1",   0x4, BIT(8),  0,      BIT(24), 0x0, BIT(2),  BIT(2),  0x1c,    0,    false),
+ 	[RK3576_PD_GPU]		= DOMAIN_RK3576("gpu",    0x4, BIT(9),  0,      BIT(25), 0x0, BIT(0),  BIT(0),  BIT(0),  0,    false),
+ };
+ 
+
+base-commit: dd383ad4cb5c46cb612ba9bf1ead30025bd336ba
+-- 
+2.43.0
+
