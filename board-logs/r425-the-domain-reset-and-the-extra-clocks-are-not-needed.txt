@@ -38,14 +38,19 @@ Results, in run order:
   [B1] dtb=963d5a4c boot=68ef4b51 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
   [exited with code 0]
 
-All 120 outputs have the same text. No arm had a failed run, a job
+Then two arms from a real power-off: the board was unplugged and plugged
+back in by hand, and the previous boot's journal ends without a shutdown.
+
+  [A3cold] dtb=1201a529 boot=8630fbd4 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [B2cold] dtb=963d5a4c boot=e5559951 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+All 180 outputs have the same text. No arm had a failed run, a job
 timeout, an IOMMU error or an SError.
 
 What this shows: on today's code, with the settle delay in place, the BIU
 reset and the three extra domain clocks change nothing over 30 domain power
-cycles per arm, on one board.
+cycles per arm, from a warm reboot or from a power-off, on one board.
 
-What it does not show: every reboot was warm, so no arm ran from a real
-power-off of the board; one board only; 30 cycles per arm; npu0/npu1 with
+What it does not show: one board only; 30 cycles per arm; npu0/npu1 with
 the delay removed was not tested (that needs a kernel build); PD_VOP's
 delay, which Finley also asks for, was not tested.
