@@ -11,8 +11,16 @@ He says the domain reset is not needed (tested on many RK3576, and the bus
 interface is not left undefined after power-on), and that CLK_RKNN_DSU0 and
 the two CBUF clocks on PD_NPU0/PD_NPU1 are redundant (DSU0 is the parent of
 ACLK_RKNN0/1; the switch flow only needs ACLK_RKNN0/1 and HCLK_RKNN_ROOT).
-The reset went in on 2026-06-10 (commit 06ff800), before the settle delay
-existed, to cure an IOMMU that did not answer after a domain power-on.
+Where the reset came from, from this repository's history. On 2026-06-08
+SRST_A_RKNN0_BIU filled rocket's second reset slot, srst_h, which the
+RK3576 does not have (notes/: "srst_h binding slot is UNVERIFIED for
+rk3576"). On 2026-06-10 (06ff800, kernel #39) it moved to the PD_NPU0/NPU1
+nodes and replaced an IOMMU retry patch that only ever lived in the kernel
+tree. The settle delay was already in that tree (bcb8019: delay_us=15 from
+kernels #36/#37), and the same two days fixed stale firmware IOMMU faults
+(later b10d5920cafa) and a rail switched off at boot. The repository holds
+no measurement of the reset on its own: its commit gives a mechanism ("the
+CRU preserves reset state across power cycles"), not an A/B.
 
 Protocol. Only the dtb changes between arms; it is edited with fdtput from
 the board's own file. Each arm: install the dtb, reboot (warm), wait, then 30
