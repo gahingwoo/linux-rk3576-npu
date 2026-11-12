@@ -1,0 +1,51 @@
+r425: the NPU0/NPU1 domain reset and the three extra domain clocks are not needed
+==================================================================================
+
+2026-11-12, Radxa ROCK 4D, Armbian 26.11.0-trunk (Ubuntu 24.04 desktop),
+kernel 7.3.4-edge-rockchip64 (#1 SMP PREEMPT Tue Nov 10 18:10:10 UTC 2026),
+which carries v14 of the series: the 15 us settle delay on nputop, npu0 and
+npu1, and v14 13/15's domain clocks and BIU reset on npu0 and npu1.
+
+Why: Finley Xiao (Rockchip) replied to v16 10/16 and 14/16 on 2026-11-11.
+He says the domain reset is not needed (tested on many RK3576, and the bus
+interface is not left undefined after power-on), and that CLK_RKNN_DSU0 and
+the two CBUF clocks on PD_NPU0/PD_NPU1 are redundant (DSU0 is the parent of
+ACLK_RKNN0/1; the switch flow only needs ACLK_RKNN0/1 and HCLK_RKNN_ROOT).
+The reset went in on 2026-06-10 (commit 06ff800), before the settle delay
+existed, to cure an IOMMU that did not answer after a domain power-on.
+
+Protocol. Only the dtb changes between arms; it is edited with fdtput from
+the board's own file. Each arm: install the dtb, reboot (warm), wait, then 30
+generations of `charsiu run Qwen3-0.6B-Q4_0 --temp 0 -n 64 "Explain what a
+bandgap is."`. The NPU autosuspends after 50 ms, so every generation starts
+with npu0 off (checked in pm_genpd_summary before each one) and powers
+npu, nputop, npu0 and npu1 up. Per arm: exit codes, the md5 of the output
+text with the timing lines removed, and the kernel journal from a marker
+for "timed out", rk_iommu/MMU_DTE/page fault, and SError/Internal error.
+
+  A  original dtb                                   md5 1201a529
+  B  A with `resets` deleted on power-domain@2 and @3   963d5a4c
+  C  A with power-domain@2/@3 clocks back to
+     <HCLK_RKNN_ROOT ACLK_RKNN0/1>, resets kept         e8366064
+
+Results, in run order:
+
+  [A1] dtb=1201a529 boot=6238fcc9 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [exited with code 0]
+  [C1] dtb=e8366064 boot=73fbe658 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [A2] dtb=1201a529 boot=da35bd18 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [exited with code 0]
+  [B1] dtb=963d5a4c boot=68ef4b51 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [exited with code 0]
+
+All 120 outputs have the same text. No arm had a failed run, a job
+timeout, an IOMMU error or an SError.
+
+What this shows: on today's code, with the settle delay in place, the BIU
+reset and the three extra domain clocks change nothing over 30 domain power
+cycles per arm, on one board.
+
+What it does not show: every reboot was warm, so no arm ran from a real
+power-off of the board; one board only; 30 cycles per arm; npu0/npu1 with
+the delay removed was not tested (that needs a kernel build); PD_VOP's
+delay, which Finley also asks for, was not tested.
