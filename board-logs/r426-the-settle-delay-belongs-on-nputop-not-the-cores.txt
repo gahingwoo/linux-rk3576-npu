@@ -1,0 +1,43 @@
+r426: the settle delay belongs on NPUTOP, not on NPU0/NPU1
+===========================================================
+
+2026-11-12, Radxa ROCK 4D, Armbian 26.11.0-trunk (Ubuntu 24.04 desktop), the
+same card, dtb and protocol as r425 (dtb A, md5 1201a529).
+
+Why: Finley Xiao (Rockchip) replied to v16 9/16 on 2026-11-11 that the 15 us
+settle is needed on PD_NPUTOP only, not on PD_NPU0/PD_NPU1, because genpd
+powers nputop first and the time has elapsed by the time a core domain
+switches on; and that PD_VOP needs 15 us as well. The vendor kernel
+(6.1.115) has exactly that table: nputop 15, npu0 0, npu1 0, vop 15. v14 to
+v16, and v15 9/15 as applied to ulfh/linux-pm.git next (d97a124b7153), put
+15 on all three NPU domains and 0 on vop.
+
+Kernel: Armbian main 2d3dd98f plus one patch after rk3576-npu-v14
+(rk3576-npu-zz-delay-test.patch, applied as 274/364 per the build log): npu0
+and npu1 15 -> 0, vop 0 -> 15. Built on the fork's CI, run 43164250530
+(gahingwoo/build branch rk3576-npu-delay-test, d5d3c07f), installed as the
+linux-image deb only. Not a clean single-variable change: the CI's compiler
+is Ubuntu gcc 13.3, the official package's is Debian gcc 14.2. rocket.ko md5
+e4c26b8c (official d91ac64f). The official kernel is kept in
+/root/kbak/kernel-7.3.4-official.tgz on the card.
+
+  [D1]     warm reboot
+  [D2cold] the board unplugged and plugged back in; the previous boot's
+           journal ends without a shutdown
+
+  [D2cold] dtb=1201a529 boot=0a0a0385 runs=30 fail=0 npu0_off_before=29/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [D1] dtb=1201a529 boot=6543dca0 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+Both arms: every run completed, all 60 outputs have the text of every r425
+arm (5e3aaf1a5a57), no job timeout, no IOMMU error, no SError, and the boot
+journal has no SError, no "failed to set idle" and no chain status error.
+In D2 one run of 30 started with npu0 not yet off, so 29 of its 30 were full
+power-ups of the core domain.
+
+What this shows: with the delay on nputop only, the NPU core domains power
+up cleanly from a warm reboot and from a power-off, 30 times each, on one
+board, which is what Finley says and what the vendor table does.
+
+What it does not show: anything about PD_VOP. Adding 15 us there changed
+nothing visible, but no failure without it was ever seen here, so whether
+VOP needs it rests on Rockchip's word, not on this board.
