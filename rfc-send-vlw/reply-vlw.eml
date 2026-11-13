@@ -1,0 +1,44 @@
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Subject: Re: [PATCH v16 09/16] pmdomain: rockchip: add optional per-domain power-on settle delay
+In-Reply-To: <20261113132323.159015-1-vlwwwwww@gmail.com>
+References: <20261108065917.135194-1-gahing@gahingwoo.com>
+ <20261108065917.135194-10-gahing@gahingwoo.com>
+ <20261113132323.159015-1-vlwwwwww@gmail.com>
+
+Hi Vladimir,
+
+Thanks for pointing this out. Your analysis is right, and I have
+reproduced it on a ROCK 4D.
+
+The problem is that a power domain marked need_regulator is switched off
+as soon as add_one_domain() adds it, and its subdomains are added only
+after that.
+
+NPUTOP, NPU0 and NPU1, which U-Boot left on, are neither idled nor really
+powered off, but genpd treats them as off. So when the regulator core
+disables vdd_npu_s0 because it has no users, the system hangs.
+
+I reproduced it on the ROCK 4D with a DT that has the NPU disabled. All
+14 boots showed the same wrong state (0x214 = 0x23e, 0x110 = 0x13e1),
+and 1 of them hung. The ROCK 4D hangs less often than your R76S, but the
+underlying state is the same.
+
+The fix: when the power domains are added, a domain that needs a
+regulator and all of its subdomains are marked as off from the start.
+Once the whole subtree has been added, the domains are switched off in
+order, from the leaves up to the root.
+
+With the fix, all 10 boots showed the correct state (0x214 = 0x3fe) and
+none hung. I also tested it on the board with the NPU enabled, and all
+30 power-ups were fine.
+
+If you have time, could you test the patch on the R76S as well? 10 boots
+are enough, without any workaround. That would show whether the fix
+works on your board.
+
+Patch:
+https://github.com/gahingwoo/build/blob/rk3576-pmdomain-probe-off/patch/kernel/archive/rockchip64-7.3/rk3576-pmdomain-power-off-npu-subtree-at-probe.patch
+
+Thanks again, this really helped find the root cause.
+
+Jiaxing
