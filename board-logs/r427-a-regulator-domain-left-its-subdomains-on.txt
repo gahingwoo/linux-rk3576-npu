@@ -1,0 +1,166 @@
+r427: PD_NPU is switched off at probe with NPUTOP, NPU0 and NPU1 still on
+========================================================================
+
+2026-11-14, Radxa ROCK 4D, Armbian 26.11.0-trunk userland.
+
+Why: Vladimir Bely reported (issue #4, and on lore in reply to v16 09/16,
+2026-11-13) that on a FriendlyElec NanoPi R76S, which does not enable the
+NPU, Armbian 7.3.3 (carrying v14) hangs hard about every second boot,
+~30 s in, with "vdd_npu_s0: disabling" as the last console line. His
+reading: rockchip_pm_add_one_domain() switches PD_NPU off at probe because
+it needs a regulator, before its subdomains are added; the subdomains the
+bootloader left on are never idled or powered off, genpd records them as
+off, and the bus hangs when regulator_late_cleanup() cuts the rail.
+
+The code agrees (pm-domains.c in Ulf's next, line 914:
+"if (pd->info->need_regulator) rockchip_pd_power(pd, false);" runs in
+add_one_domain(), and rockchip_pm_add_subdomain() adds the children only
+after it). PD_NPU is DOMAIN_RK3576 in Ulf's next; v14/v16 9 made it _R.
+
+Board setup, the same for every arm:
+
+  - N.dtb (md5 e020ef4a): the board's own dtb (1201a529, identical to the
+    one in Armbian 26.11.1 and to the one the CI build below produced)
+    with domain-supply deleted from power-domain@0 (PD_NPU), npu-supply
+    deleted from both npu nodes, and npu@27700000, iommu@27702000,
+    npu@27708000, iommu@2770a000 set to status = "disabled". This is a
+    board that does not enable the NPU. vdd_npu_s0 (RK806 dcdc-reg2) is
+    regulator-boot-on without regulator-always-on, as on the R76S.
+  - systemd RuntimeWatchdogSec=20s, so a hang resets the board by itself.
+  - Each iteration: systemctl reboot (warm), wait until uptime >= 70 s,
+    then one line from pb.sh: PMU registers from regmap debugfs of
+    27380000.power-management (0x110 idle request, 0x128 idle status,
+    0x214 power control of the 0x4 group, 0x230 status), the genpd state
+    of npu/nputop/npu0/npu1, the number of boots in the journal, and the
+    count of "vdd_npu_s0: disabling" in dmesg.
+
+The oracle is the register state, not the hang: in 0x214, bit 6/7/8 are
+the power-off bits of NPUTOP/NPU0/NPU1 (1 = off). A boot is wrong when
+those bits are 0 while genpd lists the domains off-0. A hang is a boot
+the journal shows without a shutdown, followed by a watchdog reset.
+
+Arm R: Armbian 26.11.1 from apt (7.3.3-edge-rockchip64, the kernel the
+R76S ran), N.dtb, 10 reboots.
+
+  [R 1] boot=47663e24 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=16 npu_disabling=1
+  [R 2] boot=2d90724e req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=17 npu_disabling=1
+  [R 3] boot=9d5185dd req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=19 npu_disabling=1
+  [R 4] boot=0529b5da req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=20 npu_disabling=1
+  [R 5] boot=8c3b309a req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=21 npu_disabling=1
+  [R 6] boot=708aa2af req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=22 npu_disabling=1
+  [R 7] boot=d22b5cd3 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=23 npu_disabling=1
+  [R 8] boot=d63c270c req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=24 npu_disabling=1
+  [R 9] boot=56da274f req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=25 npu_disabling=1
+  [R 10] boot=45130356 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=26 npu_disabling=1
+
+  (uptime column dropped; every line was read at 141-157 s.)
+
+Between R 2 and R 3 the journal has one extra boot, f4ec2292: its
+journal ends at 7.7 s (the flush to /var/log/journal), it has no
+shutdown, and the next boot starts 67 s after it started. That is a hang
+after the last persisted line, ~30 s plus the 20 s watchdog. So arm R:
+11 boots, 11 with NPUTOP/NPU0/NPU1 powered and not idled behind an off
+PD_NPU, 1 hang.
+
+The register state matches the R76S's (his 0x110 = 0x13e0, 0x214 =
+0x3e; ours has bit 0 of 0x110 and bit 9 of 0x214 set as well).
+
+The fix. Mark a need_regulator domain and every domain below it
+off_at_probe when it is added, give genpd "off" as their initial state,
+and once the subtree is added switch it off children first
+(rockchip_pm_power_off_subtree()), then let the provider register. The
+same diff is in two trees, both W=1 clean:
+
+  - ulfh/next + the fix: 3f1cfa7fe0c7 (worktree wt-probeoff); in the v17
+    branch it is ef861e4b983e, ahead of the patch that makes PD_NPU _R.
+  - v7.3.1 + Armbian's three earlier pm-domains patches + rk3576-npu-v14
+    + the fix: 331ceca9f624, exported as Armbian's
+    rk3576-pmdomain-power-off-npu-subtree-at-probe.patch.
+
+Fix kernel: gahingwoo/build branch rk3576-npu-probeoff-test (armbian
+origin/main + that patch file), fork CI run 43511938301, which logs
+"274/364: rk3576-pmdomain-power-off-npu-subtree-at-probe (+41/-6)".
+7.3.4-edge-rockchip64, vmlinuz md5 37bb1cf4. Its dtb for the 4D is
+1201a529, the same file as before.
+
+Two knobs differ between arm R and arm F, not one: the fix, and 7.3.3
+(Armbian 26.11.1) vs 7.3.4 (Armbian main). I have not checked what
+7.3.3..7.3.4 and the Armbian patch changes in between do to pm-domains.c,
+so the arms are not a single-variable pair. The probe-time state R reads
+is explained by the code that the fix changes, and F-N reads the state
+the fix is written to produce, but this pair alone does not exclude the
+other knob.
+
+Arm F-N: fix kernel, N.dtb, 10 reboots.
+
+  [F-N 1] boot=d9052812 req110=000013ff idle128=000113ff pwr214=000003fe st230=03fe4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=27 npu_disabling=1
+  [F-N 2] boot=9cae7890 (same registers) boots=28 npu_disabling=1
+  [F-N 3] boot=49c939e9 (same registers) boots=29 npu_disabling=1
+  [F-N 4] boot=ef575717 (same registers) boots=30 npu_disabling=1
+  [F-N 5] boot=93cc09de (same registers) boots=31 npu_disabling=1
+  [F-N 6] boot=f9d871cd (same registers) boots=32 npu_disabling=1
+  [F-N 7] boot=98c5b863 (same registers) boots=33 npu_disabling=1
+  [F-N 8] boot=c8316445 (same registers) boots=34 npu_disabling=1
+  [F-N 9] boot=5cb82a99 (same registers) boots=35 npu_disabling=1
+  [F-N 10] boot=f105508d (same registers) boots=36 npu_disabling=1
+
+  "same registers" = req110=000013ff idle128=000113ff pwr214=000003fe
+  st230=03fe4501 and all four domains off-0, checked line by line.
+
+NPUTOP/NPU0/NPU1 are powered off (0x214 bits 6..8 set) and were idled
+first (0x110 bits 1..4 set) on every boot, matching genpd. The boot count
+goes up by one per reboot, every boot's journal ends with "Journal
+stopped", so no hang in 10. vdd_npu_s0 is still disabled as unused on
+every boot, now with nothing left on behind it.
+
+The 16 "Failed to create device link (0x180) with supplier soc" lines
+from rockchip-pm-domain are in the stock 7.3.3 boot too (16) and in the
+earlier 7.3.4 build (17); they are not from the fix.
+
+What F-N does not show: the R76S. The 4D hung once in 11 stock boots, the
+R76S about every second boot; the register state is the same on both, so
+the fix removes the condition on the 4D, but a hang count on the 4D
+cannot show a rate of 1/11 going to 0 with 10 boots. A run on the R76S
+is the real test.
+
+Arm C-N, the control for the 7.3.3/7.3.4 knob: the 7.3.4 build from
+r426 (fork CI, Armbian main of 2026-11-12 + the NPUTOP/VOP delay table,
+no probe fix, vmlinuz f17933d9), N.dtb, 3 reboots.
+
+  [C-N 1] boot=7c9b45b6 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=39 npu_disabling=1
+  [C-N 2] boot=df5ed5f4 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=40 npu_disabling=1
+  [C-N 3] boot=ae38a203 req110=000013e1 idle128=000113e1 pwr214=0000023e st230=023e4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=41 npu_disabling=1
+
+7.3.4 without the fix reads the same wrong state as 7.3.3, so the change
+between R and F-N comes with the fix, not with the kernel version. (The
+r426 build also differs in its delay table, which runs only on power-on.)
+
+NPU regression arms. Fix kernel, NPU enabled, r10.sh as in r425: warm
+reboot, then 30 greedy generations of Qwen3-0.6B-Q4_0, each starting with
+npu0 off. rocket.ko md5 96c07e59 (from the same CI build).
+
+  A  the board's dtb, 1201a529 (v14: NPU0/NPU1 domain clocks + BIU reset)
+  E  e09051aa: C.dtb of r425 (domain clocks back to HCLK_RKNN_ROOT and
+     ACLK_RKNN0/1) with `resets` also deleted from power-domain@2/@3.
+     This is the domain-node layout of v17 (v16 14/16 dropped), which r425
+     never ran: its B removed only the reset, its C only the clocks.
+
+  [F-A] dtb=1201a529 boot=0e081200 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+  [F-E] dtb=e09051aa boot=de4daa54 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+  Before each, pb.sh: req110=000013ff pwr214=000003fe, all four NPU
+  domains off-0, npu_disabling=0 (the rail has consumers).
+
+Same text as every arm of r425 (5e3aaf1a5a57), no failure, timeout, IOMMU
+error or SError. On a board that enables the NPU, the fix changes nothing
+visible, and the v17 domain nodes (no reset, no extra clocks) run 30
+power-ups clean.
+
+What these do not show: one board, warm reboots only (no cold arm with
+the fix), 30 cycles per arm; the delay table in this kernel is still
+v14's (15 us on NPUTOP, NPU0, NPU1), not v17's (NPUTOP and VOP); that one
+was run in r426 on a separate build.
+
+Board left with, for its next boot: fix kernel (vmlinuz 37bb1cf4), dtb A, systemd
+RuntimeWatchdogSec=20s in /etc/systemd/system.conf.d/wd.conf (added for
+these arms).
