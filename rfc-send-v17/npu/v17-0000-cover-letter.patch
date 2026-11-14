@@ -9,8 +9,9 @@ driver.
 
 Based on: next-20261113
 
-The pmdomain patches of v16 (9/16 and 10/16) are now a separate series on
-Ulf's next. 12/12 needs its 2/3 to make the NPU domain take its supply:
+The pmdomain part of v16 9/16 is now a separate series on Ulf's next
+(v16 10/16 is dropped). 12/12 needs its 2/3 to make the NPU domain take
+its supply:
 https://lore.kernel.org/all/cover.1794615323.git.gahing@gahingwoo.com/
 
 Changes in v17:
@@ -40,9 +41,10 @@ The v15/v16 comparison of the reset order is in 4/12.
 
 Logs: https://github.com/gahingwoo/linux-rk3576-npu/tree/main/board-logs
 
-Known issue: after repeated resets with a 2 ms job timeout, the IOMMU
-does not recover ("MMU_DTE_ADDR is not functioning"). I have not looked
-into it further.
+Known issue: in v16 I saw the IOMMU not recover after repeated resets
+with a 2 ms job timeout ("MMU_DTE_ADDR is not functioning"). With v17,
+after three rounds of forced timeouts in one boot, it recovered each
+time; I have not looked into what changed.
 
 Tool use:
 
