@@ -1,4 +1,4 @@
-From c9774b4859b7272179d4eb459730d964b4dc1afd Mon Sep 17 00:00:00 2001
+From c7a91d3464b9f571435c6115bcec64d9d4a78f27 Mon Sep 17 00:00:00 2001
 Message-ID: <c9774b4859b7272179d4eb459730d964b4dc1afd.1794615323.git.gahing@gahingwoo.com>
 In-Reply-To: <cover.1794615323.git.gahing@gahingwoo.com>
 References: <cover.1794615323.git.gahing@gahingwoo.com>
@@ -7,16 +7,44 @@ Date: Sat, 14 Nov 2026 10:55:41 +1300
 Subject: [PATCH v17 3/3] pmdomain: rockchip: settle RK3576 NPUTOP and VOP
  after power-on
 
-PLACEHOLDER(Jiaxing): body, see the key points for patch 3.
+Some RK3576 power domains need extra time to settle after their idle
+request is released.
+
+If the QoS registers are restored before the domain has settled, the
+first power-on after a cold boot can raise an SError.
+
+Add an optional delay_us field: the time a domain waits after the idle
+request is released and before its QoS is restored.
+
+In his review of v16, Finley Xiao (Rockchip) pointed out that the 15 us
+wait is only needed on the top-level domain, NPUTOP. genpd powers on the
+parent NPUTOP first, so by the time NPU0 and NPU1 power on, the parent
+has already settled and no further wait is needed.
+
+Finley also pointed out that VOP needs the same 15 us wait. This matches
+the delay table in the vendor kernel:
+
+  NPUTOP: 15 us
+  NPU0:   0 us
+  NPU1:   0 us
+  VOP:    15 us
+
+Tested on a Radxa ROCK 4D with the 15 us delay on NPUTOP only: 30 NPU
+power-ons after a warm reboot and 30 after a cold power-on, with no
+problems.
+
+The VOP delay made no visible difference on this board, but it is kept
+at 15 us as Rockchip recommends.
 
 Suggested-by: Finley Xiao <finley.xiao@rock-chips.com>
+Link: https://lore.kernel.org/all/4043eb42-ce62-41ff-9a7d-d840bb90364d@rock-chips.com/
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
  drivers/pmdomain/rockchip/pm-domains.c | 55 +++++++++++++++-----------
  1 file changed, 31 insertions(+), 24 deletions(-)
 
 diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
-index 870d60789a16..987c44c7a6b7 100644
+index cb5487ed1e55..073d1bba890b 100644
 --- a/drivers/pmdomain/rockchip/pm-domains.c
 +++ b/drivers/pmdomain/rockchip/pm-domains.c
 @@ -18,6 +18,7 @@
@@ -79,7 +107,7 @@ index 870d60789a16..987c44c7a6b7 100644
  		rockchip_pmu_restore_qos(pd);
  	}
  
-@@ -1347,25 +1354,25 @@ static const struct rockchip_domain_info rk3568_pm_domains[] = {
+@@ -1360,25 +1367,25 @@ static const struct rockchip_domain_info rk3568_pm_domains[] = {
  };
  
  static const struct rockchip_domain_info rk3576_pm_domains[] = {

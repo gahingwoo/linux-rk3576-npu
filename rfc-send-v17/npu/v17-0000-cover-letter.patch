@@ -15,12 +15,15 @@ https://lore.kernel.org/all/cover.1794615323.git.gahing@gahingwoo.com/
 
 Changes in v17:
 
-PLACEHOLDER(Jiaxing): Finley (v16 7/16, 10/16, 14/16 dropped), Heiko
-(ROCKET_CLK_* in 1/12 and 9/12), the pmdomain split. See the key points.
+- Dropped v16 7/16, 10/16 and 14/16 (the power-domain reset and the
+  extra domain clocks), following Finley Xiao's (Rockchip) review.
+- Following Heiko, the clock indices are now ROCKET_CLK_* constants
+  (1/12 and 9/12).
+- The pmdomain changes are now a separate series, linked above.
 
 Testing:
 
-PLACEHOLDER(Jiaxing): what v17 was run on.
+PLACEHOLDER(Jiaxing): testing, filled in after the v17 board run.
 
 Known issue: after repeated resets with a 2 ms job timeout, the IOMMU
 does not recover ("MMU_DTE_ADDR is not functioning"). I have not looked
@@ -28,12 +31,26 @@ into it further.
 
 Tool use:
 
-PLACEHOLDER(Jiaxing): the v16 paragraph, with "v16" changed to "v17".
+An LLM helped me read code and technical material and write part of the
+implementation. Some of the code in the series was first drafted by an
+LLM, and the commit messages and cover letters of earlier versions were
+mostly written by an LLM.
+
+I reviewed the generated code and tested the changes on real hardware.
+I also used an LLM to write test scripts and to compare register write
+traces.
+
+For v17 I wrote the cover letter, commit messages and code comments
+myself in Chinese first and translated them into English with an LLM.
 
 Tag changes:
 
-PLACEHOLDER(Jiaxing): Heiko's Reviewed-by on 1/12 (changed since);
-Conor's Acked-by on 7/12; Tomeu's enum question on 10/12.
+- 1/12 changed in v17. Heiko, does your Reviewed-by still apply? If the
+  change goes beyond what you reviewed, please take another look.
+- 7/12 keeps Conor's Acked-by. The clock count changed from five to four
+  in v16; Conor, please confirm it still applies.
+- Tomeu, the GET_PARAM enum in 10/12 is unchanged (RK3588 = 1,
+  RK3576 = 2). Is that fine?
 
 Igor Paunovic (1):
   accel/rocket: request the core clocks by name
