@@ -1,0 +1,54 @@
+From 18667b2afdcaae217fa1038f5348ab23ed756bdc Mon Sep 17 00:00:00 2001
+Message-ID: <18667b2afdcaae217fa1038f5348ab23ed756bdc.1794615323.git.gahing@gahingwoo.com>
+In-Reply-To: <cover.1794615324.git.gahing@gahingwoo.com>
+References: <cover.1794615324.git.gahing@gahingwoo.com>
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 17 Aug 2026 22:53:32 +1200
+Subject: [PATCH v17 03/12] accel/rocket: wait for a running IRQ handler before
+ resetting a core
+
+drm_sched_stop() does not wait for a threaded IRQ handler that is already
+running, so call synchronize_irq() after it to make sure the handler has
+finished before the reset.
+
+Before synchronize_irq(), mask the interrupt and clear the raw status, so
+that the NPU core cannot report a completion afterwards.
+
+Do this under job_lock, because the submit path sets the interrupt mask
+under the same lock.
+
+Only touch these registers when the device is powered: check with
+pm_runtime_get_if_active(), so that a register access with the power
+domain off cannot raise an SError.
+
+Suggested-by: Igor Paunovic <royalnet026@gmail.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+---
+ drivers/accel/rocket/rocket_job.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index b61bb4d242ce..8b4ad028bc9b 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -402,6 +402,16 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 
+ 	drm_sched_stop(&core->sched, bad);
+ 
++	scoped_guard(mutex, &core->job_lock) {
++		if (pm_runtime_get_if_active(core->dev) > 0) {
++			rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
++			rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
++			pm_runtime_put_autosuspend(core->dev);
++		}
++	}
++
++	synchronize_irq(core->irq);
++
+ 	/*
+ 	 * Remaining interrupts have been handled, but we might still have
+ 	 * stuck jobs. Let's make sure the PM counters stay balanced by
+-- 
+2.43.0
+

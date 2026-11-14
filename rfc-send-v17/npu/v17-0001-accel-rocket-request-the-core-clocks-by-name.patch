@@ -1,0 +1,82 @@
+From 13f16cecfc7082c865b4d9308f0ccb50bee57500 Mon Sep 17 00:00:00 2001
+Message-ID: <13f16cecfc7082c865b4d9308f0ccb50bee57500.1794615323.git.gahing@gahingwoo.com>
+In-Reply-To: <cover.1794615324.git.gahing@gahingwoo.com>
+References: <cover.1794615324.git.gahing@gahingwoo.com>
+From: Igor Paunovic <royalnet026@gmail.com>
+Date: Mon, 31 Aug 2026 19:33:16 +1200
+Subject: [PATCH v17 01/12] accel/rocket: request the core clocks by name
+
+rocket_core_init() never sets the .id of the clocks, so all four are
+requested with a NULL name and each one resolves to the first clock in the
+DT, aclk.
+
+As a result aclk is taken and enabled four times, while hclk, pclk and the
+NPU compute clock are never enabled by the driver. It only works today
+because the power-domain driver enables those clocks for it.
+
+Give the four clocks their names, in the order the binding defines: aclk,
+hclk, npu and pclk.
+
+With that, a DT that lacks any of these clock-names fails probe with
+-ENOENT instead of running on the wrong clock.
+
+Fixes: ed98261b4168 ("accel/rocket: Add a new driver for Rockchip's NPU")
+Signed-off-by: Igor Paunovic <royalnet026@gmail.com>
+Tested-by: Sidong Yang <sidong.yang@furiosa.ai>
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # NanoPC-T6 LTS, NanoPC-T6 Plus
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
+[Jiaxing: shortened the commit message, named the clock indices]
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+---
+ drivers/accel/rocket/rocket_core.c |  4 ++++
+ drivers/accel/rocket/rocket_core.h | 10 +++++++++-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 1b27a2c2f435..c1458423cb69 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -28,6 +28,10 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+ 
++	core->clks[ROCKET_CLK_ACLK].id = "aclk";
++	core->clks[ROCKET_CLK_HCLK].id = "hclk";
++	core->clks[ROCKET_CLK_NPU].id = "npu";
++	core->clks[ROCKET_CLK_PCLK].id = "pclk";
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index f6d7382854ca..01a12664566c 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -27,6 +27,14 @@
+ #define rocket_core_writel(core, reg, value) \
+ 	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+ 
++enum rocket_clk {
++	ROCKET_CLK_ACLK,
++	ROCKET_CLK_HCLK,
++	ROCKET_CLK_NPU,
++	ROCKET_CLK_PCLK,
++	ROCKET_CLK_MAX,
++};
++
+ struct rocket_core {
+ 	struct device *dev;
+ 	struct rocket_device *rdev;
+@@ -36,7 +44,7 @@ struct rocket_core {
+ 	void __iomem *pc_iomem;
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+-	struct clk_bulk_data clks[4];
++	struct clk_bulk_data clks[ROCKET_CLK_MAX];
+ 	struct reset_control_bulk_data resets[2];
+ 
+ 	struct iommu_group *iommu_group;
+-- 
+2.43.0
+

@@ -1,0 +1,83 @@
+From 2afd051e37b8dd4f10e347a3537b0086973d554c Mon Sep 17 00:00:00 2001
+Message-ID: <2afd051e37b8dd4f10e347a3537b0086973d554c.1794615323.git.gahing@gahingwoo.com>
+In-Reply-To: <cover.1794615324.git.gahing@gahingwoo.com>
+References: <cover.1794615324.git.gahing@gahingwoo.com>
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Wed, 19 Aug 2026 19:11:26 +1200
+Subject: [PATCH v17 04/12] accel/rocket: let the core suspend after a reset
+
+The reset path drops the runtime PM reference with
+pm_runtime_put_noidle(), which does not let the device suspend, so the
+power domain is never switched off and on again.
+
+On the RK3576, powering the domain on resets the NPU bus interface. If
+that does not happen after a reset, the IOMMU may not respond and the
+next job after a timeout fails.
+
+Use pm_runtime_put_autosuspend() instead, so the reset path handles
+runtime PM the same way as a normal job completion.
+
+Also drop the runtime PM reference after rocket_core_reset(), so the NPU
+core stays powered during the reset.
+
+The earlier test on the ROCK 4D was done on the v15 code: the job after a
+timeout went from all 128 channels wrong to all 128 correct.
+
+Repeated resets were triggered with a 2 ms job timeout.
+
+v15 (put, then reset): tested twice; both times the board hung within the
+same second as the first batch of job timeouts, with nothing printed.
+
+v16 (reset, then put): tested four times; the board never hung.
+
+So moving pm_runtime_put_autosuspend() after rocket_core_reset() avoids
+the board hanging during a reset.
+
+Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+---
+ drivers/accel/rocket/rocket_job.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 8b4ad028bc9b..41c723238b2b 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -397,6 +397,8 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ static void
+ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ {
++	bool put_job_ref;
++
+ 	if (!atomic_read(&core->reset.pending))
+ 		return;
+ 
+@@ -415,11 +417,10 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	/*
+ 	 * Remaining interrupts have been handled, but we might still have
+ 	 * stuck jobs. Let's make sure the PM counters stay balanced by
+-	 * manually calling pm_runtime_put_noidle().
++	 * dropping the job's reference once the core has been reset.
+ 	 */
+ 	scoped_guard(mutex, &core->job_lock) {
+-		if (core->in_flight_job)
+-			pm_runtime_put_noidle(core->dev);
++		put_job_ref = core->in_flight_job;
+ 
+ 		iommu_detach_group(NULL, core->iommu_group);
+ 
+@@ -429,6 +430,9 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	/* Proceed with reset now. */
+ 	rocket_core_reset(core);
+ 
++	if (put_job_ref)
++		pm_runtime_put_autosuspend(core->dev);
++
+ 	/* NPU has been reset, we can clear the reset pending bit. */
+ 	atomic_set(&core->reset.pending, 0);
+ 
+-- 
+2.43.0
+

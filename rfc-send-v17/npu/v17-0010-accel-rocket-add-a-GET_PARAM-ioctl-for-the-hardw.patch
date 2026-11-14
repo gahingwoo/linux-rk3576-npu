@@ -1,0 +1,175 @@
+From bd963b70e40af3c3c74ac1569cda7be885b0ada1 Mon Sep 17 00:00:00 2001
+Message-ID: <bd963b70e40af3c3c74ac1569cda7be885b0ada1.1794615323.git.gahing@gahingwoo.com>
+In-Reply-To: <cover.1794615324.git.gahing@gahingwoo.com>
+References: <cover.1794615324.git.gahing@gahingwoo.com>
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Sun, 8 Nov 2026 13:23:56 +1300
+Subject: [PATCH v17 10/12] accel/rocket: add a GET_PARAM ioctl for the
+ hardware version
+
+Add DRM_IOCTL_ROCKET_GET_PARAM so that userspace can query the NPU
+hardware version and pick the matching hardware description, such as the
+SRAM configuration and the register layout.
+
+Add DRM_ROCKET_PARAM_HW_VERSION, which returns a hardware version enum
+that matches the device tree compatible.
+
+The enum starts at 1 and 0 is not used:
+
+  RK3588: 1
+  RK3576: 2
+
+An unknown parameter or a non-zero reserved field returns -EINVAL.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_core.h |  1 +
+ drivers/accel/rocket/rocket_drv.c  | 29 ++++++++++++++++++++++
+ include/uapi/drm/rocket_accel.h    | 40 ++++++++++++++++++++++++++++++
+ 3 files changed, 70 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index ef7043046bc6..50c8b05bd394 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -41,6 +41,7 @@ struct rocket_soc_data {
+ 	unsigned int num_clks;
+ 	unsigned int num_resets;
+ 	bool task_con_16bit;
++	u32 hw_version;
+ };
+ 
+ struct rocket_core {
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index fff31c1ebe52..c094f6843095 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -5,6 +5,7 @@
+ #include <drm/drm_drv.h>
+ #include <drm/drm_gem.h>
+ #include <drm/drm_ioctl.h>
++#include <drm/drm_print.h>
+ #include <drm/rocket_accel.h>
+ #include <linux/clk.h>
+ #include <linux/err.h>
+@@ -129,6 +130,31 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
+ 	module_put(THIS_MODULE);
+ }
+ 
++static int
++rocket_ioctl_get_param(struct drm_device *dev, void *data, struct drm_file *file)
++{
++	struct rocket_device *rdev = to_rocket_device(dev);
++	struct drm_rocket_get_param *args = data;
++	const struct rocket_soc_data *soc;
++
++	if (args->reserved != 0) {
++		drm_dbg(dev, "Reserved field in drm_rocket_get_param struct should be 0.\n");
++		return -EINVAL;
++	}
++
++	soc = READ_ONCE(rdev->cores[0].soc);
++	if (!soc)
++		return -ENODEV;
++
++	switch (args->param) {
++	case DRM_ROCKET_PARAM_HW_VERSION:
++		args->value = soc->hw_version;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
+ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
+ #define ROCKET_IOCTL(n, func) \
+ 	DRM_IOCTL_DEF_DRV(ROCKET_##n, rocket_ioctl_##func, 0)
+@@ -137,6 +163,7 @@ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
+ 	ROCKET_IOCTL(SUBMIT, submit),
+ 	ROCKET_IOCTL(PREP_BO, prep_bo),
+ 	ROCKET_IOCTL(FINI_BO, fini_bo),
++	ROCKET_IOCTL(GET_PARAM, get_param),
+ };
+ 
+ DEFINE_DRM_ACCEL_FOPS(rocket_accel_driver_fops);
+@@ -227,12 +254,14 @@ static const struct rocket_soc_data rk3588_soc_data = {
+ 	.num_clks = 4,
+ 	.num_resets = 2,
+ 	.task_con_16bit = false,
++	.hw_version = DRM_ROCKET_HW_RK3588,
+ };
+ 
+ static const struct rocket_soc_data rk3576_soc_data = {
+ 	.num_clks = 6,
+ 	.num_resets = 1,
+ 	.task_con_16bit = true,
++	.hw_version = DRM_ROCKET_HW_RK3576,
+ };
+ 
+ const struct of_device_id rocket_dt_match[] = {
+diff --git a/include/uapi/drm/rocket_accel.h b/include/uapi/drm/rocket_accel.h
+index d0685e372b79..597bf892c96d 100644
+--- a/include/uapi/drm/rocket_accel.h
++++ b/include/uapi/drm/rocket_accel.h
+@@ -15,11 +15,13 @@ extern "C" {
+ #define DRM_ROCKET_SUBMIT			0x01
+ #define DRM_ROCKET_PREP_BO			0x02
+ #define DRM_ROCKET_FINI_BO			0x03
++#define DRM_ROCKET_GET_PARAM			0x04
+ 
+ #define DRM_IOCTL_ROCKET_CREATE_BO		DRM_IOWR(DRM_COMMAND_BASE + DRM_ROCKET_CREATE_BO, struct drm_rocket_create_bo)
+ #define DRM_IOCTL_ROCKET_SUBMIT			DRM_IOW(DRM_COMMAND_BASE + DRM_ROCKET_SUBMIT, struct drm_rocket_submit)
+ #define DRM_IOCTL_ROCKET_PREP_BO		DRM_IOW(DRM_COMMAND_BASE + DRM_ROCKET_PREP_BO, struct drm_rocket_prep_bo)
+ #define DRM_IOCTL_ROCKET_FINI_BO		DRM_IOW(DRM_COMMAND_BASE + DRM_ROCKET_FINI_BO, struct drm_rocket_fini_bo)
++#define DRM_IOCTL_ROCKET_GET_PARAM		DRM_IOWR(DRM_COMMAND_BASE + DRM_ROCKET_GET_PARAM, struct drm_rocket_get_param)
+ 
+ /**
+  * struct drm_rocket_create_bo - ioctl argument for creating Rocket BOs.
+@@ -185,6 +187,44 @@ struct drm_rocket_submit {
+ 	__u64 reserved;
+ };
+ 
++/**
++ * enum drm_rocket_param - parameters for DRM_IOCTL_ROCKET_GET_PARAM
++ * @DRM_ROCKET_PARAM_HW_VERSION: an enum drm_rocket_hw_version value.
++ */
++enum drm_rocket_param {
++	DRM_ROCKET_PARAM_HW_VERSION = 0,
++};
++
++/**
++ * enum drm_rocket_hw_version - the NPU, one value per DT compatible
++ * @DRM_ROCKET_HW_RK3588: "rockchip,rk3588-rknn-core"
++ * @DRM_ROCKET_HW_RK3576: "rockchip,rk3576-rknn-core"
++ */
++enum drm_rocket_hw_version {
++	DRM_ROCKET_HW_RK3588 = 1,
++	DRM_ROCKET_HW_RK3576 = 2,
++};
++
++/**
++ * struct drm_rocket_get_param - ioctl argument for querying a parameter.
++ */
++struct drm_rocket_get_param {
++	/**
++	 * @param: Input: an enum drm_rocket_param value.
++	 */
++	__u32 param;
++
++	/**
++	 * @reserved: Reserved, must be zero.
++	 */
++	__u32 reserved;
++
++	/**
++	 * @value: Output: the value of the parameter.
++	 */
++	__u64 value;
++};
++
+ #if defined(__cplusplus)
+ }
+ #endif
+-- 
+2.43.0
+
