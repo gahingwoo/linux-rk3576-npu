@@ -1,4 +1,4 @@
-NOT SENT. Draft of v17, two series (see send-v17.sh).
+SENT 2026-11-14. See SENT.md.
 
 pd/   3 patches on ulfh/next 844a13010b0b, branch v17-pd
 npu/  12 patches on next-20261113, branch v17-npu
