@@ -31,7 +31,16 @@ Changes in v17:
 
 Testing:
 
-PLACEHOLDER(Jiaxing): testing, filled in after the v17 board run.
+Tested on a Radxa ROCK 4D, with these patches and the rest of v17
+backported to Armbian's 7.3 kernel:
+
+- With the NPU disabled in the DT, NPUTOP, NPU0 and NPU1 are switched
+  off and idled at probe on every boot (16 boots). Without 1/3, all 14
+  boots left them on, and one of them hung.
+- With the NPU enabled, 30 NPU power-ups after a warm reboot and 30
+  after a cold power-on, with identical output and no SError.
+
+Logs: https://github.com/gahingwoo/linux-rk3576-npu/tree/main/board-logs
 
 Tag changes:
 

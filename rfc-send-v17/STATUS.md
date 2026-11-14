@@ -3,5 +3,5 @@ NOT SENT. Draft of v17, two series (see send-v17.sh).
 pd/   3 patches on ulfh/next 844a13010b0b, branch v17-pd
 npu/  12 patches on next-20261113, branch v17-npu
 
-send-v17.sh refuses while any PLACEHOLDER is left: only the two Testing
-sections remain, to be filled after the v17-equivalent board run.
+All text is in; DRY=1 passes on these files (2026-11-14). Not sent:
+waiting for the go-ahead (and ideally the R76S test from Vladimir Bely).

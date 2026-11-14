@@ -23,7 +23,22 @@ Changes in v17:
 
 Testing:
 
-PLACEHOLDER(Jiaxing): testing, filled in after the v17 board run.
+Tested on a Radxa ROCK 4D running Armbian edge 7.3, with the v17
+changes backported (this series and the pmdomain series):
+
+- charsiu (https://github.com/gahingwoo/charsiu), an open source LLM
+  runtime that drives the NPU through the rocket UAPI (/dev/accel)
+  without Mesa or the vendor runtime, ran Qwen3-0.6B (Q4_0) 30 times
+  after a warm reboot and 30 times after a cold power-on. Each run starts
+  with the NPU power domain off. All 60 outputs are identical, with no
+  job timeout, IOMMU error or SError.
+- Job timeouts forced with a 1 ms timeout, three times in one boot:
+  after each, the next run gives the same output as before, with no
+  error.
+
+The v15/v16 comparison of the reset order is in 4/12.
+
+Logs: https://github.com/gahingwoo/linux-rk3576-npu/tree/main/board-logs
 
 Known issue: after repeated resets with a 2 ms job timeout, the IOMMU
 does not recover ("MMU_DTE_ADDR is not functioning"). I have not looked
