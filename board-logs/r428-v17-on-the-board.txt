@@ -1,0 +1,142 @@
+r428: the v17 changes on the board, and recovery from a job timeout without the domain reset
+==========================================================================================
+
+2026-11-14, Radxa ROCK 4D, Armbian 26.11.0-trunk userland, same board and
+card as r427. systemd RuntimeWatchdogSec=20s still in place from r427.
+
+Why: v17 is being prepared as two series (rfc-send-v17/pd, rfc-send-v17/npu):
+the pmdomain patches on Ulf's next, the rocket and DT patches on
+next-20261113. Its covers had to say what v17 was tested on, and nothing
+of v17 had run on a board. As for v16, the v17 changes are backported to
+Armbian edge 7.3 and run there.
+
+Two more things this round:
+
+  - probe-off v2. CodeRabbit on armbian/build#11366 asked for the subtree
+    power-off to propagate errors and fail probe. Failing probe would take
+    every RK3576 power domain down with it, so v2 only stops at a child that
+    fails to switch off, leaves its ancestors on, and warns. Probe goes on.
+  - v17 4/12 ("let the core suspend after a reset") says "powering the
+    domain on resets the NPU bus interface", and its timeout result was
+    measured on v15, when the domain reset (v16 10/16) was in. v17 drops
+    that reset. Does a core still recover from a job timeout?
+
+Kernels (fork CI, gahingwoo/build):
+
+  PO2   branch rk3576-npu-probeoff-test, run 43539040270: Armbian main +
+        rk3576-pmdomain-power-off-npu-subtree-at-probe.patch v2, which is
+        what #11366 will carry. vmlinuz md5 1e2e1356.
+  V17E  branch rk3576-npu-v17equiv-test, run 43539043226: PO2 + a revert of
+        "cycle an optional power-domain reset on power-on" + the delay
+        table of v17 (NPUTOP 15, NPU0 0, NPU1 0, VOP 15). The build log
+        shows both: 282/366 and 283/366, rk3576-zz-v17equiv-test (:1)
+        and (:2). vmlinuz md5 3b2d088b.
+
+  (The first runs of both, 43533438970 and 43534240147, failed: the probe
+  fix commit had picked up two dtb Makefile lines from an R76S review in
+  the same worktree, via commit --amend -a. Removed, regenerated, rebuilt.)
+
+rocket.ko: v17's drivers/accel/rocket (branch v17-npu) built against the
+7.3.4 headers of the CI build, with two lines ported to 7.3 and nothing
+else: devm_kzalloc_objs() -> devm_kcalloc(), <drm/drm_timeout.h> ->
+<drm/drm_utils.h>. md5 83651899. It replaces the in-tree rocket.ko in
+/usr/lib/modules, so it is what loads at boot (the file md5 is checked
+before each arm; the module has no srcversion to read back).
+
+DTs: N.dtb (e020ef4a, NPU disabled, as in r427) and E.dtb (e09051aa, the
+v17 domain-node layout: no reset and no extra clocks on NPU0/NPU1, as in
+r427 arm F-E).
+
+Arm PO2-N: PO2, N.dtb, 3 warm reboots, pb.sh after each (see r427).
+
+  [PO2-N 1] boot=4e84754c req110=000013ff idle128=000113ff pwr214=000003fe st230=03fe4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=42 npu_disabling=1
+  [PO2-N 2] boot=d54ca6eb (same registers) boots=43 npu_disabling=1
+  [PO2-N 3] boot=1b2ca174 (same registers) boots=44 npu_disabling=1
+
+Arm V17E-N: V17E, N.dtb, 3 warm reboots.
+
+  [V17E-N 1] boot=f4569919 req110=000013ff idle128=000113ff pwr214=000003fe st230=03fe4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 boots=45 npu_disabling=1
+  [V17E-N 2] boot=5bb1bdac (same registers) boots=46 npu_disabling=1
+  [V17E-N 3] boot=d8a2549c (same registers) boots=47 npu_disabling=1
+
+Both kernels switch NPUTOP/NPU0/NPU1 off and idle at probe on a board
+without the NPU, as v1 did in r427 F-N; no hang, the boot count goes up by
+one per reboot.
+
+Arm V17E-E: V17E, E.dtb, v17 rocket.ko, warm reboot, r10.sh (30 greedy
+generations of Qwen3-0.6B-Q4_0, -n 64, each starting with npu0 off).
+
+  [V17E-E] dtb=e09051aa boot=e585ebb3 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+Same text as every arm of r425 and r427.
+
+Arm T (timeout recovery). Same kernel, E.dtb, rocket.ko rebuilt from the
+same v17 source with two test-only module parameters (md5 e55ca51f, never
+part of a patch): test_timeout_ms overrides the scheduler timeout per job,
+test_noidle makes rocket_reset() drop the job's reference with
+pm_runtime_put_noidle() instead of pm_runtime_put_autosuspend(). One boot,
+rmmod the normal module, insmod the test one, then t428.sh: two baseline
+runs (-n 16, stdout hashed), then three arms, noidle 0/1/0, each one run
+with a 1 ms timeout and one run after the timeout is put back to 500 ms.
+Kernel messages are counted separately for the forced run and the run
+after it.
+
+  [base1] 0 6cf851807fc9  npu0=off-0 suspended
+  [base2] 0 6cf851807fc9  npu0=off-0 suspended
+  [arm1 noidle=0] forced: 0 0d9a6eb0636e (t=5 mmu=941 serr=0) | after 2 s: npu0=off-0 suspended | next run: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm2 noidle=1] forced: 0 385acb1268ee (t=3 mmu=1132 serr=0) | after 2 s: npu0=off-0 suspended | next run: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm3 noidle=0] forced: 0 1bb607118047 (t=2 mmu=3552 serr=0) | after 2 s: npu0=off-0 suspended | next run: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+
+  t = "NPU job timed out", mmu = rk_iommu "Error during raw reset.
+  MMU_DTE_ADDR is not functioning" (every one of these lines), serr = SError.
+
+What this shows: with the domain reset gone (no reset code in the kernel,
+no resets in the DT), each forced timeout is followed by a run with the
+baseline text and no timeout or IOMMU message. The domain was off 2 s
+later every time. The IOMMU reset fails while the timeouts are happening,
+and the next power-up brings it back.
+
+What it does not show: the noidle arm is not a control. It recovers as
+well, and the domain is off after 2 s, because rocket_reset() also takes
+and puts a runtime PM reference with pm_runtime_put_autosuspend() around
+masking the interrupt, before the job's reference is dropped; that second
+put lets the core suspend whichever call drops the first. So this round
+does not separate the two calls, and it does not reproduce the v8
+failure. It answers the question above (recovery without the domain
+reset), not whether 4/12 is still needed.
+
+WITHDRAWN, the first run of arm T (same boot as V17E-E, boot e585ebb3):
+it hashed stdout and stderr together, and charsiu's stderr carries the CPU
+frequency and staging counters, which change from run to run. Every hash
+differed, and I read that as "does not recover". It was not a
+measurement. Rerun above on a fresh boot with stdout only. After that
+first run the module kept working: two normal runs gave 6cf851807fc9 with
+no kernel message.
+
+Arm V17E-E-cold: the board was powered off and on by hand, then the same
+as V17E-E (V17E, E.dtb, v17 rocket.ko by file md5 83651899).
+
+  [V17E-E-cold] dtb=e09051aa boot=7cad454a runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+  pb.sh before it: req110=000013ff pwr214=000003fe, all four NPU domains
+  off-0, npu_disabling=0.
+
+The power really went: this boot's kernel log has "rtc-hym8563 2-0051: no
+valid clock/calendar values available", which the RTC reports only after
+losing power, and the system clock came back from fake-hwclock earlier
+than the previous boot had ended (so journalctl --list-boots shows this
+boot starting before the last one). The previous boot (9e303440) had
+started a shutdown before the power was cut: its journal has one shutdown
+line and ends at 248 s stopping the user slice.
+
+Summary for the v17 covers:
+
+  - pmdomain, on a board that leaves the NPU disabled: NPUTOP, NPU0 and
+    NPU1 switched off and idled at probe on all 3 boots of each kernel
+    (here), all 10 boots of v1 (r427); before the fix, 14 of 14 boots left
+    them on and one hung (r427).
+  - v17 changes together (pmdomain, DT domain nodes, rocket): 30 NPU
+    power-ups after a warm reboot and 30 after a cold power-on, identical
+    output, no timeout, IOMMU error or SError.
+  - Job timeouts forced three times in one boot: each time the next run
+    gives the baseline output with no error.
