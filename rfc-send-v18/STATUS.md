@@ -114,3 +114,9 @@ asked for no print on programming errors).
 
 CI: gahingwoo/build branch rk3576-npu-v18-test, run 45096808024
 (v7.4-rc4 + PR 11496 + v18 pd and npu, radxa-rock-4d bleedingedge).
+
+CI result: run 45096808024 passed. The log shows all 11 v18 patches
+applied (272-274 pmdomain, 275-282 rocket, after the Lausen GPU patch),
+rocket and pm-domains compiled with no warnings, and the rock-4d,
+cm5-io and r76s dtbs built. Kernel debs are in the run's artifacts, for
+the board test.
