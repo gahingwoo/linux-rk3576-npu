@@ -1,0 +1,69 @@
+From d9135d74c0b960bb5da9f47405950f6207988235 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 17 Aug 2026 20:47:52 +1200
+Subject: [PATCH v18 1/8] accel/rocket: factor the completion tail out of the
+ IRQ handler
+
+Move the part of the IRQ handler that starts the next task or finishes
+the current job into rocket_job_next_locked(). This makes the code easier
+to follow and does not change behaviour.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Igor Paunovic <royalnet026@gmail.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
+---
+ drivers/accel/rocket/rocket_job.c | 30 +++++++++++++++++++-----------
+ 1 file changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 4a5c6a425254..eed443c8406d 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -371,6 +371,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 	return ERR_PTR(ret);
+ }
+ 
++static void rocket_job_next_locked(struct rocket_core *core)
++{
++	lockdep_assert_held(&core->job_lock);
++
++	if (!core->in_flight_job)
++		return;
++
++	if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
++		rocket_job_hw_submit(core, core->in_flight_job);
++		return;
++	}
++
++	iommu_detach_group(NULL, core->iommu_group);
++	dma_fence_signal(core->in_flight_job->done_fence);
++	pm_runtime_put_autosuspend(core->dev);
++	core->in_flight_job = NULL;
++}
++
+ static void rocket_job_handle_irq(struct rocket_core *core)
+ {
+ 	pm_runtime_mark_last_busy(core->dev);
+@@ -384,17 +402,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+ 		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
+ 
+-		if (core->in_flight_job) {
+-			if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
+-				rocket_job_hw_submit(core, core->in_flight_job);
+-				return;
+-			}
+-
+-			iommu_detach_group(NULL, core->iommu_group);
+-			dma_fence_signal(core->in_flight_job->done_fence);
+-			pm_runtime_put_autosuspend(core->dev);
+-			core->in_flight_job = NULL;
+-		}
++		rocket_job_next_locked(core);
+ 	}
+ }
+ 
+-- 
+2.43.0
+

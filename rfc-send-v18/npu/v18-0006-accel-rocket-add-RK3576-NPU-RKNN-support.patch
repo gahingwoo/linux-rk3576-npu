@@ -1,0 +1,213 @@
+From 5bdb7f3555d2c6f3e88065280ab3246ec475e83e Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 23 Nov 2026 14:15:21 +1300
+Subject: [PATCH v18 6/8] accel/rocket: add RK3576 NPU (RKNN) support
+
+Add support for the RK3576 NPU. It has two cores; each core has six
+clocks and one reset, with aclk_cbuf and hclk_cbuf on top of what the
+RK3588 has.
+
+The task number in PC_TASK_CON is 16 bits wide, not 12. BIT16, BIT17 and
+BIT18 are pp_en, count_clear and last_layer_clear. Chaoyi Chen confirmed
+this layout on the list:
+
+  https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
+
+The register gets its own definition, TASK_CON_RK3576, generated from
+Mesa's registers.xml like the rest of rocket_registers.h, and is used
+when the hardware version is RK3576.
+
+Count the cores in rocket_drv.c, against the driver's match table, and
+pass the number to rocket_device_init(), instead of counting only the
+RK3588 compatible there.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+ drivers/accel/rocket/rocket_device.c    |  9 +------
+ drivers/accel/rocket/rocket_device.h    |  2 +-
+ drivers/accel/rocket/rocket_drv.c       | 16 ++++++++++++-
+ drivers/accel/rocket/rocket_job.c       | 15 ++++++++----
+ drivers/accel/rocket/rocket_registers.h | 32 +++++++++++++++++++++++++
+ include/uapi/drm/rocket_accel.h         |  2 ++
+ 6 files changed, 62 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
+index 3bceeb2cbedb..3243cb5093ff 100644
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -6,19 +6,16 @@
+ #include <linux/clk.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/platform_device.h>
+-#include <linux/of.h>
+ 
+ #include "rocket_device.h"
+ 
+ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 					 const struct drm_driver *rocket_drm_driver,
+-					 u32 hw_version)
++					 unsigned int num_cores, u32 hw_version)
+ {
+ 	struct device *dev = &pdev->dev;
+-	struct device_node *core_node;
+ 	struct rocket_device *rdev;
+ 	struct drm_device *ddev;
+-	unsigned int num_cores = 0;
+ 	int err;
+ 
+ 	rdev = devm_drm_dev_alloc(dev, rocket_drm_driver, struct rocket_device, ddev);
+@@ -29,10 +26,6 @@ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 	dev_set_drvdata(dev, rdev);
+ 	rdev->hw_version = hw_version;
+ 
+-	for_each_compatible_node(core_node, NULL, "rockchip,rk3588-rknn-core")
+-		if (of_device_is_available(core_node))
+-			num_cores++;
+-
+ 	rdev->max_cores = num_cores;
+ 
+ 	rdev->cores = devm_kzalloc_objs(dev, *rdev->cores, num_cores);
+diff --git a/drivers/accel/rocket/rocket_device.h b/drivers/accel/rocket/rocket_device.h
+index 40cabae538bc..b8571750c34b 100644
+--- a/drivers/accel/rocket/rocket_device.h
++++ b/drivers/accel/rocket/rocket_device.h
+@@ -27,7 +27,7 @@ struct rocket_device {
+ 
+ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 					 const struct drm_driver *rocket_drm_driver,
+-					 u32 hw_version);
++					 unsigned int num_cores, u32 hw_version);
+ void rocket_device_fini(struct rocket_device *rdev);
+ #define to_rocket_device(drm_dev) \
+ 	((struct rocket_device *)(container_of((drm_dev), struct rocket_device, ddev)))
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 8aa431db5968..da196474a9eb 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -195,6 +195,18 @@ static int rocket_core_hw_index(struct device *dev)
+ 	return -ENODEV;
+ }
+ 
++static unsigned int rocket_count_cores(struct device *dev)
++{
++	struct device_node *np;
++	unsigned int num_cores = 0;
++
++	for_each_matching_node(np, dev->driver->of_match_table)
++		if (of_device_is_available(np))
++			num_cores++;
++
++	return num_cores;
++}
++
+ static int rocket_probe(struct platform_device *pdev)
+ {
+ 	u32 hw_version = (uintptr_t)device_get_match_data(&pdev->dev);
+@@ -212,7 +224,8 @@ static int rocket_probe(struct platform_device *pdev)
+ 		rdev_group = devres_open_group(&drm_dev->dev, NULL, GFP_KERNEL);
+ 		if (!rdev_group)
+ 			return -ENOMEM;
+-		rdev = rocket_device_init(drm_dev, &rocket_drm_driver, hw_version);
++		rdev = rocket_device_init(drm_dev, &rocket_drm_driver,
++					  rocket_count_cores(&pdev->dev), hw_version);
+ 		if (IS_ERR(rdev)) {
+ 			int err = PTR_ERR(rdev);
+ 
+@@ -274,6 +287,7 @@ static void rocket_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id dt_match[] = {
+ 	{ .compatible = "rockchip,rk3588-rknn-core", .data = (void *)DRM_ROCKET_HW_RK3588 },
++	{ .compatible = "rockchip,rk3576-rknn-core", .data = (void *)DRM_ROCKET_HW_RK3576 },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index eed443c8406d..f6cb7685731a 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -166,10 +166,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
+ 
+-	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+-					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+-					 PC_TASK_CON_TASK_NUMBER(1) |
+-					 PC_TASK_CON_TASK_PP_EN(1));
++	if (core->rdev->hw_version == DRM_ROCKET_HW_RK3576)
++		rocket_pc_writel(core, TASK_CON_RK3576,
++				 PC_TASK_CON_RK3576_LAST_LAYER_CLEAR(1) |
++				 PC_TASK_CON_RK3576_TASK_COUNT_CLEAR(1) |
++				 PC_TASK_CON_RK3576_TASK_PP_EN(1) |
++				 PC_TASK_CON_RK3576_TASK_NUMBER(1));
++	else
++		rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
++						 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
++						 PC_TASK_CON_TASK_NUMBER(1) |
++						 PC_TASK_CON_TASK_PP_EN(1));
+ 
+ 	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
+ 
+diff --git a/drivers/accel/rocket/rocket_registers.h b/drivers/accel/rocket/rocket_registers.h
+index 9aef614c3470..efcbb00d2aa5 100644
+--- a/drivers/accel/rocket/rocket_registers.h
++++ b/drivers/accel/rocket/rocket_registers.h
+@@ -195,6 +195,38 @@ static inline uint32_t PC_TASK_CON_TASK_NUMBER(uint32_t val)
+ 	return ((val) << PC_TASK_CON_TASK_NUMBER__SHIFT) & PC_TASK_CON_TASK_NUMBER__MASK;
+ }
+ 
++#define REG_PC_TASK_CON_RK3576					0x00000030
++#define PC_TASK_CON_RK3576_RESERVED_0__MASK			0xfff80000
++#define PC_TASK_CON_RK3576_RESERVED_0__SHIFT			19
++static inline uint32_t PC_TASK_CON_RK3576_RESERVED_0(uint32_t val)
++{
++	return ((val) << PC_TASK_CON_RK3576_RESERVED_0__SHIFT) & PC_TASK_CON_RK3576_RESERVED_0__MASK;
++}
++#define PC_TASK_CON_RK3576_LAST_LAYER_CLEAR__MASK		0x00040000
++#define PC_TASK_CON_RK3576_LAST_LAYER_CLEAR__SHIFT		18
++static inline uint32_t PC_TASK_CON_RK3576_LAST_LAYER_CLEAR(uint32_t val)
++{
++	return ((val) << PC_TASK_CON_RK3576_LAST_LAYER_CLEAR__SHIFT) & PC_TASK_CON_RK3576_LAST_LAYER_CLEAR__MASK;
++}
++#define PC_TASK_CON_RK3576_TASK_COUNT_CLEAR__MASK		0x00020000
++#define PC_TASK_CON_RK3576_TASK_COUNT_CLEAR__SHIFT		17
++static inline uint32_t PC_TASK_CON_RK3576_TASK_COUNT_CLEAR(uint32_t val)
++{
++	return ((val) << PC_TASK_CON_RK3576_TASK_COUNT_CLEAR__SHIFT) & PC_TASK_CON_RK3576_TASK_COUNT_CLEAR__MASK;
++}
++#define PC_TASK_CON_RK3576_TASK_PP_EN__MASK			0x00010000
++#define PC_TASK_CON_RK3576_TASK_PP_EN__SHIFT			16
++static inline uint32_t PC_TASK_CON_RK3576_TASK_PP_EN(uint32_t val)
++{
++	return ((val) << PC_TASK_CON_RK3576_TASK_PP_EN__SHIFT) & PC_TASK_CON_RK3576_TASK_PP_EN__MASK;
++}
++#define PC_TASK_CON_RK3576_TASK_NUMBER__MASK			0x0000ffff
++#define PC_TASK_CON_RK3576_TASK_NUMBER__SHIFT			0
++static inline uint32_t PC_TASK_CON_RK3576_TASK_NUMBER(uint32_t val)
++{
++	return ((val) << PC_TASK_CON_RK3576_TASK_NUMBER__SHIFT) & PC_TASK_CON_RK3576_TASK_NUMBER__MASK;
++}
++
+ #define REG_PC_TASK_DMA_BASE_ADDR				0x00000034
+ #define PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR__MASK		0xfffffff0
+ #define PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR__SHIFT		4
+diff --git a/include/uapi/drm/rocket_accel.h b/include/uapi/drm/rocket_accel.h
+index c9271e469231..d1102b30f25a 100644
+--- a/include/uapi/drm/rocket_accel.h
++++ b/include/uapi/drm/rocket_accel.h
+@@ -199,11 +199,13 @@ enum drm_rocket_param {
+ /**
+  * enum drm_rocket_hw_version - the NPU, for DRM_ROCKET_PARAM_HW_VERSION
+  * @DRM_ROCKET_HW_RK3588: the NPU of the RK3588.
++ * @DRM_ROCKET_HW_RK3576: the NPU of the RK3576.
+  *
+  * 0 is not used.
+  */
+ enum drm_rocket_hw_version {
+ 	DRM_ROCKET_HW_RK3588 = 1,
++	DRM_ROCKET_HW_RK3576 = 2,
+ };
+ 
+ /**
+-- 
+2.43.0
+
