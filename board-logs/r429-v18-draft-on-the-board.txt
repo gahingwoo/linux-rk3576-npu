@@ -106,3 +106,80 @@ What this shows:
 
 Not run this round: the NPU-disabled boot (N.dtb, pmdomain 1/3 at
 probe); it needs a dtb change and a reboot.
+
+Second part: the timeout that does not recover, found and fixed (test patch)
+------------------------------------------------------------------------------
+
+Reproduced with log_buf_len=16M and rep.sh: up to N back-to-back forced
+timeouts, stop at the first one the next run does not recover from,
+then look at the state.
+
+  run 1: [arm1] ok, [arm2] next at once: b53886cf1677, 7938 rk_iommu lines
+         [+3s] npu1=on npu0=off-0;  [+13s] npu1=on, run still wrong
+         after unbind/bind of both cores: 6cf851807fc9 (recovered)
+  run 2: arms 1-9 ok, [arm10] fails; npu0=on npu1=off-0
+         every device of the stuck domain runtime-suspended, the domain on
+  run 3: [arm2] fails; npu1 on; PMU 0x214=0x2be (NPU1 power bit 0 = on),
+         0x110=0x13e3. Forcing a resume/suspend of both cores
+         (power/control on, auto) did not turn the domain off.
+         genpd idle_states: Rejected 0 for every NPU domain. No
+         "failed to set idle" or "failed to get ack" message.
+
+Reading of it, from the code (drivers/iommu/rockchip-iommu.c, rc4):
+
+  1. After the core reset of a timeout, bank 0 of that core's IOMMU keeps
+     paging while bank 1 is back in reset state.
+  2. rk_iommu_is_paging_enabled() and rk_iommu_is_stall_active() are true
+     only when every bank agrees, so rk_iommu_enable_stall(),
+     rk_iommu_disable_paging() and rk_iommu_disable_stall() all do
+     nothing for this IOMMU. The force reset then fails its DTE_ADDR
+     check on bank 0: "MMU_DTE_ADDR is not functioning", and
+     rk_iommu_enable() fails.
+  3. That happens in rk_iommu_resume(), while the core, its consumer, is
+     RPM_RESUMING. genpd's power-off on the failed resume sees two
+     devices not suspended and keeps the domain on; the core's resume
+     fails too, both end up "suspended", and nothing tries again. The
+     domain never goes off, so the hardware is never reset, and every
+     later job fails pm_runtime_resume_and_get() in rocket_job_run()
+     without reaching the hardware. Userspace gets the old buffer
+     contents and no error.
+
+Test patch (r429/iommufix, not sent): in rk_iommu_enable(), when the
+banks disagree on paging, stall the banks that still page, disable
+their paging and release the stall, one bank at a time, before the
+normal sequence; and print each bank's STATUS and DTE_ADDR when the
+DTE_ADDR check fails. Kernel: fork CI run 45145164030 (v18 image
+kernel + this patch), vmlinuz md5 74f785d6.
+
+Arm FIX-T: rep.sh 20 on that kernel, same test module:
+
+  [arm1..arm20] forced: 0 6cf851807fc9 | next at once: 0 6cf851807fc9 | mmu_lines=0
+                (timeouts 2 to 12 per forced run)
+  124 x "rk_iommu 27702000.iommu / 2770a000.iommu: bank 0 still paging,
+         status 0x000019; disabling it"
+
+20 of 20 recover, no rk_iommu error. The warning confirms step 1: it is
+bank 0, on both cores. The forced runs themselves now also give the
+baseline text: their wrong text before was the IOMMU failure, not the
+timeout. More timeouts per forced run, because the jobs after the first
+timeout now reach the hardware and time out at 1 ms too.
+
+Arm FIX-E: r10.sh 30 on the fix kernel:
+
+  [FIX-E] dtb=d2e7a80d boot=c86c7770 runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+Arm N: NPU-disabled DT (v18 rock-4d with both cores and MMUs disabled,
+no domain-supply on pd_npu; md5 152540ce), fix kernel, 3 warm reboots,
+read 45 s after boot:
+
+  [N-1] boot=58575569 req110=000013ff idle128=000113ff pwr214=000003fe st230=03fe4501 npu1=off-0 npu0=off-0 nputop=off-0 npu=off-0 npu_disabling=1 rocket=0
+  [N-2] boot=704a5e4f (same registers) npu_disabling=1
+  [N-3] boot=a70f0e00 (same registers) npu_disabling=1
+
+pmdomain 1/3 on v18: NPUTOP, NPU0 and NPU1 off and idled at probe, the
+rail switched off, no hang, on all 3 boots.
+
+After that, armbianEnv.txt was put back to the original (no fdtfile, no
+log_buf_len) and the board soft-rebooted. It did not come back on the
+network (no ping, no ssh, for over 10 minutes). No 4D serial console is
+attached to this host, so where it stopped is not known.
