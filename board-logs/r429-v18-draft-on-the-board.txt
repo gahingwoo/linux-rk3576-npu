@@ -183,3 +183,30 @@ After that, armbianEnv.txt was put back to the original (no fdtfile, no
 log_buf_len) and the board soft-rebooted. It did not come back on the
 network (no ping, no ssh, for over 10 minutes). No 4D serial console is
 attached to this host, so where it stopped is not known.
+
+Third part: the patch as it will be sent, and the reboot that did not come back
+--------------------------------------------------------------------------------
+
+The board came back after a power cycle by hand. The journal (persistent)
+has no entry for the boot that did not come back: the previous boot
+(a70f0e00, N-3) logs into its shutdown (armbian-ramlog sync, journal
+flush) and the next entry is the power-cycled boot. So it stopped
+before journald, in the last part of the shutdown or early in the next
+boot; without a serial console on the 4D, where is not known.
+
+Kernel with the patch exactly as in rfc-send-iommu-banks (61 lines,
+shorter comment, no DTE_ADDR debug print): fork CI run 45282869744,
+patch 290/385 "+61/-0", vmlinuz md5 bbeccf35.
+
+  rep.sh 20: 20 of 20 arms recover (next run 6cf851807fc9, 0 rk_iommu
+  error lines); 91 "bank 0 still paging" warnings (ratelimited).
+
+  5 warm reboots, each checked:
+  reboot 1: boot=dbb19123 up=21s vmlinuz=bbeccf35 cores=2 iommu_err=0 gen=6cf851807fc9
+  reboot 2: boot=538083b9 (same)
+  reboot 3: boot=eb8928d5 (same)
+  reboot 4: boot=8f091af1 (same)
+  reboot 5: boot=b985bb01 (same)
+
+Boot count on the patched kernels: 11 good, 1 that did not come back,
+cause unknown. On the image kernel without the patch: 2 good.
