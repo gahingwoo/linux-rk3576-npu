@@ -1,75 +1,45 @@
-From 03e9a7cba2057b3ec359c8f793324e2a7866f05d Mon Sep 17 00:00:00 2001
+From e8247385974299623c8fd28db6879c17561f75f3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 23 Nov 2026 22:13:52 +1300
 Subject: [PATCH] iommu/rockchip: Disable paging on banks that still page
  before a force reset
 
-A reset of the master can leave the banks of one IOMMU in different
-states. On the RK3576 NPU, after a job timeout makes the NPU driver
-reset the core, bank 0 of that core's IOMMU keeps paging with the old
-directory (STATUS 0x19) while bank 1 is back in reset state.
+After an RK3576 NPU job timeout resets the core, the banks of its IOMMU
+can be left in different states: bank 0 is still paging while bank 1
+has been reset.
 
-rk_iommu_is_paging_enabled() and rk_iommu_is_stall_active() are true
-only when every bank agrees, so rk_iommu_enable_stall(),
-rk_iommu_disable_paging() and rk_iommu_disable_stall() all do nothing
-for such an IOMMU. The force reset in rk_iommu_enable() then finds that
-bank 0 ignores its DTE_ADDR write, fails with "MMU_DTE_ADDR is not
-functioning", and so does every later enable. The device behind the
-IOMMU never gets its translation back.
+In this state the existing stall and paging helpers do nothing, so the
+force reset that follows fails as well. The IOMMU can then no longer be
+enabled, and the NPU stops working.
 
-When the banks disagree on paging, stall each bank that still pages,
-disable its paging and release the stall, one bank at a time, before
-the normal enable sequence. Banks that agree are not touched. Also print
-each bank's STATUS and DTE_ADDR when the DTE_ADDR check fails.
+When the banks disagree, stop paging on the banks that still page
+first, then run the existing sequence.
 
-Tested on a Radxa ROCK 4D (RK3576) with forced job timeouts on the NPU,
-each followed at once by another job. Without this patch, one of every
-2 to 10 such timeouts left the NPU's IOMMUs failing every enable until
-the NPU driver was rebound. With it, 20 of 20 recovered, there were no
-IOMMU errors, and the new message reported bank 0 still paging, with
-status 0x19, on both NPU cores.
+Tested on a ROCK 4D with repeated forced job timeouts. Without this
+patch, one in every 2 to 10 timeouts was not recovered from; with it,
+20 out of 20 recovered.
 
 Fixes: cd6438c5f844 ("iommu/rockchip: Reconstruct to support multi slaves")
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
-This came out of testing the RK3576 NPU series [1]: job timeouts forced
-on the NPU with a 1 ms scheduler timeout, each followed at once by the
-next job. The bank 0 state is the one Fexiven described in [2].
+Not tested on the RK3588.
 
-It touches the same file as Anton Sovetov's RFC [3], but not the same
-code: that one is about the pm_runtime_get_if_in_use() checks in attach,
-zap and the interrupt handler, this one about the enable sequence when
-the banks disagree.
+LLM-assisted.
 
-Tested only on the RK3576. The RK3588 NPU MMUs have two banks too; I
-have not run this there.
-
-Tool use: an LLM helped me find the cause and wrote this patch and its
-message. I reviewed both and ran the tests above on the board.
-
-[1] https://lore.kernel.org/all/cover.1794615324.git.gahing@gahingwoo.com/
-[2] https://github.com/gahingwoo/linux-rk3576-npu/issues/3
-[3] https://lore.kernel.org/all/CANLiQWrVGN00Hn8s3X7nyDZxh3x0wJ1YqTVzYsLUPM3s-Pkp1A@mail.gmail.com/
-
- drivers/iommu/rockchip-iommu.c | 69 ++++++++++++++++++++++++++++++++++
- 1 file changed, 69 insertions(+)
+ drivers/iommu/rockchip-iommu.c | 61 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
 
 diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
-index 1fa3110b142a..aef36e9fce0a 100644
+index 1fa3110b142a..5eabefb0ad14 100644
 --- a/drivers/iommu/rockchip-iommu.c
 +++ b/drivers/iommu/rockchip-iommu.c
-@@ -507,6 +507,69 @@ static int rk_iommu_disable_paging(struct rk_iommu *iommu)
+@@ -507,6 +507,64 @@ static int rk_iommu_disable_paging(struct rk_iommu *iommu)
  	return ret;
  }
  
 +/*
-+ * A reset of the master can leave the banks of one IOMMU in different
-+ * states: on the RK3576 NPU the core reset puts one bank back to reset
-+ * state while the other keeps paging with the old directory. The
-+ * helpers above treat "paging enabled" and "stall active" as true only
-+ * when every bank agrees, so they skip such an IOMMU, and the paging
-+ * bank then ignores the DTE_ADDR writes of the force reset. Stall and
-+ * stop paging on the banks that still page, one bank at a time.
++ * The helpers above only act when every bank agrees. After a reset of the
++ * master, one bank can still be paging; stop it bank by bank.
 + */
 +static void rk_iommu_quiesce_paging_banks(struct rk_iommu *iommu)
 +{
@@ -128,17 +98,7 @@ index 1fa3110b142a..aef36e9fce0a 100644
  static int rk_iommu_force_reset(struct rk_iommu *iommu)
  {
  	int ret, i;
-@@ -525,6 +588,9 @@ static int rk_iommu_force_reset(struct rk_iommu *iommu)
- 		rk_iommu_write(iommu->bases[i], RK_MMU_DTE_ADDR, dte_addr);
- 
- 		if (dte_addr != rk_iommu_read(iommu->bases[i], RK_MMU_DTE_ADDR)) {
-+			dev_err_ratelimited(iommu->dev, "bank %d status %#08x DTE_ADDR %#08x\n", i,
-+					    rk_iommu_read(iommu->bases[i], RK_MMU_STATUS),
-+					    rk_iommu_read(iommu->bases[i], RK_MMU_DTE_ADDR));
- 			dev_err(iommu->dev, "Error during raw reset. MMU_DTE_ADDR is not functioning\n");
- 			return -EFAULT;
- 		}
-@@ -947,6 +1013,9 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
+@@ -947,6 +1005,9 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
  	if (ret)
  		return ret;
  
