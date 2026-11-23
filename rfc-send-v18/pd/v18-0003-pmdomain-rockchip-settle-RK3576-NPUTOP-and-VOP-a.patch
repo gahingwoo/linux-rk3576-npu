@@ -1,4 +1,4 @@
-From a079e351a38d04252c866202b9629811eed0ef3a Mon Sep 17 00:00:00 2001
+From 6e10a6f19b7b92adf1e9fe022e308847ff5b2331 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Sat, 14 Nov 2026 10:55:41 +1300
 Subject: [PATCH v18 3/3] pmdomain: rockchip: settle RK3576 NPUTOP and VOP
@@ -13,10 +13,10 @@ first power-on after a cold boot can raise an SError.
 Add an optional delay_us field: the time a domain waits after the idle
 request is released and before its QoS is restored.
 
-Finley Xiao (Rockchip) pointed out that the 15 us wait is only needed
-on the top-level domain, NPUTOP. genpd powers on the parent NPUTOP
-first, so by the time NPU0 and NPU1 power on, the parent has already
-settled and no further wait is needed.
+Finley Xiao (Rockchip) pointed out that of the NPU domains, only NPUTOP
+needs the 15 us wait. genpd powers on NPUTOP before NPU0 and NPU1, so by
+the time they power on, NPUTOP has already settled and no further wait
+is needed. (PD_NPU, above NPUTOP, has no idle request to wait for.)
 
 Finley also pointed out that VOP needs the same 15 us wait. This matches
 the delay table in the vendor kernel:

@@ -1,4 +1,4 @@
-From 70e2b408a3f9e040340a4b832f60e3def67e3996 Mon Sep 17 00:00:00 2001
+From 9f142f6eabbf9802fa077de7de7ddd1e40c48919 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 23 Nov 2026 14:13:02 +1300
 Subject: [PATCH v18 4/8] accel/rocket: take the core clocks and resets from
@@ -10,9 +10,13 @@ driver for each SoC, take every clock and reset the core's node lists.
 The binding says which ones each SoC has, and dtbs_check enforces it.
 
 The driver only ever enables, disables, asserts and deasserts them all
-together, so it does not need to know which is which. On the RK3588 the
-resets are still asserted in the order the devicetree lists them,
-srst_a then srst_h, as before.
+together, so it does not need to know which is which. The clocks are
+enabled in the order the devicetree lists them, which on the RK3588 is
+the order the driver named them in.
+
+One thing changes on the RK3588: the reset array deasserts in devicetree
+order, srst_a then srst_h, while the bulk call deasserted in reverse,
+srst_h then srst_a. Both are still asserted srst_a first.
 
 Suggested-by: Daniel Drake <ddrake@baylibre.com>
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>

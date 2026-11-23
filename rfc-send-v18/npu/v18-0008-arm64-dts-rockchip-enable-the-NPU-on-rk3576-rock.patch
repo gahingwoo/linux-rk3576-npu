@@ -1,4 +1,4 @@
-From 3cd1d0d9148b4743ee908a57fa4b99c4543d8570 Mon Sep 17 00:00:00 2001
+From 123ac97d208451392d8e48fed2e3c1489b88e92e Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v18 8/8] arm64: dts: rockchip: enable the NPU on
@@ -7,7 +7,11 @@ Subject: [PATCH v18 8/8] arm64: dts: rockchip: enable the NPU on
 Enable both NPU cores and their IOMMUs in the ROCK 4D device tree.
 
 Make vdd_npu_s0 the supply of the NPU power domain. The power domain
-driver is what switches the NPU rail on and off, with the domain.
+driver is what switches the NPU rail on and off, with the domain, once
+it handles the RK3576 NPU domain supply ("pmdomain: rockchip: manage the
+RK3576 NPU domain supply", sent separately). Without that, nothing holds
+vdd_npu_s0, which is not always-on on this board, and the regulator core
+turns it off as unused.
 
 The cores also get npu-supply, which the binding requires and the
 RK3588 boards set as well. No driver uses it at the moment.

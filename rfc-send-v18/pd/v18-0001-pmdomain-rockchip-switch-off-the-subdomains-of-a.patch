@@ -1,4 +1,4 @@
-From c3e45a5131e837af8cc47ccc759159779fa96a66 Mon Sep 17 00:00:00 2001
+From 545a941150cb42a77f0b4b332511a09f55d1993a Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Sat, 14 Nov 2026 10:34:28 +1300
 Subject: [PATCH v18 1/3] pmdomain: rockchip: switch off the subdomains of a
@@ -17,7 +17,10 @@ and the SoC locks up when regulator_late_cleanup() disables vdd_npu_s0.
 
 Mark a regulator domain and every domain below it as off when it is
 added, and once the subtree is complete, switch it off from the leaves
-up. If a subdomain fails to switch off, leave its parents on and warn.
+up. If a domain fails to switch off, stop there and warn: its parents,
+and the domains not yet visited, stay on. That keeps the hardware state
+consistent, but genpd still lists those domains as off and nothing
+holds the regulator, so the regulator core can still turn it off later.
 
 Tested on a Radxa ROCK 4D with the NPU disabled in the DT. Without this
 patch, all 14 boots left NPUTOP, NPU0 and NPU1 on, and one of them hung.

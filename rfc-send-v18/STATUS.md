@@ -89,3 +89,28 @@ armbian/build#11496 (rpardini, open): v7.4-rc4, carries v17 5-12 rebased
 by hand. Same resolution as ours for 5/12. He asks for a v18 so it can be
 a plain b4 dump. Checked 2026-11-23: all 8 v18 npu patches apply with
 git am -3 on v7.4-rc4 (applied only, not built there).
+
+Review by a separate agent (2026-11-23, code reading only)
+----------------------------------------------------------
+
+Checked by me against the source before acting; messages only, no code
+changed (the CI run below builds the same code):
+
+- npu 8/8 needs pd 2/3, or nothing holds vdd_npu_s0 and the regulator
+  core turns it off as unused. 8/8 now says so; the cover must too.
+- npu 4/8: reset_control_bulk_deassert() walks backwards and
+  reset_control_array_deassert() forwards, so the RK3588 deassert order
+  is now srst_a then srst_h (was srst_h then srst_a). Said in the
+  message; Sidong's RK3588 rerun should force timeouts, since only the
+  reset path calls rocket_core_reset().
+- pd 1/3: a failing child returns at once, so its unvisited siblings are
+  not tried either, and genpd still lists them off. Message now says
+  that; same point CodeRabbit made on #11366.
+- pd 3/3: "top-level domain" was wrong (PD_NPU is above NPUTOP).
+  Reworded.
+
+Not taken: a dev_err on a core with a different hw_version (Daniel
+asked for no print on programming errors).
+
+CI: gahingwoo/build branch rk3576-npu-v18-test, run 45096808024
+(v7.4-rc4 + PR 11496 + v18 pd and npu, radxa-rock-4d bleedingedge).
