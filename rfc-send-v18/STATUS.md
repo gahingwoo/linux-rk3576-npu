@@ -120,3 +120,10 @@ applied (272-274 pmdomain, 275-282 rocket, after the Lausen GPU patch),
 rocket and pm-domains compiled with no warnings, and the rock-4d,
 cm5-io and r76s dtbs built. Kernel debs are in the run's artifacts, for
 the board test.
+
+Board (r429, 2026-11-23): probe, GET_PARAM = 2, 30/30 runs identical
+(5e3aaf1a5a57) with no error. Forced timeouts: 5 of 6 recover; one
+back-to-back timeout left both IOMMUs failing and the output silently
+wrong, also after the domain had gone off, until a driver reload. The
+cover's known-issue paragraph must say this. NPU-disabled boot (N.dtb)
+not run yet.
