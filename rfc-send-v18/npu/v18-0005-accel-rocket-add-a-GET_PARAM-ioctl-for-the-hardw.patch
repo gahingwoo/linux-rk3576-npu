@@ -1,23 +1,17 @@
-From 8339009adaec38f33e1067f7629565dfb496d9c6 Mon Sep 17 00:00:00 2001
+From cbb77a43deedadb6667a84bd1c57030cf1c9ce74 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 23 Nov 2026 14:14:47 +1300
 Subject: [PATCH v18 5/8] accel/rocket: add a GET_PARAM ioctl for the hardware
  version
 
-Add DRM_IOCTL_ROCKET_GET_PARAM so that userspace can ask which NPU it is
-running on and pick the matching hardware description, such as the SRAM
-configuration and the register layout.
+Add DRM_IOCTL_ROCKET_GET_PARAM so that userspace can tell which NPU it
+runs on. DRM_ROCKET_PARAM_HW_VERSION returns an enum
+drm_rocket_hw_version value, taken from the compatible's match data when
+the first core probes. The PC_VERSION registers cannot be used: the
+RK3568 reads 0 from them.
 
-DRM_ROCKET_PARAM_HW_VERSION returns an enum drm_rocket_hw_version
-value. The PC_VERSION registers cannot be used for this: on the RK3568
-the driver reads 0 from them.
-
-The value comes from the match data of the core's compatible and is
-stored in the device when the first core probes, before the DRM device
-is registered. A core whose compatible gives a different value is
-refused.
-
-An unknown parameter or a non-zero reserved field returns -EINVAL.
+A core with a different hardware version is refused. An unknown
+parameter or a non-zero reserved field returns -EINVAL.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

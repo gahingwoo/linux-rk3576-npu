@@ -1,22 +1,16 @@
-From 9f142f6eabbf9802fa077de7de7ddd1e40c48919 Mon Sep 17 00:00:00 2001
+From 82329b6681958350294846c830598ebde29b874a Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 23 Nov 2026 14:13:02 +1300
 Subject: [PATCH v18 4/8] accel/rocket: take the core clocks and resets from
  the devicetree
 
 The RK3576 NPU core has six clocks and one reset, the RK3588 core four
-clocks and two resets. Rather than naming and counting them in the
-driver for each SoC, take every clock and reset the core's node lists.
-The binding says which ones each SoC has, and dtbs_check enforces it.
+clocks and two resets. Take all clocks and resets the core node lists
+instead of naming and counting them per SoC; the binding defines them
+and dtbs_check enforces it. The driver only uses them all together.
 
-The driver only ever enables, disables, asserts and deasserts them all
-together, so it does not need to know which is which. The clocks are
-enabled in the order the devicetree lists them, which on the RK3588 is
-the order the driver named them in.
-
-One thing changes on the RK3588: the reset array deasserts in devicetree
-order, srst_a then srst_h, while the bulk call deasserted in reverse,
-srst_h then srst_a. Both are still asserted srst_a first.
+On the RK3588 the resets are now deasserted in devicetree order, srst_a
+then srst_h; before it was the reverse.
 
 Suggested-by: Daniel Drake <ddrake@baylibre.com>
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>

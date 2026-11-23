@@ -1,20 +1,16 @@
-From 123ac97d208451392d8e48fed2e3c1489b88e92e Mon Sep 17 00:00:00 2001
+From 0bcd73278a4c7a0cb2e1b8bdb9aba306355384cb Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 18:30:48 +1200
 Subject: [PATCH v18 8/8] arm64: dts: rockchip: enable the NPU on
  rk3576-rock-4d
 
-Enable both NPU cores and their IOMMUs in the ROCK 4D device tree.
+Enable both NPU cores and their IOMMUs, and make vdd_npu_s0 the supply
+of the NPU power domain. The rail is switched with the domain by commit
+b1bff9ced657 ("pmdomain: rockchip: manage the RK3576 NPU domain supply")
+in the pmdomain tree; without it nothing holds the rail and it is turned
+off as unused.
 
-Make vdd_npu_s0 the supply of the NPU power domain. The power domain
-driver is what switches the NPU rail on and off, with the domain, once
-it handles the RK3576 NPU domain supply ("pmdomain: rockchip: manage the
-RK3576 NPU domain supply", sent separately). Without that, nothing holds
-vdd_npu_s0, which is not always-on on this board, and the regulator core
-turns it off as unused.
-
-The cores also get npu-supply, which the binding requires and the
-RK3588 boards set as well. No driver uses it at the moment.
+npu-supply is set because the binding requires it; no driver uses it.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---

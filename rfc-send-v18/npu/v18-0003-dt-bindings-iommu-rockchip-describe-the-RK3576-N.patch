@@ -1,20 +1,12 @@
-From b3c0491ceafc69e5ebe50111be5ff8145e3bd9a2 Mon Sep 17 00:00:00 2001
+From f44a5cb03bf1ac543d35ff30a8411d1ee95525c3 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 17 Aug 2026 20:48:34 +1200
 Subject: [PATCH v18 3/8] dt-bindings: iommu: rockchip: describe the RK3576 NPU
  MMU
 
 The RK3576 NPU IOMMU is compatible with rk3568-iommu but needs four
-clocks: aclk, iface and the two CBUF clocks.
-
-Measured: with only aclk and iface, the IOMMU reset fails and the NPU does
-not probe. Without either one of the CBUF clocks it fails as well, and one
-of those configurations does not even boot.
-
-With all four clocks the IOMMU works, and the npu clock is not needed.
-
-rk_iommu enables every clock listed in the device tree (841363ebb508), so
-this list decides whether the IOMMU can reset.
+clocks: aclk, iface and the two CBUF clocks. Without any one of them the
+IOMMU reset fails and the NPU does not probe.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Acked-by: Conor Dooley <conor.dooley@microchip.com>

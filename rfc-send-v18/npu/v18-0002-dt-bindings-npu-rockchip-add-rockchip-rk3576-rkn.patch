@@ -1,18 +1,13 @@
-From 6155444101c2ccdecbeda2730920d463739ffdc0 Mon Sep 17 00:00:00 2001
+From eea37bd2f486b5855b314014d2e4c3049c666bb0 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Thu, 6 Aug 2026 17:41:12 +1200
 Subject: [PATCH v18 2/8] dt-bindings: npu: rockchip: add
  rockchip,rk3576-rknn-core
 
-The RK3576 and the RK3588 use the same NPU block, with different hardware
-resources.
-
-The RK3576 has two cores. Each core needs six clocks, two more than the
-RK3588 (aclk_cbuf and hclk_cbuf), needs only one reset, and has no
-sram-supply.
-
-Define the requirements of each SoC in allOf. The RK3588 still requires
-sram-supply.
+The RK3576 uses the same NPU block as the RK3588. Each of its two cores
+has six clocks (aclk_cbuf and hclk_cbuf on top of the RK3588's four), one
+reset and no sram-supply. Describe each SoC in allOf; the RK3588 still
+requires sram-supply.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>

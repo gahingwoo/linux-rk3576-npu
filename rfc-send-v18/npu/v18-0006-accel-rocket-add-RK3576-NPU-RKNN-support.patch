@@ -1,25 +1,17 @@
-From d94d6225ddd290ec3fc7391f42fa1990c85b54b1 Mon Sep 17 00:00:00 2001
+From c57db6883bb9c977f65d34569f1ed9cb5405bdda Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Mon, 23 Nov 2026 14:15:21 +1300
 Subject: [PATCH v18 6/8] accel/rocket: add RK3576 NPU (RKNN) support
 
-Add support for the RK3576 NPU. It has two cores; each core has six
-clocks and one reset, with aclk_cbuf and hclk_cbuf on top of what the
-RK3588 has.
-
-The task number in PC_TASK_CON is 16 bits wide, not 12. BIT16, BIT17 and
-BIT18 are pp_en, count_clear and last_layer_clear. Chaoyi Chen confirmed
-this layout on the list:
+Add the RK3576 NPU. Its PC_TASK_CON has a 16-bit task number, with
+pp_en, count_clear and last_layer_clear at BIT16, BIT17 and BIT18, as
+Chaoyi Chen confirmed:
 
   https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
 
-The register gets its own definition, TASK_CON_RK3576, generated from
-Mesa's registers.xml like the rest of rocket_registers.h, and is used
-when the hardware version is RK3576.
-
-Count the cores in rocket_drv.c, against the driver's match table, and
-pass the number to rocket_device_init(), instead of counting only the
-RK3588 compatible there.
+Add it to rocket_registers.h as TASK_CON_RK3576, generated from Mesa's
+registers.xml, and use it on the RK3576. Count the cores in rocket_drv.c
+against the match table, not only the RK3588 compatible.
 
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 ---
