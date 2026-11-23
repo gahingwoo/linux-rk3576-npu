@@ -87,5 +87,5 @@ Armbian
 
 armbian/build#11496 (rpardini, open): v7.4-rc4, carries v17 5-12 rebased
 by hand. Same resolution as ours for 5/12. He asks for a v18 so it can be
-a plain b4 dump; v18 npu is on next-20261120, so check that it applies on
-7.4 before saying so.
+a plain b4 dump. Checked 2026-11-23: all 8 v18 npu patches apply with
+git am -3 on v7.4-rc4 (applied only, not built there).
