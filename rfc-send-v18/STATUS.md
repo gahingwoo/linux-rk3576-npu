@@ -127,3 +127,9 @@ back-to-back timeout left both IOMMUs failing and the output silently
 wrong, also after the domain had gone off, until a driver reload. The
 cover's known-issue paragraph must say this. NPU-disabled boot (N.dtb)
 not run yet.
+
+2026-11-23: Ulf applied pmdomain v17: 1/3 to fixes (458777762756), 2/3
+and 3/3 to next (b1bff9ced657, adc13316e6d9). v18 is the rocket series
+only; pd/ here is not to be sent. npu 8/8's dependency note should name
+b1bff9ced657 in Ulf's next. Order agreed: the rockchip-iommu bank fix
+(r429-iommufix) goes first, v18 after, with its known issue pointing to it.
