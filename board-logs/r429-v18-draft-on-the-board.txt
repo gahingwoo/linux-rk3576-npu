@@ -1,0 +1,108 @@
+r429: the v18 draft on the board, and a timeout it does not recover from
+=========================================================================
+
+2026-11-23, Radxa ROCK 4D. A new card: the SD card was rewritten with an
+Armbian image built by fork CI for this round, and the SPI flash, which
+held EDK2, was rewritten with U-Boot.
+
+Why: v18 (rfc-send-v18) rewrites the clock/reset patch (4/8), moves
+GET_PARAM ahead of the RK3576 patch (5/8) and rewrites the RK3576 patch
+(6/8). None of that had run on a board.
+
+Setup
+-----
+
+Image: gahingwoo/build branch rk3576-npu-v18-image, run 45132062664:
+v7.4-rc4 + Armbian PR 11496 (Lausen's GPU domain supply) + v18 pmdomain
+1-3 + v18 rocket 1-8, BRANCH=bleedingedge, trixie minimal.
+Armbian-unofficial_26.11.0-trunk_Radxa-rock-4d_trixie_bleedingedge_7.4.0-rc4_minimal.img.xz,
+sha256 c60ed1ee113166f4...; the build log lists all 11 v18 patches
+applied (pmdomain 272-274, rocket 275-282).
+
+  kernel 7.4.0-rc4-bleedingedge-rockchip64, dtb md5 d2e7a80d,
+  rocket.ko md5 d1e9cb33 (the one in the image), charsiu 0.1.0 from the
+  Armbian repo, model Qwen3-0.6B-Q4_0.gguf from charsiu-get.
+
+SPI: the old content (EDK2 FIT, "FIT Image with ATF/OP-TEE/UEFI for
+RK3576 (rk3576-rock-4d)") was read out whole first,
+~/Desktop/rock4d-spi-backup-edk2-20261123.bin, 16 MiB, md5 6bda4daa...
+Then erase-flash and write of u-boot-rockchip-spi.bin taken from the
+same image (U-Boot 2026.04 Armbian, mainline ATF v2.14); read back
+1603584 bytes, identical.
+
+The first-login preset on the card only had a root password, so
+armbian-firstlogin waited for Enter on tty1 and ttyS0 (a preset is
+unattended only with root password, user name and user password). It
+was finished by hand over ssh: root password set, marker removed. The
+board stays on DHCP, 192.168.2.9.
+
+Probe
+-----
+
+  rocket 27700000.npu: Rockchip NPU core 0 version: 1179210311
+  rocket 27708000.npu: Rockchip NPU core 1 version: 1179210311
+  npu, nputop, npu0, npu1: off-0 when idle
+
+GET_PARAM (a static test program calling DRM_IOCTL_ROCKET_GET_PARAM):
+
+  param=0 reserved=0 -> ret=0 value=2        (DRM_ROCKET_HW_RK3576)
+  param=1 reserved=0 -> ret=-1 EINVAL
+  param=0 reserved=1 -> ret=-1 EINVAL
+
+Arm V18-E: r10.sh, 30 greedy generations, -n 64, each starting with npu0
+off, stdout hashed.
+
+  [V18-E] dtb=d2e7a80d boot=35c0c6bf runs=30 fail=0 npu0_off_before=30/30 hashes= 30 5e3aaf1a5a57; timeouts=0 iommu=0 serror=0
+
+Same hash as every arm of r425, r427 and r428 (v17 and earlier, other
+charsiu build, other card).
+
+Arm T: forced job timeouts
+--------------------------
+
+rocket.ko rebuilt from rc4 + Lausen + v18 (git am -3, the same 13
+commits as the image) against the board's own linux-headers package,
+with one test-only module parameter, never part of a patch:
+test_timeout_ms, which rocket_job_run() writes into core->sched.timeout
+(0 = the normal 500 ms). md5 ffd79346, vermagic matches. t429.sh:
+rmmod, insmod the test module, two baseline runs (-n 16), then six
+arms. Each arm sets test_timeout_ms=1, runs once (forced), sets it back
+to 0, and runs once more: arms 1-3 after a 2 s wait (as in r428),
+arms 4-6 at once. Kernel messages counted between markers.
+
+  [base1] 0 6cf851807fc9  npu0=off-0
+  [base2] 0 6cf851807fc9  npu0=off-0
+  [arm1 wait2s] forced: 0 1bb607118047 (t=2 mmu=3204 serr=0) | after 2 s: npu0=off-0 | next: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm2 wait2s] forced: 0 1bb607118047 (t=2 mmu=3174 serr=0) | after 2 s: npu0=off-0 | next: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm3 wait2s] forced: 0 6cf851807fc9 (t=1 mmu=113 serr=0) | after 2 s: npu0=off-0 | next: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm4 nowait] forced: 0 1bb607118047 (t=2 mmu=3158 serr=0) | next at once: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm5 nowait] forced: 0 1bb607118047 (t=2 mmu=3391 serr=0) | next at once: 0 6cf851807fc9 (t=0 mmu=0 serr=0)
+  [arm6 nowait] forced: 0 1bb607118047 (t=2 mmu=3532 serr=0) | next at once: 0 b53886cf1677 (t=0 mmu=3228 serr=0)
+  [end] npu0=off-0 0 b53886cf1677
+
+  t = "NPU job timed out", mmu = rk_iommu "Error during raw reset.
+  MMU_DTE_ADDR is not functioning", serr = SError or "Internal error".
+
+Then rmmod, modprobe of the normal rocket.ko, and one more run:
+
+  rc=0 6cf851807fc9, 0 rk_iommu lines
+
+What this shows:
+
+- Five of six forced timeouts recover: the next run has the baseline
+  text and no kernel message, after a 2 s wait (3 of 3) and at once
+  (2 of 3).
+- Arm 6 did NOT recover. The run right after it gives a different text
+  with exit code 0 and 3228 rk_iommu lines, on both IOMMUs (27702000 and
+  2770a000), with no job timeout. The run 2 s later ([end]), after npu0
+  had gone off, is wrong the same way. A driver reload (rmmod, modprobe)
+  brings it back.
+- So in this case the bad state outlived a power-off of the core's
+  domain, which points at state the driver or the IOMMU driver keeps,
+  not only at the hardware. Not established: which state, how often
+  (1 of 3 back-to-back arms here), and whether v17 or mainline rocket
+  behave the same (not run on this kernel).
+- No SoC hang, no SError in any arm.
+
+Not run this round: the NPU-disabled boot (N.dtb, pmdomain 1/3 at
+probe); it needs a dtb change and a reboot.
