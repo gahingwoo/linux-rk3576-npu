@@ -190,7 +190,7 @@ development tree rather than from it. The rest lives in `mesa-patches/`.
 
 ```
 rfc-send-vNN/          every posting of the series as it was sent, with its
-                       cover, and a SENT.md from v10 on; v16 is current
+                       cover, and a SENT.md from v10 on; v18 is current
 patches-extra/         built into the release kernel but not part of the
                        series (one dw-hdmi-qp fix); see its README
 .github/workflows/     kernel.yml builds and releases the kernel;
