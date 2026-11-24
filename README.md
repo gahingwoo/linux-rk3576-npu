@@ -36,74 +36,32 @@ oven it is roasted in.
 
 ## Upstream
 
-The driver support is on the list. Current series:
+Current series:
 
-**[PATCH v16 00/16: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/20261108065917.135194-1-gahing@gahingwoo.com/)**
-(2026-11-08, applies to a plain next-20261105)
+**[PATCH v18 0/8: accel/rocket: RK3576 NPU (RKNN) enablement](https://lore.kernel.org/all/cover.1795478392.git.gahing@gahingwoo.com/)**
+(2026-11-24, on next-20261120)
 
-v16 answers the v15 review. For Tomeu Vizoso, the descriptions and code
-comments of the accel/rocket patches are rewritten, and a GET_PARAM ioctl (13/16)
-gives userspace the NPU hardware version (RK3588 = 1, RK3576 = 2). For Heiko,
-the messages of 1/16 and 3/16 are shorter, each NPU core sits on one power
-domain, and the NPU IOMMUs take four clocks instead of five. For Chaoyi Chen, a
-comment in 11/16 is gone. For Sashiko, 4/16 drops the runtime PM reference
-after rocket_core_reset() instead of before it; with a 2 ms job timeout on the
-ROCK 4D the old order hung the board twice in two runs and the new one did not
-hang in four.
+Where the pieces are:
 
-Nothing is applied yet. Ulf Hansson has offered to take the pmdomain patches
-through his tree; the rest goes through accel and rockchip. The v15 tags are
-carried, Heiko's Reviewed-by tags from v15 are picked up, and where the code
-changed under a tag the cover asks again: Heiko on 4/16, Conor Dooley on his
-Acked-by for 8/16 (the clock count changed), and Igor Paunovic's Tested-by on
-4/16 is dropped until he retests it.
+- pmdomain (the RK3576 NPU domain supply, the NPUTOP/VOP settle delay, and
+  the probe fix for boards that leave the NPU disabled): applied by Ulf
+  Hansson, 1/3 to fixes (`458777762756`), 2/3 and 3/3 to next
+  (`b1bff9ced657`, `adc13316e6d9`).
+- accel/rocket 1-4 of v17: in v7.4-rc4, through drm-misc-fixes.
+- accel/rocket, dt-bindings and DTS, the remaining 8: v18 above. It answers
+  Daniel Drake's review of v17: the clocks and resets come from the
+  devicetree, GET_PARAM comes before the RK3576 patch, and the RK3576
+  TASK_CON is a generated register definition.
+- iommu: two patches merged earlier (`841363ebb508`, "iommu/rockchip: Take
+  all DT clocks", and `b10d5920cafa`, "iommu/rockchip: Clear stale page
+  faults before enabling stall"), and one sent on 2026-11-24 for the known
+  issue below:
+  [iommu/rockchip: Disable paging on banks that still page before a force reset](https://lore.kernel.org/all/20261123235154.315460-1-gahing@gahingwoo.com/).
 
-Known issue: after repeated resets with a 2 ms job timeout, the IOMMU does not
-recover ("MMU_DTE_ADDR is not functioning").
-
-v15 was v14 rebased: v14's 12/15 stopped applying to linux-next when Sidong
-Yang's regcmd validation put two defines where 12/15 adds its own.
-
-v14 answered the v13 review: one reset instead of an array in 10 (Philipp Zabel),
-the reset pointer cleared under the lock on removal (Sashiko), v13's 13/14 split
-in two (Heiko), and shorter messages throughout (Ulf and Heiko). It also
-corrects two numbers v12 and v13 carried: the rail test is 11 to 25 wrong words
-a pass, not 13 to 20 wrong rows, and the three-input convolution test was within
-one count, not byte exact.
-
-Heiko asked whether 9's settle delay is for the domain or the rail. Measured on
-v13 as posted: with the delay at 0 the first power-on of the NPU domain takes an
-async SError, also with the rail forced always-on; with 15 us, 536 cold
-power-ons are clean (board-logs/r420). Chaoyi Chen of Rockchip gave the same
-answer from the design: about 15 us of internal preparation, during which the
-QoS registers must not be touched.
-
-Why 594 MHz: CLK_RKNN_DSU0 clocks both cores and nothing in mainline sets its
-rate or the NPU rail, so the block comes up at 786 MHz on the 750 mV this
-board's PMIC boots with, and two cores running together then write wrong words,
-11 to 25 in each pass of 5400 rows. 14/15 assigns 594 MHz, which is clean and
-sits between the 500 and 600 MHz steps of Rockchip's OPP table, both of which
-ask 725 mV.
-
-The race 3/15's lock scope closes has no hardware proof. Igor reached the path
-on RK3588 with a two-task job and saw no fault, and says that does not show the
-race closed. On this RK3576 the protocol that would reach it, JOB_TIMEOUT_MS=2,
-takes the PMIC's I2C down and leaves two CPUs not answering an NMI, so it cannot
-be run here. That was with the v15 order in 4/15; with v16's 4/16 the 2 ms
-timeout no longer hangs the board, but the IOMMU does not recover after the
-resets, so it still says nothing about the race.
-
-Between v14 and v15 no human reviewed the series. Heiko Stuebner became a
-reviewer for the rocket driver (2026-10-13), and Leonard Lausen ran v14 on a
-NanoPi M5 and posted a board patch on top of it. Sashiko raised two points on
-v14 9/15, both measured on a CM5-IO (board-logs/r422, r423): U-Boot hands
-over with the NPU domains on and the power domain driver still probes, and the
-NPU QoS is saved before its first power-on, so it is not zeroed. The domain
-that does get its QoS zeroed is the GPU, on mainline without the series; that
-fix went out on its own
-([pmdomain: rockchip: do not restore QoS that was never saved](https://lore.kernel.org/all/20261101055633.101309-1-gahing@gahingwoo.com/)).
-Sashiko's point on 4/15, the asynchronous put after a timed-out job, is
-answered by v16's 4/16.
+Known issue: after a job timeout, the core reset can leave bank 0 of the
+NPU IOMMU paging, and the NPU then does not recover. Without the iommu fix,
+about one in every 2 to 10 back-to-back forced timeouts is not recovered
+from; with it, 20 in a row recovered (board-logs/r429).
 
 Earlier revisions:
 [v1](https://lore.kernel.org/all/20260717085220.3212274-1-gahing@gahingwoo.com/) |
@@ -120,17 +78,15 @@ Earlier revisions:
 [v12](https://lore.kernel.org/all/20260912065053.1519165-1-gahing@gahingwoo.com/) |
 [v13](https://lore.kernel.org/all/20260915104328.45901-1-gahing@gahingwoo.com/) |
 [v14](https://lore.kernel.org/all/20260924102135.92217-1-gahing@gahingwoo.com/) |
-[v15](https://lore.kernel.org/all/20261101082307.151957-1-gahing@gahingwoo.com/)
+[v15](https://lore.kernel.org/all/20261101082307.151957-1-gahing@gahingwoo.com/) |
+[v16](https://lore.kernel.org/all/20261108065917.135194-1-gahing@gahingwoo.com/) |
+v17 ([pmdomain](https://lore.kernel.org/all/cover.1794615323.git.gahing@gahingwoo.com/),
+[rocket](https://lore.kernel.org/all/cover.1794615324.git.gahing@gahingwoo.com/))
 
 Reviewers so far: Chaoyi Chen, Krzysztof Kozlowski, Conor Dooley, Alexey
 Charkov, Heiko Stuebner, Tomeu Vizoso, Philipp Zabel, Robin Murphy, Ulf Hansson,
-Abel Vesa, Diederik de Haas and Igor Paunovic, who provides the RK3588 coverage
-this project cannot produce.
-
-Two iommu patches from the same work are already merged, in linux-next since
-next-20260727: `841363ebb508` ("iommu/rockchip: Take all DT clocks") and
-`b10d5920cafa` ("iommu/rockchip: Clear stale page faults before enabling
-stall").
+Abel Vesa, Daniel Drake, Diederik de Haas and Igor Paunovic. Sidong Yang tests
+on the RK3588, which this project cannot do, and Vladimir Bely on a NanoPi R76S.
 
 ## Status
 
@@ -138,19 +94,16 @@ stall").
 |---|---|
 | SoC | RK3576 (Cortex-A72 × 4 + Cortex-A53 × 4) |
 | Boards | Radxa ROCK 4D, ArmSoM CM5 on the CM5-IO carrier |
-| Kernel | Armbian edge 7.3.3 with v14 (ROCK 4D, Armbian's own build); Armbian edge 7.3 with v16 (CM5-IO); next-20261105 with v16 (the CI) |
+| Kernel | v7.4-rc4 with v18 and the iommu fix (ROCK 4D, fork CI image, board-logs/r429); Armbian edge 7.3 with v14 (Armbian's own build); next-20261105 with v16 (the CI) |
 | Driver | `drivers/accel/rocket` (DRM-accel, merged in 6.18) |
 
 Armbian has merged v14 for both boards (armbian/build#11162 CM5-IO and
-#11163 ROCK 4D, 2026-11-02), and its edge kernel enables the NPU on both. v16
-was tested on both boards on Armbian edge 7.3 kernels built from those branches
-with the v16 changes: both NPU cores run together and charsiu's perplexity is
-41.1009 on each, the same as before. The ROCK 4D has since gone back to
-Armbian's own 7.3.3 build from beta.armbian.com, installed by the charsiu
-installer, where perplexity is again 41.1009.
-The ROCK 4D ran this project's own buildroot image with v14 until 2026-11-01
-(board-logs/r421). None of these runs exercises the race 3/15's lock scope
-closes; the Upstream section above says why.
+#11163 ROCK 4D, 2026-11-02), and its edge kernel enables the NPU on both.
+
+The ROCK 4D now runs v7.4-rc4 with v18 (board-logs/r429): both NPU cores
+probe, GET_PARAM returns 2, 30 runs in a row give the same text with no
+error, three boots with the NPU disabled switch NPUTOP, NPU0 and NPU1 off,
+and with the iommu fix 20 back-to-back forced job timeouts all recover.
 
 ## Using it on Armbian
 
