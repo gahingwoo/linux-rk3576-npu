@@ -1,0 +1,117 @@
+From 0bcd73278a4c7a0cb2e1b8bdb9aba306355384cb Mon Sep 17 00:00:00 2001
+Message-ID: <cover.1795478392.git.gahing@gahingwoo.com>
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 24 Nov 2026 12:59:52 +1300
+Subject: [PATCH v18 0/8] accel/rocket: RK3576 NPU (RKNN) enablement
+
+This series adds RK3576 NPU (RKNN) support to the mainline rocket
+driver.
+
+Changes in v18
+
+- Rebased onto next-20261120. Patches 1-4 of v17 are in v7.4-rc4 and
+  are dropped. The pmdomain series has been applied by Ulf (1/3 to
+  fixes, 2/3 and 3/3 to next).
+
+- 4/8 (was 8/12), following Daniel's review: the clocks are taken with
+  devm_clk_bulk_get_all() and the resets as a reset array, so their
+  number is no longer given per SoC and enum rocket_clk is gone. On the
+  RK3588 this changes the reset deassert order: srst_a is now released
+  before srst_h.
+
+- 5/8 (was 10/12): GET_PARAM now comes before the RK3576 support. The
+  hardware version is taken from the match data when the first core
+  probes and stored in rocket_device, so READ_ONCE is not needed and
+  core 0 is not assumed to exist. The driver keeps its own enum rather
+  than PC_VERSION, which reads 0 on the RK3568. The UAPI documentation
+  no longer ties the version to a compatible.
+
+- 6/8 (was 9/12): the RK3576 TASK_CON uses a register definition
+  generated from Mesa's registers.xml, selected by the hardware
+  version. The cores are counted in rocket_drv.c. The "# Conflicts:"
+  lines left in v17 are gone.
+
+- 7/8 and 8/8: test notes removed from the commit messages; 8/8 states
+  its dependency on b1bff9ced657 in Ulf's tree.
+
+- All commit messages shortened.
+
+Review tags
+
+Kept: Reviewed-by from Igor and Heiko and Tested-by from Sidong on 1/8,
+Reviewed-by from Krzysztof on 2/8, Acked-by from Conor on 3/8. Dropped
+Sidong's Tested-by on v17 8-10, which were rewritten.
+
+Sidong, could you test this again on the RK3588? The reset and recovery
+path after a job timeout matters most, since the deassert order has
+changed.
+
+Testing
+
+Radxa ROCK 4D (RK3576), v7.4-rc4 with this series, in an image built
+with Armbian:
+
+- Both NPU cores probe.
+- GET_PARAM returns the RK3576 hardware version (2); invalid requests
+  return -EINVAL.
+- 30 inference runs in a row give identical output, with no job
+  timeout, IOMMU error or SError.
+- Booted 3 times with the NPU not enabled: NPUTOP, NPU0 and NPU1 are
+  switched off, and so is the NPU rail.
+
+Known issue
+
+A core reset after a job timeout can leave bank 0 of the IOMMU paging,
+and the NPU then does not recover. The fix has been sent separately:
+
+https://lore.kernel.org/all/20261123235154.315460-1-gahing@gahingwoo.com/
+
+With repeated forced timeouts on the ROCK 4D, about one in every 2 to
+10 is not recovered from without the fix; with it, 20 in a row all
+recovered.
+
+Notes
+
+- 594 MHz (Daniel's question): mainline does not scale the NPU
+  frequency or voltage yet. The NPU boots at 786 MHz and 750 mV, which
+  is not in the vendor's OPP table. That table runs up to 600 MHz at
+  725 mV, so 594 MHz is within it.
+
+- npu-supply: the binding requires it and the RK3588 device trees set
+  it, but the driver does not use it. The NPU rail is switched by the
+  power domain through domain-supply.
+
+- The register definitions are generated from Mesa's registers.xml;
+  the XML change will go with Mesa MR !43804.
+
+LLM-assisted.
+
+Jiaxing Hu (8):
+  accel/rocket: factor the completion tail out of the IRQ handler
+  dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+  dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+  accel/rocket: take the core clocks and resets from the devicetree
+  accel/rocket: add a GET_PARAM ioctl for the hardware version
+  accel/rocket: add RK3576 NPU (RKNN) support
+  arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+  arm64: dts: rockchip: enable the NPU on rk3576-rock-4d
+
+ .../bindings/iommu/rockchip,iommu.yaml        | 26 +++++++
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 40 ++++++++++-
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 22 ++++++
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi      | 70 ++++++++++++++++++-
+ drivers/accel/rocket/rocket_core.c            | 25 +++----
+ drivers/accel/rocket/rocket_core.h            | 13 +---
+ drivers/accel/rocket/rocket_device.c          | 11 +--
+ drivers/accel/rocket/rocket_device.h          |  6 +-
+ drivers/accel/rocket/rocket_drv.c             | 52 ++++++++++++--
+ drivers/accel/rocket/rocket_job.c             | 45 ++++++++----
+ drivers/accel/rocket/rocket_registers.h       | 32 +++++++++
+ include/uapi/drm/rocket_accel.h               | 43 ++++++++++++
+ 12 files changed, 329 insertions(+), 56 deletions(-)
+
+
+base-commit: 909ef7a9a30fa139e69e555e3606680f5cca7726
+-- 
+2.43.0
+
