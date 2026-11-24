@@ -34,6 +34,11 @@ oven it is roasted in.
 | [kiln](https://github.com/gahingwoo/kiln) | the **vendor** RKLLM/RKNN stack on a mainline kernel. LLM and vision on the board today, through a closed runtime, and the yardstick the open stack is measured against |
 | [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own and runs Llama-3.2-1B end to end at four bits, about 18 tokens a second, with no Mesa and no vendor runtime in the path |
 
+For Windows on Arm, [woa-rk3576-npu](https://github.com/gahingwoo/woa-rk3576-npu)
+is a Windows driver for the same NPU, following `rocket`'s job model. charsiu
+runs on it and decodes Llama-3.2-1B at 14 to 16 tokens a second on a
+TaishanPi 3M under Windows 11 23H2 (2026-11-24).
+
 ## Upstream
 
 Current series:
