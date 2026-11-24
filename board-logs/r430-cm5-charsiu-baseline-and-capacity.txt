@@ -1,0 +1,101 @@
+r430: charsiu on the ArmSoM CM5 as a normal user, a baseline, and what each unit can do
+=====================================================================================
+
+2026-11-24, ArmSoM CM5 on the CM5-IO carrier, Armbian 26.11.0-trunk.141
+(trixie), kernel 7.3.5-edge-rockchip64 (Armbian's build, v14 of the NPU
+series). NPU clk_rknn_dsu0 594 MHz, vdd_npu_s0 750 mV. User woo (not root).
+CPU governor ondemand, A72 up to 2208 MHz. Model Qwen3-0.6B-Q4_0.gguf
+(charsiu-get qwen3-0.6b-q4). Readings in different minutes drift by up to
+~25% on this board (thermal); only interleaved pairs are compared.
+
+Why: performance work on charsiu (branch `performance`). This is the
+baseline and the capacity data the scheduling design is drawn from.
+
+1. Two user-mode losses, fixed on branch performance
+----------------------------------------------------
+
+a) /dev/cpu_dma_latency is root:root 0600, so as a user charsiu could not
+hold it ("deep idle stays allowed"). charsiu 0.1.0, 64 tokens, same boot:
+
+  as woo                  20.90 22.19 21.23 tok/s
+  as root                 25.68 25.08 25.37 tok/s
+  as woo, udev rule on    25.60 25.41 25.64 tok/s
+
+Fix: charsiu 228d247, udev rule giving the node to group render.
+
+b) The two-core overlap guard read the NPU clock from debugfs, root only;
+as a user it took 800 MHz and serialised the cores in every batched call
+("two cores serialised: 800 MHz at 750 mV"). The real clock is 594 MHz,
+inside the vendor table. A 159-token prompt, CHARSIU_SPEC=4, same text in
+all four runs:
+
+  0.1.0 binary    prompt 1249 1277 ms   gen 16.47 16.14 tok/s   serialised
+  with the fix    prompt 1071 1049 ms   gen 20.10 20.12 tok/s   overlapped
+
+Fix: charsiu 8751585, clock from the rknn-core nodes' assigned-clock-rates
+(CLK_RKNN_DSU0, id 232).
+
+2. Speculative decoding (prompt lookup) is right but was slower
+---------------------------------------------------------------
+
+Text identical with spec on and off (stdout only). Before fix (b):
+
+  free text, k=4   25.47 24.87 tok/s off   19.31 19.28 on   1.56 tok/pass
+  copying,   k=4   19.52 19.64 off         17.59 17.68 on   2.51 tok/pass
+
+Cost of one verify pass (1 + k rows, padded even) against k, before (b):
+about 157 ms for 2 to 4 rows, 180-190 ms for 6, against ~52 ms for one
+decode token. With (b), ~144-150 ms for ~6 rows (from two lengths of the
+same run, so only the verify rows differ): fence ~64, pack ~27, read ~8,
+submit ~4, scale ~3, CPU outside the NPU entry ~44 ms.
+
+--batch-probe 8 (whole model, one batched call per tensor, rows checked):
+
+  m   one row x m   batched   fence   pack   read
+  2   116 ms        67 ms     45      13     4
+  4   190           65        35      15     8
+  6   284           75        35      17     11
+  8   378           84        35      19     15
+
+The batched kernel does not re-read weights per row pair: the fence is
+flat from 4 to 8 rows. The verify path is what costs (q/k/v and gate/up as
+separate one-slot calls, one core each). Work in progress: CHARSIU_NPU_BATCH_GROUP.
+
+3. Decode attention against context (CHARSIU_STAGES=1, -c 2048)
+----------------------------------------------------------------
+
+  context   attention ms/token   share
+  ~100      5.5 - 7.2            14-16%
+  ~400      20.9 - 22.3          32-33%
+  ~790      40.4 - 41.1          47%
+  ~1480     75.2 - 77.8          62-63%
+
+Everything else is flat (q k v 7-10, gate+up 9-11, down 7-9, head 5.5 ms).
+fp32 KV is ~229 KB a position (28 layers, K and V, 8 heads x 128 x 4 B):
+at ~1480 positions ~339 MB in ~77 ms, about 4.4 GB/s.
+
+4. TTFT and decode, the build with both fixes, -c 2048, two runs
+-----------------------------------------------------------------
+
+  prompt     prompt rate        TTFT            decode (32 tok)
+  24 tok     54.9  122.4        437  196 ms     26.02 25.83   (first point cold)
+  81         155.6 155.0        521  523        24.52 23.09
+  195        141.5 139.0        1379 1403       21.57 21.80
+  385        131.9 133.0        2920 2894       15.70 15.54
+  765        128.4 128.8        5958 5940       11.64 11.63
+  1430       120.3 119.7        11891 11945     8.15  8.23
+
+charsiu_run called directly (no chat template), so token counts are lower
+than through the front door; staging is 4.9-6.0 s on every start.
+
+5. The GPU (Mali-G52 r1 MC3, Mesa 27.0 git, rusticl OpenCL 3.0)
+---------------------------------------------------------------
+
+clpeak 1.1.3: memory bandwidth ~10 GB/s (float2/4); fp32 ~75 GFLOPS;
+fp16 up to 148 GFLOPS (half2); int8 up to 195 GIOPS (char4); kernel
+launch latency 311 us; enqueueReadBuffer 0.71 GB/s. panvk (Vulkan 1.3)
+also enumerates with PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1.
+
+Reading: a GPU attention at ~10 GB/s would beat today's CPU attention at
+~4.4 GB/s and could run beside the NPU, but 28 launches a token cost ~8.7
+ms, so it only pays at long context, and data must stay mapped, not copied.
