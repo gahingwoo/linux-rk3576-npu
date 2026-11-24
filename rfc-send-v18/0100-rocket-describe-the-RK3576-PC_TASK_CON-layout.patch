@@ -1,0 +1,61 @@
+From 98e7716f35b0b9f5add5733fa26dd1f932f59fca Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Tue, 24 Nov 2026 13:07:51 +1300
+Subject: [PATCH] rocket: describe the RK3576 PC_TASK_CON layout
+
+The RK3576 PC_TASK_CON has a 16-bit task number, with pp_en, count_clear
+and last_layer_clear at bits 16, 17 and 18; the RK3588 one has a 12-bit
+task number. Add it as TASK_CON_RK3576 at the same offset.
+
+The two definitions share an offset, so gen_header.py now lists each
+offset once in rkt_get_target(); otherwise the switch has a duplicate
+case.
+
+The kernel's rocket driver writes this register, and its
+rocket_registers.h is generated from this file; the RK3576 support there
+uses the new definition.
+---
+ src/gallium/drivers/rocket/gen_header.py | 6 ++++++
+ src/gallium/drivers/rocket/registers.xml | 7 +++++++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/src/gallium/drivers/rocket/gen_header.py b/src/gallium/drivers/rocket/gen_header.py
+index 5457ef71..090ab4b2 100644
+--- a/src/gallium/drivers/rocket/gen_header.py
++++ b/src/gallium/drivers/rocket/gen_header.py
+@@ -61,8 +61,14 @@ git clone https://gitlab.freedesktop.org/mesa/mesa.git
+ 	print("{")
+ 
+ 	print("\tswitch(offset) {")
++	seen = set()
+ 	for e in p.file:
+ 		if isinstance(e, Reg):
++			# Two layouts of one register share an offset; list it once.
++			key = (e.domain, e.array.offset if e.array else 0, e.offset)
++			if key in seen:
++				continue
++			seen.add(key)
+ 			print("\t\tcase REG_%s:" % e.full_name)
+ 			print("\t\t\treturn %s;" % e.domain)
+ 	print("\t}")
+diff --git a/src/gallium/drivers/rocket/registers.xml b/src/gallium/drivers/rocket/registers.xml
+index 8410edab..7d8b564c 100644
+--- a/src/gallium/drivers/rocket/registers.xml
++++ b/src/gallium/drivers/rocket/registers.xml
+@@ -140,6 +140,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+       <bitfield name="TASK_PP_EN" pos="12" type="uint"/>
+       <bitfield name="TASK_NUMBER" low="0" high="11" type="uint"/>
+    </reg32>
++   <reg32 offset="0x0030" name="TASK_CON_RK3576">
++      <bitfield name="RESERVED_0" low="19" high="31" type="uint"/>
++      <bitfield name="LAST_LAYER_CLEAR" pos="18" type="uint"/>
++      <bitfield name="TASK_COUNT_CLEAR" pos="17" type="uint"/>
++      <bitfield name="TASK_PP_EN" pos="16" type="uint"/>
++      <bitfield name="TASK_NUMBER" low="0" high="15" type="uint"/>
++   </reg32>
+    <reg32 offset="0x0034" name="TASK_DMA_BASE_ADDR">
+       <bitfield name="DMA_BASE_ADDR" low="4" high="31" type="uint"/>
+       <bitfield name="RESERVED_0" low="0" high="3" type="uint"/>
+-- 
+2.43.0
+
