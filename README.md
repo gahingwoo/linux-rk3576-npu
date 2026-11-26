@@ -32,7 +32,7 @@ oven it is roasted in.
 |---|---|
 | **linux-rk3576-npu** | this one: the open RK3576 NPU driver and Mesa work. `rocket` on the list, Teflon in Mesa, and the register knowledge the other two are built on |
 | [kiln](https://github.com/gahingwoo/kiln) | the **vendor** RKLLM/RKNN stack on a mainline kernel. LLM and vision on the board today, through a closed runtime, and the yardstick the open stack is measured against |
-| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own and runs Llama-3.2-1B end to end at four bits, about 18 tokens a second, with no Mesa and no vendor runtime in the path |
+| [charsiu](https://github.com/gahingwoo/charsiu) | an open **LLM** runtime for this NPU on the open driver. It reaches the NPU through `rocket` on its own, with no Mesa and no vendor runtime in the path. v0.2.0 (2026-11-26) on a CM5-IO, Qwen3-0.6B, NPU at 594 MHz, against the vendor's rkllm 1.3.1 at 950 MHz, its maximum: first token 10-21% sooner, decode 27-28 against 23.2-23.75 tok/s, peak memory 0.73 against 1.12 GB |
 
 For Windows on Arm, [woa-rk3576-npu](https://github.com/gahingwoo/woa-rk3576-npu)
 is a Windows driver for the same NPU, following `rocket`'s job model. charsiu
@@ -118,6 +118,9 @@ works out of the box, and charsiu is in the Armbian repository:
 ```bash
 sudo apt install charsiu
 ```
+
+On 2026-11-26 beta.armbian.com has charsiu 0.2.0 and apt.armbian.com still
+0.1.0.
 
 `ls /dev/accel/` shows `accel0` when the kernel drives the NPU. The edge kernel
 in apt.armbian.com still predated the merge on 2026-11-09; the one in
